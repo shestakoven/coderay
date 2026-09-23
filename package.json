@@ -6,7 +6,7 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc -p packages/core",
+    "typecheck": "tsc -p packages/core && tsc -p packages/ui",
     "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
     "dev:core": "tsx watch packages/core/src/main.ts --project . --allow-origin http://localhost:5173",
     "core": "tsx packages/core/src/main.ts"
