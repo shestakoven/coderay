@@ -96,6 +96,10 @@ describe('server', () => {
     expect(status).toBe(401);
   });
 
+  it('rejects startup when the port is already taken', async () => {
+    await expect(startServer({ port: server.port, snapshot: () => snapshot(1) })).rejects.toThrow('EADDRINUSE');
+  });
+
   it('refuses a symlink that points outside the static directory', async () => {
     const root = tempDir('ide-server-');
     mkdirSync(join(root, 'public'));

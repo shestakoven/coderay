@@ -50,10 +50,17 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   await new Promise<void>((resolveListen, reject) => {
-    http.once('error', reject);
-    http.listen(options.port, HOST, () => resolveListen());
+    const onStartupError = (error: Error): void => reject(error);
+    http.once('error', onStartupError);
+    wss.once('error', onStartupError);
+    http.listen(options.port, HOST, () => {
+      http.removeListener('error', onStartupError);
+      wss.removeListener('error', onStartupError);
+      resolveListen();
+    });
   });
   port = (http.address() as AddressInfo).port;
+  wss.on('error', (error) => console.error('server: websocket error', error));
 
   return {
     port,
