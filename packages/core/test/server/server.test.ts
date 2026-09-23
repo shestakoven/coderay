@@ -1,4 +1,5 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
+import { request } from 'node:http';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
@@ -42,6 +43,16 @@ function openClient(headers: Record<string, string>): Promise<ServerMessage[]> {
   });
 }
 
+function httpRequest(path: string, headers: Record<string, string> = {}): Promise<number> {
+  return new Promise((resolve, reject) => {
+    const req = request({ host: '127.0.0.1', port: server.port, path, headers }, (res) => {
+      resolve(res.statusCode ?? 500);
+    });
+    req.on('error', reject);
+    req.end();
+  });
+}
+
 describe('server', () => {
   it('sends the current snapshot to a same-origin client on connect', async () => {
     const messages = await openClient({ origin: `http://127.0.0.1:${server.port}` });
@@ -78,5 +89,25 @@ describe('server', () => {
     expect(await index.text()).toBe('<h1>ide</h1>');
     expect((await fetch(`${base}/..%2Fsecret.txt`)).status).toBe(403);
     expect((await fetch(`${base}/missing.js`)).status).toBe(404);
+  });
+
+  it('refuses static requests whose host is not local', async () => {
+    const status = await httpRequest('/', { host: `evil.example:${server.port}` });
+    expect(status).toBe(401);
+  });
+
+  it('refuses a symlink that points outside the static directory', async () => {
+    const root = tempDir('ide-server-');
+    mkdirSync(join(root, 'public'));
+    writeFileSync(join(root, 'secret.txt'), 'top secret');
+    symlinkSync(join(root, 'secret.txt'), join(root, 'public', 'leak.txt'));
+    const svr = await startServer({
+      port: 0,
+      staticDir: join(root, 'public'),
+      snapshot: () => snapshot(1),
+    });
+    const status = await httpRequest('/', { host: `127.0.0.1:${svr.port}` });
+    await fetch(`http://127.0.0.1:${svr.port}/leak.txt`).then((res) => expect(res.status).toBe(403));
+    await svr.close();
   });
 });

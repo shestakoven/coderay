@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
@@ -31,6 +32,10 @@ const CONTENT_TYPES: Record<string, string> = {
 export async function startServer(options: ServerOptions): Promise<RunningServer> {
   let port = 0;
   const http = createServer((req, res) => {
+    if (!isLocalHost(req.headers.host, port)) {
+      res.writeHead(401).end();
+      return;
+    }
     void serveStatic(options.staticDir, req.url ?? '/', res);
   });
   const wss = new WebSocketServer({
@@ -65,8 +70,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
 }
 
+function isLocalHost(host: string | undefined, port: number): boolean {
+  return !!(host && [`127.0.0.1:${port}`, `localhost:${port}`].includes(host));
+}
+
 function isAllowedUpgrade(host: string | undefined, origin: string | undefined, port: number, allowedOrigins: string[]): boolean {
-  if (!host || ![`127.0.0.1:${port}`, `localhost:${port}`].includes(host)) return false;
+  if (!isLocalHost(host, port)) return false;
   if (!origin) return true;
   return origin === `http://${host}` || allowedOrigins.includes(origin);
 }
@@ -90,6 +99,12 @@ async function serveStatic(staticDir: string | undefined, url: string, res: Serv
     return;
   }
   try {
+    const realRoot = await realpath(root);
+    const realFile = await realpath(file);
+    if (!realFile.startsWith(realRoot + sep)) {
+      res.writeHead(403).end();
+      return;
+    }
     const body = await readFile(file);
     res.writeHead(200, { 'content-type': CONTENT_TYPES[extname(file)] ?? 'application/octet-stream' }).end(body);
   } catch {
