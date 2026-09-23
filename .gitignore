@@ -2,3 +2,4 @@
 .ide/*.sqlite*
 node_modules/
 .worktrees/
+packages/ui/dist/
