@@ -7,7 +7,9 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc -p packages/core",
-    "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test"
+    "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
+    "dev:core": "tsx watch packages/core/src/main.ts --project . --allow-origin http://localhost:5173",
+    "core": "tsx packages/core/src/main.ts"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
