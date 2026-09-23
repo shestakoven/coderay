@@ -1,3 +1,4 @@
 .superpowers/
 .ide/*.sqlite*
 node_modules/
+.worktrees/
