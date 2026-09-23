@@ -84,7 +84,15 @@ export class Indexer {
           console.error(`indexer: failed to refresh ${relPath}`, error);
         }
       }
-      if (changed.size > 0) for (const listener of this.listeners) listener([...changed]);
+      if (changed.size > 0) {
+        for (const listener of this.listeners) {
+          try {
+            listener([...changed]);
+          } catch (error) {
+            console.error('indexer: change listener failed', error);
+          }
+        }
+      }
     });
   }
 

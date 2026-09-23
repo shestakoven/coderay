@@ -1,6 +1,6 @@
 import { rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { Indexer, MAX_FILE_BYTES } from '../../src/indexer/indexer';
 import { createPythonAdapter } from '../../src/lang/python';
 import { createTypeScriptAdapter } from '../../src/lang/typescript';
@@ -106,5 +106,29 @@ describe('Indexer', () => {
     await waitFor(() => paths().length === 51);
     await waitFor(() => new Set(batches.flat()).size === 50);
     expect(batches.length).toBeLessThanOrEqual(5);
+  });
+
+  it('keeps indexing and notifying after a change listener throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { root, indexer, batches } = await startIndexer({
+        'src/a.ts': 'export const a = 1;',
+        'src/b.ts': 'export const b = 1;',
+      });
+      let calls = 0;
+      indexer.onChange(() => {
+        calls += 1;
+        if (calls === 1) throw new Error('listener boom');
+      });
+
+      await writeFile(join(root, 'src/a.ts'), "import { c } from './c';");
+      await waitFor(() => batches.flat().includes('src/a.ts'));
+
+      await writeFile(join(root, 'src/b.ts'), "import { d } from './d';");
+      await waitFor(() => batches.flat().includes('src/b.ts'));
+      expect(indexer.files().find((f) => f.path === 'src/b.ts')?.imports).toEqual(['./d']);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });
