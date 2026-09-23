@@ -2,3 +2,5 @@
 .ide/*.sqlite*
 node_modules/
 .worktrees/
+spike/out/
+spike/.cache/
