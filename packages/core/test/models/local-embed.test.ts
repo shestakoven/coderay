@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BGE_SMALL, LocalEmbedModel, READY_TIMEOUT_MS } from '../../src/models/local-embed';
 import type { EmbedStatus } from '../../src/models/types';
-import { tempDir, writeTree } from '../helpers';
+import { tempDir, waitFor, writeTree } from '../helpers';
 
 const models: LocalEmbedModel[] = [];
 
@@ -54,6 +54,32 @@ describe('LocalEmbedModel', () => {
     const model = start('fake-embed-worker');
     await expect(model.embed(['crash'])).rejects.toThrow('exited with code 3');
     await expect(model.embed(['abc'])).rejects.toThrow('exited with code 3');
+  });
+
+  it('rejects embed calls after it is closed', async () => {
+    const model = start('fake-embed-worker');
+    await model.embed(['a']);
+    await model.close();
+    await expect(model.embed(['abc'])).rejects.toThrow('embedding model closed');
+  });
+
+  it('rejects a pending embed when it is closed', async () => {
+    const model = start('stalled-embed-worker');
+    await waitFor(() => model.status().state === 'ready', 'model ready');
+    const pending = model.embed(['abc']);
+    const rejection = expect(pending).rejects.toThrow('embedding model closed');
+    await Promise.resolve(); // one microtask lets embed() post its request
+    await model.close();
+    await rejection;
+  });
+
+  it('keeps its status and stays quiet for listeners when it is closed', async () => {
+    const model = start('fake-embed-worker');
+    await model.embed(['a']);
+    const states: EmbedStatus['state'][] = [];
+    model.onStatus((status) => states.push(status.state));
+    await model.close();
+    expect([model.status().state, states]).toEqual(['ready', []]);
   });
 
   it('gives up when the model is not ready within ten minutes', () => {

@@ -11,6 +11,7 @@ export const BGE_SMALL = {
 } as const;
 
 export const READY_TIMEOUT_MS = 10 * 60 * 1000;
+const CLOSED_MESSAGE = 'embedding model closed';
 
 export interface LocalEmbedOptions {
   cacheDir: string;
@@ -47,7 +48,7 @@ export class LocalEmbedModel implements EmbedModel {
       this.settleReady = { resolve, reject };
     });
     this.ready.catch(() => undefined);
-    this.readyTimer = setTimeout(() => this.fail('timed out loading the embedding model'), READY_TIMEOUT_MS);
+    this.readyTimer = setTimeout(() => this.fail('timed out loading the embedding model'), READY_TIMEOUT_MS).unref();
     this.worker = new Worker(options.workerUrl ?? new URL('./embed-worker.ts', import.meta.url), {
       workerData: { cacheDir: options.cacheDir, modelId: BGE_SMALL.id, pooling: BGE_SMALL.pooling },
     });
@@ -68,7 +69,9 @@ export class LocalEmbedModel implements EmbedModel {
 
   async embed(texts: string[]): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
+    if (this.closed) throw new Error(CLOSED_MESSAGE);
     await this.ready;
+    if (this.closed) throw new Error(CLOSED_MESSAGE);
     if (this.current.state === 'unavailable') throw new Error(this.current.reason);
     const id = this.nextId;
     this.nextId += 1;
@@ -81,8 +84,9 @@ export class LocalEmbedModel implements EmbedModel {
   async close(): Promise<void> {
     this.closed = true;
     clearTimeout(this.readyTimer);
-    this.settleReady?.reject(new Error('embedding model closed'));
-    for (const entry of this.pending.values()) entry.reject(new Error('embedding model closed'));
+    const error = new Error(CLOSED_MESSAGE);
+    this.settleReady?.reject(error);
+    for (const entry of this.pending.values()) entry.reject(error);
     this.pending.clear();
     await this.worker.terminate();
   }
