@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 
-const FORBIDDEN = /\b(?:describe|it|test)\.(?:skip|only|todo)\b|\b(?:xit|xdescribe|fit|fdescribe)\s*\(/;
+const FORBIDDEN = /\b(?:describe|it|test)(?:\.\w+)*\.(?:skip|only|todo|skipIf|runIf)\b|\.skip\(|\b(?:xit|xdescribe|fit|fdescribe)\s*\(/;
 const SKIPPED_DIRS = new Set(['node_modules', 'dist', 'fixtures']);
 const offenders = [];
 

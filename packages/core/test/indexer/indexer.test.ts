@@ -8,6 +8,8 @@ import { createTypeScriptAdapter } from '../../src/lang/typescript';
 import type { LanguageAdapter } from '../../src/lang/types';
 import { fixture, tempDir, waitFor, writeTree } from '../helpers';
 
+const SOURCE = { 'src/a.ts': 'export const a = 1;' };
+
 let adapters: LanguageAdapter[];
 let indexer: Indexer | undefined;
 
@@ -38,29 +40,47 @@ async function startIndexerAt(root: string, withAdapters: LanguageAdapter[] = ad
 async function awaitLiveWatcher({ root, batches }: { root: string; batches: string[][] }, dir: string): Promise<void> {
   const probe = dir ? `${dir}/live-probe.ts` : 'live-probe.ts';
   await writeFile(join(root, probe), '');
-  await waitFor(() => batches.flat().includes(probe));
+  await waitFor(() => batches.flat().includes(probe), `${probe} reported`);
   batches.length = 0;
 }
 
 describe('Indexer', () => {
-  it('indexes supported sources and skips ignored, unsupported and oversized files', async () => {
-    const { indexer, paths } = await startIndexer({
-      'src/a.ts': "import { b } from './b';",
-      'src/b.ts': 'export const b = 1;',
-      'app/main.py': 'import os',
-      'src/broken.ts': 'export function (',
-      'README.md': '# readme',
-      'node_modules/lib/index.js': 'module.exports = 1;',
-      'generated/out.ts': 'export const x = 1;',
-      '.gitignore': 'generated/\n',
-      'dist-bundle.js': `const big = "${'x'.repeat(MAX_FILE_BYTES)}";`,
-    });
+  it('indexes TypeScript and Python sources with their imports', async () => {
+    const { indexer } = await startIndexer({ 'src/a.ts': "import { b } from './b';", 'app/main.py': 'import os' });
 
-    expect(paths()).toEqual(['app/main.py', 'src/a.ts', 'src/b.ts', 'src/broken.ts']);
     const byPath = new Map(indexer.files().map((f) => [f.path, f]));
     expect(byPath.get('src/a.ts')).toMatchObject({ lang: 'typescript', imports: ['./b'], parseError: false });
-    expect(byPath.get('app/main.py')).toMatchObject({ lang: 'python', imports: ['os'] });
-    expect(byPath.get('src/broken.ts')?.parseError).toBe(true);
+    expect(byPath.get('app/main.py')).toMatchObject({ lang: 'python', imports: ['os'], parseError: false });
+  });
+
+  it('skips files matched by .gitignore', async () => {
+    const { paths } = await startIndexer({ ...SOURCE, '.gitignore': 'generated/\n', 'generated/out.ts': 'export const x = 1;' });
+
+    expect(paths()).toEqual(['src/a.ts']);
+  });
+
+  it('skips node_modules', async () => {
+    const { paths } = await startIndexer({ ...SOURCE, 'node_modules/lib/index.js': 'module.exports = 1;' });
+
+    expect(paths()).toEqual(['src/a.ts']);
+  });
+
+  it('skips files no adapter handles', async () => {
+    const { paths } = await startIndexer({ ...SOURCE, 'README.md': '# readme' });
+
+    expect(paths()).toEqual(['src/a.ts']);
+  });
+
+  it('skips a supported file larger than MAX_FILE_BYTES', async () => {
+    const { paths } = await startIndexer({ ...SOURCE, 'dist-bundle.js': `const big = "${'x'.repeat(MAX_FILE_BYTES)}";` });
+
+    expect(paths()).toEqual(['src/a.ts']);
+  });
+
+  it('keeps a file with syntax errors on the map with parseError', async () => {
+    const { indexer } = await startIndexer({ 'src/broken.ts': 'export function (' });
+
+    expect(indexer.files()).toMatchObject([{ path: 'src/broken.ts', parseError: true }]);
   });
 
   it('re-indexes a changed file and reports it', async () => {
@@ -68,7 +88,7 @@ describe('Indexer', () => {
 
     await writeFile(join(root, 'src/a.ts'), "import { c } from './c';");
 
-    await waitFor(() => batches.flat().includes('src/a.ts'));
+    await waitFor(() => batches.flat().includes('src/a.ts'), 'src/a.ts reported');
     expect(indexer.files().find((f) => f.path === 'src/a.ts')?.imports).toEqual(['./c']);
   });
 
@@ -78,7 +98,7 @@ describe('Indexer', () => {
     await writeFile(join(root, 'src/a.ts'), 'export const a = 1;');
     await writeFile(join(root, 'src/b.ts'), 'export const b = 2;');
 
-    await waitFor(() => batches.flat().includes('src/b.ts'));
+    await waitFor(() => batches.flat().includes('src/b.ts'), 'src/b.ts reported');
     expect(batches.flat()).not.toContain('src/a.ts');
   });
 
@@ -93,9 +113,9 @@ describe('Indexer', () => {
     await rm(join(root, 'src/gone.ts'));
     await rm(join(root, 'src/feature'), { recursive: true });
 
-    await waitFor(() => paths().length === 1);
-    expect(paths()).toEqual(['src/keep.ts']);
+    await waitFor(() => new Set(batches.flat()).size === 3, 'three deletions reported');
     expect(batches.flat().sort()).toEqual(['src/feature/deep/y.ts', 'src/feature/x.ts', 'src/gone.ts']);
+    expect(paths()).toEqual(['src/keep.ts']);
   });
 
   it('drops a file from the index when it grows beyond the size limit', async () => {
@@ -103,7 +123,7 @@ describe('Indexer', () => {
 
     await writeFile(join(root, 'src/a.ts'), `export const a = "${'x'.repeat(MAX_FILE_BYTES)}";`);
 
-    await waitFor(() => !paths().includes('src/a.ts'));
+    await waitFor(() => !paths().includes('src/a.ts'), 'oversized src/a.ts dropped');
     expect(paths()).toEqual(['src/b.ts']);
   });
 
@@ -117,8 +137,8 @@ describe('Indexer', () => {
 
     await writeTree(root, burst);
 
-    await waitFor(() => paths().length === 52);
-    await waitFor(() => new Set(batches.flat()).size === 50);
+    await waitFor(() => paths().length === 52, 'burst indexed');
+    await waitFor(() => new Set(batches.flat()).size === 50, 'burst reported');
     expect(batches.length).toBeLessThanOrEqual(5);
   });
 
@@ -136,10 +156,10 @@ describe('Indexer', () => {
       });
 
       await writeFile(join(root, 'src/a.ts'), "import { c } from './c';");
-      await waitFor(() => batches.flat().includes('src/a.ts'));
+      await waitFor(() => batches.flat().includes('src/a.ts'), 'src/a.ts reported');
 
       await writeFile(join(root, 'src/b.ts'), "import { d } from './d';");
-      await waitFor(() => batches.flat().includes('src/b.ts'));
+      await waitFor(() => batches.flat().includes('src/b.ts'), 'src/b.ts reported');
       expect(indexer.files().find((f) => f.path === 'src/b.ts')?.imports).toEqual(['./d']);
     } finally {
       consoleError.mockRestore();
@@ -155,7 +175,7 @@ describe('Indexer', () => {
     await symlink(outside, join(context.root, 'linked'));
     await writeFile(join(context.root, 'after.ts'), '');
 
-    await waitFor(() => context.batches.flat().includes('after.ts'));
+    await waitFor(() => context.batches.flat().includes('after.ts'), 'after.ts reported');
     expect(context.paths()).toEqual(['after.ts', 'live-probe.ts', 'src/a.ts']);
   });
 
@@ -177,7 +197,8 @@ describe('Indexer', () => {
 
     const { indexer } = await startIndexerAt(root, [editingFirstScannedFile]);
 
-    await waitFor(() => indexer.files().find((f) => f.path === editedPath)?.imports.includes('./c'));
+    const editedImports = () => indexer.files().find((f) => f.path === editedPath)?.imports;
+    await waitFor(() => editedImports()?.includes('./c'), 'edit during scan indexed');
   });
 
   it('reports an edit within the maximum wait while another source file is rewritten continuously', async () => {
@@ -187,7 +208,7 @@ describe('Indexer', () => {
     try {
       await writeFile(join(root, 'src/a.ts'), 'export const a = 2;');
 
-      await waitFor(() => batches.flat().includes('src/a.ts'), 1500);
+      await waitFor(() => batches.flat().includes('src/a.ts'), 'src/a.ts reported during writes', 1500);
     } finally {
       clearInterval(writer);
     }
@@ -199,7 +220,7 @@ describe('Indexer', () => {
 
     await rename(join(context.root, 'src/Foo.ts'), join(context.root, 'src/foo.ts'));
 
-    await waitFor(() => ['src/Foo.ts', 'src/foo.ts'].every((p) => context.batches.flat().includes(p)));
+    await waitFor(() => ['src/Foo.ts', 'src/foo.ts'].every((p) => context.batches.flat().includes(p)), 'both names reported');
     for (const path of context.paths()) {
       expect(await readdir(join(context.root, dirname(path)))).toContain(basename(path));
     }
@@ -214,7 +235,7 @@ describe('Indexer', () => {
     const { batches, paths } = await startIndexerAt(root);
     await writeFile(join(root, 'src/a.ts'), 'export const a = 2;');
 
-    await waitFor(() => batches.flat().includes('src/a.ts'));
+    await waitFor(() => batches.flat().includes('src/a.ts'), 'src/a.ts reported');
     expect(paths()).toEqual(['src/a.ts']);
   });
 });

@@ -5,7 +5,7 @@
   "packageManager": "pnpm@10.27.0",
   "engines": { "node": ">=24" },
   "scripts": {
-    "test": "vitest run",
+    "test": "vitest run --allowOnly=false",
     "typecheck": "tsc -p packages/core && tsc -p packages/ui",
     "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
     "dev:core": "tsx watch packages/core/src/main.ts --project . --allow-origin http://localhost:5173",
