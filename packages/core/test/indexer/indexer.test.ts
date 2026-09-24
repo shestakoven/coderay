@@ -2,7 +2,7 @@ import { writeFileSync } from 'node:fs';
 import { chmod, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { basename, dirname, join } from 'node:path';
 import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
-import { Indexer, MAX_FILE_BYTES } from '../../src/indexer/indexer';
+import { Indexer, MAX_FILE_BYTES, type IndexerOptions } from '../../src/indexer/indexer';
 import { createPythonAdapter } from '../../src/lang/python';
 import { createTypeScriptAdapter } from '../../src/lang/typescript';
 import type { LanguageAdapter } from '../../src/lang/types';
@@ -22,14 +22,18 @@ afterEach(async () => {
   indexer = undefined;
 });
 
-async function startIndexer(files: Record<string, string>) {
+async function startIndexer(files: Record<string, string>, options: Partial<IndexerOptions> = {}) {
   const root = tempDir('ide-indexer-');
   await writeTree(root, files);
-  return startIndexerAt(root);
+  return startIndexerAt(root, adapters, options);
 }
 
-async function startIndexerAt(root: string, withAdapters: LanguageAdapter[] = adapters) {
-  indexer = new Indexer({ root, adapters: withAdapters, debounceMs: 150 });
+async function startIndexerAt(
+  root: string,
+  withAdapters: LanguageAdapter[] = adapters,
+  options: Partial<IndexerOptions> = {},
+) {
+  indexer = new Indexer({ root, adapters: withAdapters, debounceMs: 150, ...options });
   const batches: string[][] = [];
   indexer.onChange((paths) => batches.push(paths));
   await indexer.start();
@@ -186,6 +190,16 @@ describe('Indexer', () => {
     expect(context.paths()).toEqual(['after.ts', 'live-probe.ts', 'src/a.ts']);
   });
 
+  it('reports files created immediately after start', async () => {
+    const { root, batches, paths } = await startIndexer(SOURCE);
+    const created = Array.from({ length: 20 }, (_, i) => `src/new${i}.ts`);
+
+    for (const path of created) writeFileSync(join(root, path), 'export const n = 1;');
+
+    await waitFor(() => created.every((p) => batches.flat().includes(p)), 'created files reported', 3000);
+    expect(paths()).toEqual(['src/a.ts', ...created].sort());
+  });
+
   it('picks up an edit made to an already scanned file while the initial scan runs', async () => {
     const root = tempDir('ide-indexer-');
     await writeTree(root, Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`src/f${i}.ts`, `export const f${i} = ${i};`])));
@@ -209,7 +223,10 @@ describe('Indexer', () => {
   });
 
   it('reports an edit within the maximum wait while another source file is rewritten continuously', async () => {
-    const { root, batches } = await startIndexer({ 'src/a.ts': 'export const a = 1;', 'src/hot.ts': 'export const n = 0;' });
+    const { root, batches } = await startIndexer(
+      { 'src/a.ts': 'export const a = 1;', 'src/hot.ts': 'export const n = 0;' },
+      { reconcileDelayMs: 60_000 },
+    );
     let n = 0;
     const writer = setInterval(() => writeFileSync(join(root, 'src/hot.ts'), `export const n = ${++n};`), 50);
     try {

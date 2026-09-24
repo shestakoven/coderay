@@ -14,6 +14,7 @@ export interface IndexerOptions {
   root: string;
   adapters: LanguageAdapter[];
   debounceMs?: number;
+  reconcileDelayMs?: number;
 }
 
 export type ChangeListener = (changedPaths: string[]) => void;
@@ -22,12 +23,14 @@ export class Indexer {
   private readonly root: string;
   private readonly adapters: LanguageAdapter[];
   private readonly debounceMs: number;
+  private readonly reconcileDelayMs: number;
   private readonly isIgnored: IgnoreMatcher;
   private readonly indexed = new Map<string, IndexedFile>();
   private readonly listeners = new Set<ChangeListener>();
   private readonly pending = new Set<string>();
   private watcher: FSWatcher | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private reconcileTimer: NodeJS.Timeout | undefined;
   private firstPendingAt: number | undefined;
   private live = false;
   private realRoot = '';
@@ -37,6 +40,7 @@ export class Indexer {
     this.root = options.root;
     this.adapters = options.adapters;
     this.debounceMs = options.debounceMs ?? 100;
+    this.reconcileDelayMs = options.reconcileDelayMs ?? 1000;
     this.isIgnored = createIgnoreMatcher(options.root);
   }
 
@@ -58,11 +62,13 @@ export class Indexer {
     await this.queue;
     this.live = true;
     if (this.pending.size > 0) this.flush();
+    this.reconcileTimer = setTimeout(() => this.reconcile(), this.reconcileDelayMs);
     await this.queue;
   }
 
   async stop(): Promise<void> {
     clearTimeout(this.timer);
+    clearTimeout(this.reconcileTimer);
     await this.watcher?.close();
     await this.queue;
   }
@@ -108,16 +114,29 @@ export class Indexer {
           console.error(`indexer: failed to refresh ${relPath}`, error);
         }
       }
-      if (changed.size > 0) {
-        for (const listener of this.listeners) {
-          try {
-            listener([...changed]);
-          } catch (error) {
-            console.error('indexer: change listener failed', error);
-          }
-        }
-      }
+      this.notify([...changed]);
     });
+  }
+
+  private reconcile(): void {
+    this.queue = this.queue.then(async () => {
+      const seen = new Set<string>();
+      const changed = await this.scan('', seen);
+      const removed = [...this.indexed.keys()].filter((path) => !seen.has(path));
+      for (const path of removed) this.indexed.delete(path);
+      this.notify([...changed, ...removed]);
+    });
+  }
+
+  private notify(changed: string[]): void {
+    if (changed.length === 0) return;
+    for (const listener of this.listeners) {
+      try {
+        listener(changed);
+      } catch (error) {
+        console.error('indexer: change listener failed', error);
+      }
+    }
   }
 
   private async refresh(relPath: string): Promise<string[]> {
@@ -133,17 +152,19 @@ export class Indexer {
     return real === join(this.realRoot, relPath);
   }
 
-  private async scan(relDir: string): Promise<string[]> {
+  private async scan(relDir: string, seen?: Set<string>): Promise<string[]> {
     const changed: string[] = [];
     const entries = await readdir(join(this.root, relDir), { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       const relPath = relDir ? `${relDir}/${entry.name}` : entry.name;
       if (entry.isSymbolicLink() || this.isIgnored(relPath, entry.isDirectory())) continue;
       if (entry.isDirectory()) {
-        changed.push(...(await this.scan(relPath)));
+        changed.push(...(await this.scan(relPath, seen)));
       } else if (entry.isFile()) {
         const info = await lstat(join(this.root, relPath)).catch(() => null);
-        if (info?.isFile()) changed.push(...(await this.indexFile(relPath, info.size)));
+        if (!info?.isFile()) continue;
+        seen?.add(relPath);
+        changed.push(...(await this.indexFile(relPath, info.size)));
       }
     }
     return changed;
