@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import type { Stats } from 'node:fs';
+import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
 import { watch, type FSWatcher } from 'chokidar';
 import type { LanguageAdapter, ParsedFile } from '../lang/types';
@@ -7,6 +8,7 @@ import type { IndexedFile } from '../model';
 import { createIgnoreMatcher, type IgnoreMatcher } from './ignore';
 
 export const MAX_FILE_BYTES = 1_000_000;
+const MAX_WAIT_MS = 1000;
 
 export interface IndexerOptions {
   root: string;
@@ -26,6 +28,9 @@ export class Indexer {
   private readonly pending = new Set<string>();
   private watcher: FSWatcher | undefined;
   private timer: NodeJS.Timeout | undefined;
+  private firstPendingAt: number | undefined;
+  private live = false;
+  private realRoot = '';
   private queue: Promise<void> = Promise.resolve();
 
   constructor(options: IndexerOptions) {
@@ -36,15 +41,24 @@ export class Indexer {
   }
 
   async start(): Promise<void> {
-    await this.scan('');
+    this.realRoot = await realpath(this.root);
     const watcher = watch(this.root, {
       ignoreInitial: true,
       followSymlinks: false,
-      ignored: (absPath, stats) => this.isIgnored(this.toRel(absPath), stats?.isDirectory() ?? false),
+      ignorePermissionErrors: true,
+      ignored: (absPath, stats) => this.isUnwatched(this.toRel(absPath), stats),
     });
-    watcher.on('all', (_event, absPath) => this.schedule(this.toRel(absPath)));
     this.watcher = watcher;
+    watcher.on('error', (error) => console.error('indexer: watch error', error));
+    watcher.on('all', (_event, absPath) => this.schedule(this.toRel(absPath)));
     await new Promise<void>((resolve) => watcher.once('ready', () => resolve()));
+    this.queue = this.queue.then(async () => {
+      await this.scan('');
+    });
+    await this.queue;
+    this.live = true;
+    if (this.pending.size > 0) this.flush();
+    await this.queue;
   }
 
   async stop(): Promise<void> {
@@ -66,13 +80,23 @@ export class Indexer {
     return relative(this.root, absPath).split(sep).join('/');
   }
 
+  private isUnwatched(relPath: string, stats: Stats | undefined): boolean {
+    if (this.isIgnored(relPath, stats?.isDirectory() ?? false)) return true;
+    return !!stats?.isFile() && !this.adapters.some((a) => a.handles(relPath));
+  }
+
   private schedule(relPath: string): void {
     this.pending.add(relPath);
+    if (!this.live) return;
+    this.firstPendingAt ??= Date.now();
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush(), this.debounceMs);
+    const untilMaxWait = this.firstPendingAt + MAX_WAIT_MS - Date.now();
+    this.timer = setTimeout(() => this.flush(), Math.max(0, Math.min(this.debounceMs, untilMaxWait)));
   }
 
   private flush(): void {
+    clearTimeout(this.timer);
+    this.firstPendingAt = undefined;
     const batch = [...this.pending];
     this.pending.clear();
     this.queue = this.queue.then(async () => {
@@ -97,10 +121,16 @@ export class Indexer {
   }
 
   private async refresh(relPath: string): Promise<string[]> {
-    const info = await stat(join(this.root, relPath)).catch(() => null);
-    if (!info) return this.removeUnder(relPath);
+    const absPath = join(this.root, relPath);
+    const info = await lstat(absPath).catch(() => null);
+    if (!info || info.isSymbolicLink() || !(await this.isExactPath(absPath, relPath))) return this.removeUnder(relPath);
     if (info.isDirectory()) return this.scan(relPath);
     return this.indexFile(relPath, info.size);
+  }
+
+  private async isExactPath(absPath: string, relPath: string): Promise<boolean> {
+    const real = await realpath(absPath).catch(() => null);
+    return real === join(this.realRoot, relPath);
   }
 
   private async scan(relDir: string): Promise<string[]> {
@@ -112,8 +142,8 @@ export class Indexer {
       if (entry.isDirectory()) {
         changed.push(...(await this.scan(relPath)));
       } else if (entry.isFile()) {
-        const info = await stat(join(this.root, relPath)).catch(() => null);
-        if (info) changed.push(...(await this.indexFile(relPath, info.size)));
+        const info = await lstat(join(this.root, relPath)).catch(() => null);
+        if (info?.isFile()) changed.push(...(await this.indexFile(relPath, info.size)));
       }
     }
     return changed;

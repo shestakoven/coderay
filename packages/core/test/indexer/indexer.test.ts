@@ -1,6 +1,7 @@
-import { rm, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
+import { writeFileSync } from 'node:fs';
+import { chmod, readdir, rename, rm, symlink, writeFile } from 'node:fs/promises';
+import { basename, dirname, join } from 'node:path';
+import { afterEach, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Indexer, MAX_FILE_BYTES } from '../../src/indexer/indexer';
 import { createPythonAdapter } from '../../src/lang/python';
 import { createTypeScriptAdapter } from '../../src/lang/typescript';
@@ -22,12 +23,23 @@ afterEach(async () => {
 async function startIndexer(files: Record<string, string>) {
   const root = tempDir('ide-indexer-');
   await writeTree(root, files);
-  indexer = new Indexer({ root, adapters, debounceMs: 150 });
+  return startIndexerAt(root);
+}
+
+async function startIndexerAt(root: string, withAdapters: LanguageAdapter[] = adapters) {
+  indexer = new Indexer({ root, adapters: withAdapters, debounceMs: 150 });
   const batches: string[][] = [];
   indexer.onChange((paths) => batches.push(paths));
   await indexer.start();
   const paths = () => indexer!.files().map((f) => f.path).sort();
   return { root, indexer, batches, paths };
+}
+
+async function awaitLiveWatcher({ root, batches }: { root: string; batches: string[][] }, dir: string): Promise<void> {
+  const probe = dir ? `${dir}/live-probe.ts` : 'live-probe.ts';
+  await writeFile(join(root, probe), '');
+  await waitFor(() => batches.flat().includes(probe));
+  batches.length = 0;
 }
 
 describe('Indexer', () => {
@@ -96,14 +108,16 @@ describe('Indexer', () => {
   });
 
   it('batches a burst of new files into a few change reports', async () => {
-    const { root, batches, paths } = await startIndexer({ 'src/a.ts': 'export const a = 1;' });
+    const context = await startIndexer({ 'src/a.ts': 'export const a = 1;' });
+    const { root, batches, paths } = context;
+    await awaitLiveWatcher(context, 'src');
     const burst = Object.fromEntries(
       Array.from({ length: 50 }, (_, i) => [`src/generated/f${i}.ts`, `export const f${i} = ${i};`]),
     );
 
     await writeTree(root, burst);
 
-    await waitFor(() => paths().length === 51);
+    await waitFor(() => paths().length === 52);
     await waitFor(() => new Set(batches.flat()).size === 50);
     expect(batches.length).toBeLessThanOrEqual(5);
   });
@@ -130,5 +144,77 @@ describe('Indexer', () => {
     } finally {
       consoleError.mockRestore();
     }
+  });
+
+  it('never indexes files behind a directory symlink created after start', async () => {
+    const outside = tempDir('ide-outside-');
+    await writeTree(outside, { 'secret.ts': 'export const s = 1;' });
+    const context = await startIndexer({ 'src/a.ts': 'export const a = 1;' });
+    await awaitLiveWatcher(context, '');
+
+    await symlink(outside, join(context.root, 'linked'));
+    await writeFile(join(context.root, 'after.ts'), '');
+
+    await waitFor(() => context.batches.flat().includes('after.ts'));
+    expect(context.paths()).toEqual(['after.ts', 'live-probe.ts', 'src/a.ts']);
+  });
+
+  it('picks up an edit made to an already scanned file while the initial scan runs', async () => {
+    const root = tempDir('ide-indexer-');
+    await writeTree(root, Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`src/f${i}.ts`, `export const f${i} = ${i};`])));
+    const typescript = adapters[0]!;
+    let editedPath: string | undefined;
+    const editingFirstScannedFile: LanguageAdapter = {
+      ...typescript,
+      parse(path, source) {
+        if (!editedPath) {
+          editedPath = path;
+          writeFileSync(join(root, path), "import { c } from './c';");
+        }
+        return typescript.parse(path, source);
+      },
+    };
+
+    const { indexer } = await startIndexerAt(root, [editingFirstScannedFile]);
+
+    await waitFor(() => indexer.files().find((f) => f.path === editedPath)?.imports.includes('./c'));
+  });
+
+  it('reports an edit within the maximum wait while another source file is rewritten continuously', async () => {
+    const { root, batches } = await startIndexer({ 'src/a.ts': 'export const a = 1;', 'src/hot.ts': 'export const n = 0;' });
+    let n = 0;
+    const writer = setInterval(() => writeFileSync(join(root, 'src/hot.ts'), `export const n = ${++n};`), 50);
+    try {
+      await writeFile(join(root, 'src/a.ts'), 'export const a = 2;');
+
+      await waitFor(() => batches.flat().includes('src/a.ts'), 1500);
+    } finally {
+      clearInterval(writer);
+    }
+  });
+
+  it('keeps only paths that exist with their exact name on disk after a case-only rename', async () => {
+    const context = await startIndexer({ 'src/Foo.ts': 'export const foo = 1;' });
+    await awaitLiveWatcher(context, 'src');
+
+    await rename(join(context.root, 'src/Foo.ts'), join(context.root, 'src/foo.ts'));
+
+    await waitFor(() => ['src/Foo.ts', 'src/foo.ts'].every((p) => context.batches.flat().includes(p)));
+    for (const path of context.paths()) {
+      expect(await readdir(join(context.root, dirname(path)))).toContain(basename(path));
+    }
+  });
+
+  it('keeps indexing when a directory is unreadable', async () => {
+    const root = tempDir('ide-indexer-');
+    await writeTree(root, { 'src/a.ts': 'export const a = 1;', 'locked/b.ts': 'export const b = 1;' });
+    await chmod(join(root, 'locked'), 0o000);
+    onTestFinished(() => chmod(join(root, 'locked'), 0o755));
+
+    const { batches, paths } = await startIndexerAt(root);
+    await writeFile(join(root, 'src/a.ts'), 'export const a = 2;');
+
+    await waitFor(() => batches.flat().includes('src/a.ts'));
+    expect(paths()).toEqual(['src/a.ts']);
   });
 });
