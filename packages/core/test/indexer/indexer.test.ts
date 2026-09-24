@@ -39,8 +39,15 @@ async function startIndexerAt(root: string, withAdapters: LanguageAdapter[] = ad
 
 async function awaitLiveWatcher({ root, batches }: { root: string; batches: string[][] }, dir: string): Promise<void> {
   const probe = dir ? `${dir}/live-probe.ts` : 'live-probe.ts';
-  await writeFile(join(root, probe), '');
-  await waitFor(() => batches.flat().includes(probe), `${probe} reported`);
+  // macOS arms FSEvents after chokidar's 'ready', so one write can be lost; identical rewrites are reported once.
+  const touch = () => writeFileSync(join(root, probe), '');
+  touch();
+  const toucher = setInterval(touch, 250);
+  try {
+    await waitFor(() => batches.flat().includes(probe), `${probe} reported`, 3000);
+  } finally {
+    clearInterval(toucher);
+  }
   batches.length = 0;
 }
 
