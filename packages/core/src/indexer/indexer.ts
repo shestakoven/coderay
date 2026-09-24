@@ -33,6 +33,8 @@ export class Indexer {
   private reconcileTimer: NodeJS.Timeout | undefined;
   private firstPendingAt: number | undefined;
   private live = false;
+  private stopping = false;
+  private abortStart: (() => void) | undefined;
   private realRoot = '';
   private queue: Promise<void> = Promise.resolve();
 
@@ -46,6 +48,7 @@ export class Indexer {
 
   async start(): Promise<void> {
     this.realRoot = await realpath(this.root);
+    if (this.stopping) return;
     const watcher = watch(this.root, {
       ignoreInitial: true,
       followSymlinks: false,
@@ -55,18 +58,26 @@ export class Indexer {
     this.watcher = watcher;
     watcher.on('error', (error) => console.error('indexer: watch error', error));
     watcher.on('all', (_event, absPath) => this.schedule(this.toRel(absPath)));
-    await new Promise<void>((resolve) => watcher.once('ready', () => resolve()));
+    await new Promise<void>((resolve) => {
+      this.abortStart = resolve;
+      watcher.once('ready', () => resolve());
+    });
+    if (this.stopping) return;
     this.queue = this.queue.then(async () => {
       await this.scan('');
     });
     await this.queue;
+    if (this.stopping) return;
     this.live = true;
     if (this.pending.size > 0) this.flush();
     this.reconcileTimer = setTimeout(() => this.reconcile(), this.reconcileDelayMs);
+    this.reconcileTimer.unref();
     await this.queue;
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
+    this.abortStart?.();
     clearTimeout(this.timer);
     clearTimeout(this.reconcileTimer);
     await this.watcher?.close();

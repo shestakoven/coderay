@@ -201,6 +201,22 @@ describe('Indexer', () => {
     expect(paths()).toEqual(['src/a.ts', ...created].sort());
   });
 
+  it('reports nothing after stop when stopped while starting', async () => {
+    const root = tempDir('ide-indexer-');
+    await writeTree(root, SOURCE);
+    indexer = new Indexer({ root, adapters, debounceMs: 150, reconcileDelayMs: 0 });
+    const calls: string[][] = [];
+    indexer.onChange((paths) => calls.push(paths));
+
+    const starting = indexer.start();
+    await indexer.stop();
+    await starting;
+    await writeFile(join(root, 'src/a.ts'), 'export const a = 2;');
+    await new Promise((resolve) => setTimeout(resolve, 500));
+
+    expect(calls).toEqual([]);
+  });
+
   it('picks up an edit made to an already scanned file while the initial scan runs', async () => {
     const root = tempDir('ide-indexer-');
     await writeTree(root, Object.fromEntries(Array.from({ length: 300 }, (_, i) => [`src/f${i}.ts`, `export const f${i} = ${i};`])));
