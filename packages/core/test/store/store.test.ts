@@ -65,6 +65,20 @@ describe('openStore', () => {
     expect(store.history('s1').toolEvents).toEqual([{ ...toolEvent, status: 'ok', endedAt: 9 }]);
   });
 
+  it("keeps a turn's corrected kind when it is saved again", () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveTurn('s1', { id: 't1', kind: 'agent-initiated', openedAt: 1, startedAt: null, closedAt: null, resultSubtype: null });
+    store.saveTurn('s1', { id: 't1', kind: 'user', openedAt: 1, startedAt: 2, closedAt: 5, resultSubtype: 'success' });
+    expect(store.history('s1').turns).toEqual([{ id: 't1', kind: 'user', openedAt: 1, startedAt: 2, closedAt: 5, resultSubtype: 'success' }]);
+  });
+
+  it('can be closed twice', () => {
+    const store = freshStore();
+    store.close();
+    expect(() => store.close()).not.toThrow();
+  });
+
   it("waits for another process's write lock instead of failing at once", async () => {
     const dir = tempDir('ide-store-');
     const store = freshStore(dir);

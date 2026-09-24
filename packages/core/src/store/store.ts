@@ -228,7 +228,7 @@ export function openStore(dir: string): Store {
   const upsertTurn = db.prepare(`
     INSERT INTO turns (id, session_id, kind, opened_at, started_at, closed_at, result_subtype)
     VALUES (:id, :sessionId, :kind, :openedAt, :startedAt, :closedAt, :resultSubtype)
-    ON CONFLICT (id) DO UPDATE SET started_at = excluded.started_at, closed_at = excluded.closed_at, result_subtype = excluded.result_subtype`);
+    ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, started_at = excluded.started_at, closed_at = excluded.closed_at, result_subtype = excluded.result_subtype`);
   const insertMessage = db.prepare(`
     INSERT INTO messages (id, session_id, seq, turn_id, parent_tool_use_id, role, text, ts)
     VALUES (:id, :sessionId, :seq, :turnId, :parentToolUseId, :role, :text, :ts)
