@@ -272,6 +272,7 @@ describe('AgentSession', () => {
     seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: unrelated.pid ?? -1 });
 
     await harness('multi-turn', { home, root });
+    expect(isAlive(unrelated.pid ?? -1)).toBe(true);
     unrelated.kill('SIGTERM');
 
     expect(await unrelatedExit).toBe('SIGTERM');
