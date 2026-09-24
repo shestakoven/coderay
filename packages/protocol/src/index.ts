@@ -36,6 +36,12 @@ export interface FileEdge {
   kind: 'import';
 }
 
+export interface GroupingPayload {
+  paths: number;
+  symbols: number;
+  links: number;
+}
+
 export interface MapSnapshot {
   version: number;
   projectName: string;

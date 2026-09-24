@@ -7,7 +7,7 @@ interface Group {
 
 const MIN_SPLIT_FILES = 12;
 
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+export const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 export function folderComponents(paths: string[]): MapComponent[] {
   if (paths.length === 0) return [];
