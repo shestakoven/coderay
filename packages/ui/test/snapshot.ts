@@ -1,7 +1,7 @@
 import type { MapSnapshot } from '@ide/protocol';
 
 const component = (id: string, files: string[]) => ({
-  id, name: id.replace('folder:src/', ''), description: '', files, globs: [], source: 'folder' as const, stale: false,
+  id, name: id.replace('folder:src/', ''), summary: '', description: '', files, keyFiles: [], globs: [], source: 'folder' as const, stale: false,
 });
 const file = (path: string, componentId: string, parseError = false) => ({
   path, lang: 'typescript' as const, componentId, symbols: [], parseError,

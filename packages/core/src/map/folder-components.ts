@@ -39,7 +39,7 @@ function groupByNextSegment(paths: string[], prefix: string): Group[] {
 }
 
 function toComponent(group: Group, prefix: string): MapComponent {
-  const base = { description: '', files: group.files, source: 'folder' as const, stale: false };
+  const base = { summary: '', description: '', files: group.files, keyFiles: [], source: 'folder' as const, stale: false };
   if (group.dir !== null) {
     return { ...base, id: `folder:${group.dir}`, name: lastSegment(group.dir), globs: [`${group.dir}/**`] };
   }

@@ -23,8 +23,10 @@ export type ComponentSource = 'ai' | 'manual' | 'folder';
 export interface MapComponent {
   id: string;
   name: string;
+  summary: string;
   description: string;
   files: string[];
+  keyFiles: string[];
   globs: string[];
   source: ComponentSource;
   stale: boolean;
