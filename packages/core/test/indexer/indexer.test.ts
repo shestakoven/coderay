@@ -33,7 +33,8 @@ async function startIndexerAt(
   withAdapters: LanguageAdapter[] = adapters,
   options: Partial<IndexerOptions> = {},
 ) {
-  indexer = new Indexer({ root, adapters: withAdapters, debounceMs: 150, ...options });
+  // The reconcile rescan would satisfy most watcher assertions on its own, so only the reconcile test enables it.
+  indexer = new Indexer({ root, adapters: withAdapters, debounceMs: 150, reconcileDelayMs: 60_000, ...options });
   const batches: string[][] = [];
   indexer.onChange((paths) => batches.push(paths));
   await indexer.start();
@@ -191,7 +192,7 @@ describe('Indexer', () => {
   });
 
   it('reports files created immediately after start', async () => {
-    const { root, batches, paths } = await startIndexer(SOURCE);
+    const { root, batches, paths } = await startIndexer(SOURCE, { reconcileDelayMs: 1000 });
     const created = Array.from({ length: 20 }, (_, i) => `src/new${i}.ts`);
 
     for (const path of created) writeFileSync(join(root, path), 'export const n = 1;');
@@ -223,10 +224,7 @@ describe('Indexer', () => {
   });
 
   it('reports an edit within the maximum wait while another source file is rewritten continuously', async () => {
-    const { root, batches } = await startIndexer(
-      { 'src/a.ts': 'export const a = 1;', 'src/hot.ts': 'export const n = 0;' },
-      { reconcileDelayMs: 60_000 },
-    );
+    const { root, batches } = await startIndexer({ 'src/a.ts': 'export const a = 1;', 'src/hot.ts': 'export const n = 0;' });
     let n = 0;
     const writer = setInterval(() => writeFileSync(join(root, 'src/hot.ts'), `export const n = ${++n};`), 50);
     try {
