@@ -3,7 +3,7 @@ import type { FileEdge } from '@ide/protocol';
 
 export type Owners = Pick<ReadonlyMap<string, string>, 'get'>;
 
-const TEST_DIRS = new Set(['test', 'tests', '__tests__', 'spec']);
+const TEST_DIRS = new Set(['test', 'tests', '__tests__', 'spec', 'specs']);
 
 export function isTestPath(path: string): boolean {
   const segments = path.split('/');
@@ -18,7 +18,7 @@ export function isTestPath(path: string): boolean {
 
   const withoutExt = posix.parse(name).name;
   if (/\.(test|spec)$/.test(withoutExt)) return true;
-  if (/^test_/.test(withoutExt)) return true;
+  if (/^test_./.test(withoutExt)) return true;
   if (/_test$/.test(withoutExt)) return true;
 
   return false;

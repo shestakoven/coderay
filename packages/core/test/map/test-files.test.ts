@@ -15,8 +15,7 @@ describe('isTestPath', () => {
     const tests = ['src/a.test.ts', 'src/a.spec.tsx', 'packages/core/test/helpers.ts', 'app/tests/test_db.py', 'pkg/db_test.go', 'conftest.py'];
     const sources = ['src/testing.ts', 'src/latest.ts', 'app/contest.py', 'src/test_.py'];
 
-    expect(tests.every(isTestPath)).toBe(true);
-    expect(sources.every(isTestPath)).toBe(false);
+    expect([tests.filter(p => !isTestPath(p)), sources.filter(p => isTestPath(p))]).toEqual([[], []]);
   });
 });
 
