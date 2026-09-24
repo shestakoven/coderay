@@ -1,0 +1,23 @@
+{
+  "name": "ide",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.27.0",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "vitest run --allowOnly=false",
+    "typecheck": "tsc -p packages/core && tsc -p packages/ui",
+    "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
+    "dev:core": "tsx watch packages/core/src/main.ts --project . --allow-origin http://localhost:5173",
+    "core": "tsx packages/core/src/main.ts",
+    "dev": "pnpm run \"/^dev:/\"",
+    "dev:ui": "pnpm --filter @ide/ui exec vite",
+    "start": "pnpm --filter @ide/ui build && tsx packages/core/src/main.ts --ui packages/ui/dist"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^5.0.1"
+  }
+}

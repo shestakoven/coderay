@@ -4,3 +4,4 @@ node_modules/
 .worktrees/
 spike/out/
 spike/.cache/
+packages/ui/dist/

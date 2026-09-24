@@ -1,0 +1,95 @@
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  useEdgesState,
+  useNodesInitialized,
+  useNodesState,
+  useReactFlow,
+  type Edge,
+} from '@xyflow/react';
+import ELK from 'elkjs/lib/elk-api.js';
+import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
+import { useEffect, useMemo, useRef, type Dispatch } from 'react';
+import { layoutGraph, type MapFlowNode } from './layout';
+import type { MapAction, MapState } from './map-state';
+import { nodeTypes } from './nodes';
+import { graphSignature, visibleGraph } from './visible-graph';
+
+const elk = new ELK({ workerUrl: elkWorkerUrl });
+
+export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
+  const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const graph = useMemo(
+    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded) : null),
+    [state.snapshot, state.expanded],
+  );
+  const signature = useMemo(() => (graph ? graphSignature(graph) : null), [graph]);
+  const flowNodes = useMemo(
+    () =>
+      nodes.map((node) => {
+        const selected = node.id === state.selected;
+        return !!node.selected === selected ? node : { ...node, selected };
+      }),
+    [nodes, state.selected],
+  );
+
+  // Keyed on the signature, not the graph: a snapshot that leaves the visible graph unchanged must not re-run ELK.
+  useEffect(() => {
+    if (!graph) return;
+    let cancelled = false;
+    layoutGraph(graph, state.expanded, elk).then(
+      (layout) => {
+        if (cancelled) return;
+        setNodes(layout.nodes);
+        setEdges(layout.edges);
+      },
+      (error: unknown) => console.error('map layout failed', error),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [signature, setNodes, setEdges]);
+
+  return (
+    <div className="map">
+      <ReactFlow
+        nodes={flowNodes}
+        edges={edges}
+        nodeTypes={nodeTypes}
+        onNodesChange={onNodesChange}
+        onEdgesChange={onEdgesChange}
+        onNodeClick={(_event, node) => {
+          dispatch({ type: 'select', id: node.id });
+          if (node.type === 'component') dispatch({ type: 'toggle', componentId: node.id });
+        }}
+        onPaneClick={() => dispatch({ type: 'select', id: null })}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        deleteKeyCode={null}
+        minZoom={0.05}
+        colorMode="dark"
+        proOptions={{ hideAttribution: true }}
+      >
+        <Background />
+        <Controls showInteractive={false} />
+        <MiniMap pannable zoomable />
+        <FitOnFirstLayout hasNodes={nodes.length > 0} />
+      </ReactFlow>
+    </div>
+  );
+}
+
+function FitOnFirstLayout({ hasNodes }: { hasNodes: boolean }) {
+  const { fitView } = useReactFlow();
+  const initialized = useNodesInitialized();
+  const done = useRef(false);
+  useEffect(() => {
+    if (!hasNodes || !initialized || done.current) return;
+    done.current = true;
+    void fitView({ padding: 0.1 });
+  }, [hasNodes, initialized, fitView]);
+  return null;
+}
