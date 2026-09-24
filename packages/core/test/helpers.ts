@@ -26,10 +26,14 @@ export async function writeTree(root: string, files: Record<string, string>): Pr
   }
 }
 
-export async function waitFor<T>(probe: () => T | undefined | null | false, label: string, timeoutMs = 2000): Promise<T> {
+export async function waitFor<T>(
+  probe: () => T | undefined | null | false | Promise<T | undefined | null | false>,
+  label: string,
+  timeoutMs = 2000,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const value = probe();
+    const value = await probe();
     if (value) return value;
     if (Date.now() > deadline) throw new Error(`waitFor: ${label} not met within ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 20));
