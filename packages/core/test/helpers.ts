@@ -39,3 +39,8 @@ export async function waitFor<T>(
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
 }
+
+export function unit(...values: number[]): Float32Array {
+  const norm = Math.hypot(...values);
+  return Float32Array.from(values, (value) => value / norm);
+}
