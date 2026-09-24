@@ -1,3 +1,7 @@
+import type { ChatClientMessage, SessionServerMessage } from './session';
+
+export * from './session';
+
 export type Lang = 'typescript' | 'python';
 
 export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'enum' | 'variable';
@@ -44,4 +48,6 @@ export interface MapSnapshot {
   fileEdges: FileEdge[];
 }
 
-export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot };
+export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot } | SessionServerMessage;
+
+export type ClientMessage = ChatClientMessage;

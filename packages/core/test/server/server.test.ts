@@ -11,6 +11,9 @@ const snapshot = (version: number): MapSnapshot => ({
   version, projectName: 'demo', files: [], components: [], fileEdges: [],
 });
 
+const versionOf = (message: ServerMessage | undefined): number | undefined =>
+  message?.type === 'map.snapshot' ? message.snapshot.version : undefined;
+
 let server: RunningServer;
 const sockets: WebSocket[] = [];
 
@@ -69,7 +72,7 @@ describe('server', () => {
     await waitFor(() => messages[0], 'snapshot on connect');
     server.broadcast({ type: 'map.snapshot', snapshot: snapshot(2) });
     const second = await waitFor(() => messages[1], 'broadcast received');
-    expect(second.snapshot.version).toBe(2);
+    expect(versionOf(second)).toBe(2);
   });
 
   it('accepts a configured development origin', async () => {
@@ -145,7 +148,7 @@ describe('server', () => {
     for (let version = 2; version <= 11; version++) server.broadcast({ type: 'map.snapshot', snapshot: large(version) });
     socket.resume();
 
-    await waitFor(() => messages.at(-1)?.snapshot.version === 11, 'latest snapshot received');
+    await waitFor(() => versionOf(messages.at(-1)) === 11, 'latest snapshot received');
     expect(messages.length).toBeLessThan(11);
   });
 
@@ -160,7 +163,7 @@ describe('server', () => {
       await waitFor(() => bad.socket.readyState === WebSocket.CLOSED, 'invalid client closed');
       server.broadcast({ type: 'map.snapshot', snapshot: snapshot(2) });
 
-      expect((await waitFor(() => good.messages[1], 'broadcast received')).snapshot.version).toBe(2);
+      expect(versionOf(await waitFor(() => good.messages[1], 'broadcast received'))).toBe(2);
       expect(consoleError).toHaveBeenCalledWith('server: client error', expect.any(Error));
     } finally {
       consoleError.mockRestore();
