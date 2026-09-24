@@ -36,6 +36,7 @@ export interface MapView {
 
 interface Unsaved {
   ai: AiComponent[];
+  raw: AiComponent[];
   groupedAt: string;
   basedOn: string | null;
   inputPaths: string[];
@@ -241,7 +242,7 @@ export class MapService {
     const finalized = this.finalize(ai, this.map, inputPaths);
     this.rebuildBaseline = true;
     if (!sameGrouping(finalized, this.effectiveAi())) {
-      this.unsaved = { ai: finalized, groupedAt: new Date().toISOString(), basedOn, inputPaths };
+      this.unsaved = { ai: finalized, raw: ai, groupedAt: new Date().toISOString(), basedOn, inputPaths };
       await this.persist();
     }
     await this.settle();
@@ -262,7 +263,7 @@ export class MapService {
         this.writeWarning = null;
         return;
       }
-      const ai = this.finalize(this.unsaved.ai, fresh, this.unsaved.inputPaths);
+      const ai = this.finalize(this.unsaved.raw, fresh, this.unsaved.inputPaths);
       if (this.stopped) return;
       let written: MapFileData | 'conflict';
       try {

@@ -310,7 +310,9 @@ describe('MapService', () => {
     service.update(filesOf(rest), []);
     model.answer(componentsPerDirectory);
     await service.idle();
-    expect((await readMap(root)).components.flatMap((component) => component.files)).not.toContain('src/db/schema.ts');
+    const saved = await readMap(root);
+    expect(saved.components.flatMap((component) => component.files)).not.toContain('src/db/schema.ts');
+    expect(saved.components.find((component) => component.id === 'ai:db')?.globs).toEqual(['src/db/**']);
   });
 
   it('stops without waiting for embeddings that are still running', async () => {
