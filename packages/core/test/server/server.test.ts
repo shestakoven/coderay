@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync, symlinkSync } from 'node:fs';
 import { request } from 'node:http';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import type { MapSnapshot, ServerMessage } from '@ide/protocol';
 import { startServer, type RunningServer } from '../../src/server/server';
@@ -32,15 +32,19 @@ afterEach(async () => {
   await server.close();
 });
 
-function openClient(headers: Record<string, string>): Promise<ServerMessage[]> {
+function connect(headers: Record<string, string>): Promise<{ socket: WebSocket; messages: ServerMessage[] }> {
   return new Promise((resolve, reject) => {
     const socket = new WebSocket(`ws://127.0.0.1:${server.port}/ws`, { headers });
     sockets.push(socket);
     const messages: ServerMessage[] = [];
     socket.on('message', (data) => messages.push(JSON.parse(String(data)) as ServerMessage));
-    socket.once('open', () => resolve(messages));
+    socket.once('open', () => resolve({ socket, messages }));
     socket.once('error', reject);
   });
+}
+
+async function openClient(headers: Record<string, string>): Promise<ServerMessage[]> {
+  return (await connect(headers)).messages;
 }
 
 function httpRequest(path: string, headers: Record<string, string> = {}): Promise<number> {
@@ -113,5 +117,62 @@ describe('server', () => {
     const status = await httpRequest('/', { host: `127.0.0.1:${svr.port}` });
     await fetch(`http://127.0.0.1:${svr.port}/leak.txt`).then((res) => expect(res.status).toBe(403));
     await svr.close();
+  });
+
+  it('broadcasts messages as text frames', async () => {
+    const { socket, messages } = await connect({});
+    await waitFor(() => messages[0]);
+    const binaryFlags: boolean[] = [];
+    socket.on('message', (_data, isBinary) => binaryFlags.push(isBinary));
+
+    server.broadcast({ type: 'map.snapshot', snapshot: snapshot(2) });
+
+    await waitFor(() => binaryFlags.length === 1);
+    expect(binaryFlags).toEqual([false]);
+  });
+
+  it('sends a client that stops reading the latest snapshot instead of every broadcast', async () => {
+    const { socket, messages } = await connect({});
+    await waitFor(() => messages[0]);
+    const large = (version: number): MapSnapshot => ({ ...snapshot(version), projectName: 'x'.repeat(10 * 1024 * 1024) });
+
+    socket.pause();
+    for (let version = 2; version <= 11; version++) server.broadcast({ type: 'map.snapshot', snapshot: large(version) });
+    socket.resume();
+
+    await waitFor(() => messages.at(-1)?.snapshot.version === 11);
+    expect(messages.length).toBeLessThan(11);
+  });
+
+  it('keeps serving other clients after a client sends an invalid frame', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const bad = await connect({});
+      const good = await connect({});
+      await waitFor(() => good.messages[0]);
+
+      bad.socket.send(Buffer.from([0xff, 0xfe, 0xfd]), { binary: false });
+      await waitFor(() => bad.socket.readyState === WebSocket.CLOSED);
+      server.broadcast({ type: 'map.snapshot', snapshot: snapshot(2) });
+
+      expect((await waitFor(() => good.messages[1])).snapshot.version).toBe(2);
+      expect(consoleError).toHaveBeenCalledWith('server: client error', expect.any(Error));
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('closes a client that sends a frame larger than 64 KiB', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { socket } = await connect({});
+      const closeCode = new Promise<number>((resolve) => socket.once('close', resolve));
+
+      socket.send('x'.repeat(64 * 1024 + 1));
+
+      expect(await closeCode).toBe(1009);
+    } finally {
+      consoleError.mockRestore();
+    }
   });
 });

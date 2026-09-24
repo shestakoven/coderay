@@ -1,7 +1,7 @@
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTypeScriptAdapter } from '../../src/lang/typescript';
 import type { LanguageAdapter } from '../../src/lang/types';
-import { fixture } from '../helpers';
+import { fixture, tempDir, writeTree } from '../helpers';
 
 let adapter: LanguageAdapter;
 const existing = (...paths: string[]) => (path: string) => paths.includes(path);
@@ -59,6 +59,10 @@ describe('TypeScript adapter', () => {
     expect(parsed.symbols.map((s) => s.name)).toEqual(['App']);
   });
 
+  it('parses JSX in .js files without syntax errors', () => {
+    expect(adapter.parse('src/App.js', 'export const App = () => <div/>;').parseError).toBe(false);
+  });
+
   it('flags syntax errors instead of throwing', () => {
     expect(adapter.parse('src/bad.ts', 'export function (').parseError).toBe(true);
   });
@@ -78,5 +82,20 @@ describe('TypeScript adapter', () => {
   it('leaves package and out-of-project imports unresolved', () => {
     expect(adapter.resolve('src/main.ts', 'express', existing('express.ts'))).toBeNull();
     expect(adapter.resolve('src/main.ts', '../../outside', existing('../outside.ts'))).toBeNull();
+  });
+
+  it('ignores a tsconfig whose extends cannot be resolved and still resolves relative imports', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const root = tempDir('ide-tsconfig-');
+      await writeTree(root, { 'tsconfig.json': JSON.stringify({ extends: './missing.json' }) });
+
+      const withBrokenConfig = await createTypeScriptAdapter(root);
+
+      expect(withBrokenConfig.resolve('src/main.ts', './a', existing('src/a.ts'))).toBe('src/a.ts');
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('typescript: ignoring tsconfig paths:'));
+    } finally {
+      warn.mockRestore();
+    }
   });
 });

@@ -1,3 +1,4 @@
+import { realpathSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { Indexer } from './indexer/indexer';
@@ -21,7 +22,15 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
   process.exit(1);
 }
 
-const root = resolve(values.project.at(-1) ?? '.');
+const projectArg = resolve(values.project.at(-1) ?? '.');
+let root: string;
+try {
+  root = realpathSync(projectArg);
+  if (!statSync(root).isDirectory()) throw new Error('not a directory');
+} catch {
+  console.error(`IDE core: project directory not found: ${projectArg}`);
+  process.exit(1);
+}
 const projectName = basename(root);
 
 try {

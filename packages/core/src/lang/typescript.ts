@@ -6,6 +6,7 @@ import { loadGrammar, symbolOf } from './tree-sitter';
 import type { LanguageAdapter } from './types';
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
+const NON_JSX_EXTENSIONS = ['.ts', '.mts', '.cts'];
 const RESOLVE_EXTENSIONS = ['.ts', '.tsx', '.d.ts', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const JS_TO_TS: Record<string, string[]> = { '.js': ['.ts', '.tsx'], '.jsx': ['.tsx'], '.mjs': ['.mts'], '.cjs': ['.cts'] };
 
@@ -37,14 +38,13 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
     loadGrammar('tree-sitter-typescript/tree-sitter-tsx.wasm'),
   ]);
   const grammars = { ts: grammarFor(ts), tsx: grammarFor(tsx) };
-  const tsconfig = getTsconfig(root);
-  const matchPaths = tsconfig ? createPathsMatcher(tsconfig) : null;
+  const matchPaths = pathsMatcher(root);
 
   return {
     lang: 'typescript',
     handles: (path) => SOURCE_EXTENSIONS.includes(posix.extname(path)),
     parse(path, source) {
-      const { parser, imports } = /\.[jt]sx$/.test(path) ? grammars.tsx : grammars.ts;
+      const { parser, imports } = NON_JSX_EXTENSIONS.includes(posix.extname(path)) ? grammars.ts : grammars.tsx;
       const tree = parser.parse(source);
       if (!tree) return { imports: [], symbols: [], parseError: true };
       try {
@@ -70,6 +70,16 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
       return null;
     },
   };
+}
+
+function pathsMatcher(root: string): ((specifier: string) => string[]) | null {
+  try {
+    const tsconfig = getTsconfig(root);
+    return tsconfig ? createPathsMatcher(tsconfig) : null;
+  } catch (error) {
+    console.warn(`typescript: ignoring tsconfig paths: ${(error as Error).message}`);
+    return null;
+  }
 }
 
 function grammarFor(language: Language): Grammar {

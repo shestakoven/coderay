@@ -3,7 +3,7 @@ import { realpath } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
-import { WebSocketServer } from 'ws';
+import { WebSocketServer, type WebSocket } from 'ws';
 import type { MapSnapshot, ServerMessage } from '@ide/protocol';
 
 export interface ServerOptions {
@@ -20,6 +20,9 @@ export interface RunningServer {
 }
 
 const HOST = '127.0.0.1';
+const MAX_CLIENT_PAYLOAD_BYTES = 64 * 1024;
+const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+const CATCH_UP_INTERVAL_MS = 250;
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -41,10 +44,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const wss = new WebSocketServer({
     server: http,
     path: '/ws',
+    maxPayload: MAX_CLIENT_PAYLOAD_BYTES,
     verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) =>
       isAllowedUpgrade(req.headers.host, origin, port, options.allowedOrigins ?? []),
   });
   wss.on('connection', (socket) => {
+    socket.on('error', (error) => console.error('server: client error', error));
     const message: ServerMessage = { type: 'map.snapshot', snapshot: options.snapshot() };
     socket.send(JSON.stringify(message));
   });
@@ -62,14 +67,32 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   port = (http.address() as AddressInfo).port;
   wss.on('error', (error) => console.error('server: websocket error', error));
 
+  let latest: Buffer | undefined;
+  const behind = new Set<WebSocket>();
+  const deliver = (client: WebSocket, data: Buffer): void => {
+    if (client.readyState !== client.OPEN) {
+      behind.delete(client);
+    } else if (client.bufferedAmount > MAX_BUFFERED_BYTES) {
+      behind.add(client);
+    } else {
+      behind.delete(client);
+      client.send(data, { binary: false });
+    }
+  };
+  const catchUp = setInterval(() => {
+    if (latest) for (const client of behind) deliver(client, latest);
+  }, CATCH_UP_INTERVAL_MS);
+  catchUp.unref();
+
   return {
     port,
     broadcast(message) {
-      const data = JSON.stringify(message);
-      for (const client of wss.clients) if (client.readyState === client.OPEN) client.send(data);
+      latest = Buffer.from(JSON.stringify(message));
+      for (const client of wss.clients) deliver(client, latest);
     },
     close: () =>
       new Promise<void>((resolveClose) => {
+        clearInterval(catchUp);
         for (const client of wss.clients) client.terminate();
         wss.close();
         http.close(() => resolveClose());

@@ -11,7 +11,7 @@ export function createIgnoreMatcher(root: string): IgnoreMatcher {
   const gitignore = join(root, '.gitignore');
   if (existsSync(gitignore)) rules.add(readFileSync(gitignore, 'utf8'));
   return (relPath, isDir) => {
-    if (relPath === '') return false;
+    if (relPath === '' || relPath === '..' || relPath.startsWith('../')) return false;
     if (relPath.split('/').some((segment) => ALWAYS_IGNORED.has(segment))) return true;
     return rules.ignores(isDir ? `${relPath}/` : relPath);
   };
