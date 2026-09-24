@@ -1,16 +1,21 @@
+import { timingSafeEqual } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { realpath } from 'node:fs/promises';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { extname, resolve, sep } from 'node:path';
 import { WebSocketServer, type WebSocket } from 'ws';
-import type { MapSnapshot, ServerMessage } from '@ide/protocol';
+import { MAX_CLIENT_FRAME_BYTES, type ClientMessage, type MapSnapshot, type ServerMessage } from '@ide/protocol';
+import { parseClientMessage } from './client-messages';
 
 export interface ServerOptions {
   port: number;
+  token: string;
   staticDir?: string;
   allowedOrigins?: string[];
   snapshot: () => MapSnapshot;
+  greeting?: () => ServerMessage[];
+  onClientMessage?: (message: ClientMessage, reply: (message: ServerMessage) => void) => void;
 }
 
 export interface RunningServer {
@@ -20,8 +25,8 @@ export interface RunningServer {
 }
 
 const HOST = '127.0.0.1';
-const MAX_CLIENT_PAYLOAD_BYTES = 64 * 1024;
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
+const MAX_ORDERED_BACKLOG_BYTES = 8 * 1024 * 1024;
 const CATCH_UP_INTERVAL_MS = 250;
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
@@ -44,14 +49,43 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const wss = new WebSocketServer({
     server: http,
     path: '/ws',
-    maxPayload: MAX_CLIENT_PAYLOAD_BYTES,
-    verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) =>
-      isAllowedUpgrade(req.headers.host, origin, port, options.allowedOrigins ?? []),
+    maxPayload: MAX_CLIENT_FRAME_BYTES,
+    verifyClient: ({ origin, req }: { origin?: string; req: IncomingMessage }) => isAllowedUpgrade(req, origin, port, options),
   });
+
+  const orderedBacklog = new WeakMap<WebSocket, number>();
+  const sendOrdered = (client: WebSocket, data: Buffer): void => {
+    const backlog = orderedBacklog.get(client) ?? 0;
+    if (backlog > MAX_ORDERED_BACKLOG_BYTES) {
+      client.terminate();
+      return;
+    }
+    orderedBacklog.set(client, backlog + data.length);
+    client.send(data, { binary: false }, () => orderedBacklog.set(client, (orderedBacklog.get(client) ?? data.length) - data.length));
+  };
+
   wss.on('connection', (socket) => {
     socket.on('error', (error) => console.error('server: client error', error));
-    const message: ServerMessage = { type: 'map.snapshot', snapshot: options.snapshot() };
-    socket.send(JSON.stringify(message));
+    const reply = (message: ServerMessage): void => {
+      if (socket.readyState !== socket.OPEN) return;
+      const data = Buffer.from(JSON.stringify(message));
+      if (message.type === 'map.snapshot') socket.send(data, { binary: false });
+      else sendOrdered(socket, data);
+    };
+    socket.on('message', (data, isBinary) => {
+      const message = isBinary ? null : parseClientMessage(String(data));
+      if (!message) {
+        reply({ type: 'error', message: 'invalid client message' });
+        return;
+      }
+      try {
+        options.onClientMessage?.(message, reply);
+      } catch (error) {
+        reply({ type: 'error', message: (error as Error).message });
+      }
+    });
+    reply({ type: 'map.snapshot', snapshot: options.snapshot() });
+    for (const message of options.greeting?.() ?? []) reply(message);
   });
 
   await new Promise<void>((resolveListen, reject) => {
@@ -87,7 +121,12 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   return {
     port,
     broadcast(message) {
-      latest = Buffer.from(JSON.stringify(message));
+      const data = Buffer.from(JSON.stringify(message));
+      if (message.type !== 'map.snapshot') {
+        for (const client of wss.clients) if (client.readyState === client.OPEN) sendOrdered(client, data);
+        return;
+      }
+      latest = data;
       for (const client of wss.clients) deliver(client, latest);
     },
     close: () =>
@@ -104,10 +143,17 @@ function isLocalHost(host: string | undefined, port: number): boolean {
   return !!(host && [`127.0.0.1:${port}`, `localhost:${port}`].includes(host));
 }
 
-function isAllowedUpgrade(host: string | undefined, origin: string | undefined, port: number, allowedOrigins: string[]): boolean {
+function isAllowedUpgrade(req: IncomingMessage, origin: string | undefined, port: number, options: ServerOptions): boolean {
+  const host = req.headers.host;
   if (!isLocalHost(host, port)) return false;
-  if (!origin) return true;
-  return origin === `http://${host}` || allowedOrigins.includes(origin);
+  if (origin && origin !== `http://${host}` && !(options.allowedOrigins ?? []).includes(origin)) return false;
+  return hasToken(req.url, options.token);
+}
+
+function hasToken(url: string | undefined, token: string): boolean {
+  const given = Buffer.from(new URL(url ?? '/', 'http://localhost').searchParams.get('token') ?? '');
+  const expected = Buffer.from(token);
+  return given.length === expected.length && timingSafeEqual(given, expected);
 }
 
 async function serveStatic(staticDir: string | undefined, url: string, res: ServerResponse): Promise<void> {

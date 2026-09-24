@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -32,6 +33,7 @@ try {
   process.exit(1);
 }
 const projectName = basename(root);
+const token = randomBytes(24).toString('base64url');
 
 try {
   const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
@@ -42,6 +44,7 @@ try {
   let snapshot = buildSnapshot(version, projectName, indexer.files(), adapters);
   const server = await startServer({
     port,
+    token,
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
     snapshot: () => snapshot,
@@ -55,7 +58,8 @@ try {
 
   console.log(`IDE core: ${root}`);
   console.log(`  ${snapshot.files.length} files, ${snapshot.components.length} components`);
-  console.log(`  http://127.0.0.1:${server.port}`);
+  if (values.ui) console.log(`  open: http://127.0.0.1:${server.port}/#token=${token}`);
+  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
 
   const shutdown = async (): Promise<void> => {
     await indexer.stop();
