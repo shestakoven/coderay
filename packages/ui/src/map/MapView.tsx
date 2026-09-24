@@ -9,11 +9,15 @@ import {
   useReactFlow,
   type Edge,
 } from '@xyflow/react';
+import ELK from 'elkjs/lib/elk-api.js';
+import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, type Dispatch } from 'react';
 import { layoutGraph, type MapFlowNode } from './layout';
 import type { MapAction, MapState } from './map-state';
 import { nodeTypes } from './nodes';
-import { visibleGraph } from './visible-graph';
+import { graphSignature, visibleGraph } from './visible-graph';
+
+const elk = new ELK({ workerUrl: elkWorkerUrl });
 
 export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
@@ -22,11 +26,21 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded) : null),
     [state.snapshot, state.expanded],
   );
+  const signature = useMemo(() => (graph ? graphSignature(graph) : null), [graph]);
+  const flowNodes = useMemo(
+    () =>
+      nodes.map((node) => {
+        const selected = node.id === state.selected;
+        return !!node.selected === selected ? node : { ...node, selected };
+      }),
+    [nodes, state.selected],
+  );
 
+  // Keyed on the signature, not the graph: a snapshot that leaves the visible graph unchanged must not re-run ELK.
   useEffect(() => {
     if (!graph) return;
     let cancelled = false;
-    layoutGraph(graph, state.expanded).then(
+    layoutGraph(graph, state.expanded, elk).then(
       (layout) => {
         if (cancelled) return;
         setNodes(layout.nodes);
@@ -37,12 +51,12 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     return () => {
       cancelled = true;
     };
-  }, [graph, state.expanded, setNodes, setEdges]);
+  }, [signature, setNodes, setEdges]);
 
   return (
     <div className="map">
       <ReactFlow
-        nodes={nodes}
+        nodes={flowNodes}
         edges={edges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
@@ -54,6 +68,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         onPaneClick={() => dispatch({ type: 'select', id: null })}
         nodesDraggable={false}
         nodesConnectable={false}
+        deleteKeyCode={null}
         minZoom={0.05}
         colorMode="dark"
         proOptions={{ hideAttribution: true }}

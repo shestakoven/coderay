@@ -1,5 +1,5 @@
 import type { Edge, Node } from '@xyflow/react';
-import ELK, { type ElkNode } from 'elkjs/lib/elk.bundled.js';
+import type { ELK, ElkNode } from 'elkjs/lib/elk-api.js';
 import type { VisibleGraph, VisibleNode } from './visible-graph';
 
 export type MapNodeData = {
@@ -17,8 +17,6 @@ export const NODE_SIZE = {
   file: { width: 170, height: 34 },
 };
 
-const elk = new ELK();
-
 const ROOT_OPTIONS = {
   'elk.algorithm': 'layered',
   'elk.direction': 'RIGHT',
@@ -30,6 +28,7 @@ const ROOT_OPTIONS = {
 export async function layoutGraph(
   graph: VisibleGraph,
   expanded: ReadonlySet<string>,
+  elk: ELK,
 ): Promise<{ nodes: MapFlowNode[]; edges: Edge[] }> {
   const childrenOf = new Map<string, VisibleNode[]>();
   for (const node of graph.nodes) {

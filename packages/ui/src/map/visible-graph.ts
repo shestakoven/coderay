@@ -23,6 +23,8 @@ export interface VisibleGraph {
 
 const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
+export const graphSignature = (graph: VisibleGraph): string => JSON.stringify(graph);
+
 export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string>): VisibleGraph {
   const parseErrors = new Map(snapshot.files.map((f) => [f.path, f.parseError]));
   const nodes: VisibleNode[] = [];

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { visibleGraph } from '../src/map/visible-graph';
+import { graphSignature, visibleGraph } from '../src/map/visible-graph';
 import { demoSnapshot } from './snapshot';
 
 describe('visibleGraph', () => {
@@ -28,5 +28,20 @@ describe('visibleGraph', () => {
   it('marks files with parse errors', () => {
     const graph = visibleGraph(demoSnapshot(), new Set(['folder:src/db']));
     expect(graph.nodes.find((n) => n.id === 'src/db/c.ts')?.parseError).toBe(true);
+  });
+
+  it('keeps the signature for a snapshot whose visible nodes and edges are unchanged', () => {
+    const before = demoSnapshot(1);
+    const symbol = { name: 'x', kind: 'variable' as const, startLine: 1, endLine: 1, exported: true };
+    const after = { ...demoSnapshot(2), files: before.files.map((f) => ({ ...f, symbols: [symbol] })) };
+
+    expect(graphSignature(visibleGraph(after, new Set()))).toBe(graphSignature(visibleGraph(before, new Set())));
+  });
+
+  it('changes the signature when an edge appears', () => {
+    const before = demoSnapshot();
+    const after = { ...before, fileEdges: [...before.fileEdges, { from: 'src/db/c.ts', to: 'src/api/a.ts', kind: 'import' as const }] };
+
+    expect(graphSignature(visibleGraph(after, new Set()))).not.toBe(graphSignature(visibleGraph(before, new Set())));
   });
 });
