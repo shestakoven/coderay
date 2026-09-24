@@ -4,34 +4,24 @@ import type { FileEdge } from '@ide/protocol';
 export type Owners = Pick<ReadonlyMap<string, string>, 'get'>;
 
 const TEST_DIRS = new Set(['test', 'tests', '__tests__', 'spec', 'specs']);
+const TEST_STEM = /^test_.|._test$|\.(test|spec)$|^conftest$/;
+
+const stemOf = (name: string): string => name.slice(0, name.length - posix.extname(name).length);
 
 export function isTestPath(path: string): boolean {
   const segments = path.split('/');
-  const name = segments[segments.length - 1] ?? '';
-
-  if (name === 'conftest.py') return true;
-  if (TEST_DIRS.has(name)) return true;
-
-  for (const segment of segments) {
-    if (TEST_DIRS.has(segment)) return true;
-  }
-
-  const withoutExt = posix.parse(name).name;
-  if (/\.(test|spec)$/.test(withoutExt)) return true;
-  if (/^test_./.test(withoutExt)) return true;
-  if (/_test$/.test(withoutExt)) return true;
-
-  return false;
+  const name = segments.pop() ?? '';
+  return segments.some((segment) => TEST_DIRS.has(segment)) || TEST_STEM.test(stemOf(name));
 }
 
 export function importTargets(edges: FileEdge[]): Map<string, string[]> {
-  const result = new Map<string, string[]>();
+  const targets = new Map<string, string[]>();
   for (const edge of edges) {
-    const current = result.get(edge.from) ?? [];
-    current.push(edge.to);
-    result.set(edge.from, current);
+    const list = targets.get(edge.from);
+    if (list) list.push(edge.to);
+    else targets.set(edge.from, [edge.to]);
   }
-  return result;
+  return targets;
 }
 
 export function testSubject(path: string, imports: readonly string[], owner: Owners): string | null {
@@ -61,8 +51,4 @@ function mirroredSources(path: string): string[] {
     dirs.push([...segments.slice(0, testDir), ...segments.slice(testDir + 1)]);
   }
   return dirs.map((dir) => [...dir, bare].join('/')).filter((candidate) => candidate !== path);
-}
-
-function stemOf(name: string): string {
-  return posix.parse(name).name;
 }

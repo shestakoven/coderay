@@ -14,8 +14,7 @@ describe('isTestPath', () => {
   it('recognizes test files by the naming conventions of common languages', () => {
     const tests = ['src/a.test.ts', 'src/a.spec.tsx', 'packages/core/test/helpers.ts', 'app/tests/test_db.py', 'pkg/db_test.go', 'conftest.py'];
     const sources = ['src/testing.ts', 'src/latest.ts', 'app/contest.py', 'src/test_.py'];
-
-    expect([tests.filter(p => !isTestPath(p)), sources.filter(p => isTestPath(p))]).toEqual([[], []]);
+    expect([tests.filter((path) => !isTestPath(path)), sources.filter(isTestPath)]).toEqual([[], []]);
   });
 });
 
