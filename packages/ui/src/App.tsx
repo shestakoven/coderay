@@ -3,6 +3,7 @@ import { useEffect, useReducer, useState } from 'react';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
+import { describeMapStatus } from './map/status';
 import { connect, type ConnectionStatus } from './net/socket';
 
 export function App() {
@@ -27,6 +28,12 @@ export function App() {
             {snapshot.files.length} files · {snapshot.components.length} components
           </span>
         )}
+        {snapshot &&
+          describeMapStatus(snapshot.status).map((chip) => (
+            <span key={chip.text} className={`chip ${chip.tone}`} title={chip.title}>
+              {chip.text}
+            </span>
+          ))}
         <span className={`status ${status}`}>{status === 'open' ? 'live ●' : status}</span>
       </header>
       <main className="body">

@@ -25,6 +25,13 @@ describe('visibleGraph', () => {
     ]);
   });
 
+  it('carries component summaries and staleness onto component nodes', () => {
+    const snapshot = demoSnapshot();
+    snapshot.components[0] = { ...snapshot.components[0]!, summary: 'Serves the HTTP API', stale: true };
+    const node = visibleGraph(snapshot, new Set()).nodes.find((n) => n.id === 'folder:src/api');
+    expect(node).toMatchObject({ summary: 'Serves the HTTP API', stale: true });
+  });
+
   it('marks files with parse errors', () => {
     const graph = visibleGraph(demoSnapshot(), new Set(['folder:src/db']));
     expect(graph.nodes.find((n) => n.id === 'src/db/c.ts')?.parseError).toBe(true);

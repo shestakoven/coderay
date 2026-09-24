@@ -4,6 +4,8 @@ export interface VisibleNode {
   id: string;
   kind: 'component' | 'file';
   label: string;
+  summary?: string;
+  stale?: boolean;
   parentId?: string;
   fileCount?: number;
   parseError?: boolean;
@@ -31,7 +33,14 @@ export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string
   const visibleOf = new Map<string, string>();
 
   for (const component of snapshot.components) {
-    nodes.push({ id: component.id, kind: 'component', label: component.name, fileCount: component.files.length });
+    nodes.push({
+      id: component.id,
+      kind: 'component',
+      label: component.name,
+      summary: component.summary,
+      stale: component.stale,
+      fileCount: component.files.length,
+    });
     const open = expanded.has(component.id);
     for (const path of component.files) {
       if (open) {
