@@ -38,10 +38,36 @@ export interface FileEdge {
   kind: 'import';
 }
 
+export type GroupingState = 'idle' | 'running' | 'failed' | 'too-large';
+
 export interface GroupingPayload {
   paths: number;
   symbols: number;
   links: number;
+}
+
+export type EmbeddingsState = 'loading' | 'downloading' | 'ready' | 'unavailable';
+
+export interface EmbeddingPlacement {
+  on: boolean;
+  detail: string;
+}
+
+export interface MapStatus {
+  layer: 'folder' | 'ai';
+  grouping: GroupingState;
+  groupingError: string | null;
+  groupedAt: string | null;
+  stale: boolean;
+  staleReasons: string[];
+  unassigned: number;
+  pending: number;
+  sending: GroupingPayload | null;
+  embeddings: EmbeddingsState;
+  embeddingsError: string | null;
+  embeddingPlacement: EmbeddingPlacement | null;
+  modelDownloadBytes: number | null;
+  warnings: string[];
 }
 
 export interface MapSnapshot {
