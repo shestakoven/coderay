@@ -5,10 +5,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import WebSocket from 'ws';
 import type { MapSnapshot, ServerMessage } from '@ide/protocol';
 import { startServer, type RunningServer } from '../../src/server/server';
-import { tempDir, waitFor } from '../helpers';
+import { mapStatus, tempDir, waitFor } from '../helpers';
 
 const snapshot = (version: number): MapSnapshot => ({
-  version, projectName: 'demo', files: [], components: [], fileEdges: [],
+  version, projectName: 'demo', files: [], components: [], fileEdges: [], status: mapStatus(),
 });
 
 let server: RunningServer;

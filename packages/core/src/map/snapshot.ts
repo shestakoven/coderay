@@ -1,29 +1,29 @@
-import type { MapSnapshot } from '@ide/protocol';
-import { computeFileEdges } from '../graph/edges';
-import type { LanguageAdapter } from '../lang/types';
+import type { FileEdge, MapSnapshot } from '@ide/protocol';
 import type { IndexedFile } from '../model';
-import { folderComponents } from './folder-components';
+import type { MapView } from './map-service';
 
 export function buildSnapshot(
   version: number,
   projectName: string,
   files: IndexedFile[],
-  adapters: LanguageAdapter[],
+  fileEdges: FileEdge[],
+  view: MapView,
 ): MapSnapshot {
   const sorted = [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
-  const components = folderComponents(sorted.map((f) => f.path));
-  const owner = new Map(components.flatMap((c) => c.files.map((path) => [path, c.id] as const)));
+  const owner = new Map(view.components.flatMap((component) => component.files.map((path) => [path, component.id] as const)));
   return {
     version,
     projectName,
-    files: sorted.map((f) => ({
-      path: f.path,
-      lang: f.lang,
-      componentId: owner.get(f.path) ?? null,
-      symbols: f.symbols,
-      parseError: f.parseError,
+    files: sorted.map((file) => ({
+      path: file.path,
+      lang: file.lang,
+      componentId: owner.get(file.path) ?? null,
+      manualAssignment: view.manualFiles.has(file.path),
+      symbols: file.symbols,
+      parseError: file.parseError,
     })),
-    components,
-    fileEdges: computeFileEdges(sorted, adapters),
+    components: view.components,
+    fileEdges,
+    status: view.status,
   };
 }

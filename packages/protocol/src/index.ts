@@ -14,6 +14,7 @@ export interface MapFile {
   path: string;
   lang: Lang;
   componentId: string | null;
+  manualAssignment: boolean;
   symbols: MapSymbol[];
   parseError: boolean;
 }
@@ -76,6 +77,7 @@ export interface MapSnapshot {
   files: MapFile[];
   components: MapComponent[];
   fileEdges: FileEdge[];
+  status: MapStatus;
 }
 
 export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot };
