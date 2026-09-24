@@ -1,0 +1,13 @@
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"/fake/project","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.281"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fx_enter","name":"EnterPlanMode","input":{}}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"system","subtype":"status","status":null,"permissionMode":"plan","session_id":"$SESSION"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_fx_enter","type":"tool_result","content":"Entered plan mode. You should now focus on exploring the codebase and designing an implementation approach."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fx_plan","name":"ExitPlanMode","input":{"plan":"1. Create plan.txt containing hello.\n","planFilePath":"/fake/home/.claude/plans/fx-plan.md"}}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"control_request","request_id":"req_fx_plan","request":{"subtype":"can_use_tool","tool_name":"ExitPlanMode","display_name":"ExitPlanMode","input":{"plan":"1. Create plan.txt containing hello.\n","planFilePath":"/fake/home/.claude/plans/fx-plan.md"},"tool_use_id":"toolu_fx_plan","requires_user_interaction":true}}
+{"fake":"await-control-response"}
+{"type":"system","subtype":"status","status":null,"permissionMode":"bypassPermissions","session_id":"$SESSION"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_fx_plan","type":"tool_result","content":"User has approved your plan. You can now start coding."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Created plan.txt."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"result","subtype":"success","is_error":false,"result":"Created plan.txt.","session_id":"$SESSION"}
+{"fake":"await-user"}

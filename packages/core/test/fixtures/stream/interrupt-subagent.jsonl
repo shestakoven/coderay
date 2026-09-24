@@ -1,0 +1,13 @@
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"/fake/project","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.281"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fx_agent","name":"Agent","input":{"description":"Run a slow command","prompt":"Run node -e \"setTimeout(() => {}, 30000)\" with the Bash tool."}}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"system","subtype":"task_started","task_id":"task_fx_agent","tool_use_id":"toolu_fx_agent","description":"Run a slow command","subagent_type":"general-purpose","is_backgrounded":true,"task_type":"local_agent","session_id":"$SESSION"}
+{"type":"user","message":{"role":"user","content":[{"tool_use_id":"toolu_fx_agent","type":"tool_result","content":[{"type":"text","text":"Async agent launched successfully."}]}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"STARTED"}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"result","subtype":"success","is_error":false,"result":"STARTED","session_id":"$SESSION"}
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"/fake/project","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.281"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"tool_use","id":"toolu_fx_bash","name":"Bash","input":{"command":"node -e \"setTimeout(() => {}, 15000)\"","description":"Wait 15 s"}}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"system","subtype":"task_started","task_id":"task_fx_bash","tool_use_id":"toolu_fx_bash","description":"Wait 15 s","is_backgrounded":false,"task_type":"local_bash","session_id":"$SESSION"}
+{"fake":"sleep","ms":30000}
+{"fake":"await-user"}
