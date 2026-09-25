@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { onTestFinished } from 'vitest';
-import type { Lang } from '@ide/protocol';
+import type { Lang, MapStatus } from '@ide/protocol';
 import type { IndexedFile } from '../src/model';
 
 export const fixture = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
@@ -26,12 +26,41 @@ export async function writeTree(root: string, files: Record<string, string>): Pr
   }
 }
 
-export async function waitFor<T>(probe: () => T | undefined | null | false, label: string, timeoutMs = 2000): Promise<T> {
+export async function waitFor<T>(
+  probe: () => T | undefined | null | false | Promise<T | undefined | null | false>,
+  label: string,
+  timeoutMs = 2000,
+): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
-    const value = probe();
+    const value = await probe();
     if (value) return value;
     if (Date.now() > deadline) throw new Error(`waitFor: ${label} not met within ${timeoutMs} ms`);
     await new Promise((resolve) => setTimeout(resolve, 20));
   }
+}
+
+export function unit(...values: number[]): Float32Array {
+  const norm = Math.hypot(...values);
+  return Float32Array.from(values, (value) => value / norm);
+}
+
+export function mapStatus(overrides: Partial<MapStatus> = {}): MapStatus {
+  return {
+    layer: 'folder',
+    grouping: 'idle',
+    groupingError: null,
+    groupedAt: null,
+    stale: false,
+    staleReasons: [],
+    unassigned: 0,
+    pending: 0,
+    sending: null,
+    embeddings: 'ready',
+    embeddingsError: null,
+    embeddingPlacement: null,
+    modelDownloadBytes: null,
+    warnings: [],
+    ...overrides,
+  };
 }

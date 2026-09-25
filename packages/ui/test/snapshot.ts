@@ -1,10 +1,27 @@
-import type { MapSnapshot } from '@ide/protocol';
+import type { MapSnapshot, MapStatus } from '@ide/protocol';
+
+export const folderStatus: MapStatus = {
+  layer: 'folder',
+  grouping: 'idle',
+  groupingError: null,
+  groupedAt: null,
+  stale: false,
+  staleReasons: [],
+  unassigned: 0,
+  pending: 0,
+  sending: null,
+  embeddings: 'ready',
+  embeddingsError: null,
+  embeddingPlacement: null,
+  modelDownloadBytes: null,
+  warnings: [],
+};
 
 const component = (id: string, files: string[]) => ({
-  id, name: id.replace('folder:src/', ''), description: '', files, globs: [], source: 'folder' as const, stale: false,
+  id, name: id.replace('folder:src/', ''), summary: '', description: '', files, keyFiles: [], globs: [], source: 'folder' as const, stale: false,
 });
 const file = (path: string, componentId: string, parseError = false) => ({
-  path, lang: 'typescript' as const, componentId, symbols: [], parseError,
+  path, lang: 'typescript' as const, componentId, manualAssignment: false, symbols: [], parseError,
 });
 const edge = (from: string, to: string) => ({ from, to, kind: 'import' as const });
 
@@ -14,4 +31,5 @@ export const demoSnapshot = (version = 1): MapSnapshot => ({
   components: [component('folder:src/api', ['src/api/a.ts', 'src/api/b.ts']), component('folder:src/db', ['src/db/c.ts'])],
   files: [file('src/api/a.ts', 'folder:src/api'), file('src/api/b.ts', 'folder:src/api'), file('src/db/c.ts', 'folder:src/db', true)],
   fileEdges: [edge('src/api/a.ts', 'src/db/c.ts'), edge('src/api/b.ts', 'src/db/c.ts'), edge('src/api/a.ts', 'src/api/b.ts')],
+  status: folderStatus,
 });

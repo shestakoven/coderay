@@ -5,6 +5,8 @@ import type { VisibleGraph, VisibleNode } from './visible-graph';
 export type MapNodeData = {
   label: string;
   kind: 'component' | 'file';
+  summary?: string;
+  stale?: boolean;
   fileCount?: number;
   parseError?: boolean;
   expanded: boolean;
@@ -13,7 +15,7 @@ export type MapNodeData = {
 export type MapFlowNode = Node<MapNodeData, 'component' | 'file'>;
 
 export const NODE_SIZE = {
-  component: { width: 180, height: 56 },
+  component: { width: 240, height: 72 },
   file: { width: 170, height: 34 },
 };
 
@@ -37,7 +39,7 @@ export async function layoutGraph(
   const toElk = (node: VisibleNode): ElkNode => {
     const children = childrenOf.get(node.id);
     if (children?.length) {
-      return { id: node.id, layoutOptions: { 'elk.padding': '[top=44,left=12,bottom=12,right=12]' }, children: children.map(toElk) };
+      return { id: node.id, layoutOptions: { 'elk.padding': '[top=64,left=12,bottom=12,right=12]' }, children: children.map(toElk) };
     }
     return { id: node.id, ...NODE_SIZE[node.kind] };
   };
@@ -64,6 +66,8 @@ export async function layoutGraph(
       data: {
         label: node.label,
         kind: node.kind,
+        summary: node.summary,
+        stale: node.stale,
         fileCount: node.fileCount,
         parseError: node.parseError,
         expanded: expanded.has(node.id),

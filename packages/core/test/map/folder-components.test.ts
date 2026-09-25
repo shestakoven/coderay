@@ -43,6 +43,6 @@ describe('folderComponents', () => {
 
   it('marks components as folder-sourced and fresh', () => {
     const [component] = folderComponents(['a/x.ts', 'b/y.ts']);
-    expect(component).toMatchObject({ source: 'folder', stale: false, description: '' });
+    expect(component).toMatchObject({ source: 'folder', stale: false, summary: '', description: '', keyFiles: [] });
   });
 });

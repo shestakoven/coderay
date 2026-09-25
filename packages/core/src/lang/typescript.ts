@@ -4,6 +4,7 @@ import { Parser, Query, type Language, type Node } from 'web-tree-sitter';
 import type { MapSymbol, SymbolKind } from '@ide/protocol';
 import { loadGrammar, symbolOf } from './tree-sitter';
 import type { LanguageAdapter } from './types';
+import { findWorkspacePackages, workspaceImportBases } from './workspace';
 
 const SOURCE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs'];
 const NON_JSX_EXTENSIONS = ['.ts', '.mts', '.cts'];
@@ -39,6 +40,7 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
   ]);
   const grammars = { ts: grammarFor(ts), tsx: grammarFor(tsx) };
   const matchPaths = pathsMatcher(root);
+  const packages = findWorkspacePackages(root);
 
   return {
     lang: 'typescript',
@@ -61,7 +63,10 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
     resolve(fromPath, specifier, exists) {
       const bases = specifier.startsWith('.')
         ? [posix.join(posix.dirname(fromPath), specifier)]
-        : (matchPaths?.(specifier) ?? []).map((abs) => relative(root, abs).split(sep).join('/'));
+        : [
+            ...(matchPaths?.(specifier) ?? []).map((abs) => relative(root, abs).split(sep).join('/')),
+            ...workspaceImportBases(specifier, packages),
+          ];
       for (const base of bases) {
         if (base.startsWith('..')) continue;
         const hit = candidates(base).find(exists);
