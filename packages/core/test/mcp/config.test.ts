@@ -1,4 +1,4 @@
-import { statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { entryHash, fileHash, parseEntry, prepareEntry, readMcpFile, readRawMcp, writeRawMcp } from '../../src/mcp/config';
@@ -140,6 +140,12 @@ describe('fileHash', () => {
     expect(fileHash(path)).toBe(hash1);
     writeFileSync(path, JSON.stringify({ mcpServers: { a: { command: 'changed' } } }));
     expect(fileHash(path)).not.toBe(hash1);
+  });
+
+  it("returns 'unreadable' for a read error other than a missing file, such as a path that is a directory", () => {
+    const path = join(tempDir('ide-mcp-'), 'a-directory');
+    mkdirSync(path);
+    expect(fileHash(path)).toBe('unreadable');
   });
 });
 

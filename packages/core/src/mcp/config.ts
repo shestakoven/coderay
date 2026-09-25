@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { closeSync, constants, existsSync, fchmodSync, mkdirSync, openSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { McpEntry } from '@ide/protocol';
 import { isRecord } from '../json';
@@ -80,10 +80,26 @@ export function readMcpFile(path: string): McpFile {
   return { servers, problems };
 }
 
-export function writeRawMcp(path: string, file: RawMcpFile, mode?: number): void {
+// O_NOFOLLOW so the final path component is never followed if it is a symbolic link (ELOOP), even under a TOCTOU race with a caller's own lstat check.
+export function writeFileNoFollow(path: string, text: string, mode?: number): void {
   mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(file, null, 2)}\n`, mode === undefined ? {} : { mode });
-  if (mode !== undefined) chmodSync(path, mode);
+  let fd: number;
+  try {
+    fd = openSync(path, constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW, mode ?? 0o666);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ELOOP') throw new Error(`${path} is a symbolic link; refusing to write through it`);
+    throw error;
+  }
+  try {
+    writeFileSync(fd, text);
+    if (mode !== undefined) fchmodSync(fd, mode);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+export function writeRawMcp(path: string, file: RawMcpFile, mode?: number): void {
+  writeFileNoFollow(path, `${JSON.stringify(file, null, 2)}\n`, mode);
 }
 
 export function entryHash(name: string, entry: McpEntry): string {
@@ -91,7 +107,11 @@ export function entryHash(name: string, entry: McpEntry): string {
 }
 
 export function fileHash(path: string): string {
-  return existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : 'absent';
+  try {
+    return createHash('sha256').update(readFileSync(path)).digest('hex');
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === 'ENOENT' ? 'absent' : 'unreadable';
+  }
 }
 
 // claude expands ${VAR} and ${VAR:-default} in url and ${VAR} in headers itself (spike c28), so those secrets stay out of the run file.

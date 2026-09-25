@@ -1,7 +1,19 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { FileHashes, McpEntry, McpLevel, McpServerView, SettingsView } from '@ide/protocol';
-import { entryHash, prepareEntry, fileHash, parseEntry, readMcpFile, readRawMcp, writeRawMcp, type RawMcpFile } from './config';
+import { isRecord } from '../json';
+import {
+  entryHash,
+  prepareEntry,
+  fileHash,
+  parseEntry,
+  readMcpFile,
+  readRawMcp,
+  writeFileNoFollow,
+  writeRawMcp,
+  type McpFile,
+  type RawMcpFile,
+} from './config';
 
 interface TrustRecord {
   projectPath: string;
@@ -32,9 +44,17 @@ export interface McpRegistryOptions {
 const PRIVATE_FILE_MODE = 0o600;
 
 function writePrivateJson(path: string, value: unknown): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`, { mode: PRIVATE_FILE_MODE });
-  chmodSync(path, PRIVATE_FILE_MODE);
+  writeFileNoFollow(path, `${JSON.stringify(value, null, 2)}\n`, PRIVATE_FILE_MODE);
+}
+
+function isTrustRecord(value: unknown): value is TrustRecord {
+  return (
+    isRecord(value) &&
+    typeof value.projectPath === 'string' &&
+    typeof value.serverName === 'string' &&
+    typeof value.entryHash === 'string' &&
+    typeof value.approvedAt === 'number'
+  );
 }
 
 export class McpRegistry {
@@ -95,7 +115,7 @@ export class McpRegistry {
 
   approve(name: string, shownHash: string): void {
     this.assertNoOutsideEdits('project');
-    const entry = readMcpFile(this.projectPath).servers.get(name);
+    const entry = this.readProject().servers.get(name);
     if (!entry) throw new McpSettingsError(`there is no valid project-level server named "${name}"`);
     if (entryHash(name, entry) !== shownHash) {
       throw new McpSettingsError(`the project-level server "${name}" changed after Settings showed it; review it again before approving`);
@@ -108,12 +128,15 @@ export class McpRegistry {
     if (current.ideServers !== shown.ideServers || current.trust !== shown.trust) {
       throw new McpSettingsError('the files changed again after Settings showed them; review them again before confirming');
     }
-    this.writeLedger({ mcpHash: current.ideServers, trustHash: current.trust });
+    if (current.trust !== this.readLedger().trustHash) {
+      writePrivateJson(this.trustPath, { records: this.keptTrustRecords() });
+    }
+    this.writeLedger({ mcpHash: current.ideServers, trustHash: fileHash(this.trustPath) });
   }
 
   private evaluate(): { servers: Evaluated[]; problems: string[]; externalEdits: SettingsView['externalEdits'] } {
     const ide = readMcpFile(this.idePath);
-    const project = readMcpFile(this.projectPath);
+    const project = this.readProject();
     const ledger = this.readLedger();
     const edited = { ideServers: fileHash(this.idePath) !== ledger.mcpHash, trust: fileHash(this.trustPath) !== ledger.trustHash };
     const records = this.trustRecords().filter((record) => record.projectPath === this.options.root);
@@ -173,12 +196,33 @@ export class McpRegistry {
     this.writeLedger({ mcpHash: fileHash(this.idePath) });
   }
 
-  private assertNotLinked(): void {
+  // lstat (not existsSync, which follows links and reports false for a dangling one) so a symlink is caught even when its target is missing.
+  private linkedProjectPath(): string | null {
     for (const path of [dirname(this.projectPath), this.projectPath]) {
-      if (existsSync(path) && lstatSync(path).isSymbolicLink()) {
-        throw new McpSettingsError(`${path} is a symbolic link; the IDE does not write project settings through links`);
-      }
+      if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) return path;
     }
+    return null;
+  }
+
+  private assertNotLinked(): void {
+    const linked = this.linkedProjectPath();
+    if (linked) throw new McpSettingsError(`${linked} is a symbolic link; the IDE does not write project settings through links`);
+  }
+
+  private readProject(): McpFile {
+    const linked = this.linkedProjectPath();
+    if (linked) return { servers: new Map(), problems: [`${linked} is a symbolic link; it was not read`] };
+    return readMcpFile(this.projectPath);
+  }
+
+  private keptTrustRecords(): TrustRecord[] {
+    const { externalEdits } = this.evaluate();
+    const project = this.readProject();
+    return this.trustRecords().filter((record) => {
+      if (record.projectPath !== this.options.root || !externalEdits.trustApproves.includes(record.serverName)) return false;
+      const entry = project.servers.get(record.serverName);
+      return entry !== undefined && record.entryHash === entryHash(record.serverName, entry);
+    });
   }
 
   private trust(name: string, entry: McpEntry, previousName: string | null): void {
@@ -197,7 +241,7 @@ export class McpRegistry {
     if (!existsSync(this.trustPath)) return [];
     try {
       const value = JSON.parse(readFileSync(this.trustPath, 'utf8')) as { records?: unknown };
-      return Array.isArray(value.records) ? (value.records as TrustRecord[]) : [];
+      return Array.isArray(value.records) ? value.records.filter(isTrustRecord) : [];
     } catch {
       return [];
     }
@@ -227,6 +271,10 @@ export class McpRegistry {
   }
 
   private readRaw(path: string): RawMcpFile {
+    if (path === this.projectPath) {
+      const linked = this.linkedProjectPath();
+      if (linked) throw new McpSettingsError(`${linked} is a symbolic link; the IDE does not read or write project settings through links`);
+    }
     const file = readRawMcp(path);
     if (typeof file === 'string') throw new McpSettingsError(`${file}; fix or delete it first`);
     return file;
