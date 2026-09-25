@@ -5,12 +5,12 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 import WebSocket from 'ws';
 import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
 import { startServer, type RunningServer } from '../../src/server/server';
-import { tempDir, waitFor } from '../helpers';
+import { mapStatus, tempDir, waitFor } from '../helpers';
 
 const TOKEN = 'test-launch-token';
 
 const snapshot = (version: number): MapSnapshot => ({
-  version, projectName: 'demo', files: [], components: [], fileEdges: [],
+  version, projectName: 'demo', files: [], components: [], fileEdges: [], status: mapStatus(),
 });
 
 const versionOf = (message: ServerMessage | undefined): number | undefined =>

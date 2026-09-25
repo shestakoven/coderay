@@ -6,6 +6,7 @@ import { chatReducer, initialChatState } from './chat/chat-state';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
+import { describeMapStatus } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
@@ -89,6 +90,12 @@ export function App() {
             {snapshot.files.length} files · {snapshot.components.length} components
           </span>
         )}
+        {snapshot &&
+          describeMapStatus(snapshot.status).map((chip) => (
+            <span key={chip.text} className={`chip ${chip.tone}`} title={chip.title}>
+              {chip.text}
+            </span>
+          ))}
         <span className="badge danger" title="No pre-execution gate yet (Plan 4): the agent runs with --dangerously-skip-permissions.">
           unguarded
         </span>

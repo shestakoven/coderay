@@ -5,9 +5,14 @@ const classes = (...names: (string | false | undefined)[]) => names.filter(Boole
 
 export function ComponentNode({ data, selected }: NodeProps<MapFlowNode>) {
   return (
-    <div className={classes('node', 'component', data.expanded && 'expanded', selected && 'selected')}>
+    <div className={classes('node', 'component', data.expanded && 'expanded', data.stale && 'stale', selected && 'selected')}>
       <Handle type="target" position={Position.Left} />
       <div className="title">{data.label}</div>
+      {data.summary && (
+        <div className="summary" title={data.summary}>
+          {data.summary}
+        </div>
+      )}
       <div className="meta">
         {data.fileCount} files {data.expanded ? '▾' : '▸'}
       </div>

@@ -2,16 +2,20 @@ import { randomBytes } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { ClientMessage, ServerMessage } from '@ide/protocol';
+import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
 import { AgentSession } from './agent/agent-session';
-import { defaultIdeHome, projectDir } from './home';
+import { computeFileEdges } from './graph/edges';
+import { defaultIdeHome, projectDir, runDir } from './home';
 import { Indexer } from './indexer/indexer';
 import { createPythonAdapter } from './lang/python';
 import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
+import { MapService } from './map/map-service';
 import { buildSnapshot } from './map/snapshot';
 import { McpRegistry } from './mcp/registry';
-import { startServer } from './server/server';
+import { removeStaleModelDirs } from './models/claude-cli';
+import { createModelProvider } from './models/provider';
+import { startServer, type RunningServer } from './server/server';
 import { openStore } from './store/store';
 
 const { values } = parseArgs({
@@ -55,6 +59,7 @@ try {
   const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
   const indexer = new Indexer({ root, adapters });
   await indexer.start();
+  await removeStaleModelDirs(runDir(home));
 
   const store = openStore(projectDir(home, root));
   const registry = new McpRegistry({ home, root });
@@ -84,6 +89,8 @@ try {
     }
   };
 
+  let server: RunningServer | undefined;
+
   const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
@@ -112,21 +119,48 @@ try {
           error = (failure as Error).message;
         }
         reply({ type: 'settings.result', requestId: message.requestId, error });
-        server.broadcast(settingsSnapshot());
+        server?.broadcast(settingsSnapshot());
       }
     }
   };
 
   let closing: Promise<void> | undefined;
 
-  let version = 1;
-  let snapshot = buildSnapshot(version, projectName, indexer.files(), adapters);
-  const server = await startServer({
+  let files = indexer.files();
+  let edges = computeFileEdges(files, adapters);
+  let version = 0;
+  let snapshot: MapSnapshot | undefined;
+  const publish = (): MapSnapshot => {
+    version += 1;
+    snapshot = buildSnapshot(version, projectName, files, edges, mapService.view());
+    server?.broadcast({ type: 'map.snapshot', snapshot });
+    return snapshot;
+  };
+
+  const models = createModelProvider(home);
+  const mapService = new MapService({
+    root,
+    projectName,
+    stateDir: projectDir(home, root),
+    reasoning: models.reasoning,
+    embed: models.embed,
+    isAgentIdle: () => true,
+    onChange: publish,
+  });
+  indexer.onChange(() => {
+    files = indexer.files();
+    edges = computeFileEdges(files, adapters);
+    mapService.update(files, edges);
+    if (snapshot) publish();
+  });
+  await mapService.start(files, edges);
+  const initial = publish();
+  const running = await startServer({
     port,
     token,
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
-    snapshot: () => snapshot,
+    snapshot: () => snapshot ?? initial,
     greeting: () => [{ type: 'session.snapshot', state: session.state() }, settingsSnapshot()],
     onClientMessage: (message, reply) => {
       if (closing) {
@@ -136,24 +170,22 @@ try {
       handle(message, reply).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));
     },
   });
-  session.onMessage((message) => server.broadcast(message));
-
-  indexer.onChange(() => {
-    version += 1;
-    snapshot = buildSnapshot(version, projectName, indexer.files(), adapters);
-    server.broadcast({ type: 'map.snapshot', snapshot });
-  });
+  server = running;
+  session.onMessage((message) => running.broadcast(message));
 
   console.log(`IDE core: ${root}`);
-  console.log(`  ${snapshot.files.length} files, ${snapshot.components.length} components`);
+  console.log(`  ${initial.files.length} files, ${initial.components.length} components (${initial.status.layer} map)`);
   console.log(`  agent: ${values.claude} (unguarded until Plan 4) · IDE home: ${home}`);
-  if (values.ui) console.log(`  open: http://127.0.0.1:${server.port}/#token=${token}`);
+  if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
   for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
 
   const shutdown = async (): Promise<void> => {
     await session.close();
+    const stopping = mapService.stop();
+    await models.close();
+    await stopping;
     await indexer.stop();
-    await server.close();
+    await running.close();
     store.close();
     lock.release();
     process.exit(0);
