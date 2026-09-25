@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ClientMessage } from '@ide/protocol';
+import type { ClientMessage, SettingsView } from '@ide/protocol';
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
 import { DetailsPanel } from './map/DetailsPanel';
@@ -8,11 +8,15 @@ import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
+import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
 
 export function App() {
   const token = useMemo(launchToken, []);
   const [state, dispatch] = useReducer(mapReducer, initialMapState);
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
+  const [settings, setSettings] = useState<SettingsView | null>(null);
+  const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const connection = useRef<Connection | null>(null);
 
@@ -36,6 +40,12 @@ export function App() {
           break;
         case 'session.patch':
           dispatchChat({ type: 'patch', patch: message.patch });
+          break;
+        case 'settings.snapshot':
+          setSettings(message.settings);
+          break;
+        case 'settings.result':
+          setSettingsResult({ requestId: message.requestId, error: message.error });
           break;
         case 'error':
           dispatchChat({ type: 'error', message: message.message });
@@ -62,6 +72,13 @@ export function App() {
     return true;
   };
 
+  const openSettings = (): void => {
+    send({ type: 'settings.get' });
+    setSettingsOpen(true);
+  };
+  const toReview = (settings?.servers.filter((server) => server.status === 'unapproved').length ?? 0)
+    + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0);
+
   const snapshot = state.snapshot;
   return (
     <div className="app">
@@ -75,6 +92,9 @@ export function App() {
         <span className="badge danger" title="No pre-execution gate yet (Plan 4): the agent runs with --dangerously-skip-permissions.">
           unguarded
         </span>
+        <button className="link" onClick={openSettings}>
+          MCP servers{toReview > 0 ? ` · ${toReview} to review` : ''}
+        </button>
         <span className={`status ${status}`}>{status === 'open' ? 'live ●' : status}</span>
       </header>
       <main className="body">
@@ -86,6 +106,15 @@ export function App() {
         </div>
         <ChatPanel chat={chat} send={send} onDismissError={() => dispatchChat({ type: 'dismiss-error' })} />
       </main>
+      {settingsOpen && (
+        <SettingsPanel
+          settings={settings}
+          lastResult={settingsResult}
+          sessionServers={chat.mcpServers}
+          send={send}
+          onClose={() => setSettingsOpen(false)}
+        />
+      )}
     </div>
   );
 }

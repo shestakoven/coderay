@@ -70,3 +70,20 @@ button:disabled { opacity: 0.45; cursor: default; }
 .composer { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
 .composer textarea { width: 100%; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px; font: inherit; }
 .composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
+button.link { background: none; border: none; color: var(--accent); padding: 0; }
+.modal { position: fixed; inset: 0; background: rgba(0, 0, 0, 0.55); display: flex; align-items: flex-start; justify-content: center; padding-top: 6vh; z-index: 20; }
+.settings { width: min(920px, 94vw); max-height: 86vh; overflow: auto; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px 18px; font-size: 13px; }
+.settings-header { display: flex; justify-content: space-between; align-items: center; }
+.settings h2 { font-size: 15px; margin: 0; }
+.settings h3 { font-size: 13px; margin: 16px 0 6px; color: var(--muted); }
+.server { border-bottom: 1px solid var(--line); padding: 4px 0; }
+.server-row { display: flex; gap: 10px; align-items: baseline; }
+.server-row .actions { margin-left: auto; white-space: nowrap; display: flex; gap: 6px; }
+.server .entry { background: var(--bg); border-radius: 5px; padding: 6px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; }
+.server-status.ready { color: var(--ok); }
+.server-status.unapproved, .server-status.missing-env, .server-status.shadowed { color: var(--warn); }
+.banner { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 10px; margin: 8px 0; border-radius: 6px; background: #1f2735; }
+.banner.warn { background: #4a2a12; color: var(--warn); }
+.entry-editor { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.entry-editor label { display: grid; gap: 3px; color: var(--muted); }
+.entry-editor input, .entry-editor select, .entry-editor textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; }
