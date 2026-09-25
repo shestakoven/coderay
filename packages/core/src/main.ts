@@ -158,11 +158,13 @@ try {
     lock.release();
     process.exit(0);
   };
-  let closingSince = 0;
+  let firstInterrupt = 0;
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(signal, () => {
-      if (closing && signal === 'SIGINT' && Date.now() - closingSince > 1000) process.exit(130);
-      if (!closing) closingSince = Date.now();
+      if (signal === 'SIGINT') {
+        if (firstInterrupt && Date.now() - firstInterrupt > 1000) process.exit(130);
+        firstInterrupt ||= Date.now();
+      }
       closing ??= shutdown();
     });
   }
