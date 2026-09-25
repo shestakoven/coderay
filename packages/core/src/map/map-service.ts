@@ -26,6 +26,7 @@ export interface MapServiceOptions {
   embeddingRule?: EmbeddingRule | null;
   cooldownMs?: number;
   mapPollMs?: number;
+  onEmbeddingProgress?: (progress: { done: number; total: number } | null) => void;
 }
 
 export interface MapView {
@@ -92,7 +93,12 @@ export class MapService {
     this.options = options;
     this.rule = options.embeddingRule === undefined ? EMBEDDING_RULE : options.embeddingRule;
     this.baselineFile = join(options.stateDir, 'grouping-baseline.json');
-    this.embeddings = new EmbeddingIndex({ root: options.root, cacheFile: join(options.stateDir, 'embeddings.json'), model: options.embed });
+    this.embeddings = new EmbeddingIndex({
+      root: options.root,
+      cacheFile: join(options.stateDir, 'embeddings.json'),
+      model: options.embed,
+      onProgress: options.onEmbeddingProgress,
+    });
     this.scheduler = new RegroupScheduler({
       regroup: () => this.regroup(),
       need: () => {

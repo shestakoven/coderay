@@ -41,6 +41,7 @@ interface Setup {
   embeddingRule?: EmbeddingRule | null;
   agentIdle?: boolean;
   settle?: boolean;
+  onEmbeddingProgress?: (progress: { done: number; total: number } | null) => void;
 }
 
 async function startService(setup: Setup = {}) {
@@ -61,6 +62,7 @@ async function startService(setup: Setup = {}) {
     onChange: () => undefined,
     embeddingRule: setup.embeddingRule ?? null,
     mapPollMs: 20,
+    onEmbeddingProgress: setup.onEmbeddingProgress,
   });
   services.push(service);
   await service.start(filesOf(tree), setup.edges ?? []);
@@ -428,5 +430,12 @@ describe('MapService', () => {
     await service.start(filesOf(Object.fromEntries(Array.from({ length: 10_001 }, (_, i) => [`src/f${i}.ts`, `${i}`]))), []);
     await service.idle();
     expect([service.view().status.grouping, reasoning.requests.length]).toEqual(['too-large', 0]);
+  });
+
+  it('reports embedding progress during the first pass and clears it at the end', async () => {
+    const progress: ({ done: number; total: number } | null)[] = [];
+    await startService({ onEmbeddingProgress: (current) => progress.push(current) });
+    expect(progress[0]).toEqual({ done: 0, total: Object.keys(PROJECT).length });
+    expect(progress.at(-1)).toBeNull();
   });
 });

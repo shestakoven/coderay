@@ -15,6 +15,7 @@ export interface IndexerOptions {
   adapters: LanguageAdapter[];
   debounceMs?: number;
   reconcileDelayMs?: number;
+  onProgress?: (indexed: number) => void;
 }
 
 export type ChangeListener = (changedPaths: string[]) => void;
@@ -25,6 +26,7 @@ export class Indexer {
   private readonly debounceMs: number;
   private readonly reconcileDelayMs: number;
   private readonly isIgnored: IgnoreMatcher;
+  private readonly onProgress: ((indexed: number) => void) | undefined;
   private readonly indexed = new Map<string, IndexedFile>();
   private readonly listeners = new Set<ChangeListener>();
   private readonly pending = new Set<string>();
@@ -44,6 +46,7 @@ export class Indexer {
     this.debounceMs = options.debounceMs ?? 100;
     this.reconcileDelayMs = options.reconcileDelayMs ?? 1000;
     this.isIgnored = createIgnoreMatcher(options.root);
+    this.onProgress = options.onProgress;
   }
 
   async start(): Promise<void> {
@@ -175,7 +178,9 @@ export class Indexer {
         const info = await lstat(join(this.root, relPath)).catch(() => null);
         if (!info?.isFile()) continue;
         seen?.add(relPath);
-        changed.push(...(await this.indexFile(relPath, info.size)));
+        const indexedPaths = await this.indexFile(relPath, info.size);
+        changed.push(...indexedPaths);
+        if (!this.live && indexedPaths.length > 0) this.onProgress?.(this.indexed.size);
       }
     }
     return changed;
