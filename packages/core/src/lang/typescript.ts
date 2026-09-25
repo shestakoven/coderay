@@ -1,8 +1,8 @@
 import { posix, relative, sep } from 'node:path';
-import { createPathsMatcher, getTsconfig } from 'get-tsconfig';
 import { Parser, Query, type Language, type Node } from 'web-tree-sitter';
 import type { MapSymbol, SymbolKind } from '@ide/protocol';
 import { loadGrammar, symbolOf } from './tree-sitter';
+import { createTsconfigPaths } from './tsconfig-paths';
 import type { LanguageAdapter } from './types';
 import { findWorkspacePackages, workspaceImportBases } from './workspace';
 
@@ -39,7 +39,7 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
     loadGrammar('tree-sitter-typescript/tree-sitter-tsx.wasm'),
   ]);
   const grammars = { ts: grammarFor(ts), tsx: grammarFor(tsx) };
-  const matchPaths = pathsMatcher(root);
+  const pathMatchers = createTsconfigPaths(root);
   const packages = findWorkspacePackages(root);
 
   return {
@@ -64,7 +64,9 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
       const bases = specifier.startsWith('.')
         ? [posix.join(posix.dirname(fromPath), specifier)]
         : [
-            ...(matchPaths?.(specifier) ?? []).map((abs) => relative(root, abs).split(sep).join('/')),
+            ...pathMatchers(fromPath)
+              .flatMap((match) => match(specifier))
+              .map((abs) => relative(root, abs).split(sep).join('/')),
             ...workspaceImportBases(specifier, packages),
           ];
       for (const base of bases) {
@@ -75,16 +77,6 @@ export async function createTypeScriptAdapter(root: string): Promise<LanguageAda
       return null;
     },
   };
-}
-
-function pathsMatcher(root: string): ((specifier: string) => string[]) | null {
-  try {
-    const tsconfig = getTsconfig(root);
-    return tsconfig ? createPathsMatcher(tsconfig) : null;
-  } catch (error) {
-    console.warn(`typescript: ignoring tsconfig paths: ${(error as Error).message}`);
-    return null;
-  }
 }
 
 function grammarFor(language: Language): Grammar {
