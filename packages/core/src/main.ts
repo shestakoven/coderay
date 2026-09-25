@@ -1,10 +1,10 @@
 import { randomBytes } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
-import { basename, resolve } from 'node:path';
+import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
 import { AgentSession } from './agent/agent-session';
-import { computeFileEdges } from './graph/edges';
+import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { Indexer } from './indexer/indexer';
 import { createPythonAdapter } from './lang/python';
@@ -12,6 +12,8 @@ import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
 import { MapService } from './map/map-service';
 import { buildSnapshot } from './map/snapshot';
+import { IdentifierClassifier } from './c4/classify';
+import { watchDeploy } from './c4/deploy';
 import { buildC4 } from './c4/model';
 import { McpRegistry } from './mcp/registry';
 import { removeStaleModelDirs } from './models/claude-cli';
@@ -92,6 +94,8 @@ try {
   let snapshot: MapSnapshot | undefined;
   let indexer: Indexer | undefined;
   let mapService: MapService | undefined;
+  let classifier: IdentifierClassifier | undefined;
+  let deployWatch: { close(): Promise<void> } | undefined;
   const progress = new ProgressReporter((current) => server?.broadcast({ type: 'map.progress', progress: current }));
 
   const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
@@ -152,6 +156,8 @@ try {
   const shutdown = async (): Promise<void> => {
     await session.close();
     progress.stop();
+    classifier?.stop();
+    await deployWatch?.close();
     const stopping = mapService?.stop();
     await models.close();
     await stopping;
@@ -189,7 +195,16 @@ try {
   if (!closing) {
     let files = index.files();
     let edges = computeFileEdges(files, adapters);
+    let unresolved = unresolvedImports(files, adapters);
     let version = 0;
+    const names = new IdentifierClassifier({
+      model: models.fast,
+      cachePath: join(home, 'c4-classification.json'),
+      onChange: () => {
+        if (snapshot) publish();
+      },
+    });
+    classifier = names;
     const service = new MapService({
       root,
       projectName,
@@ -204,14 +219,23 @@ try {
     function publish(): MapSnapshot {
       version += 1;
       const view = service.view();
-      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: buildC4(root, files, edges, view.components) };
+      const c4 = buildC4(root, files, edges, view.components, unresolved, names.lookup);
+      names.request(c4.pending);
+      const status = names.status();
+      if (status.waiting > 0) c4.model.warnings.push(`Classifying ${status.waiting} package, image and host names with Haiku (names only)`);
+      if (status.failure) c4.model.warnings.push(`Could not classify names: ${status.failure}`);
+      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: c4.model };
       running.broadcast({ type: 'map.snapshot', snapshot });
       return snapshot;
     }
     index.onChange(() => {
       files = index.files();
       edges = computeFileEdges(files, adapters);
+      unresolved = unresolvedImports(files, adapters);
       service.update(files, edges);
+      if (snapshot) publish();
+    });
+    deployWatch = watchDeploy(root, () => {
       if (snapshot) publish();
     });
     await service.start(files, edges);

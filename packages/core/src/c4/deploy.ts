@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, posix } from 'node:path';
+import { basename, join, posix } from 'node:path';
+import { watch } from 'chokidar';
 import { parse } from 'yaml';
 
 export interface BuildDef {
@@ -53,6 +54,41 @@ export function readDeploy(root: string): Deploy {
     }
   }
   return { services, files: [...seen], warnings };
+}
+
+const WATCH_DEBOUNCE_MS = 300;
+
+// Compose files at the root, the files they include and the Dockerfiles they build are not indexed, so they get their own watch.
+export function watchDeploy(root: string, onChange: () => void): { close(): Promise<void> } {
+  let timer: NodeJS.Timeout | undefined;
+  const deployFiles = (): Set<string> => {
+    const deploy = readDeploy(root);
+    const builds = [...deploy.services.values()].flat().flatMap((d) => (d.build ? [posix.join(d.build.context, d.build.dockerfile)] : []));
+    return new Set([...deploy.files, ...builds].map((path) => join(root, path)));
+  };
+  let watched = deployFiles();
+  const options = { ignoreInitial: true, followSymlinks: false, ignorePermissionErrors: true };
+  const rootWatcher = watch(root, { ...options, depth: 0, ignored: (path: string, stats?: { isFile(): boolean }) => Boolean(stats?.isFile()) && !COMPOSE_FILE.test(basename(path)) });
+  const fileWatcher = watch([...watched], options);
+  const changed = (): void => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      const next = deployFiles();
+      fileWatcher.add([...next].filter((path) => !watched.has(path)));
+      fileWatcher.unwatch([...watched].filter((path) => !next.has(path)));
+      watched = next;
+      onChange();
+    }, WATCH_DEBOUNCE_MS);
+  };
+  rootWatcher.on('all', changed);
+  fileWatcher.on('all', changed);
+  for (const w of [rootWatcher, fileWatcher]) w.on('error', (error) => console.error('c4: deploy watch error', error));
+  return {
+    close: async () => {
+      clearTimeout(timer);
+      await Promise.all([rootWatcher.close(), fileWatcher.close()]);
+    },
+  };
 }
 
 function serviceDef(root: string, file: string, name: string, raw: Record<string, unknown>): ServiceDef {

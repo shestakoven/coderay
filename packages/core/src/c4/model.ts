@@ -12,62 +12,8 @@ import type {
   MapComponent,
 } from '@ide/protocol';
 import type { IndexedFile } from '../model';
+import { identifierKey, type Classification, type Classify, type Identifier } from './classify';
 import { readDeploy, type ServiceDef } from './deploy';
-
-// POC stand-in for the Haiku classification of identifiers (spec §5.2): names only, no values.
-const SYSTEMS: Record<string, { name: string; kind: ExternalKind; protocol?: string }> = {
-  postgresql: { name: 'PostgreSQL', kind: 'database' },
-  nats: { name: 'NATS', kind: 'broker' },
-  minio: { name: 'MinIO', kind: 'storage' },
-  onlyoffice: { name: 'OnlyOffice', kind: 'documents' },
-  gotenberg: { name: 'Gotenberg', kind: 'documents' },
-  email: { name: 'Mail (SMTP)', kind: 'email' },
-  searxng: { name: 'SearXNG', kind: 'search' },
-  firecrawl: { name: 'Firecrawl', kind: 'search' },
-  redis: { name: 'Redis', kind: 'cache' },
-  rabbitmq: { name: 'RabbitMQ', kind: 'broker' },
-  mlflow: { name: 'MLflow', kind: 'ml' },
-  llm: { name: 'LLM providers', kind: 'ai' },
-  microsoft365: { name: 'Microsoft 365', kind: 'source' },
-  google: { name: 'Google Workspace', kind: 'source' },
-  atlassian: { name: 'Atlassian', kind: 'source' },
-  asana: { name: 'Asana', kind: 'source' },
-  box: { name: 'Box', kind: 'source' },
-  clickup: { name: 'ClickUp', kind: 'source' },
-  discord: { name: 'Discord', kind: 'source' },
-  docusign: { name: 'DocuSign', kind: 'source' },
-  fireflies: { name: 'Fireflies', kind: 'source' },
-  gitbook: { name: 'GitBook', kind: 'source' },
-  monday: { name: 'monday.com', kind: 'source' },
-  notion: { name: 'Notion', kind: 'source' },
-  servicenow: { name: 'ServiceNow', kind: 'source' },
-  webex: { name: 'Webex', kind: 'source' },
-  zoom: { name: 'Zoom', kind: 'source' },
-  slack: { name: 'Slack', kind: 'source' },
-  s3: { name: 'Amazon S3', kind: 'source', protocol: 'S3' },
-  smb: { name: 'SMB file shares', kind: 'source', protocol: 'SMB' },
-  sftp: { name: 'SFTP servers', kind: 'source', protocol: 'SFTP' },
-  ldap: { name: 'Active Directory', kind: 'source', protocol: 'LDAP' },
-};
-
-const HOST_RULES: [RegExp, string][] = [
-  [/(^|\.)(graph\.microsoft\.com|login\.microsoftonline\.com|sharepoint\.com)$/, 'microsoft365'],
-  [/(^|\.)googleapis\.com$/, 'google'],
-  [/(^|\.)atlassian\.com$/, 'atlassian'],
-  [/(^|\.)asana\.com$/, 'asana'],
-  [/(^|\.)box\.com$/, 'box'],
-  [/(^|\.)clickup\.com$/, 'clickup'],
-  [/(^|\.)discord\.com$/, 'discord'],
-  [/(^|\.)docusign\.(net|com)$/, 'docusign'],
-  [/(^|\.)fireflies\.ai$/, 'fireflies'],
-  [/(^|\.)gitbook\.com$/, 'gitbook'],
-  [/(^|\.)monday\.com$/, 'monday'],
-  [/(^|\.)notion\.com$/, 'notion'],
-  [/(^|\.)service-now\.com$/, 'servicenow'],
-  [/(^|\.)webexapis\.com$/, 'webex'],
-  [/(^|\.)zoom\.us$/, 'zoom'],
-  [/(^|\.)firecrawl\.dev$/, 'firecrawl'],
-];
 
 // Literal URL hosts are names like package names; file contents never leave this process.
 const URL_LITERAL = /['"`]https?:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi;
@@ -85,51 +31,6 @@ function hostsIn(root: string, file: IndexedFile): string[] {
   literalHosts.set(file.path, { hash: file.contentHash, hosts });
   return hosts;
 }
-
-const IMAGE_RULES: [RegExp, string][] = [
-  [/postgres|vchord|pgvector|timescale|postgis/, 'postgresql'],
-  [/(^|\/)nats\b/, 'nats'],
-  [/minio/, 'minio'],
-  [/onlyoffice|documentserver/, 'onlyoffice'],
-  [/gotenberg/, 'gotenberg'],
-  [/mailpit|mailhog|maildev/, 'email'],
-  [/searxng/, 'searxng'],
-  [/firecrawl/, 'firecrawl'],
-  [/redis|valkey/, 'redis'],
-  [/rabbitmq/, 'rabbitmq'],
-  [/mlflow/, 'mlflow'],
-];
-
-const PACKAGE_RULES: Record<string, string> = {
-  sqlalchemy: 'postgresql',
-  asyncpg: 'postgresql',
-  psycopg: 'postgresql',
-  psycopg2: 'postgresql',
-  pgvector: 'postgresql',
-  nats: 'nats',
-  minio: 'minio',
-  boto3: 's3',
-  aioboto3: 's3',
-  botocore: 's3',
-  msal: 'microsoft365',
-  googleapiclient: 'google',
-  google: 'google',
-  slack_sdk: 'slack',
-  smbprotocol: 'smb',
-  smbclient: 'smb',
-  paramiko: 'sftp',
-  ldap3: 'ldap',
-  litellm: 'llm',
-  openai: 'llm',
-  anthropic: 'llm',
-  mistralai: 'llm',
-  firecrawl: 'firecrawl',
-  redis: 'redis',
-  mlflow: 'mlflow',
-  aiosmtplib: 'email',
-  smtplib: 'email',
-  '@onlyoffice/document-editor-react': 'onlyoffice',
-};
 
 const SCHEME_PROTOCOL: Record<string, string> = {
   http: 'HTTP',
@@ -170,7 +71,19 @@ interface Entry {
   devServer: boolean;
 }
 
-export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], components: MapComponent[]): C4Model {
+export interface C4Build {
+  model: C4Model;
+  pending: Identifier[];
+}
+
+export function buildC4(
+  root: string,
+  files: IndexedFile[],
+  edges: FileEdge[],
+  components: MapComponent[],
+  unresolved: ReadonlyMap<string, string[]>,
+  classify: Classify,
+): C4Build {
   const deploy = readDeploy(root);
   const warnings = [...deploy.warnings];
   const paths = files.map((f) => f.path);
@@ -182,15 +95,25 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
   const containers: C4Container[] = [];
   const closures = new Map<string, Set<string>>();
   const depths = new Map<string, Map<string, number>>();
-  const serviceSystem = new Map<string, string>();
+  const serviceImage = new Map<string, Identifier>();
   const tooling: string[] = [];
   const externals = new Map<string, C4External>();
-  const addExternal = (systemId: string, identifier: string): string => {
-    const id = `ext:${systemId}`;
-    const known = SYSTEMS[systemId] ?? { name: systemId, kind: 'other' as const };
-    const existing = externals.get(id) ?? { id, name: known.name, kind: known.kind, identifiers: [] };
+  const generic = new Set<string>();
+  const serviceBacked = new Set<string>();
+  const protocols = new Map<string, string>();
+  const pending = new Map<string, Identifier>();
+  const lookup = (id: Identifier): Classification | null => {
+    const found = classify(id);
+    if (found === undefined) pending.set(identifierKey(id), id);
+    return found ?? null;
+  };
+  const addExternal = (found: Classification, identifier: string): string => {
+    const id = `ext:${slug(found.system)}`;
+    const existing = externals.get(id) ?? { id, name: found.system, kind: found.kind, identifiers: [] };
     if (!existing.identifiers.includes(identifier)) existing.identifiers.push(identifier);
     externals.set(id, existing);
+    if (found.generic) generic.add(id);
+    if (found.protocol && !protocols.has(id)) protocols.set(id, found.protocol);
     return id;
   };
 
@@ -202,9 +125,8 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
       continue;
     }
     if (!repoCode) {
-      const image = defs.find((d) => d.image)?.image ?? name;
-      const system = IMAGE_RULES.find(([pattern]) => pattern.test(image))?.[1] ?? image.split(/[:@]/)[0]!.split('/').at(-1)!;
-      serviceSystem.set(name, system);
+      const image = (defs.find((d) => d.image)?.image ?? name).split('@')[0]!.replace(/:[\w.-]+$/, '');
+      serviceImage.set(name, { type: 'image', ecosystem: 'docker', name: image, hint: `compose service "${name}"` });
       continue;
     }
     const entry = detectEntry(commands);
@@ -307,28 +229,30 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
   };
 
   const byFile = new Map(files.map((f) => [f.path, f]));
-  const linkedServices = new Set<string>();
   const codeContainers = containers.filter((c) => c.files > 0).length;
   const fileReach = new Map<string, number>();
   for (const closure of closures.values()) for (const path of closure) fileReach.set(path, (fileReach.get(path) ?? 0) + 1);
   const containerNames = new Set(containers.map((c) => c.name));
   for (const container of containers) {
     for (const path of closures.get(container.name) ?? []) {
-      for (const specifier of byFile.get(path)?.imports ?? []) {
-        const system = PACKAGE_RULES[packageOf(specifier)];
-        if (!system) continue;
-        const to = addExternal(system, packageOf(specifier));
-        link(container.id, to, protocolFor(externals.get(to)!), { path, note: `imports ${packageOf(specifier)}` });
+      const ecosystem = byFile.get(path)?.lang === 'python' ? 'python' : 'npm';
+      for (const specifier of unresolved.get(path) ?? []) {
+        const name = packageOf(specifier);
+        if (!name) continue;
+        const found = lookup({ type: 'package', ecosystem, name });
+        if (!found) continue;
+        const to = addExternal(found, name);
+        link(container.id, to, protocolOf(to, externals, protocols), { path, note: `imports ${name}` });
       }
       const file = byFile.get(path);
       // A URL in a module every container loads (settings) is configuration, not a call.
       const everywhere = codeContainers > 2 && (fileReach.get(path) ?? 0) >= codeContainers;
       const test = /(^|\/)(tests?|__tests__)\/|(^|\/)test_[^/]*\.py$|\.(test|spec)\.[jt]sx?$/.test(path);
-      for (const host of file && !everywhere && !test ? hostsIn(root, file) : []) {
-        const system = HOST_RULES.find(([pattern]) => pattern.test(host))?.[1];
-        if (!system) continue;
-        const to = addExternal(system, host);
-        link(container.id, to, protocolFor(externals.get(to)!), { path, note: `calls ${host}` });
+      for (const host of file && !everywhere && !test ? hostsIn(root, file).filter(isPublicHost) : []) {
+        const found = lookup({ type: 'host', ecosystem: 'url', name: host });
+        if (!found) continue;
+        const to = addExternal(found, host);
+        link(container.id, to, protocolOf(to, externals, protocols), { path, note: `calls ${host}` });
       }
     }
     for (const def of deploy.services.get(container.name) ?? []) {
@@ -338,21 +262,17 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
         const note = `${key} in ${def.file}`;
         if (containerNames.has(target.host)) {
           link(container.id, `container:${target.host}`, SCHEME_PROTOCOL[target.scheme] ?? 'HTTP', { path: def.file, note });
-        } else if (serviceSystem.has(target.host)) {
-          linkedServices.add(target.host);
-          const to = addExternal(serviceSystem.get(target.host)!, `service ${target.host}`);
-          link(container.id, to, SCHEME_PROTOCOL[target.scheme] ?? protocolFor(externals.get(to)!), { path: def.file, note });
+        } else if (serviceImage.has(target.host)) {
+          const image = serviceImage.get(target.host)!;
+          const found = lookup(image) ?? { system: image.name.split('/').at(-1)!, kind: 'other' as const, generic: false, protocol: '' };
+          const to = addExternal(found, `service ${target.host}`);
+          addExternal(found, `image ${image.name}`);
+          serviceBacked.add(to);
+          link(container.id, to, SCHEME_PROTOCOL[target.scheme] ?? protocolOf(to, externals, protocols), { path: def.file, note });
         }
       }
     }
   }
-  for (const [service, system] of serviceSystem) {
-    if (linkedServices.has(service)) {
-      const image = deploy.services.get(service)?.find((d) => d.image)?.image;
-      if (image) addExternal(system, `image ${image.split('@')[0]}`);
-    }
-  }
-
   const behindUi = new Set(
     [...links.values()].filter((l) => containers.some((c) => c.id === l.from && c.role === 'ui')).map((l) => l.to),
   );
@@ -375,13 +295,57 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
     for (const member of members) member.group = `group:${key}`;
   }
 
+  const merged = mergeGeneric(externals, generic, serviceBacked, [...links.values()]);
   return {
-    containers,
-    externals: [...externals.values()],
-    links: [...links.values()],
-    tooling,
-    warnings,
+    model: { containers, externals: merged.externals, links: merged.links, tooling, warnings },
+    pending: [...pending.values()],
   };
+}
+
+// A generic client ("SQL database" from sqlalchemy) belongs to the one specific system of its kind: the one the
+// project runs as a compose service if there is exactly one, else the only one there is.
+function mergeGeneric(
+  externals: Map<string, C4External>,
+  generic: Set<string>,
+  serviceBacked: Set<string>,
+  links: C4Link[],
+): { externals: C4External[]; links: C4Link[] } {
+  const into = new Map<string, string>();
+  for (const id of generic) {
+    const kind = externals.get(id)!.kind;
+    const specific = [...externals.values()].filter((e) => e.kind === kind && !generic.has(e.id));
+    const backed = specific.filter((e) => serviceBacked.has(e.id));
+    const target = backed.length === 1 ? backed[0] : specific.length === 1 ? specific[0] : undefined;
+    if (!target) continue;
+    into.set(id, target.id);
+    target.identifiers.push(...externals.get(id)!.identifiers.filter((i) => !target.identifiers.includes(i)));
+  }
+  const byId = new Map<string, C4Link>();
+  for (const l of links) {
+    const to = into.get(l.to) ?? l.to;
+    const id = `${l.from}->${to}`;
+    const existing = byId.get(id);
+    if (!existing) {
+      byId.set(id, { ...l, id, to, evidence: [...l.evidence] });
+      continue;
+    }
+    for (const e of l.evidence) {
+      if (existing.evidence.some((x) => x.path === e.path && x.note === e.note)) continue;
+      existing.strength += 1;
+      existing.evidence.push(e);
+    }
+  }
+  return { externals: [...externals.values()].filter((e) => !into.has(e.id)), links: [...byId.values()] };
+}
+
+function slug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'system';
+}
+
+// Hosts that name a machine on a private network or a placeholder never leave this process.
+function isPublicHost(host: string): boolean {
+  if (/^\d+(\.\d+){3}$/.test(host) || !host.includes('.')) return false;
+  return !/(^|\.)(localhost|local|internal|lan|svc|cluster\.local|example|test|invalid)$|(^|\.)example\.(com|org|net)$/.test(host);
 }
 
 function launchLines(command: string): string[] {
@@ -443,14 +407,14 @@ function resolveModule(module: string, paths: string[], scope: string[]): string
 }
 
 function packageOf(specifier: string): string {
-  if (specifier.startsWith('.') || specifier.startsWith('/')) return '';
+  if (/^[./#~]|^@\//.test(specifier)) return '';
   if (specifier.startsWith('@')) return specifier.split('/').slice(0, 2).join('/');
   return specifier.split(/[./]/)[0]!;
 }
 
-function protocolFor(external: C4External): string {
-  if (external.kind === 'broker') return external.name;
-  return SYSTEMS[external.id.slice('ext:'.length)]?.protocol ?? KIND_PROTOCOL[external.kind];
+function protocolOf(id: string, externals: Map<string, C4External>, protocols: Map<string, string>): string {
+  const external = externals.get(id)!;
+  return protocols.get(id) ?? (external.kind === 'broker' ? external.name : KIND_PROTOCOL[external.kind]);
 }
 
 function hostOf(key: string, value: string, services: Map<string, ServiceDef[]>): { host: string; scheme: string } | null {

@@ -9,8 +9,8 @@ afterEach(async () => {
   for (const model of models.splice(0)) await model.close();
 });
 
-function start(fixture: string, cacheDir = tempDir('ide-models-')): LocalEmbedModel {
-  const model = new LocalEmbedModel({ cacheDir, workerUrl: new URL(`../fixtures/${fixture}.mjs`, import.meta.url) });
+function start(fixture: string, cacheDir = tempDir('ide-models-'), closeWaitMs?: number): LocalEmbedModel {
+  const model = new LocalEmbedModel({ cacheDir, workerUrl: new URL(`../fixtures/${fixture}.mjs`, import.meta.url), closeWaitMs });
   models.push(model);
   return model;
 }
@@ -64,7 +64,7 @@ describe('LocalEmbedModel', () => {
   });
 
   it('rejects a pending embed when it is closed', async () => {
-    const model = start('stalled-embed-worker');
+    const model = start('stalled-embed-worker', tempDir('ide-models-'), 50);
     await waitFor(() => model.status().state === 'ready', 'model ready');
     const pending = model.embed(['abc']);
     const rejection = expect(pending).rejects.toThrow('embedding model closed');
