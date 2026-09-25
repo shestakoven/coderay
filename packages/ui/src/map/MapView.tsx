@@ -1,10 +1,10 @@
 import {
   Background,
+  ControlButton,
   Controls,
   MiniMap,
   ReactFlow,
   useEdgesState,
-  useNodesInitialized,
   useNodesState,
   useReactFlow,
   type Edge,
@@ -12,12 +12,13 @@ import {
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, type Dispatch } from 'react';
-import { layoutGraph, type MapFlowNode } from './layout';
+import { fitKey, layoutBounds, layoutGraph, type Bounds, type MapFlowNode } from './layout';
 import type { MapAction, MapState } from './map-state';
 import { nodeTypes } from './nodes';
 import { graphSignature, visibleGraph } from './visible-graph';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
+const FIT_PADDING = 0.1;
 
 export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
@@ -35,6 +36,8 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
       }),
     [nodes, state.selected],
   );
+  const bounds = useMemo(() => layoutBounds(nodes), [nodes]);
+  const key = useMemo(() => fitKey(nodes), [nodes]);
 
   // Keyed on the signature, not the graph: a snapshot that leaves the visible graph unchanged must not re-run ELK.
   useEffect(() => {
@@ -74,22 +77,39 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         proOptions={{ hideAttribution: true }}
       >
         <Background />
-        <Controls showInteractive={false} />
+        <Controls showInteractive={false} showFitView={false}>
+          <FitButton bounds={bounds} />
+        </Controls>
         <MiniMap pannable zoomable />
-        <FitOnFirstLayout hasNodes={nodes.length > 0} />
+        <FitOnNewComponents fitKey={key} bounds={bounds} />
       </ReactFlow>
     </div>
   );
 }
 
-function FitOnFirstLayout({ hasNodes }: { hasNodes: boolean }) {
-  const { fitView } = useReactFlow();
-  const initialized = useNodesInitialized();
-  const done = useRef(false);
+function FitOnNewComponents({ fitKey: key, bounds }: { fitKey: string; bounds: Bounds | null }) {
+  const { fitBounds } = useReactFlow();
+  const fitted = useRef('');
   useEffect(() => {
-    if (!hasNodes || !initialized || done.current) return;
-    done.current = true;
-    void fitView({ padding: 0.1 });
-  }, [hasNodes, initialized, fitView]);
+    if (!bounds || !key || fitted.current === key) return;
+    fitted.current = key;
+    void fitBounds(bounds, { padding: FIT_PADDING });
+  }, [key, bounds, fitBounds]);
   return null;
+}
+
+function FitButton({ bounds }: { bounds: Bounds | null }) {
+  const { fitBounds } = useReactFlow();
+  return (
+    <ControlButton
+      title="Fit View"
+      aria-label="Fit View"
+      disabled={!bounds}
+      onClick={() => {
+        if (bounds) void fitBounds(bounds, { padding: FIT_PADDING });
+      }}
+    >
+      ⤢
+    </ControlButton>
+  );
 }

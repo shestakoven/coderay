@@ -19,6 +19,32 @@ export const NODE_SIZE = {
   file: { width: 170, height: 34 },
 };
 
+export interface Bounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+// Only top-level nodes carry absolute positions; children lie inside their parents.
+export function layoutBounds(nodes: MapFlowNode[]): Bounds | null {
+  const top = nodes.filter((node) => !node.parentId);
+  if (top.length === 0) return null;
+  const left = Math.min(...top.map((node) => node.position.x));
+  const upper = Math.min(...top.map((node) => node.position.y));
+  const right = Math.max(...top.map((node) => node.position.x + (node.width ?? 0)));
+  const lower = Math.max(...top.map((node) => node.position.y + (node.height ?? 0)));
+  return { x: left, y: upper, width: right - left, height: lower - upper };
+}
+
+export function fitKey(nodes: MapFlowNode[]): string {
+  return nodes
+    .filter((node) => !node.parentId)
+    .map((node) => node.id)
+    .sort()
+    .join('\n');
+}
+
 const ROOT_OPTIONS = {
   'elk.algorithm': 'layered',
   'elk.direction': 'RIGHT',
