@@ -114,9 +114,8 @@ try {
     lock.release();
     process.exit(0);
   };
-  process.once('SIGINT', () => void shutdown());
-  process.once('SIGTERM', () => void shutdown());
-  process.once('SIGHUP', () => void shutdown());
+  let closing: Promise<void> | undefined;
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => { closing ??= shutdown(); });
 } catch (error) {
   lock.release();
   console.error(`IDE core failed to start: ${(error as Error).message}`);

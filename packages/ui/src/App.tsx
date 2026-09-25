@@ -7,7 +7,7 @@ import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
-import { launchToken } from './net/token';
+import { hashToken, launchToken } from './net/token';
 
 export function App() {
   const token = useMemo(launchToken, []);
@@ -15,6 +15,14 @@ export function App() {
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const connection = useRef<Connection | null>(null);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      if (hashToken(location.hash)) location.reload();
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
 
   useEffect(() => {
     if (!token) return;

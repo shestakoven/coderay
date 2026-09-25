@@ -25,7 +25,7 @@ function AskForm({ questions, onAnswer }: { questions: AskQuestion[]; onAnswer: 
   const submit = () => {
     const result = askAnswers(questions, selections);
     if ('error' in result) setError(result.error);
-    else onAnswer({ kind: 'answers', answers: result.answers });
+    else { setError(null); onAnswer({ kind: 'answers', answers: result.answers }); }
   };
   return (
     <div className="prompt">
