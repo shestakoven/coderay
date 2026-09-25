@@ -99,7 +99,7 @@ export function prepareEntry(entry: McpEntry, env: NodeJS.ProcessEnv): { entry: 
   const missing = new Set<string>();
   const prepare = (claudeExpands: 'none' | 'plain' | 'all') => (text: string): string =>
     text.replace(VARIABLE, (match, name: string, fallback: string | undefined) => {
-      const value = env[name];
+      const value = Object.hasOwn(env, name) ? env[name] : undefined;
       if (value === undefined && fallback === undefined) missing.add(name);
       if (claudeExpands === 'all' || (claudeExpands === 'plain' && fallback === undefined)) return match;
       if (value !== undefined && value !== '') return value;

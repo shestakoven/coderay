@@ -1,7 +1,7 @@
-import { writeFileSync } from 'node:fs';
+import { statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { entryHash, parseEntry, prepareEntry, readMcpFile } from '../../src/mcp/config';
+import { entryHash, fileHash, parseEntry, prepareEntry, readMcpFile, readRawMcp, writeRawMcp } from '../../src/mcp/config';
 import { tempDir } from '../helpers';
 
 function mcpFile(content: unknown): string {
@@ -97,6 +97,71 @@ describe('prepareEntry', () => {
     const http = { type: 'http' as const, url: 'https://${HOST:-x}/mcp', headers: { A: '${ONE}', B: '${TWO}-${ONE}' } };
     const stdio = { type: 'stdio' as const, command: 'run', args: ['${THREE}'], env: { K: '${ONE}' } };
     expect([prepareEntry(http, {}).missing, prepareEntry(stdio, {}).missing]).toEqual([['ONE', 'TWO'], ['ONE', 'THREE']]);
+  });
+
+  it('looks up variables as own properties, not through the prototype chain', () => {
+    const entry = { type: 'stdio' as const, command: 'run', args: ['${__proto__}', '${constructor}'], env: { K: '${constructor}' } };
+    const result = prepareEntry(entry, {});
+    expect(result.missing).toEqual(['__proto__', 'constructor']);
+    expect(result.entry).toEqual({ type: 'stdio', command: 'run', args: ['', ''], env: { K: '' } });
+  });
+
+  it('uses the default of ${VAR:-default} for a variable that only exists on the prototype', () => {
+    const entry = { type: 'stdio' as const, command: 'run', args: ['${constructor:-x}'] };
+    expect(prepareEntry(entry, {})).toEqual({ entry: { type: 'stdio', command: 'run', args: ['x'] }, missing: [] });
+  });
+});
+
+describe('writeRawMcp', () => {
+  it('writes a new file with mode 0600 and the JSON round-trips through readRawMcp', () => {
+    const path = join(tempDir('ide-mcp-'), 'mcp.json');
+    const file = { mcpServers: { local: { type: 'stdio', command: 'run' } } };
+    writeRawMcp(path, file, 0o600);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+    expect(readRawMcp(path)).toEqual(file);
+  });
+
+  it('sets mode 0600 even when the file already existed with another mode', () => {
+    const path = join(tempDir('ide-mcp-'), 'mcp.json');
+    writeFileSync(path, '{}', { mode: 0o644 });
+    writeRawMcp(path, { mcpServers: {} }, 0o600);
+    expect(statSync(path).mode & 0o777).toBe(0o600);
+  });
+});
+
+describe('fileHash', () => {
+  it("returns 'absent' for a missing file", () => {
+    expect(fileHash(join(tempDir('ide-mcp-'), 'absent.json'))).toBe('absent');
+  });
+
+  it('returns the same hash for identical contents and a different hash after a change', () => {
+    const path = mcpFile({ mcpServers: { a: { command: 'run' } } });
+    const hash1 = fileHash(path);
+    expect(fileHash(path)).toBe(hash1);
+    writeFileSync(path, JSON.stringify({ mcpServers: { a: { command: 'changed' } } }));
+    expect(fileHash(path)).not.toBe(hash1);
+  });
+});
+
+describe('readRawMcp', () => {
+  it('reports a file that is not valid JSON', () => {
+    const path = mcpFile('{ nope');
+    expect(readRawMcp(path)).toBe(`${path} is not valid JSON`);
+  });
+
+  it('reports a root that is not a JSON object', () => {
+    const path = mcpFile([]);
+    expect(readRawMcp(path)).toBe(`${path} must contain a JSON object`);
+  });
+
+  it('reports mcpServers that is not an object', () => {
+    const path = mcpFile({ mcpServers: 'nope' });
+    expect(readRawMcp(path)).toBe(`${path}: "mcpServers" must be an object`);
+  });
+
+  it('keeps an entry it cannot parse alongside valid ones', () => {
+    const path = mcpFile({ mcpServers: { broken: { type: 'sse' }, ok: { command: 'run' } } });
+    expect(readRawMcp(path)).toEqual({ mcpServers: { broken: { type: 'sse' }, ok: { command: 'run' } } });
   });
 });
 
