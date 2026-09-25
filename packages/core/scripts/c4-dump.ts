@@ -1,0 +1,20 @@
+import { computeFileEdges } from '../src/graph/edges';
+import { Indexer } from '../src/indexer/indexer';
+import { createPythonAdapter } from '../src/lang/python';
+import { createTypeScriptAdapter } from '../src/lang/typescript';
+import { buildC4 } from '../src/c4/model';
+
+const root = process.argv[2]!;
+const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
+const indexer = new Indexer({ root, adapters });
+await indexer.start();
+const files = indexer.files();
+const edges = computeFileEdges(files, adapters);
+console.log(`${files.length} files, ${edges.length} edges`);
+const model = buildC4(root, files, edges, []);
+for (const c of model.containers) console.log(`C ${c.name} [${c.role} · ${c.tech}] files=${c.files} entry=${c.entryFiles.join(',')} missing=${c.entryMissing.join(',')} group=${c.group}`);
+for (const e of model.externals) console.log(`E ${e.name} [${e.kind}] ${e.identifiers.join(', ')}`);
+for (const l of model.links) console.log(`L ${l.from} -> ${l.to} ${l.protocol} ×${l.strength}  e.g. ${l.evidence.slice(0, 2).map((e) => `${e.path} (${e.note})`).join('; ')}`);
+console.log('tooling', model.tooling, '\nwarnings', model.warnings);
+await indexer.stop();
+process.exit(0);

@@ -33,7 +33,7 @@ export async function createPythonAdapter(): Promise<LanguageAdapter> {
     resolve(fromPath, specifier, exists) {
       const dots = specifier.length - specifier.replace(/^\.+/, '').length;
       const parts = specifier.slice(dots).split('.').filter(Boolean);
-      const bases = dots > 0 ? [posix.join(packageDir(fromPath, dots), ...parts)] : SOURCE_ROOTS.map((r) => posix.join(r, ...parts));
+      const bases = dots > 0 ? [posix.join(packageDir(fromPath, dots), ...parts)] : importRoots(fromPath, exists).map((r) => posix.join(r, ...parts));
       for (const base of bases) {
         const hit = [`${base}.py`, `${base}.pyi`, posix.join(base, '__init__.py')].find(exists);
         if (hit) return hit;
@@ -47,6 +47,16 @@ function packageDir(fromPath: string, dots: number): string {
   let dir = posix.dirname(fromPath);
   for (let level = 1; level < dots; level += 1) dir = posix.dirname(dir);
   return dir;
+}
+
+// A directory without __init__.py is where Python (and pytest's rootdir insertion) finds the top-level packages beneath it.
+function importRoots(fromPath: string, exists: (path: string) => boolean): string[] {
+  const roots: string[] = [];
+  for (let dir = posix.dirname(fromPath); dir !== '.'; dir = posix.dirname(dir)) {
+    if (!exists(posix.join(dir, '__init__.py'))) roots.push(dir);
+  }
+  for (const root of SOURCE_ROOTS) if (!roots.includes(root)) roots.push(root);
+  return roots;
 }
 
 function importSpecifiers(node: Node): string[] {

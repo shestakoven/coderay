@@ -12,6 +12,7 @@ import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
 import { MapService } from './map/map-service';
 import { buildSnapshot } from './map/snapshot';
+import { buildC4 } from './c4/model';
 import { McpRegistry } from './mcp/registry';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
@@ -132,7 +133,8 @@ try {
   let snapshot: MapSnapshot | undefined;
   const publish = (): MapSnapshot => {
     version += 1;
-    snapshot = buildSnapshot(version, projectName, files, edges, mapService.view());
+    const view = mapService.view();
+    snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: buildC4(root, files, edges, view.components) };
     server?.broadcast({ type: 'map.snapshot', snapshot });
     return snapshot;
   };

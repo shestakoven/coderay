@@ -77,6 +77,60 @@ export interface MapStatus {
   warnings: string[];
 }
 
+export type ContainerRole = 'ui' | 'api' | 'worker' | 'service';
+
+export type ExternalKind = 'database' | 'broker' | 'storage' | 'ai' | 'search' | 'documents' | 'email' | 'cache' | 'ml' | 'other';
+
+export interface C4Evidence {
+  path: string;
+  note: string;
+}
+
+export interface C4ContainerComponent {
+  id: string;
+  files: number;
+  near: number;
+  containers: number;
+}
+
+export interface C4Container {
+  id: string;
+  name: string;
+  role: ContainerRole;
+  tech: string;
+  launch: string[];
+  entryFiles: string[];
+  entryMissing: string[];
+  files: number;
+  components: C4ContainerComponent[];
+  group: string | null;
+  evidence: C4Evidence[];
+}
+
+export interface C4External {
+  id: string;
+  name: string;
+  kind: ExternalKind;
+  identifiers: string[];
+}
+
+export interface C4Link {
+  id: string;
+  from: string;
+  to: string;
+  protocol: string;
+  strength: number;
+  evidence: C4Evidence[];
+}
+
+export interface C4Model {
+  containers: C4Container[];
+  externals: C4External[];
+  links: C4Link[];
+  tooling: string[];
+  warnings: string[];
+}
+
 export interface MapSnapshot {
   version: number;
   projectName: string;
@@ -84,6 +138,7 @@ export interface MapSnapshot {
   components: MapComponent[];
   fileEdges: FileEdge[];
   status: MapStatus;
+  c4?: C4Model;
 }
 
 export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot } | SessionServerMessage | SettingsServerMessage;
