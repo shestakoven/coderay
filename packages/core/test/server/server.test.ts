@@ -204,6 +204,19 @@ describe('server', () => {
     expect(messages.map((message) => message.type)).toEqual(['map.snapshot', 'session.snapshot']);
   });
 
+  it('sends no map snapshot before one exists and still sends the greeting', async () => {
+    const svr = await startServer({
+      port: 0,
+      token: TOKEN,
+      snapshot: () => null,
+      greeting: () => [{ type: 'map.progress', progress: { indexing: { indexed: 3 }, embedding: null } }],
+    });
+    onTestFinished(() => svr.close());
+    const { messages } = await connect({}, svr.port);
+    await waitFor(() => messages[0], 'greeting');
+    expect(messages).toEqual([{ type: 'map.progress', progress: { indexing: { indexed: 3 }, embedding: null } }]);
+  });
+
   it('keeps the connection and the server up when the greeting throws', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
