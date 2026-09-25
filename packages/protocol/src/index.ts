@@ -1,6 +1,7 @@
 import type { ChatClientMessage, SessionServerMessage } from './session';
 
 export * from './session';
+export * from './settings';
 
 export type Lang = 'typescript' | 'python';
 
