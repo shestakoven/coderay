@@ -54,13 +54,9 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   });
 
   const orderedBacklog = new WeakMap<WebSocket, number>();
+  const orderedOverLimitTicks = new WeakMap<WebSocket, number>();
   const sendOrdered = (client: WebSocket, data: Buffer): void => {
-    const backlog = orderedBacklog.get(client) ?? 0;
-    if (backlog > MAX_ORDERED_BACKLOG_BYTES) {
-      client.terminate();
-      return;
-    }
-    orderedBacklog.set(client, backlog + data.length);
+    orderedBacklog.set(client, (orderedBacklog.get(client) ?? 0) + data.length);
     client.send(data, { binary: false }, () => orderedBacklog.set(client, (orderedBacklog.get(client) ?? data.length) - data.length));
   };
 
@@ -115,6 +111,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   };
   const catchUp = setInterval(() => {
     if (latest) for (const client of behind) deliver(client, latest);
+    // ws send callbacks land asynchronously, so judge the ordered backlog here, not at queue time.
+    for (const client of wss.clients) {
+      if (client.readyState !== client.OPEN) continue;
+      const overLimit = (orderedBacklog.get(client) ?? 0) > MAX_ORDERED_BACKLOG_BYTES;
+      const ticks = overLimit ? (orderedOverLimitTicks.get(client) ?? 0) + 1 : 0;
+      orderedOverLimitTicks.set(client, ticks);
+      if (ticks >= 2) client.terminate();
+    }
   }, CATCH_UP_INTERVAL_MS);
   catchUp.unref();
 

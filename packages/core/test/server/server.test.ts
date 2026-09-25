@@ -239,10 +239,46 @@ describe('server', () => {
 
     socket.pause();
     for (let i = 0; i < 3; i += 1) server.broadcast({ type: 'session.patch', patch: { items: [notice] } });
+    // Pausing and resuming in the same tick never yields to the event loop, so it cannot exercise real
+    // backpressure under a tick-judged backlog; hold the pause across two catch-up ticks instead.
+    await new Promise((resolve) => setTimeout(resolve, 600));
     socket.resume();
 
     await closed;
     expect(messages.length).toBeLessThan(4);
+  });
+
+  it('keeps a client that keeps reading connected through an ordered burst over 8 MB', async () => {
+    const big = { kind: 'notice' as const, id: 'n1', seq: 1, turnId: null, parentToolUseId: null, text: 'x'.repeat(9 * 1024 * 1024), ts: 0 };
+    const small = { kind: 'notice' as const, id: 'n2', seq: 2, turnId: null, parentToolUseId: null, text: 'hi', ts: 0 };
+    const svr = await startServer({
+      port: 0,
+      token: TOKEN,
+      snapshot: () => snapshot(1),
+      greeting: () => [
+        { type: 'session.patch', patch: { items: [big] } },
+        { type: 'session.patch', patch: { items: [small] } },
+      ],
+    });
+    onTestFinished(() => svr.close());
+    const { socket, messages } = await connect({}, svr.port);
+
+    await waitFor(() => messages.length === 3, 'snapshot and both greeting messages');
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+
+  it('keeps a client that keeps reading connected across more than 8 MB of ordered frames over several ticks', async () => {
+    const { socket, messages } = await connect({});
+    await waitFor(() => messages[0], 'snapshot on connect');
+    const big = (id: string) => ({ kind: 'notice' as const, id, seq: 1, turnId: null, parentToolUseId: null, text: 'x'.repeat(3 * 1024 * 1024), ts: 0 });
+
+    for (let i = 0; i < 4; i += 1) {
+      server.broadcast({ type: 'session.patch', patch: { items: [big(`n${i}`)] } });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    }
+
+    await waitFor(() => messages.length === 5, 'snapshot and all patches received');
+    expect(socket.readyState).toBe(WebSocket.OPEN);
   });
 
   it('keeps a client that is behind only on map snapshots connected when a session message arrives', async () => {
