@@ -68,6 +68,34 @@ describe('Python adapter', () => {
     expect(adapter.resolve('x.py', 'os', exists)).toBeNull();
   });
 
+  it('resolves absolute imports from the nearest ancestor that is not a package', () => {
+    const exists = existing(
+      'backend/src/__init__.py',
+      'backend/src/api/__init__.py',
+      'backend/src/api/routes.py',
+      'backend/src/core/__init__.py',
+      'backend/src/core/db.py',
+      'backend/tests/__init__.py',
+      'backend/tests/core/__init__.py',
+      'backend/tests/core/test_db.py',
+      'backend/scripts/seed.py',
+    );
+    expect(adapter.resolve('backend/src/api/routes.py', 'src.core.db', exists)).toBe('backend/src/core/db.py');
+    expect(adapter.resolve('backend/tests/core/test_db.py', 'src.core.db', exists)).toBe('backend/src/core/db.py');
+    expect(adapter.resolve('backend/scripts/seed.py', 'src.core', exists)).toBe('backend/src/core/__init__.py');
+  });
+
+  it('does not resolve an absolute import to a sibling module inside a package', () => {
+    const exists = existing('pkg/__init__.py', 'pkg/mod.py', 'pkg/utils.py');
+    expect(adapter.resolve('pkg/mod.py', 'utils', exists)).toBeNull();
+  });
+
+  it('prefers the nearest root when the same module exists under several roots', () => {
+    const exists = existing('services/api/app/__init__.py', 'services/api/app/db.py', 'services/api/main.py', 'app/db.py');
+    expect(adapter.resolve('services/api/main.py', 'app.db', exists)).toBe('services/api/app/db.py');
+    expect(adapter.resolve('tool.py', 'app.db', exists)).toBe('app/db.py');
+  });
+
   it('resolves relative imports by package level', () => {
     const exists = existing('app/db.py', 'app/__init__.py', 'pkg/mod.py');
     expect(adapter.resolve('app/main.py', '.db', exists)).toBe('app/db.py');
