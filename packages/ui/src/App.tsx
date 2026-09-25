@@ -87,6 +87,7 @@ export function App() {
     + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0);
 
   const snapshot = state.snapshot;
+  const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
   return (
     <div className="app">
       <header className="topbar">
@@ -101,7 +102,7 @@ export function App() {
             {chip.text}
           </span>
         ))}
-        {snapshot?.c4 && (
+        {c4 && (
           <span className="view-switch">
             <button className={view === 'c4' ? 'on' : ''} onClick={() => setView('c4')}>C4</button>
             <button className={view === 'components' ? 'on' : ''} onClick={() => setView('components')}>Components</button>
@@ -117,9 +118,9 @@ export function App() {
       </header>
       <main className="body">
         <div className="map-area">
-          {view === 'c4' && snapshot?.c4 ? (
+          {view === 'c4' && snapshot && c4 ? (
             <ReactFlowProvider>
-              <C4View snapshot={snapshot} model={snapshot.c4} />
+              <C4View snapshot={snapshot} model={c4} />
             </ReactFlowProvider>
           ) : (
             <>
