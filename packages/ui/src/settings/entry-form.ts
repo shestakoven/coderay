@@ -37,6 +37,8 @@ export function entryFromForm(form: EntryForm): { entry: McpEntry } | { error: s
   if ('error' in headers) return headers;
   const timeoutText = form.timeout.trim();
   if (timeoutText !== '' && !/^\d+$/.test(timeoutText)) return { error: 'The timeout must be a whole number of milliseconds.' };
+  if (form.type === 'stdio' && form.command.trim() === '') return { error: 'Enter a command.' };
+  if (form.type === 'http' && form.url.trim() === '') return { error: 'Enter a URL.' };
   const args = lines(form.args);
   const base: McpEntry = form.type === 'stdio'
     ? {

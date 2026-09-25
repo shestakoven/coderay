@@ -77,7 +77,10 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
               {edits.trustApproves.length > 0 && <div>Confirming approves these project servers: {edits.trustApproves.join(', ')}.</div>}
               {edits.trust && <div>Confirming keeps only the approvals listed above and removes every other approval in ~/.ide/trust.json, including other projects'; those servers must be approved again.</div>}
             </div>
-            <button onClick={() => request({ type: 'mcp.confirm-external-edits', requestId: crypto.randomUUID(), fileHashes: settings.fileHashes }, false)}>
+            <button
+              disabled={awaiting !== null}
+              onClick={() => request({ type: 'mcp.confirm-external-edits', requestId: crypto.randomUUID(), fileHashes: settings.fileHashes }, false)}
+            >
               Confirm the edits
             </button>
           </div>
@@ -107,12 +110,20 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
                   <span className="muted">session: {liveStatus(server.name)}</span>
                   <span className="actions">
                     {server.level === 'project' && server.status === 'unapproved' && !edits?.trust && (
-                      <button onClick={() => request({ type: 'mcp.approve', requestId: crypto.randomUUID(), name: server.name, entryHash: server.entryHash }, false)}>
+                      <button
+                        disabled={awaiting !== null}
+                        onClick={() => request({ type: 'mcp.approve', requestId: crypto.randomUUID(), name: server.name, entryHash: server.entryHash }, false)}
+                      >
                         Approve as shown
                       </button>
                     )}
                     <button onClick={() => edit(level, server)}>Edit</button>
-                    <button onClick={() => request({ type: 'mcp.remove', requestId: crypto.randomUUID(), level, name: server.name }, false)}>Remove</button>
+                    <button
+                      disabled={awaiting !== null}
+                      onClick={() => request({ type: 'mcp.remove', requestId: crypto.randomUUID(), level, name: server.name }, false)}
+                    >
+                      Remove
+                    </button>
                   </span>
                 </div>
                 <details open={server.status === 'unapproved'}>
@@ -124,12 +135,13 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
             <button onClick={() => edit(level, null)}>Add server</button>
           </section>
         ))}
-        {settings?.problems.map((problem) => <p key={problem} className="problem">{problem}</p>)}
+        {settings?.problems.map((problem, index) => <p key={index} className="problem">{problem}</p>)}
         {form && (
           <EntryEditor
             form={form}
             error={formError}
             saving={awaiting?.fromForm === true}
+            busy={awaiting !== null}
             onChange={setForm}
             onSave={save}
             onCancel={() => setForm(null)}
@@ -140,10 +152,11 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
   );
 }
 
-function EntryEditor({ form, error, saving, onChange, onSave, onCancel }: {
+function EntryEditor({ form, error, saving, busy, onChange, onSave, onCancel }: {
   form: EntryForm;
   error: string | null;
   saving: boolean;
+  busy: boolean;
   onChange: (form: EntryForm) => void;
   onSave: () => void;
   onCancel: () => void;
@@ -179,7 +192,7 @@ function EntryEditor({ form, error, saving, onChange, onSave, onCancel }: {
       {error && <p className="problem">{error}</p>}
       <div className="composer-actions">
         <button onClick={onCancel}>Cancel</button>
-        <button onClick={onSave} disabled={saving}>{saving ? 'Saving…' : 'Save'}</button>
+        <button onClick={onSave} disabled={busy}>{saving ? 'Saving…' : 'Save'}</button>
       </div>
     </div>
   );

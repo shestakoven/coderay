@@ -16,6 +16,14 @@ describe('entryFromForm', () => {
     expect(entryFromForm({ ...emptyForm('ide'), command: 'x', env: 'TOKEN' })).toEqual({ error: '"TOKEN" needs the form NAME=value.' });
   });
 
+  it('rejects an empty command for a stdio entry', () => {
+    expect(entryFromForm({ ...emptyForm('ide'), command: '  ' })).toEqual({ error: 'Enter a command.' });
+  });
+
+  it('rejects an empty URL for an http entry', () => {
+    expect(entryFromForm({ ...emptyForm('project'), type: 'http' as const, url: '  ' })).toEqual({ error: 'Enter a URL.' });
+  });
+
   it('round-trips a server through the form', () => {
     const entry = { type: 'stdio' as const, command: 'npx', args: ['-y', 'server'], env: { A: '1' }, timeout: 5000 };
     expect(entryFromForm(formFromServer({ name: 'local', level: 'ide', entry, entryHash: 'h', status: 'ready', reason: null }))).toEqual({ entry });
