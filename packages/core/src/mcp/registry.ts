@@ -43,8 +43,8 @@ export interface McpRegistryOptions {
 
 const PRIVATE_FILE_MODE = 0o600;
 
-function writePrivateJson(path: string, value: unknown): void {
-  writeFileNoFollow(path, `${JSON.stringify(value, null, 2)}\n`, PRIVATE_FILE_MODE);
+function writePrivateJson(path: string, value: unknown): string {
+  return writeFileNoFollow(path, `${JSON.stringify(value, null, 2)}\n`, PRIVATE_FILE_MODE);
 }
 
 function isTrustRecord(value: unknown): value is TrustRecord {
@@ -128,10 +128,10 @@ export class McpRegistry {
     if (current.ideServers !== shown.ideServers || current.trust !== shown.trust) {
       throw new McpSettingsError('the files changed again after Settings showed them; review them again before confirming');
     }
-    if (current.trust !== this.readLedger().trustHash) {
-      writePrivateJson(this.trustPath, { records: this.keptTrustRecords() });
-    }
-    this.writeLedger({ mcpHash: current.ideServers, trustHash: fileHash(this.trustPath) });
+    // Never re-read a file to learn its hash after this point: idePath is untouched here, so its shown hash still holds;
+    // trust.json, if rewritten, is recorded from the bytes writePrivateJson just wrote, not a fresh read that a concurrent writer could race.
+    const trustHash = current.trust === this.readLedger().trustHash ? shown.trust : writePrivateJson(this.trustPath, { records: this.keptTrustRecords() });
+    this.writeLedger({ mcpHash: shown.ideServers, trustHash });
   }
 
   private evaluate(): { servers: Evaluated[]; problems: string[]; externalEdits: SettingsView['externalEdits'] } {
@@ -192,26 +192,35 @@ export class McpRegistry {
       writeRawMcp(this.projectPath, file);
       return;
     }
-    writeRawMcp(this.idePath, file, PRIVATE_FILE_MODE);
-    this.writeLedger({ mcpHash: fileHash(this.idePath) });
+    const hash = writeRawMcp(this.idePath, file, PRIVATE_FILE_MODE);
+    this.writeLedger({ mcpHash: hash });
   }
 
   // lstat (not existsSync, which follows links and reports false for a dangling one) so a symlink is caught even when its target is missing.
-  private linkedProjectPath(): string | null {
+  // Any lstat error other than "does not exist" (e.g. ENOTDIR when .ide is a regular file) is reported, not thrown: a hostile or malformed repo must not crash Settings.
+  private projectFileProblem(): string | null {
     for (const path of [dirname(this.projectPath), this.projectPath]) {
-      if (lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink()) return path;
+      let stat;
+      try {
+        stat = lstatSync(path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
+        return `${path} could not be read (${(error as NodeJS.ErrnoException).code ?? 'unknown error'}); project servers were not read`;
+      }
+      if (stat.isSymbolicLink()) return `${path} is a symbolic link; the IDE does not read or write project settings through links`;
+      if (path === dirname(this.projectPath) && !stat.isDirectory()) return `${path} is not a directory; project servers were not read`;
     }
     return null;
   }
 
   private assertNotLinked(): void {
-    const linked = this.linkedProjectPath();
-    if (linked) throw new McpSettingsError(`${linked} is a symbolic link; the IDE does not write project settings through links`);
+    const problem = this.projectFileProblem();
+    if (problem) throw new McpSettingsError(problem);
   }
 
   private readProject(): McpFile {
-    const linked = this.linkedProjectPath();
-    if (linked) return { servers: new Map(), problems: [`${linked} is a symbolic link; it was not read`] };
+    const problem = this.projectFileProblem();
+    if (problem) return { servers: new Map(), problems: [problem] };
     return readMcpFile(this.projectPath);
   }
 
@@ -248,8 +257,8 @@ export class McpRegistry {
   }
 
   private writeTrust(records: TrustRecord[]): void {
-    writePrivateJson(this.trustPath, { records });
-    this.writeLedger({ trustHash: fileHash(this.trustPath) });
+    const hash = writePrivateJson(this.trustPath, { records });
+    this.writeLedger({ trustHash: hash });
   }
 
   private readLedger(): Ledger {
@@ -258,7 +267,8 @@ export class McpRegistry {
     try {
       return { ...fresh, ...(JSON.parse(readFileSync(this.ledgerPath, 'utf8')) as Partial<Ledger>) };
     } catch {
-      return { mcpHash: 'unreadable', trustHash: 'unreadable' };
+      // Distinct from fileHash's own 'unreadable': that sentinel must never equal a corrupt ledger's, or an unreadable file and a corrupt ledger would compare equal and hide an outside edit.
+      return { mcpHash: 'corrupt-ledger', trustHash: 'corrupt-ledger' };
     }
   }
 
@@ -272,8 +282,8 @@ export class McpRegistry {
 
   private readRaw(path: string): RawMcpFile {
     if (path === this.projectPath) {
-      const linked = this.linkedProjectPath();
-      if (linked) throw new McpSettingsError(`${linked} is a symbolic link; the IDE does not read or write project settings through links`);
+      const problem = this.projectFileProblem();
+      if (problem) throw new McpSettingsError(problem);
     }
     const file = readRawMcp(path);
     if (typeof file === 'string') throw new McpSettingsError(`${file}; fix or delete it first`);

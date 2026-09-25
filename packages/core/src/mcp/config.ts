@@ -80,8 +80,9 @@ export function readMcpFile(path: string): McpFile {
   return { servers, problems };
 }
 
-// O_NOFOLLOW so the final path component is never followed if it is a symbolic link (ELOOP), even under a TOCTOU race with a caller's own lstat check.
-export function writeFileNoFollow(path: string, text: string, mode?: number): void {
+// O_NOFOLLOW refuses to write through a symlink at the final path component (ELOOP); it does not protect an intermediate directory (e.g. a swapped .ide) from a TOCTOU race.
+// Returns the hash of the bytes written, so a caller can record it in a ledger without a re-read that a concurrent writer could race.
+export function writeFileNoFollow(path: string, text: string, mode?: number): string {
   mkdirSync(dirname(path), { recursive: true });
   let fd: number;
   try {
@@ -96,10 +97,15 @@ export function writeFileNoFollow(path: string, text: string, mode?: number): vo
   } finally {
     closeSync(fd);
   }
+  return hashText(text);
 }
 
-export function writeRawMcp(path: string, file: RawMcpFile, mode?: number): void {
-  writeFileNoFollow(path, `${JSON.stringify(file, null, 2)}\n`, mode);
+export function writeRawMcp(path: string, file: RawMcpFile, mode?: number): string {
+  return writeFileNoFollow(path, `${JSON.stringify(file, null, 2)}\n`, mode);
+}
+
+export function hashText(text: string): string {
+  return createHash('sha256').update(text, 'utf8').digest('hex');
 }
 
 export function entryHash(name: string, entry: McpEntry): string {

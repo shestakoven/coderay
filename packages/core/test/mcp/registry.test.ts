@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { entryHash } from '../../src/mcp/config';
-import { McpRegistry } from '../../src/mcp/registry';
+import { entryHash, fileHash } from '../../src/mcp/config';
+import { McpRegistry, McpSettingsError } from '../../src/mcp/registry';
 import { tempDir } from '../helpers';
 
 const docs = { type: 'http', url: 'https://docs.example/mcp' };
@@ -274,5 +274,69 @@ describe('McpRegistry', () => {
     const { registry, home } = setup();
     registry.save('ide', 'docs', docs, null);
     expect(statSync(join(home, 'settings-ledger.json')).mode & 0o777).toBe(0o600);
+  });
+
+  it('treats a project .ide that is a regular file as unreadable instead of throwing, returning IDE servers and builtins only', () => {
+    const { registry, root } = setup();
+    registry.save('ide', 'docs', docs, null);
+    writeFileSync(join(root, '.ide'), 'not a directory');
+    expect(registry.view().problems.some((problem) => problem.includes('is not a directory'))).toBe(true);
+    expect(registry.view().servers.every((server) => server.level === 'ide')).toBe(true);
+    expect(registry.sessionServers()).toEqual({ docs });
+    expect(() => registry.save('project', 'other', docs, null)).toThrow(McpSettingsError);
+  });
+
+  it('records the settings-ledger mcpHash from the bytes just written to ~/.ide/mcp.json', () => {
+    const { registry, home } = setup();
+    registry.save('ide', 'docs', docs, null);
+    const ledger = JSON.parse(readFileSync(join(home, 'settings-ledger.json'), 'utf8')) as { mcpHash: string };
+    expect(ledger.mcpHash).toBe(fileHash(join(home, 'mcp.json')));
+  });
+
+  it('records the settings-ledger trustHash from the bytes just written to ~/.ide/trust.json', () => {
+    const { home, writeProjectFile, approve } = setup();
+    writeProjectFile({ docs });
+    approve('docs');
+    const ledger = JSON.parse(readFileSync(join(home, 'settings-ledger.json'), 'utf8')) as { trustHash: string };
+    expect(ledger.trustHash).toBe(fileHash(join(home, 'trust.json')));
+  });
+
+  it('confirms outside edits by recording the shown hash for an untouched file and the written hash for a rewritten trust.json', () => {
+    const { registry, home } = setup();
+    registry.save('ide', 'docs', docs, null);
+    writeFileSync(join(home, 'trust.json'), JSON.stringify({ records: [] }));
+    const shown = registry.view().fileHashes;
+    registry.confirmExternalEdits(shown);
+    const ledger = JSON.parse(readFileSync(join(home, 'settings-ledger.json'), 'utf8')) as { mcpHash: string; trustHash: string };
+    expect(ledger.mcpHash).toBe(shown.ideServers);
+    expect(ledger.trustHash).toBe(fileHash(join(home, 'trust.json')));
+  });
+
+  it('does not let a corrupt ledger and an unreadable trust.json cancel each other out to hide an outside edit', () => {
+    const { registry, home, writeProjectFile, approve, shown } = setup();
+    writeProjectFile({ docs, other: docs });
+    approve('other');
+    chmodSync(join(home, 'trust.json'), 0o200);
+    writeFileSync(join(home, 'settings-ledger.json'), '{ corrupt');
+    try {
+      expect(registry.view().externalEdits.trust).toBe(true);
+      const hash = shown('docs')?.entryHash ?? '';
+      expect(() => registry.approve('docs', hash)).toThrow('was edited outside Settings');
+    } finally {
+      chmodSync(join(home, 'trust.json'), 0o600);
+    }
+  });
+
+  it('refuses to write through a symbolic link at ~/.ide/settings-ledger.json, and does not treat the server as approved afterward', () => {
+    const { registry, home, writeProjectFile, shown } = setup();
+    writeProjectFile({ docs });
+    const hash = shown('docs')?.entryHash ?? '';
+    const elsewhere = tempDir('ide-elsewhere-');
+    const target = join(elsewhere, 'ledger.json');
+    symlinkSync(target, join(home, 'settings-ledger.json'));
+    expect(() => registry.approve('docs', hash)).toThrow('is a symbolic link');
+    expect(existsSync(target)).toBe(false);
+    expect(shown('docs')?.status).not.toBe('ready');
+    expect(registry.sessionServers()).toEqual({});
   });
 });
