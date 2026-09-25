@@ -7,7 +7,7 @@ export function DetailsPanel({ state }: { state: MapState }) {
   const file = snapshot?.files.find((f) => f.path === selected);
   if (component) return <ComponentDetails component={component} />;
   if (file) return <FileDetails file={file} owner={snapshot?.components.find((c) => c.id === file.componentId)} />;
-  return <aside className="details muted">Select a component or a file</aside>;
+  return null;
 }
 
 function ComponentDetails({ component }: { component: MapComponent }) {

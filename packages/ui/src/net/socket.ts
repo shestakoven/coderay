@@ -1,8 +1,21 @@
-import type { ServerMessage } from '@ide/protocol';
+import { MAX_CLIENT_FRAME_BYTES, type ClientMessage, type ServerMessage } from '@ide/protocol';
 
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
-export function connect(onMessage: (message: ServerMessage) => void, onStatus: (status: ConnectionStatus) => void): () => void {
+export interface Connection {
+  send(message: ClientMessage): boolean;
+  close(): void;
+}
+
+export function fitsFrame(message: ClientMessage): boolean {
+  return new TextEncoder().encode(JSON.stringify(message)).length <= MAX_CLIENT_FRAME_BYTES;
+}
+
+export function connect(
+  token: string,
+  onMessage: (message: ServerMessage) => void,
+  onStatus: (status: ConnectionStatus) => void,
+): Connection {
   let socket: WebSocket | undefined;
   let attempt = 0;
   let stopped = false;
@@ -10,7 +23,8 @@ export function connect(onMessage: (message: ServerMessage) => void, onStatus: (
 
   const open = () => {
     onStatus('connecting');
-    socket = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+    const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}`);
     socket.onopen = () => {
       attempt = 0;
       onStatus('open');
@@ -23,9 +37,16 @@ export function connect(onMessage: (message: ServerMessage) => void, onStatus: (
   };
 
   open();
-  return () => {
-    stopped = true;
-    window.clearTimeout(retryTimer);
-    socket?.close();
+  return {
+    send(message) {
+      if (socket?.readyState !== WebSocket.OPEN) return false;
+      socket.send(JSON.stringify(message));
+      return true;
+    },
+    close() {
+      stopped = true;
+      window.clearTimeout(retryTimer);
+      socket?.close();
+    },
   };
 }

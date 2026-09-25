@@ -1,3 +1,9 @@
+import type { ChatClientMessage, SessionServerMessage } from './session';
+import type { SettingsClientMessage, SettingsServerMessage } from './settings';
+
+export * from './session';
+export * from './settings';
+
 export type Lang = 'typescript' | 'python';
 
 export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'enum' | 'variable';
@@ -80,4 +86,6 @@ export interface MapSnapshot {
   status: MapStatus;
 }
 
-export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot };
+export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot } | SessionServerMessage | SettingsServerMessage;
+
+export type ClientMessage = ChatClientMessage | SettingsClientMessage;
