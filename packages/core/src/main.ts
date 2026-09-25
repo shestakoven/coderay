@@ -2,11 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import type { ClientMessage } from '@ide/protocol';
+import { AgentSession } from './agent/agent-session';
+import { defaultIdeHome, projectDir } from './home';
 import { Indexer } from './indexer/indexer';
 import { createPythonAdapter } from './lang/python';
 import { createTypeScriptAdapter } from './lang/typescript';
+import { acquireCoreLock } from './lock';
 import { buildSnapshot } from './map/snapshot';
 import { startServer } from './server/server';
+import { openStore } from './store/store';
 
 const { values } = parseArgs({
   options: {
@@ -14,6 +19,8 @@ const { values } = parseArgs({
     port: { type: 'string', default: '4317' },
     ui: { type: 'string' },
     'allow-origin': { type: 'string', multiple: true, default: [] },
+    'ide-home': { type: 'string' },
+    claude: { type: 'string', default: 'claude' },
   },
 });
 
@@ -33,12 +40,44 @@ try {
   process.exit(1);
 }
 const projectName = basename(root);
+const home = resolve(values['ide-home'] ?? defaultIdeHome());
+
+const lock = acquireCoreLock(projectDir(home, root));
+if (!lock.acquired) {
+  console.error(`IDE core: another IDE core (pid ${lock.holder}) is already running for ${root}.`);
+  console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
+  process.exit(1);
+}
 const token = randomBytes(24).toString('base64url');
 
 try {
   const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
   const indexer = new Indexer({ root, adapters });
   await indexer.start();
+
+  const store = openStore(projectDir(home, root));
+  const session = new AgentSession({ root, home, store, claude: { command: values.claude, args: [] } });
+  await session.start();
+
+  const handle = async (message: ClientMessage): Promise<void> => {
+    switch (message.type) {
+      case 'chat.send':
+        session.send(message.text);
+        return;
+      case 'chat.stop':
+        session.stop();
+        return;
+      case 'session.restart':
+        await session.restart();
+        return;
+      case 'session.new':
+        await session.newSession();
+        return;
+      case 'prompt.answer':
+        session.answerPrompt(message.requestId, message.answer);
+        return;
+    }
+  };
 
   let version = 1;
   let snapshot = buildSnapshot(version, projectName, indexer.files(), adapters);
@@ -48,7 +87,12 @@ try {
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
     snapshot: () => snapshot,
+    greeting: () => [{ type: 'session.snapshot', state: session.state() }],
+    onClientMessage: (message, reply) => {
+      handle(message).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));
+    },
   });
+  session.onMessage((message) => server.broadcast(message));
 
   indexer.onChange(() => {
     version += 1;
@@ -58,17 +102,23 @@ try {
 
   console.log(`IDE core: ${root}`);
   console.log(`  ${snapshot.files.length} files, ${snapshot.components.length} components`);
+  console.log(`  agent: ${values.claude} (unguarded until Plan 4) · IDE home: ${home}`);
   if (values.ui) console.log(`  open: http://127.0.0.1:${server.port}/#token=${token}`);
   for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
 
   const shutdown = async (): Promise<void> => {
+    await session.close();
     await indexer.stop();
     await server.close();
+    store.close();
+    lock.release();
     process.exit(0);
   };
   process.once('SIGINT', () => void shutdown());
   process.once('SIGTERM', () => void shutdown());
+  process.once('SIGHUP', () => void shutdown());
 } catch (error) {
+  lock.release();
   console.error(`IDE core failed to start: ${(error as Error).message}`);
   process.exit(1);
 }
