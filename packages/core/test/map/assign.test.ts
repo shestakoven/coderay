@@ -90,6 +90,56 @@ describe('assignFiles', () => {
     const result = assign(['tools/gen.ts'], { rule: { kind: 'threshold', min: 0.9 } });
     expect([result.pending, result.unassigned]).toEqual([['tools/gen.ts'], []]);
   });
+
+  it('matches a "dir/**" AI glob by prefix, and not a sibling directory that merely starts with the same name', () => {
+    const result = assign(['src/apiExtra/file.ts']);
+    expect(result.owner.get('src/apiExtra/file.ts')).toBeUndefined();
+    expect(assign(['src/api/nested/deep/file.ts']).owner.get('src/api/nested/deep/file.ts')).toBe('ai:api');
+  });
+
+  it('matches a "**" AI glob against any path', () => {
+    const catchAll = ai('ai:catchall', [], ['**']);
+    const result = assignFiles({
+      paths: [...catchAll.files, 'anything/at/all.ts'],
+      ai: [catchAll],
+      manualOwner: new Map(),
+      imports: new Map(),
+      vector: () => undefined,
+      rule: null,
+    });
+    expect(result.owner.get('anything/at/all.ts')).toBe('ai:catchall');
+  });
+
+  it('falls back to a general glob matcher for a stored AI glob of any other shape', () => {
+    const custom = ai('ai:custom', [], ['tools/*.ts']);
+    const result = assignFiles({
+      paths: [...custom.files, 'tools/gen.ts', 'tools/nested/gen.ts'],
+      ai: [custom],
+      manualOwner: new Map(),
+      imports: new Map(),
+      vector: () => undefined,
+      rule: null,
+    });
+    expect([result.owner.get('tools/gen.ts'), result.owner.get('tools/nested/gen.ts')]).toEqual(['ai:custom', undefined]);
+  });
+
+  it('places 2,000 files under 300 "dir/**" AI globs well under the cost of a general glob matcher', () => {
+    const components = Array.from({ length: 300 }, (_, i) => ai(`ai:d${i}`, [], [`d${i}/**`]));
+    const paths = Array.from({ length: 2000 }, (_, i) => `d${i % 300}/f${i}.ts`);
+    const start = performance.now();
+    const result = assignFiles({
+      paths,
+      ai: components,
+      manualOwner: new Map(),
+      imports: new Map(),
+      vector: () => undefined,
+      rule: null,
+    });
+    const elapsed = performance.now() - start;
+    expect(elapsed).toBeLessThan(200);
+    expect(result.owner.get('d17/f17.ts')).toBe('ai:d17');
+    expect(result.unassigned).toEqual([]);
+  });
 });
 
 describe('nearestComponent', () => {

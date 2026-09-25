@@ -118,10 +118,17 @@ function globOwner(path: string, ai: AiComponent[]): string | undefined {
   let best: { id: string; length: number } | undefined;
   for (const component of ai) {
     for (const glob of component.globs) {
-      if (posix.matchesGlob(path, glob) && (!best || glob.length > best.length)) best = { id: component.id, length: glob.length };
+      if (ownsPath(path, glob) && (!best || glob.length > best.length)) best = { id: component.id, length: glob.length };
     }
   }
   return best?.id;
+}
+
+// ownedGlobs (component-map.ts) only ever stores "dir/**" or "**"; a prefix check avoids the cost of a general glob matcher on the hot path.
+function ownsPath(path: string, glob: string): boolean {
+  if (glob === '**') return true;
+  if (glob.endsWith('/**')) return path.startsWith(glob.slice(0, -2));
+  return posix.matchesGlob(path, glob);
 }
 
 function membersOf(owner: ReadonlyMap<string, string>, ids: ReadonlySet<string>): Pick<AiComponent, 'id' | 'files'>[] {

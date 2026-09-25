@@ -53,6 +53,7 @@ function groupingChip({ sending }: MapStatus): StatusChip {
   return {
     text: `grouping… sent ${sending.paths} paths, ${sending.symbols} symbol names, ${sending.links} dependency counts`,
     tone: 'muted',
-    title: 'Haiku receives file paths, exported symbol names and import counts between groups. File contents are never sent.',
+    title:
+      'Haiku receives the project name, file paths, exported symbol names, import counts between groups, and the names and summaries of previous components. File contents are never sent.',
   };
 }

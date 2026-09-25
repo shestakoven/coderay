@@ -13,6 +13,7 @@ export function matchManual(
   manual: ManualComponent[],
   assignments: ReadonlyMap<string, string>,
   knownIds: ReadonlySet<string>,
+  glob: (path: string) => string | undefined = (path) => manualGlobOwner(path, manual),
 ): ManualEvidence {
   const owner = new Map<string, string>();
   const dangling: string[] = [];
@@ -23,10 +24,14 @@ export function matchManual(
       continue;
     }
     if (assigned !== undefined) dangling.push(path);
-    const component = manual.find((m) => m.files.includes(path) || m.globs.some((glob) => posix.matchesGlob(path, glob)));
-    if (component) owner.set(path, component.id);
+    const id = glob(path);
+    if (id) owner.set(path, id);
   }
   return { owner, dangling };
+}
+
+export function manualGlobOwner(path: string, manual: ManualComponent[]): string | undefined {
+  return manual.find((m) => m.files.includes(path) || m.globs.some((glob) => posix.matchesGlob(path, glob)))?.id;
 }
 
 export function ownedGlobs(components: Pick<AiComponent, 'id' | 'files'>[], allPaths: string[]): Map<string, string[]> {

@@ -47,7 +47,8 @@ describe('describeMapStatus', () => {
     expect(chips[1]).toEqual({
       text: 'grouping… sent 92 paths, 240 symbol names, 31 dependency counts',
       tone: 'muted',
-      title: 'Haiku receives file paths, exported symbol names and import counts between groups. File contents are never sent.',
+      title:
+        'Haiku receives the project name, file paths, exported symbol names, import counts between groups, and the names and summaries of previous components. File contents are never sent.',
     });
   });
 

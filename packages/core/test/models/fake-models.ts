@@ -14,7 +14,8 @@ export interface FakeEmbedOptions {
 export class FakeEmbedModel implements EmbedModel {
   readonly id: string;
   readonly calls: string[][] = [];
-  private readonly current: EmbedStatus;
+  private current: EmbedStatus;
+  private readonly listeners = new Set<(status: EmbedStatus) => void>();
   private readonly alias: Record<string, string>;
   private readonly dirs = new Map<string, number>();
   private gate: Promise<void> | undefined;
@@ -29,8 +30,14 @@ export class FakeEmbedModel implements EmbedModel {
     return this.current;
   }
 
-  onStatus(): () => void {
-    return () => undefined;
+  onStatus(listener: (status: EmbedStatus) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  setStatus(status: EmbedStatus): void {
+    this.current = status;
+    for (const listener of this.listeners) listener(status);
   }
 
   hold(): () => void {

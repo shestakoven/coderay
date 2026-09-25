@@ -48,6 +48,42 @@ describe('map.json', () => {
     expect(written).toEqual(await readMapFile(root));
   });
 
+  it('strips bidi overrides and zero-width characters from a loaded component and bounds an over-long summary', async () => {
+    const root = await rootWithMap(
+      JSON.stringify({
+        version: 1,
+        components: [{ ...API, name: 'Map\u200bUI\u202e Core', summary: 'y'.repeat(200) }],
+        manual: [{ id: 'auth', name: 'Auth\u200bentication', files: [], globs: [] }],
+      }),
+    );
+    const read = await readMapFile(root);
+    expect(read.ai?.[0]).toMatchObject({ name: 'MapUI Core', summary: 'y'.repeat(120) });
+    expect(read.manual[0]?.name).toBe('Authentication');
+  });
+
+  it('never splits a surrogate pair when bounding a summary to its max length', async () => {
+    const summary = `${'a'.repeat(119)}\u{1F600}`;
+    const root = await rootWithMap(JSON.stringify({ version: 1, components: [{ ...API, summary }] }));
+    const cleaned = (await readMapFile(root)).ai?.[0]?.summary ?? '';
+    expect(cleaned).toBe('a'.repeat(119));
+    expect(/[\ud800-\udbff]$/.test(cleaned)).toBe(false);
+  });
+
+  it('normalizes an AI component id whose invisible characters can simply be stripped, and rejects one whose shape stays unsafe', async () => {
+    const root = await rootWithMap(
+      JSON.stringify({
+        version: 1,
+        components: [
+          { ...API, id: 'ai:\u200bapi' },
+          { ...API, id: 'ai:Not Safe!', name: 'Other' },
+        ],
+      }),
+    );
+    const read = await readMapFile(root);
+    expect(read.ai?.map((component) => component.id)).toEqual(['ai:api']);
+    expect(read.warnings).toEqual(['.ide/map.json: components[1] is invalid; it was ignored']);
+  });
+
   it('ignores an invalid manual entry and says why', async () => {
     const root = await rootWithMap(
       JSON.stringify({

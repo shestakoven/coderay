@@ -361,17 +361,29 @@ function withStableIds(drafts: Draft[], previous: AiComponent[], reservedIds: st
   });
 }
 
-function clean(value: unknown, max: number): string {
+export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+const INVISIBLE_CHARS = /[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff]/g;
+
+export function clean(value: unknown, max: number): string {
   if (typeof value !== 'string') return '';
-  return value
-    .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, max)
-    .trim();
+  return boundedSlice(
+    value
+      .replace(/[\u0000-\u001f\u007f-\u009f]/g, ' ')
+      .replace(INVISIBLE_CHARS, '')
+      .replace(/\s+/g, ' ')
+      .trim(),
+    max,
+  ).trim();
 }
 
-const cleanName = (value: unknown): string =>
+// Never cuts between the two code units of a surrogate pair.
+function boundedSlice(value: string, max: number): string {
+  if (value.length <= max) return value;
+  const code = value.charCodeAt(max - 1);
+  return value.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
+}
+
+export const cleanName = (value: unknown): string =>
   clean(value, NAME_MAX)
     .replace(/[^A-Za-z0-9 &/+.()'-]/g, '')
     .replace(/^[^A-Za-z0-9]+/, '')

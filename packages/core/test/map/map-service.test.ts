@@ -383,6 +383,35 @@ describe('MapService', () => {
     expect([running.grouping, running.sending, service.view().status.sending]).toEqual(['running', { paths: 6, symbols: 0, links: 0 }, null]);
   });
 
+  it('publishes an embedding status change even while the pass it started is still running', async () => {
+    const embed = new FakeEmbedModel({ status: { state: 'downloading', bytes: 1000 } });
+    const release = embed.hold();
+    let changes = 0;
+    const root = tempDir('ide-map-');
+    await writeTree(root, PROJECT);
+    const service = new MapService({
+      root,
+      projectName: 'demo',
+      stateDir: tempDir('ide-state-'),
+      reasoning: new ScriptedModel(componentsPerDirectory),
+      embed,
+      isAgentIdle: () => true,
+      onChange: () => (changes += 1),
+      mapPollMs: 20,
+    });
+    services.push(service);
+    await service.start(filesOf(PROJECT), []);
+    await waitFor(() => embed.calls.length === 1, 'embedding started');
+    service.view();
+    changes = 0;
+
+    embed.setStatus({ state: 'ready' });
+
+    expect(changes).toBeGreaterThan(0);
+    release();
+    await service.idle();
+  });
+
   it('does not group a project with more files than AI grouping allows', async () => {
     const reasoning = new ScriptedModel(componentsPerDirectory);
     const root = tempDir('ide-map-');

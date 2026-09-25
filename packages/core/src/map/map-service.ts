@@ -6,7 +6,7 @@ import { isRecord, parseJson } from '../json';
 import type { IndexedFile } from '../model';
 import type { EmbedModel, StructuredModel } from '../models/types';
 import { aiCentroids, assignFiles, EMBEDDING_RULE } from './assign';
-import { matchManual, ownedGlobs, projectComponents } from './component-map';
+import { manualGlobOwner as globOwnerOf, matchManual, ownedGlobs, projectComponents } from './component-map';
 import { checkRule, residualSamples, type EmbeddingRule, type RuleCheck } from './embedding-check';
 import { EmbeddingIndex } from './embedding-index';
 import { groupFiles, MAX_AI_FILES } from './grouping';
@@ -85,6 +85,8 @@ export class MapService {
   private started = false;
   private stopped = false;
   private published = '';
+  private manualGlobMemoHash: string | null | undefined = undefined;
+  private readonly manualGlobMemo = new Map<string, string | undefined>();
 
   constructor(options: MapServiceOptions) {
     this.options = options;
@@ -105,7 +107,10 @@ export class MapService {
       stateFile: join(options.stateDir, 'regroup-state.json'),
       cooldownMs: options.cooldownMs,
     });
-    this.unsubscribe = options.embed.onStatus(() => this.refresh());
+    this.unsubscribe = options.embed.onStatus(() => {
+      this.publishIfChanged();
+      this.refresh();
+    });
   }
 
   async start(files: IndexedFile[], edges: FileEdge[]): Promise<void> {
@@ -478,7 +483,20 @@ export class MapService {
       map.manual,
       map.assignments,
       knownIds,
+      (path) => this.manualGlobOwner(path, map),
     );
+  }
+
+  // manualGlobOwner depends only on map.manual, so it can be memoized per path for as long as map.hash does not change.
+  private manualGlobOwner(path: string, map: MapFileData): string | undefined {
+    if (this.manualGlobMemoHash !== map.hash) {
+      this.manualGlobMemoHash = map.hash;
+      this.manualGlobMemo.clear();
+    }
+    if (this.manualGlobMemo.has(path)) return this.manualGlobMemo.get(path);
+    const id = globOwnerOf(path, map.manual);
+    this.manualGlobMemo.set(path, id);
+    return id;
   }
 
   // Globs come from the files the grouping saw, so a file created or deleted meanwhile does not unsettle them.

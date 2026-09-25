@@ -3,6 +3,7 @@ import { statSync, type Stats } from 'node:fs';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { isRecord, parseJson } from '../json';
+import { clean, cleanName, DESCRIPTION_MAX, NAME_MAX, SLUG_PATTERN, SUMMARY_MAX } from './grouping';
 
 export const MAP_FILE = '.ide/map.json';
 const RESERVED_ID_PREFIXES = ['ai:', 'folder:'];
@@ -176,27 +177,25 @@ function unreadable(problem: string, hash: string | null): MapFileData {
 
 function toManual(value: unknown): ManualComponent | null {
   if (!isRecord(value)) return null;
-  const { id, name } = value;
   const files = optionalStrings(value.files);
   const globs = optionalStrings(value.globs);
-  if (typeof id !== 'string' || id === '' || typeof name !== 'string' || name === '' || !files || !globs) return null;
+  const id = clean(value.id, NAME_MAX);
+  const name = cleanName(value.name);
+  if (id === '' || name === '' || !files || !globs) return null;
   if (RESERVED_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return null;
-  return { id, name, summary: text(value.summary), description: text(value.description), files, globs };
+  return { id, name, summary: clean(value.summary, SUMMARY_MAX), description: clean(value.description, DESCRIPTION_MAX), files, globs };
 }
 
 function toAi(value: unknown): AiComponent | null {
   if (!isRecord(value)) return null;
-  const { id, name } = value;
   const files = optionalStrings(value.files);
   const keyFiles = optionalStrings(value.keyFiles);
   const globs = optionalStrings(value.globs);
-  if (typeof id !== 'string' || !id.startsWith('ai:') || typeof name !== 'string' || name === '' || !files || !keyFiles || !globs) {
-    return null;
-  }
-  return { id, name, summary: text(value.summary), description: text(value.description), keyFiles, files, globs };
+  const id = clean(value.id, NAME_MAX);
+  const name = cleanName(value.name);
+  if (!id.startsWith('ai:') || !SLUG_PATTERN.test(id.slice(3)) || name === '' || !files || !keyFiles || !globs) return null;
+  return { id, name, summary: clean(value.summary, SUMMARY_MAX), description: clean(value.description, DESCRIPTION_MAX), keyFiles, files, globs };
 }
-
-const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 
 function optionalStrings(value: unknown): string[] | null {
   if (value === undefined) return [];
