@@ -1,4 +1,5 @@
-import { posix } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { join, posix } from 'node:path';
 import type {
   C4Container,
   C4Evidence,
@@ -14,7 +15,7 @@ import type { IndexedFile } from '../model';
 import { readDeploy, type ServiceDef } from './deploy';
 
 // POC stand-in for the Haiku classification of identifiers (spec §5.2): names only, no values.
-const SYSTEMS: Record<string, { name: string; kind: ExternalKind }> = {
+const SYSTEMS: Record<string, { name: string; kind: ExternalKind; protocol?: string }> = {
   postgresql: { name: 'PostgreSQL', kind: 'database' },
   nats: { name: 'NATS', kind: 'broker' },
   minio: { name: 'MinIO', kind: 'storage' },
@@ -27,7 +28,63 @@ const SYSTEMS: Record<string, { name: string; kind: ExternalKind }> = {
   rabbitmq: { name: 'RabbitMQ', kind: 'broker' },
   mlflow: { name: 'MLflow', kind: 'ml' },
   llm: { name: 'LLM providers', kind: 'ai' },
+  microsoft365: { name: 'Microsoft 365', kind: 'source' },
+  google: { name: 'Google Workspace', kind: 'source' },
+  atlassian: { name: 'Atlassian', kind: 'source' },
+  asana: { name: 'Asana', kind: 'source' },
+  box: { name: 'Box', kind: 'source' },
+  clickup: { name: 'ClickUp', kind: 'source' },
+  discord: { name: 'Discord', kind: 'source' },
+  docusign: { name: 'DocuSign', kind: 'source' },
+  fireflies: { name: 'Fireflies', kind: 'source' },
+  gitbook: { name: 'GitBook', kind: 'source' },
+  monday: { name: 'monday.com', kind: 'source' },
+  notion: { name: 'Notion', kind: 'source' },
+  servicenow: { name: 'ServiceNow', kind: 'source' },
+  webex: { name: 'Webex', kind: 'source' },
+  zoom: { name: 'Zoom', kind: 'source' },
+  slack: { name: 'Slack', kind: 'source' },
+  s3: { name: 'Amazon S3', kind: 'source', protocol: 'S3' },
+  smb: { name: 'SMB file shares', kind: 'source', protocol: 'SMB' },
+  sftp: { name: 'SFTP servers', kind: 'source', protocol: 'SFTP' },
+  ldap: { name: 'Active Directory', kind: 'source', protocol: 'LDAP' },
 };
+
+const HOST_RULES: [RegExp, string][] = [
+  [/(^|\.)(graph\.microsoft\.com|login\.microsoftonline\.com|sharepoint\.com)$/, 'microsoft365'],
+  [/(^|\.)googleapis\.com$/, 'google'],
+  [/(^|\.)atlassian\.com$/, 'atlassian'],
+  [/(^|\.)asana\.com$/, 'asana'],
+  [/(^|\.)box\.com$/, 'box'],
+  [/(^|\.)clickup\.com$/, 'clickup'],
+  [/(^|\.)discord\.com$/, 'discord'],
+  [/(^|\.)docusign\.(net|com)$/, 'docusign'],
+  [/(^|\.)fireflies\.ai$/, 'fireflies'],
+  [/(^|\.)gitbook\.com$/, 'gitbook'],
+  [/(^|\.)monday\.com$/, 'monday'],
+  [/(^|\.)notion\.com$/, 'notion'],
+  [/(^|\.)service-now\.com$/, 'servicenow'],
+  [/(^|\.)webexapis\.com$/, 'webex'],
+  [/(^|\.)zoom\.us$/, 'zoom'],
+  [/(^|\.)firecrawl\.dev$/, 'firecrawl'],
+];
+
+// Literal URL hosts are names like package names; file contents never leave this process.
+const URL_LITERAL = /['"`]https?:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi;
+const literalHosts = new Map<string, { hash: string; hosts: string[] }>();
+
+function hostsIn(root: string, file: IndexedFile): string[] {
+  const cached = literalHosts.get(file.path);
+  if (cached?.hash === file.contentHash) return cached.hosts;
+  let hosts: string[] = [];
+  try {
+    hosts = [...new Set([...readFileSync(join(root, file.path), 'utf8').matchAll(URL_LITERAL)].map((m) => m[1]!.toLowerCase()))];
+  } catch {
+    hosts = [];
+  }
+  literalHosts.set(file.path, { hash: file.contentHash, hosts });
+  return hosts;
+}
 
 const IMAGE_RULES: [RegExp, string][] = [
   [/postgres|vchord|pgvector|timescale|postgis/, 'postgresql'],
@@ -51,8 +108,17 @@ const PACKAGE_RULES: Record<string, string> = {
   pgvector: 'postgresql',
   nats: 'nats',
   minio: 'minio',
-  boto3: 'minio',
-  aioboto3: 'minio',
+  boto3: 's3',
+  aioboto3: 's3',
+  botocore: 's3',
+  msal: 'microsoft365',
+  googleapiclient: 'google',
+  google: 'google',
+  slack_sdk: 'slack',
+  smbprotocol: 'smb',
+  smbclient: 'smb',
+  paramiko: 'sftp',
+  ldap3: 'ldap',
   litellm: 'llm',
   openai: 'llm',
   anthropic: 'llm',
@@ -88,6 +154,7 @@ const KIND_PROTOCOL: Record<ExternalKind, string> = {
   email: 'SMTP',
   cache: 'Redis',
   ml: 'HTTP',
+  source: 'API',
   other: 'uses',
 };
 
@@ -226,6 +293,9 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
 
   const byFile = new Map(files.map((f) => [f.path, f]));
   const linkedServices = new Set<string>();
+  const codeContainers = containers.filter((c) => c.files > 0).length;
+  const fileReach = new Map<string, number>();
+  for (const closure of closures.values()) for (const path of closure) fileReach.set(path, (fileReach.get(path) ?? 0) + 1);
   const containerNames = new Set(containers.map((c) => c.name));
   for (const container of containers) {
     for (const path of closures.get(container.name) ?? []) {
@@ -234,6 +304,16 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
         if (!system) continue;
         const to = addExternal(system, packageOf(specifier));
         link(container.id, to, protocolFor(externals.get(to)!), { path, note: `imports ${packageOf(specifier)}` });
+      }
+      const file = byFile.get(path);
+      // A URL in a module every container loads (settings) is configuration, not a call.
+      const everywhere = codeContainers > 2 && (fileReach.get(path) ?? 0) >= codeContainers;
+      const test = /(^|\/)(tests?|__tests__)\/|(^|\/)test_[^/]*\.py$|\.(test|spec)\.[jt]sx?$/.test(path);
+      for (const host of file && !everywhere && !test ? hostsIn(root, file) : []) {
+        const system = HOST_RULES.find(([pattern]) => pattern.test(host))?.[1];
+        if (!system) continue;
+        const to = addExternal(system, host);
+        link(container.id, to, protocolFor(externals.get(to)!), { path, note: `calls ${host}` });
       }
     }
     for (const def of deploy.services.get(container.name) ?? []) {
@@ -354,7 +434,8 @@ function packageOf(specifier: string): string {
 }
 
 function protocolFor(external: C4External): string {
-  return external.kind === 'broker' ? external.name : KIND_PROTOCOL[external.kind];
+  if (external.kind === 'broker') return external.name;
+  return SYSTEMS[external.id.slice('ext:'.length)]?.protocol ?? KIND_PROTOCOL[external.kind];
 }
 
 function hostOf(key: string, value: string, services: Map<string, ServiceDef[]>): { host: string; scheme: string } | null {

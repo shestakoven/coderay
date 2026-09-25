@@ -14,6 +14,7 @@ export type C4NodeData = {
   expanded?: boolean;
   warn?: boolean;
   slim?: boolean;
+  external?: boolean;
 };
 
 export type C4FlowNode = Node<C4NodeData, Exclude<C4Kind, 'group'> | 'c4group'>;
@@ -67,6 +68,7 @@ const KIND_ICON: Record<ExternalKind, string> = {
   email: 'mail',
   cache: 'db',
   ml: 'ai',
+  source: 'plug',
   other: 'box',
 };
 const KIND_LABEL: Record<ExternalKind, string> = {
@@ -79,6 +81,7 @@ const KIND_LABEL: Record<ExternalKind, string> = {
   email: 'Email',
   cache: 'Cache',
   ml: 'ML tracking',
+  source: 'Connector',
   other: 'External',
 };
 
@@ -190,12 +193,38 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
     reattach.set(c.id, byComponent);
   }
 
+  const sources = model.externals.filter((e) => e.kind === 'source');
+  const sourceGroup = sources.length >= 3 ? 'extgroup:source' : null;
+  if (sourceGroup) {
+    const open = expanded === sourceGroup;
+    nodes.push({
+      id: sourceGroup,
+      kind: 'group',
+      column: 4,
+      data: {
+        kind: 'group',
+        title: `Connectors ×${sources.length}`,
+        subtitle: 'External data sources',
+        detail: open ? undefined : sources.map((e) => e.name).join(', '),
+        accent: 'var(--c4-external)',
+        icon: 'plug',
+        expanded: open,
+        external: true,
+      },
+    });
+  }
   for (const e of model.externals) {
+    const grouped = sourceGroup && e.kind === 'source';
+    if (grouped && expanded !== sourceGroup) {
+      visibleOf.set(e.id, sourceGroup);
+      continue;
+    }
     nodes.push({
       id: e.id,
       kind: 'external',
+      parentId: grouped ? sourceGroup : undefined,
       column: 4,
-      data: { kind: 'external', title: e.name, subtitle: KIND_LABEL[e.kind], accent: 'var(--c4-external)', icon: KIND_ICON[e.kind] },
+      data: { kind: 'external', title: e.name, subtitle: KIND_LABEL[e.kind], accent: 'var(--c4-external)', icon: KIND_ICON[e.kind], slim: Boolean(grouped) },
     });
     visibleOf.set(e.id, e.id);
   }
@@ -215,13 +244,15 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
     const to = visibleOf.get(link.to);
     if (!from || !to) continue;
     const inner = reattach.get(link.from);
-    if (!inner) {
+    const openGroup = sourceGroup && expanded === sourceGroup && sources.some((e) => e.id === link.to) ? sourceGroup : null;
+    if (!inner && !openGroup) {
       add(from, to, link.protocol, link.strength, link.id);
       continue;
     }
-    add(from, to, link.protocol, link.strength, link.id, 'summary');
-    for (const e of link.evidence) {
-      const child = inner.get(componentOf.get(e.path) ?? '');
+    add(from, openGroup ?? to, link.protocol, link.strength, link.id, 'summary');
+    if (openGroup) add(from, to, link.protocol, link.strength, link.id, 'detail');
+    for (const e of inner ? link.evidence : []) {
+      const child = inner!.get(componentOf.get(e.path) ?? '');
       if (child) add(child, to, link.protocol, 1, link.id, 'detail');
     }
   }

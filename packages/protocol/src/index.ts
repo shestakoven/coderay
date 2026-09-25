@@ -79,7 +79,7 @@ export interface MapStatus {
 
 export type ContainerRole = 'ui' | 'api' | 'worker' | 'service';
 
-export type ExternalKind = 'database' | 'broker' | 'storage' | 'ai' | 'search' | 'documents' | 'email' | 'cache' | 'ml' | 'other';
+export type ExternalKind = 'database' | 'broker' | 'storage' | 'ai' | 'search' | 'documents' | 'email' | 'cache' | 'ml' | 'source' | 'other';
 
 export interface C4Evidence {
   path: string;

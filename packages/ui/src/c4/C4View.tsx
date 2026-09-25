@@ -31,6 +31,7 @@ const ICONS: Record<string, string> = {
   globe: '<circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13"/>',
   mail: '<rect x="1.5" y="3.5" width="13" height="9" rx="1"/><path d="M1.5 4.5l6.5 5 6.5-5"/>',
   box: '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/>',
+  plug: '<path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 0 1-9 0zM8 12v2.5"/>',
   stack: '<rect x="2.5" y="6" width="11" height="7.5" rx="1.5"/><path d="M4 4h8M5.5 2h5"/>',
 };
 
@@ -39,7 +40,7 @@ function Icon({ name }: { name: string }) {
 }
 
 function C4Card({ data, selected }: NodeProps<C4FlowNode>) {
-  const cls = ['c4-card', data.kind, data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', selected && 'selected'].filter(Boolean).join(' ');
+  const cls = ['c4-card', data.kind, data.external && 'external', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', selected && 'selected'].filter(Boolean).join(' ');
   return (
     <div className={cls} style={{ ['--acc' as string]: data.accent }}>
       <Handle type="target" position={Position.Left} />
