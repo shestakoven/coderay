@@ -1,6 +1,6 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { describe, expect, it } from 'vitest';
-import { layoutGraph, NODE_SIZE } from '../src/map/layout';
+import { fitKey, layoutBounds, layoutGraph, NODE_SIZE } from '../src/map/layout';
 import { visibleGraph } from '../src/map/visible-graph';
 import { demoSnapshot } from './snapshot';
 
@@ -30,5 +30,24 @@ describe('layoutGraph', () => {
     expect(container.data.expanded).toBe(true);
     expect(container.width!).toBeGreaterThan(NODE_SIZE.file.width);
     expect(container.height!).toBeGreaterThan(NODE_SIZE.file.height * 2);
+  });
+
+  it('bounds the top-level nodes of a layout', async () => {
+    const { nodes } = await layoutGraph(visibleGraph(demoSnapshot(), new Set()), new Set(), elk);
+    const bounds = layoutBounds(nodes)!;
+    for (const node of nodes) {
+      expect(node.position.x).toBeGreaterThanOrEqual(bounds.x);
+      expect(node.position.y).toBeGreaterThanOrEqual(bounds.y);
+      expect(node.position.x + node.width!).toBeLessThanOrEqual(bounds.x + bounds.width);
+      expect(node.position.y + node.height!).toBeLessThanOrEqual(bounds.y + bounds.height);
+    }
+    expect(layoutBounds([])).toBeNull();
+  });
+
+  it('keys the fit on the top-level components, not on what is expanded', async () => {
+    const collapsed = await layoutGraph(visibleGraph(demoSnapshot(), new Set()), new Set(), elk);
+    const open = await layoutGraph(visibleGraph(demoSnapshot(), expanded), expanded, elk);
+    expect(fitKey(open.nodes)).toBe(fitKey(collapsed.nodes));
+    expect(fitKey(collapsed.nodes)).toBe('folder:src/api\nfolder:src/db');
   });
 });

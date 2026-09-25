@@ -170,4 +170,36 @@ describe('EmbeddingIndex', () => {
 
     expect(index.vector('src/b.ts')).toBeUndefined();
   });
+
+  it('reports progress per batch of missing files and clears it when the pass ends', async () => {
+    const tree = Object.fromEntries(Array.from({ length: 20 }, (_, i) => [`src/f${i}.ts`, `f${i}`]));
+    const { root, cacheFile } = await project(tree);
+    const progress: ({ done: number; total: number } | null)[] = [];
+    const index = new EmbeddingIndex({ root, cacheFile, model: new FakeEmbedModel(), onProgress: (current) => progress.push(current) });
+
+    await index.update(filesOf(tree));
+    expect(progress).toEqual([{ done: 0, total: 20 }, { done: 16, total: 20 }, { done: 20, total: 20 }, null]);
+
+    progress.length = 0;
+    await index.update(filesOf(tree));
+    expect(progress).toEqual([]);
+  });
+
+  it('clears the progress when a pass is aborted', async () => {
+    const tree = { 'src/a.ts': 'a', 'src/b.ts': 'b' };
+    const { root, cacheFile } = await project(tree);
+    const model = new FakeEmbedModel();
+    const release = model.hold();
+    const progress: ({ done: number; total: number } | null)[] = [];
+    const index = new EmbeddingIndex({ root, cacheFile, model, onProgress: (current) => progress.push(current) });
+    const controller = new AbortController();
+
+    const run = index.update(filesOf(tree), controller.signal);
+    await waitFor(() => progress.length > 0, 'pass started');
+    controller.abort();
+    await run.catch(() => undefined);
+    release();
+
+    expect(progress).toEqual([{ done: 0, total: 2 }, null]);
+  });
 });

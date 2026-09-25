@@ -13,7 +13,7 @@ export interface ServerOptions {
   token: string;
   staticDir?: string;
   allowedOrigins?: string[];
-  snapshot: () => MapSnapshot;
+  snapshot: () => MapSnapshot | null;
   greeting?: () => ServerMessage[];
   onClientMessage?: (message: ClientMessage, reply: (message: ServerMessage) => void) => void;
 }
@@ -81,7 +81,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
       }
     });
     try {
-      reply({ type: 'map.snapshot', snapshot: options.snapshot() });
+      const current = options.snapshot();
+      if (current) reply({ type: 'map.snapshot', snapshot: current });
       for (const message of options.greeting?.() ?? []) reply(message);
     } catch (error) {
       console.error('server: greeting failed', error);

@@ -1,3 +1,4 @@
+import { join } from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTypeScriptAdapter } from '../../src/lang/typescript';
 import type { LanguageAdapter } from '../../src/lang/types';
@@ -94,6 +95,57 @@ describe('TypeScript adapter', () => {
 
       expect(withBrokenConfig.resolve('src/main.ts', './a', existing('src/a.ts'))).toBe('src/a.ts');
       expect(warn).toHaveBeenCalledWith(expect.stringContaining('typescript: ignoring tsconfig paths:'));
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('resolves aliases from the nearest tsconfig.json and the configs it references', async () => {
+    const root = tempDir('ide-tsconfig-');
+    await writeTree(root, {
+      'tsconfig.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '#root/*': ['shared/*'] } } }),
+      'frontend/tsconfig.json': JSON.stringify({ files: [], references: [{ path: './tsconfig.app.json' }] }),
+      'frontend/tsconfig.app.json': '{\n  // comments are allowed\n  "compilerOptions": { "baseUrl": ".", "paths": { "@/*": ["src/*"] } }\n}\n',
+      'admin/tsconfig.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['lib/*'] } } }),
+    });
+
+    const packages = await createTypeScriptAdapter(root);
+
+    expect(packages.resolve('frontend/src/pages/home.tsx', '@/components/button', existing('frontend/src/components/button.tsx'))).toBe(
+      'frontend/src/components/button.tsx',
+    );
+    expect(packages.resolve('admin/lib/app.ts', '@/util', existing('admin/lib/util.ts'))).toBe('admin/lib/util.ts');
+    expect(packages.resolve('shared/a.ts', '#root/b', existing('shared/b.ts'))).toBe('shared/b.ts');
+    expect(packages.resolve('frontend/src/a.ts', '#root/b', existing('shared/b.ts'))).toBeNull();
+  });
+
+  it('ignores a tsconfig.json above the project root', async () => {
+    const parent = tempDir('ide-tsconfig-parent-');
+    await writeTree(parent, {
+      'tsconfig.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['project/src/*'] } } }),
+      'project/src/x.ts': 'export const x = 1;',
+    });
+
+    const inner = await createTypeScriptAdapter(join(parent, 'project'));
+
+    expect(inner.resolve('src/main.ts', '@/x', existing('src/x.ts'))).toBeNull();
+  });
+
+  it('skips a referenced tsconfig that cannot be read, warns once, and keeps the other configs', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const root = tempDir('ide-tsconfig-');
+      await writeTree(root, {
+        'tsconfig.json': JSON.stringify({ files: [], references: [{ path: './missing' }, { path: './tsconfig.app.json' }] }),
+        'tsconfig.app.json': JSON.stringify({ compilerOptions: { baseUrl: '.', paths: { '@/*': ['src/*'] } } }),
+      });
+
+      const withMissing = await createTypeScriptAdapter(root);
+
+      expect(withMissing.resolve('src/main.ts', '@/a', existing('src/a.ts'))).toBe('src/a.ts');
+      expect(withMissing.resolve('src/deep/main.ts', '@/a', existing('src/a.ts'))).toBe('src/a.ts');
+      const warnings = warn.mock.calls.filter(([message]) => String(message).startsWith('typescript: ignoring tsconfig paths:'));
+      expect(warnings).toHaveLength(1);
     } finally {
       warn.mockRestore();
     }

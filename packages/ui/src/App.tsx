@@ -1,13 +1,13 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ClientMessage, SettingsView } from '@ide/protocol';
+import type { ClientMessage, MapProgress, SettingsView } from '@ide/protocol';
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
 import { C4View } from './c4/C4View';
-import { describeMapStatus } from './map/status';
+import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
@@ -21,6 +21,7 @@ export function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [view, setView] = useState<'c4' | 'components'>('c4');
+  const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
   const connection = useRef<Connection | null>(null);
 
   useEffect(() => {
@@ -37,6 +38,9 @@ export function App() {
       switch (message.type) {
         case 'map.snapshot':
           dispatch({ type: 'snapshot', snapshot: message.snapshot });
+          break;
+        case 'map.progress':
+          setProgress(message.progress);
           break;
         case 'session.snapshot':
           dispatchChat({ type: 'snapshot', state: message.state });
@@ -92,12 +96,11 @@ export function App() {
             {snapshot.files.length} files · {snapshot.components.length} components
           </span>
         )}
-        {snapshot &&
-          describeMapStatus(snapshot.status).map((chip) => (
-            <span key={chip.text} className={`chip ${chip.tone}`} title={chip.title}>
-              {chip.text}
-            </span>
-          ))}
+        {[...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].map((chip) => (
+          <span key={chip.text} className={`chip ${chip.tone}`} title={chip.title}>
+            {chip.text}
+          </span>
+        ))}
         {snapshot?.c4 && (
           <span className="view-switch">
             <button className={view === 'c4' ? 'on' : ''} onClick={() => setView('c4')}>C4</button>

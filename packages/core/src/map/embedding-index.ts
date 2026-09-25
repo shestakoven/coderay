@@ -19,6 +19,7 @@ export interface EmbeddingIndexOptions {
   cacheFile: string;
   model: EmbedModel;
   saveDelayMs?: number;
+  onProgress?: (progress: { done: number; total: number } | null) => void;
 }
 
 interface Missing {
@@ -33,6 +34,7 @@ export class EmbeddingIndex {
   private readonly cacheFile: string;
   private readonly model: EmbedModel;
   private readonly saveDelayMs: number;
+  private readonly onProgress: ((progress: { done: number; total: number } | null) => void) | undefined;
   private readonly cache = new Map<string, Float32Array>();
   private readonly keyOf = new Map<string, string>();
   private readonly hashOf = new Map<string, string>();
@@ -46,6 +48,7 @@ export class EmbeddingIndex {
     this.cacheFile = options.cacheFile;
     this.model = options.model;
     this.saveDelayMs = options.saveDelayMs ?? SAVE_DELAY_MS;
+    this.onProgress = options.onProgress;
   }
 
   async load(): Promise<void> {
@@ -105,16 +108,23 @@ export class EmbeddingIndex {
       if (this.cache.has(key)) this.remember(file.path, file.contentHash, key);
       else missing.push({ path: file.path, hash: file.contentHash, key, text });
     }
-    for (let start = 0; start < missing.length; start += BATCH_SIZE) {
-      const batch = missing.slice(start, start + BATCH_SIZE);
-      const vectors = await untilAborted(this.model.embed(batch.map((entry) => entry.text)), signal);
-      batch.forEach((entry, i) => {
-        const vector = vectors[i];
-        if (!vector) return;
-        this.cache.set(entry.key, vector);
-        this.remember(entry.path, entry.hash, entry.key);
-      });
-      this.scheduleSave();
+    if (missing.length === 0) return;
+    this.onProgress?.({ done: 0, total: missing.length });
+    try {
+      for (let start = 0; start < missing.length; start += BATCH_SIZE) {
+        const batch = missing.slice(start, start + BATCH_SIZE);
+        const vectors = await untilAborted(this.model.embed(batch.map((entry) => entry.text)), signal);
+        batch.forEach((entry, i) => {
+          const vector = vectors[i];
+          if (!vector) return;
+          this.cache.set(entry.key, vector);
+          this.remember(entry.path, entry.hash, entry.key);
+        });
+        this.scheduleSave();
+        this.onProgress?.({ done: Math.min(start + BATCH_SIZE, missing.length), total: missing.length });
+      }
+    } finally {
+      this.onProgress?.(null);
     }
   }
 

@@ -16,6 +16,7 @@ import { buildC4 } from './c4/model';
 import { McpRegistry } from './mcp/registry';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
+import { ProgressReporter } from './progress';
 import { startServer, type RunningServer } from './server/server';
 import { openStore } from './store/store';
 
@@ -57,11 +58,6 @@ if (!lock.acquired) {
 const token = randomBytes(24).toString('base64url');
 
 try {
-  const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
-  const indexer = new Indexer({ root, adapters });
-  await indexer.start();
-  await removeStaleModelDirs(runDir(home));
-
   const store = openStore(projectDir(home, root));
   const registry = new McpRegistry({ home, root });
   const session = new AgentSession({
@@ -70,6 +66,7 @@ try {
     mcpServers: () => registry.sessionServers(),
   });
   await session.start();
+  const models = createModelProvider(home);
 
   const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: registry.view() });
 
@@ -91,6 +88,11 @@ try {
   };
 
   let server: RunningServer | undefined;
+  let closing: Promise<void> | undefined;
+  let snapshot: MapSnapshot | undefined;
+  let indexer: Indexer | undefined;
+  let mapService: MapService | undefined;
+  const progress = new ProgressReporter((current) => server?.broadcast({ type: 'map.progress', progress: current }));
 
   const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
     switch (message.type) {
@@ -125,45 +127,17 @@ try {
     }
   };
 
-  let closing: Promise<void> | undefined;
-
-  let files = indexer.files();
-  let edges = computeFileEdges(files, adapters);
-  let version = 0;
-  let snapshot: MapSnapshot | undefined;
-  const publish = (): MapSnapshot => {
-    version += 1;
-    const view = mapService.view();
-    snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: buildC4(root, files, edges, view.components) };
-    server?.broadcast({ type: 'map.snapshot', snapshot });
-    return snapshot;
-  };
-
-  const models = createModelProvider(home);
-  const mapService = new MapService({
-    root,
-    projectName,
-    stateDir: projectDir(home, root),
-    reasoning: models.reasoning,
-    embed: models.embed,
-    isAgentIdle: () => true,
-    onChange: publish,
-  });
-  indexer.onChange(() => {
-    files = indexer.files();
-    edges = computeFileEdges(files, adapters);
-    mapService.update(files, edges);
-    if (snapshot) publish();
-  });
-  await mapService.start(files, edges);
-  const initial = publish();
   const running = await startServer({
     port,
     token,
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
-    snapshot: () => snapshot ?? initial,
-    greeting: () => [{ type: 'session.snapshot', state: session.state() }, settingsSnapshot()],
+    snapshot: () => snapshot ?? null,
+    greeting: () => [
+      { type: 'map.progress', progress: progress.get() },
+      { type: 'session.snapshot', state: session.state() },
+      settingsSnapshot(),
+    ],
     onClientMessage: (message, reply) => {
       if (closing) {
         reply({ type: 'error', message: 'The IDE core is shutting down.' });
@@ -175,18 +149,13 @@ try {
   server = running;
   session.onMessage((message) => running.broadcast(message));
 
-  console.log(`IDE core: ${root}`);
-  console.log(`  ${initial.files.length} files, ${initial.components.length} components (${initial.status.layer} map)`);
-  console.log(`  agent: ${values.claude} (unguarded until Plan 4) · IDE home: ${home}`);
-  if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
-  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
-
   const shutdown = async (): Promise<void> => {
     await session.close();
-    const stopping = mapService.stop();
+    progress.stop();
+    const stopping = mapService?.stop();
     await models.close();
     await stopping;
-    await indexer.stop();
+    await indexer?.stop();
     await running.close();
     store.close();
     lock.release();
@@ -201,6 +170,55 @@ try {
       }
       closing ??= shutdown();
     });
+  }
+
+  console.log(`IDE core: ${root}`);
+  console.log(`  agent: ${values.claude} (unguarded until Plan 4) · IDE home: ${home}`);
+  if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
+  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+
+  progress.set({ indexing: { indexed: 0 } });
+  const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
+  const index = new Indexer({ root, adapters, onProgress: (indexed) => progress.set({ indexing: { indexed } }) });
+  indexer = index;
+  await index.start();
+  progress.set({ indexing: null });
+  await removeStaleModelDirs(runDir(home));
+
+  // A shutdown that began while indexing must not start the map service, whose model calls it could no longer stop.
+  if (!closing) {
+    let files = index.files();
+    let edges = computeFileEdges(files, adapters);
+    let version = 0;
+    const service = new MapService({
+      root,
+      projectName,
+      stateDir: projectDir(home, root),
+      reasoning: models.reasoning,
+      embed: models.embed,
+      isAgentIdle: () => true,
+      onChange: () => publish(),
+      onEmbeddingProgress: (embedding) => progress.set({ embedding }),
+    });
+    mapService = service;
+    function publish(): MapSnapshot {
+      version += 1;
+      const view = service.view();
+      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: buildC4(root, files, edges, view.components) };
+      running.broadcast({ type: 'map.snapshot', snapshot });
+      return snapshot;
+    }
+    index.onChange(() => {
+      files = index.files();
+      edges = computeFileEdges(files, adapters);
+      service.update(files, edges);
+      if (snapshot) publish();
+    });
+    await service.start(files, edges);
+    if (!closing) {
+      const initial = publish();
+      console.log(`  ${initial.files.length} files, ${initial.components.length} components (${initial.status.layer} map)`);
+    }
   }
 } catch (error) {
   lock.release();

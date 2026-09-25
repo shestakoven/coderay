@@ -276,4 +276,18 @@ describe('Indexer', () => {
     await waitFor(() => batches.flat().includes('src/a.ts'), 'src/a.ts reported');
     expect(paths()).toEqual(['src/a.ts']);
   });
+
+  it('reports the running file count during the initial scan only', async () => {
+    const counts: number[] = [];
+    const context = await startIndexer(
+      { 'src/a.ts': 'export const a = 1;', 'src/b.ts': 'export const b = 2;', 'README.md': '# readme' },
+      { onProgress: (indexed) => counts.push(indexed) },
+    );
+    expect(counts).toEqual([1, 2]);
+
+    await awaitLiveWatcher(context, 'src');
+    await writeFile(join(context.root, 'src/c.ts'), 'export const c = 3;');
+    await waitFor(() => context.batches.flat().includes('src/c.ts'), 'src/c.ts reported');
+    expect(counts).toEqual([1, 2]);
+  });
 });

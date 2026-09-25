@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { MapStatus } from '@ide/protocol';
-import { describeMapStatus } from '../src/map/status';
+import { describeMapStatus, describeProgress } from '../src/map/status';
 import { folderStatus } from './snapshot';
 
 const status = (overrides: Partial<MapStatus>): MapStatus => ({ ...folderStatus, ...overrides });
@@ -66,6 +66,21 @@ describe('describeMapStatus', () => {
     expect(describeMapStatus(failed)).toEqual([
       { text: 'folder map', tone: 'muted', title: 'Components are folders until an AI grouping succeeds' },
       { text: 'grouping failed', tone: 'error', title: 'not logged in' },
+    ]);
+  });
+});
+
+describe('describeProgress', () => {
+  it('shows nothing when nothing runs', () => {
+    expect(describeProgress({ indexing: null, embedding: null })).toEqual([]);
+  });
+
+  it('shows the running file count while indexing and the embedded share during a pass', () => {
+    expect(describeProgress({ indexing: { indexed: 1234 }, embedding: null })).toEqual([
+      { text: 'indexing… 1234 files', tone: 'muted', title: 'Reading and parsing source files; the map appears when this finishes' },
+    ]);
+    expect(describeProgress({ indexing: null, embedding: { done: 640, total: 2879 } })).toEqual([
+      { text: 'embedding 640 / 2879 files', tone: 'muted', title: 'Computing file embeddings with the local model; nothing leaves this machine' },
     ]);
   });
 });
