@@ -86,6 +86,15 @@ export interface MapSnapshot {
   status: MapStatus;
 }
 
-export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot } | SessionServerMessage | SettingsServerMessage;
+export interface MapProgress {
+  indexing: { indexed: number } | null;
+  embedding: { done: number; total: number } | null;
+}
+
+export type ServerMessage =
+  | { type: 'map.snapshot'; snapshot: MapSnapshot }
+  | { type: 'map.progress'; progress: MapProgress }
+  | SessionServerMessage
+  | SettingsServerMessage;
 
 export type ClientMessage = ChatClientMessage | SettingsClientMessage;
