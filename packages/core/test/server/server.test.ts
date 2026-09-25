@@ -204,6 +204,68 @@ describe('server', () => {
     expect(messages.map((message) => message.type)).toEqual(['map.snapshot', 'session.snapshot']);
   });
 
+  it('keeps the connection and the server up when the greeting throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const svr = await startServer({
+        port: 0,
+        token: TOKEN,
+        snapshot: () => snapshot(1),
+        greeting: () => {
+          throw new Error('registry unreadable');
+        },
+        onClientMessage: (message, reply) => reply({ type: 'error', message: 'handled' }),
+      });
+      onTestFinished(() => svr.close());
+
+      const { socket, messages } = await connect({}, svr.port);
+      await waitFor(() => messages[1], 'error after the snapshot');
+      expect(messages[0]).toEqual({ type: 'map.snapshot', snapshot: snapshot(1) });
+      expect(messages[1]).toEqual({ type: 'error', message: 'registry unreadable' });
+      expect(consoleError).toHaveBeenCalledWith('server: greeting failed', expect.any(Error));
+
+      const second = await connect({}, svr.port);
+      await waitFor(() => second.messages[1], 'second client also greeted and errored');
+      expect(second.messages[0]).toEqual({ type: 'map.snapshot', snapshot: snapshot(1) });
+
+      socket.send(JSON.stringify({ type: 'chat.send', text: 'hi' }));
+      await waitFor(() => messages[2], 'reply to a normal message on the first connection');
+      expect(messages[2]).toEqual({ type: 'error', message: 'handled' });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
+  it('keeps the server up when the snapshot throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const svr = await startServer({
+        port: 0,
+        token: TOKEN,
+        snapshot: () => {
+          throw new Error('index unreadable');
+        },
+        onClientMessage: (message, reply) => reply({ type: 'error', message: 'handled' }),
+      });
+      onTestFinished(() => svr.close());
+
+      const { socket, messages } = await connect({}, svr.port);
+      await waitFor(() => messages[0], 'error reply');
+      expect(messages[0]).toEqual({ type: 'error', message: 'index unreadable' });
+      expect(consoleError).toHaveBeenCalledWith('server: greeting failed', expect.any(Error));
+
+      socket.send(JSON.stringify({ type: 'chat.send', text: 'hi' }));
+      await waitFor(() => messages[1], 'reply to a normal message on the same connection');
+      expect(messages[1]).toEqual({ type: 'error', message: 'handled' });
+
+      const second = await connect({}, svr.port);
+      await waitFor(() => second.messages[0], 'server still accepts a second client');
+      expect(second.messages[0]).toEqual({ type: 'error', message: 'index unreadable' });
+    } finally {
+      consoleError.mockRestore();
+    }
+  });
+
   it('hands a valid client message to the handler, which can reply to that client', async () => {
     const received: ClientMessage[] = [];
     const svr = await startServer({

@@ -80,8 +80,13 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         reply({ type: 'error', message: (error as Error).message });
       }
     });
-    reply({ type: 'map.snapshot', snapshot: options.snapshot() });
-    for (const message of options.greeting?.() ?? []) reply(message);
+    try {
+      reply({ type: 'map.snapshot', snapshot: options.snapshot() });
+      for (const message of options.greeting?.() ?? []) reply(message);
+    } catch (error) {
+      console.error('server: greeting failed', error);
+      reply({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   await new Promise<void>((resolveListen, reject) => {
