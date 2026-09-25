@@ -28,4 +28,25 @@ describe('parseClientMessage', () => {
   it('rejects unknown types, non-objects and invalid JSON', () => {
     expect(['{"type":"nope"}', '[1]', 'nope'].map(parseClientMessage)).toEqual([null, null, null]);
   });
+
+  it('parses Settings requests with their request ids and the hashes the user saw', () => {
+    const entry = { type: 'http', url: 'https://docs.example/mcp' };
+    const messages = [
+      { type: 'settings.get' },
+      { type: 'mcp.save', requestId: 'r1', level: 'ide', name: 'docs', entry, previousName: null },
+      { type: 'mcp.remove', requestId: 'r2', level: 'project', name: 'docs' },
+      { type: 'mcp.approve', requestId: 'r3', name: 'docs', entryHash: 'abc' },
+      { type: 'mcp.confirm-external-edits', requestId: 'r4', fileHashes: { ideServers: 'a', trust: 'b' } },
+    ];
+    expect(messages.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual(messages);
+  });
+
+  it('rejects malformed Settings requests', () => {
+    const bad = [
+      { type: 'mcp.remove', level: 'ide', name: 'docs' },
+      { type: 'mcp.approve', requestId: 'r1', name: 'docs' },
+      { type: 'mcp.save', requestId: 'r2', level: 'machine', name: 'docs', entry: {}, previousName: null },
+    ];
+    expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null, null]);
+  });
 });

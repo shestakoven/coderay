@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
 import { basename, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { ClientMessage } from '@ide/protocol';
+import type { ClientMessage, ServerMessage } from '@ide/protocol';
 import { AgentSession } from './agent/agent-session';
 import { defaultIdeHome, projectDir } from './home';
 import { Indexer } from './indexer/indexer';
@@ -10,6 +10,7 @@ import { createPythonAdapter } from './lang/python';
 import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
 import { buildSnapshot } from './map/snapshot';
+import { McpRegistry } from './mcp/registry';
 import { startServer } from './server/server';
 import { openStore } from './store/store';
 
@@ -56,10 +57,34 @@ try {
   await indexer.start();
 
   const store = openStore(projectDir(home, root));
-  const session = new AgentSession({ root, home, store, claude: { command: values.claude, args: [] } });
+  const registry = new McpRegistry({ home, root });
+  const session = new AgentSession({
+    root, home, store,
+    claude: { command: values.claude, args: [] },
+    mcpServers: () => registry.sessionServers(),
+  });
   await session.start();
 
-  const handle = async (message: ClientMessage): Promise<void> => {
+  const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: registry.view() });
+
+  const changeSettings = (message: Extract<ClientMessage, { requestId: string; type: `mcp.${string}` }>): void => {
+    switch (message.type) {
+      case 'mcp.save':
+        registry.save(message.level, message.name, message.entry, message.previousName);
+        return;
+      case 'mcp.remove':
+        registry.remove(message.level, message.name);
+        return;
+      case 'mcp.approve':
+        registry.approve(message.name, message.entryHash);
+        return;
+      case 'mcp.confirm-external-edits':
+        registry.confirmExternalEdits(message.fileHashes);
+        return;
+    }
+  };
+
+  const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
         session.send(message.text);
@@ -76,6 +101,19 @@ try {
       case 'prompt.answer':
         session.answerPrompt(message.requestId, message.answer);
         return;
+      case 'settings.get':
+        reply(settingsSnapshot());
+        return;
+      default: {
+        let error: string | null = null;
+        try {
+          changeSettings(message);
+        } catch (failure) {
+          error = (failure as Error).message;
+        }
+        reply({ type: 'settings.result', requestId: message.requestId, error });
+        server.broadcast(settingsSnapshot());
+      }
     }
   };
 
@@ -87,9 +125,9 @@ try {
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
     snapshot: () => snapshot,
-    greeting: () => [{ type: 'session.snapshot', state: session.state() }],
+    greeting: () => [{ type: 'session.snapshot', state: session.state() }, settingsSnapshot()],
     onClientMessage: (message, reply) => {
-      handle(message).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));
+      handle(message, reply).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));
     },
   });
   session.onMessage((message) => server.broadcast(message));

@@ -1,4 +1,5 @@
 import type { ChatClientMessage, SessionServerMessage } from './session';
+import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 
 export * from './session';
 export * from './settings';
@@ -49,6 +50,6 @@ export interface MapSnapshot {
   fileEdges: FileEdge[];
 }
 
-export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot } | SessionServerMessage;
+export type ServerMessage = { type: 'map.snapshot'; snapshot: MapSnapshot } | SessionServerMessage | SettingsServerMessage;
 
-export type ClientMessage = ChatClientMessage;
+export type ClientMessage = ChatClientMessage | SettingsClientMessage;

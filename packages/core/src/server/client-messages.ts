@@ -1,5 +1,7 @@
-import type { ClientMessage, PromptAnswer } from '@ide/protocol';
+import type { ClientMessage, FileHashes, McpEntry, McpLevel, PromptAnswer } from '@ide/protocol';
 import { isRecord } from '../json';
+
+const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
 
 export function parseClientMessage(raw: string): ClientMessage | null {
   let value: unknown;
@@ -9,21 +11,40 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  const { type, text, requestId, answer } = value;
+  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes } = value;
   switch (type) {
     case 'chat.send':
       return typeof text === 'string' ? { type, text } : null;
     case 'chat.stop':
     case 'session.restart':
     case 'session.new':
+    case 'settings.get':
       return { type };
     case 'prompt.answer': {
       const parsed = parseAnswer(answer);
       return typeof requestId === 'string' && parsed ? { type, requestId, answer: parsed } : null;
     }
+  }
+  if (typeof requestId !== 'string') return null;
+  switch (type) {
+    // McpRegistry.save validates the entry itself before storing it.
+    case 'mcp.save':
+      return isLevel(level) && typeof name === 'string' && (previousName === null || typeof previousName === 'string') && isRecord(entry)
+        ? { type, requestId, level, name, entry: entry as unknown as McpEntry, previousName }
+        : null;
+    case 'mcp.remove':
+      return isLevel(level) && typeof name === 'string' ? { type, requestId, level, name } : null;
+    case 'mcp.approve':
+      return typeof name === 'string' && typeof entryHash === 'string' ? { type, requestId, name, entryHash } : null;
+    case 'mcp.confirm-external-edits':
+      return isFileHashes(fileHashes) ? { type, requestId, fileHashes } : null;
     default:
       return null;
   }
+}
+
+function isFileHashes(value: unknown): value is FileHashes {
+  return isRecord(value) && typeof value.ideServers === 'string' && typeof value.trust === 'string';
 }
 
 function parseAnswer(value: unknown): PromptAnswer | null {
