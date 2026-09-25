@@ -16,3 +16,16 @@ export function computeFileEdges(files: IndexedFile[], adapters: LanguageAdapter
   }
   return [...edges.values()];
 }
+
+export function unresolvedImports(files: IndexedFile[], adapters: LanguageAdapter[]): Map<string, string[]> {
+  const known = new Set(files.map((f) => f.path));
+  const exists = (path: string) => known.has(path);
+  const result = new Map<string, string[]>();
+  for (const file of files) {
+    const adapter = adapters.find((a) => a.lang === file.lang);
+    if (!adapter) continue;
+    const missing = file.imports.filter((specifier) => adapter.resolve(file.path, specifier, exists) === null);
+    if (missing.length > 0) result.set(file.path, missing);
+  }
+  return result;
+}

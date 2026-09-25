@@ -1,3 +1,4 @@
+import { readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { BGE_SMALL, LocalEmbedModel, READY_TIMEOUT_MS } from '../../src/models/local-embed';
 import type { EmbedStatus } from '../../src/models/types';
@@ -9,8 +10,8 @@ afterEach(async () => {
   for (const model of models.splice(0)) await model.close();
 });
 
-function start(fixture: string, cacheDir = tempDir('ide-models-')): LocalEmbedModel {
-  const model = new LocalEmbedModel({ cacheDir, workerUrl: new URL(`../fixtures/${fixture}.mjs`, import.meta.url) });
+function start(fixture: string, cacheDir = tempDir('ide-models-'), closeWaitMs?: number): LocalEmbedModel {
+  const model = new LocalEmbedModel({ cacheDir, workerUrl: new URL(`../fixtures/${fixture}.mjs`, import.meta.url), closeWaitMs });
   models.push(model);
   return model;
 }
@@ -64,7 +65,7 @@ describe('LocalEmbedModel', () => {
   });
 
   it('rejects a pending embed when it is closed', async () => {
-    const model = start('stalled-embed-worker');
+    const model = start('stalled-embed-worker', tempDir('ide-models-'), 50);
     await waitFor(() => model.status().state === 'ready', 'model ready');
     const pending = model.embed(['abc']);
     const rejection = expect(pending).rejects.toThrow('embedding model closed');
@@ -91,5 +92,47 @@ describe('LocalEmbedModel', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  describe('close', () => {
+    const markers = (cacheDir: string, prefix: string) => readdirSync(cacheDir).filter((name) => name.startsWith(prefix));
+
+    async function runningBatch(delayMs: number, closeWaitMs: number) {
+      const cacheDir = tempDir('ide-models-');
+      const model = start('slow-embed-worker', cacheDir, closeWaitMs);
+      await waitFor(() => model.status().state === 'ready', 'model ready');
+      model.embed([String(delayMs)]).catch(() => undefined);
+      await waitFor(() => markers(cacheDir, 'started-').length > 0, 'batch started in the worker');
+      return { model, cacheDir };
+    }
+
+    it('lets a batch the worker is running finish before terminating it', async () => {
+      const { model, cacheDir } = await runningBatch(300, 5000);
+      await model.close();
+      expect(markers(cacheDir, 'finished-')).toHaveLength(1);
+    });
+
+    it('terminates the worker once closeWaitMs has passed with a batch still running', async () => {
+      const { model, cacheDir } = await runningBatch(600, 150);
+      await model.close();
+      // A worker left running would finish its batch well within this pause.
+      await new Promise((resolve) => setTimeout(resolve, 900));
+      expect(markers(cacheDir, 'finished-')).toEqual([]);
+    });
+
+    it('waits no longer than closeWaitMs for a running batch', async () => {
+      const { model } = await runningBatch(10_000, 200);
+      const began = Date.now();
+      await model.close();
+      expect(Date.now() - began).toBeLessThan(2000);
+    });
+
+    it('closes without waiting when no batch is running', async () => {
+      const model = start('slow-embed-worker', tempDir('ide-models-'), 5000);
+      await waitFor(() => model.status().state === 'ready', 'model ready');
+      const began = Date.now();
+      await model.close();
+      expect(Date.now() - began).toBeLessThan(1000);
+    });
   });
 });

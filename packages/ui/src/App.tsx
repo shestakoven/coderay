@@ -6,6 +6,7 @@ import { chatReducer, initialChatState } from './chat/chat-state';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
+import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
@@ -19,6 +20,7 @@ export function App() {
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
+  const [view, setView] = useState<'c4' | 'components'>('c4');
   const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
   const connection = useRef<Connection | null>(null);
 
@@ -85,6 +87,7 @@ export function App() {
     + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0);
 
   const snapshot = state.snapshot;
+  const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
   return (
     <div className="app">
       <header className="topbar">
@@ -99,6 +102,12 @@ export function App() {
             {chip.text}
           </span>
         ))}
+        {c4 && (
+          <span className="view-switch">
+            <button className={view === 'c4' ? 'on' : ''} onClick={() => setView('c4')}>C4</button>
+            <button className={view === 'components' ? 'on' : ''} onClick={() => setView('components')}>Components</button>
+          </span>
+        )}
         <span className="badge danger" title="No pre-execution gate yet (Plan 4): the agent runs with --dangerously-skip-permissions.">
           unguarded
         </span>
@@ -109,10 +118,18 @@ export function App() {
       </header>
       <main className="body">
         <div className="map-area">
-          <ReactFlowProvider>
-            <MapView state={state} dispatch={dispatch} />
-          </ReactFlowProvider>
-          <DetailsPanel state={state} />
+          {view === 'c4' && snapshot && c4 ? (
+            <ReactFlowProvider>
+              <C4View snapshot={snapshot} model={c4} />
+            </ReactFlowProvider>
+          ) : (
+            <>
+              <ReactFlowProvider>
+                <MapView state={state} dispatch={dispatch} />
+              </ReactFlowProvider>
+              <DetailsPanel state={state} />
+            </>
+          )}
         </div>
         <ChatPanel chat={chat} send={send} onDismissError={() => dispatchChat({ type: 'dismiss-error' })} />
       </main>

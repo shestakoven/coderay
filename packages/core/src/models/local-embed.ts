@@ -12,10 +12,12 @@ export const BGE_SMALL = {
 
 export const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSED_MESSAGE = 'embedding model closed';
+const CLOSE_WAIT_MS = 15_000;
 
 export interface LocalEmbedOptions {
   cacheDir: string;
   workerUrl?: URL;
+  closeWaitMs?: number;
 }
 
 type WorkerMessage =
@@ -40,8 +42,12 @@ export class LocalEmbedModel implements EmbedModel {
   private settleReady: { resolve: () => void; reject: (error: Error) => void } | undefined;
   private nextId = 1;
   private closed = false;
+  private readonly running = new Set<number>();
+  private onDrained: (() => void) | undefined;
+  private readonly closeWaitMs: number;
 
   constructor(options: LocalEmbedOptions) {
+    this.closeWaitMs = options.closeWaitMs ?? CLOSE_WAIT_MS;
     const cached = existsSync(join(options.cacheDir, BGE_SMALL.id, BGE_SMALL.weightsFile));
     this.current = cached ? { state: 'loading' } : { state: 'downloading', bytes: BGE_SMALL.downloadBytes };
     this.ready = new Promise<void>((resolve, reject) => {
@@ -77,6 +83,7 @@ export class LocalEmbedModel implements EmbedModel {
     this.nextId += 1;
     return new Promise((resolve, reject) => {
       this.pending.set(id, { resolve, reject });
+      this.running.add(id);
       this.worker.postMessage({ id, texts });
     });
   }
@@ -88,7 +95,18 @@ export class LocalEmbedModel implements EmbedModel {
     this.settleReady?.reject(error);
     for (const entry of this.pending.values()) entry.reject(error);
     this.pending.clear();
+    // Terminating the worker during an inference aborts the process with a native error, so let posted batches finish.
+    let timer: NodeJS.Timeout | undefined;
+    await Promise.race([this.drained(), new Promise((resolve) => (timer = setTimeout(resolve, this.closeWaitMs)))]);
+    clearTimeout(timer);
     await this.worker.terminate();
+  }
+
+  private drained(): Promise<void> {
+    if (this.running.size === 0) return Promise.resolve();
+    return new Promise((resolve) => {
+      this.onDrained = resolve;
+    });
   }
 
   private handle(message: WorkerMessage): void {
@@ -101,6 +119,8 @@ export class LocalEmbedModel implements EmbedModel {
     } else {
       const entry = this.pending.get(message.id);
       this.pending.delete(message.id);
+      this.running.delete(message.id);
+      if (this.running.size === 0) this.onDrained?.();
       if (message.type === 'failed') entry?.reject(new Error(message.message));
       else entry?.resolve(rows(message.data, message.dims));
     }
@@ -114,6 +134,7 @@ export class LocalEmbedModel implements EmbedModel {
     this.settleReady?.reject(error);
     for (const entry of this.pending.values()) entry.reject(error);
     this.pending.clear();
+    this.running.clear();
     void this.worker.terminate();
   }
 
