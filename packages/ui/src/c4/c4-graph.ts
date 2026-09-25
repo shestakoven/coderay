@@ -15,6 +15,8 @@ export type C4NodeData = {
   warn?: boolean;
   slim?: boolean;
   external?: boolean;
+  dim?: boolean;
+  root?: boolean;
 };
 
 export type C4FlowNode = Node<C4NodeData, Exclude<C4Kind, 'group'> | 'c4group'>;
@@ -259,7 +261,8 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
   return { nodes, edges: [...edges.values()] };
 }
 
-const sizeOf = (node: VisibleNode) => (node.data.slim ? SLIM : SIZE[node.kind]);
+const ROOT_COMPONENT = { width: 250, height: 74 };
+const sizeOf = (node: VisibleNode) => (node.data.slim ? SLIM : node.kind === 'component' && node.data.detail ? ROOT_COMPONENT : SIZE[node.kind]);
 
 export async function layoutC4(
   graph: { nodes: VisibleNode[]; edges: VisibleEdge[] },
@@ -290,7 +293,7 @@ export async function layoutC4(
   const parentOf = new Map(graph.nodes.filter((n) => n.parentId).map((n) => [n.id, n.parentId!]));
   const topOf = (id: string) => parentOf.get(id) ?? id;
   const seen = new Set<string>();
-  const elkEdges = graph.edges.flatMap((e) => {
+  const elkEdges = graph.edges.filter((e) => e.kind !== 'detail').flatMap((e) => {
     const from = topOf(e.from);
     const to = topOf(e.to);
     const key = `${from}->${to}`;
@@ -335,9 +338,138 @@ export async function layoutC4(
       source: e.from,
       target: e.to,
       label: e.protocols.join(' · '),
+      className: e.protocols.includes('imports') || e.protocols.includes('starts') ? 'c4-import' : '',
       animated: true,
       data: { protocols: e.protocols, strength: e.strength, linkIds: e.linkIds, kind: e.kind },
       style: { strokeWidth: 1 + Math.min(4, Math.log2(1 + e.strength)) },
     })),
   };
+}
+
+// A container opened as root: who calls it, the container, its components with their imports, and what it uses.
+export function c4RootGraph(snapshot: MapSnapshot, model: C4Model, rootId: string, expanded: string | null): { nodes: VisibleNode[]; edges: VisibleEdge[] } {
+  const root = model.containers.find((c) => c.id === rootId);
+  if (!root) return { nodes: [], edges: [] };
+  const component = new Map(snapshot.components.map((c) => [c.id, c]));
+  const componentOf = new Map(snapshot.files.map((f) => [f.path, f.componentId ?? 'unassigned']));
+  const entryComponents = new Set(root.entryFiles.map((p) => componentOf.get(p) ?? 'unassigned'));
+  const nodes: VisibleNode[] = [];
+  const edges = new Map<string, VisibleEdge>();
+  const add = (from: string, to: string, protocol: string, strength: number, linkId: string, kind: EdgeKind = 'plain') => {
+    if (from === to) return;
+    const id = `${from}->${to}`;
+    const edge = edges.get(id) ?? { id, from, to, protocols: [], strength: 0, linkIds: [], kind };
+    if (!edge.protocols.includes(protocol)) edge.protocols.push(protocol);
+    edge.strength += strength;
+    if (!edge.linkIds.includes(linkId)) edge.linkIds.push(linkId);
+    edges.set(id, edge);
+  };
+  const sources = model.externals.filter((e) => e.kind === 'source');
+  const sourceIds = new Set(sources.map((e) => e.id));
+  const groupSources = sources.length >= 3;
+  const sourceGroup = 'extgroup:source';
+  const openGroup = groupSources && expanded === sourceGroup;
+  const visible = (id: string) => (groupSources && !openGroup && sourceIds.has(id) ? sourceGroup : id);
+  const nodeFor = (id: string, column: number) => {
+    if (nodes.some((n) => n.id === id)) return;
+    if (groupSources && sourceIds.has(id)) {
+      if (!nodes.some((n) => n.id === sourceGroup)) {
+        nodes.push({
+          id: sourceGroup,
+          kind: 'group',
+          column,
+          data: {
+            kind: 'group',
+            title: `Connectors ×${sources.filter((e) => model.links.some((l) => l.from === root.id && l.to === e.id)).length}`,
+            subtitle: 'External data sources',
+            accent: 'var(--c4-external)',
+            icon: 'plug',
+            expanded: openGroup,
+            external: true,
+          },
+        });
+      }
+      if (!openGroup) return;
+      const e = sources.find((x) => x.id === id)!;
+      nodes.push({ id, kind: 'external', parentId: sourceGroup, column, data: { kind: 'external', title: e.name, subtitle: KIND_LABEL[e.kind], accent: 'var(--c4-external)', icon: KIND_ICON[e.kind], slim: true } });
+      return;
+    }
+    if (id === 'users') {
+      nodes.push({ id, kind: 'person', column, data: { kind: 'person', title: 'Users', subtitle: 'Person', accent: 'var(--c4-person)', icon: 'person' } });
+      return;
+    }
+    const c = model.containers.find((x) => x.id === id);
+    if (c) {
+      nodes.push({
+        id,
+        kind: 'container',
+        column,
+        data: { kind: 'container', title: c.name, subtitle: `${c.role} · ${c.tech}`, detail: 'context', accent: ROLE_ACCENT[c.role], icon: ROLE_ICON[c.role], dim: true },
+      });
+      return;
+    }
+    const e = model.externals.find((x) => x.id === id);
+    if (e) nodes.push({ id, kind: 'external', column, data: { kind: 'external', title: e.name, subtitle: KIND_LABEL[e.kind], accent: 'var(--c4-external)', icon: KIND_ICON[e.kind] } });
+  };
+
+  nodes.push({
+    id: root.id,
+    kind: 'container',
+    column: 1,
+    data: {
+      kind: 'container',
+      title: root.name,
+      subtitle: `${root.role} · ${root.tech}`,
+      detail: root.launch.find((l) => /uvicorn|python|node|npm|pnpm|nginx|celery/.test(l)) ?? root.launch[0],
+      accent: ROLE_ACCENT[root.role],
+      icon: ROLE_ICON[root.role],
+      root: true,
+    },
+  });
+  for (const p of root.components) {
+    const id = `root:${p.id}`;
+    const entry = entryComponents.has(p.id);
+    nodes.push({
+      id,
+      kind: 'component',
+      column: 2,
+      data: {
+        kind: 'component',
+        title: component.get(p.id)?.name ?? (p.id === 'unassigned' ? 'Unassigned files' : p.id),
+        subtitle: `${p.near} near entry · ${p.files} files`,
+        detail: component.get(p.id)?.summary,
+        accent: entry ? 'var(--c4-person)' : p.near > 0 ? ROLE_ACCENT[root.role] : 'var(--c4-muted)',
+        icon: entry ? 'play' : 'box',
+        dim: p.near === 0,
+      },
+    });
+    if (entry) add(root.id, id, 'starts', 1, `entry:${p.id}`);
+  }
+  // The backbone drawn by default links each component to the one that imports it most; the others show on selection.
+  const parent = new Map<string, { from: string; count: number }>();
+  for (const l of root.componentLinks) {
+    if (entryComponents.has(l.to)) continue;
+    if ((parent.get(l.to)?.count ?? 0) < l.count) parent.set(l.to, { from: l.from, count: l.count });
+  }
+  for (const l of root.componentLinks) {
+    const backbone = parent.get(l.to)?.from === l.from;
+    add(`root:${l.from}`, `root:${l.to}`, 'imports', l.count, `imports:${l.from}->${l.to}`, backbone ? 'plain' : 'detail');
+  }
+
+  const incoming = model.links.filter((l) => l.to === root.id);
+  for (const link of incoming) {
+    nodeFor(link.from, 0);
+    add(link.from, root.id, link.protocol, link.strength, link.id);
+  }
+  for (const link of model.links.filter((l) => l.from === root.id)) {
+    nodeFor(link.to, 4);
+    const target = visible(link.to);
+    add(root.id, openGroup && sourceIds.has(link.to) ? sourceGroup : target, link.protocol, link.strength, link.id, 'summary');
+    if (openGroup && sourceIds.has(link.to)) add(root.id, target, link.protocol, link.strength, link.id, 'detail');
+    for (const e of link.evidence) {
+      const owner = componentOf.get(e.path);
+      if (owner && root.components.some((p) => p.id === owner)) add(`root:${owner}`, target, link.protocol, 1, link.id, 'detail');
+    }
+  }
+  return { nodes, edges: [...edges.values()] };
 }

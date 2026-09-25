@@ -93,6 +93,12 @@ export interface C4ContainerComponent {
   containers: number;
 }
 
+export interface C4ComponentLink {
+  from: string;
+  to: string;
+  count: number;
+}
+
 export interface C4Container {
   id: string;
   name: string;
@@ -103,6 +109,7 @@ export interface C4Container {
   entryMissing: string[];
   files: number;
   components: C4ContainerComponent[];
+  componentLinks: C4ComponentLink[];
   group: string | null;
   evidence: C4Evidence[];
 }

@@ -14,7 +14,7 @@ import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { C4Model, MapSnapshot } from '@ide/protocol';
-import { c4Graph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
+import { c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 
@@ -40,14 +40,14 @@ function Icon({ name }: { name: string }) {
 }
 
 function C4Card({ data, selected }: NodeProps<C4FlowNode>) {
-  const cls = ['c4-card', data.kind, data.external && 'external', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', selected && 'selected'].filter(Boolean).join(' ');
+  const cls = ['c4-card', data.kind, data.external && 'external', data.dim && 'dim', data.root && 'root', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', selected && 'selected'].filter(Boolean).join(' ');
   return (
     <div className={cls} style={{ ['--acc' as string]: data.accent }}>
       <Handle type="target" position={Position.Left} />
       <div className="c4-title">
         <Icon name={data.icon} />
         <span>{data.title}</span>
-        {(data.kind === 'container' || data.kind === 'group') && <span className="c4-caret">{data.expanded ? '▾' : '▸'}</span>}
+        {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret">{data.expanded ? '▾' : '▸'}</span>}
       </div>
       <div className="c4-sub">{data.subtitle}</div>
       {data.detail && <div className="c4-detail">{data.detail}</div>}
@@ -64,6 +64,8 @@ const expandable = (node: C4FlowNode) => node.type === 'c4group' || node.type ==
 
 export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Model }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [root, setRoot] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
   const [nodes, setNodes, onNodesChange] = useNodesState<C4FlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge<C4EdgeData>>([]);
@@ -73,7 +75,16 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
   const { fitBounds, setCenter, getZoom } = useReactFlow();
   // Fit every new layout until the user moves, drags or opens something.
   const needFit = useRef(true);
-  const graph = useMemo(() => c4Graph(snapshot, model, expanded), [snapshot, model, expanded]);
+  const graph = useMemo(() => (root ? c4RootGraph(snapshot, model, root, expanded) : c4Graph(snapshot, model, expanded)), [snapshot, model, expanded, root]);
+  const openRoot = (id: string | null) => {
+    needFit.current = true;
+    moved.current.clear();
+    setMovedCount(0);
+    setMenu(null);
+    setSelection(null);
+    setExpanded(null);
+    setRoot(id);
+  };
   const signature = useMemo(() => JSON.stringify(graph), [graph]);
 
   useEffect(() => {
@@ -129,7 +140,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
           hidden: focus ? !on : !quiet,
           animated: on,
           label: on ? e.label : undefined,
-          className: on ? 'c4-edge-focus' : '',
+          className: [e.className, on && 'c4-edge-focus'].filter(Boolean).join(' '),
         };
       }),
     [edges, focus],
@@ -153,7 +164,18 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
           if (expandable(node) && (event.target as HTMLElement).closest('.c4-caret')) toggle(node.id);
         }}
         onNodeDoubleClick={(_event, node) => {
+          if (root) {
+            if (node.type === 'container' && node.id !== root) openRoot(node.id);
+            else if (node.type === 'c4group') toggle(node.id);
+            return;
+          }
           if (expandable(node)) toggle(node.id);
+        }}
+        onNodeContextMenu={(event, node) => {
+          event.preventDefault();
+          if (node.type !== 'container') return;
+          const box = (event.currentTarget as HTMLElement).closest('.c4')?.getBoundingClientRect();
+          setMenu({ x: event.clientX - (box?.left ?? 0), y: event.clientY - (box?.top ?? 0), id: node.id });
         }}
         onNodeDragStop={(_event, node) => {
           needFit.current = false;
@@ -162,7 +184,10 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
           setMovedCount(moved.current.size);
         }}
         onEdgeClick={(_event, edge) => setSelection({ type: 'edge', id: edge.id, ids: edge.data?.linkIds ?? [] })}
-        onPaneClick={() => setSelection(null)}
+        onPaneClick={() => {
+          setSelection(null);
+          setMenu(null);
+        }}
         onMoveStart={(event) => {
           if (event) needFit.current = false;
         }}
@@ -181,6 +206,12 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         <Controls showInteractive={false} />
       </ReactFlow>
       <div className="c4-toolbar">
+        <span className="c4-crumbs">
+          <button className="link" onClick={() => openRoot(null)} disabled={!root}>
+            {snapshot.projectName}
+          </button>
+          {root && <span> / {model.containers.find((c) => c.id === root)?.name}</span>}
+        </span>
         {selection && <span className="muted">Showing only the selection's links · Esc or click the background to clear</span>}
         {movedCount > 0 && (
           <button
@@ -195,7 +226,18 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
           </button>
         )}
       </div>
-      <EscapeClears onClear={() => setSelection(null)} />
+      {menu && (
+        <div className="c4-menu" style={{ left: menu.x, top: menu.y }}>
+          <button onClick={() => openRoot(menu.id)}>Open as root</button>
+        </div>
+      )}
+      <EscapeClears
+        onClear={() => {
+          if (menu) setMenu(null);
+          else if (selection) setSelection(null);
+          else if (root) openRoot(null);
+        }}
+      />
       <C4Details snapshot={snapshot} model={model} selection={selection} />
     </div>
   );
@@ -280,6 +322,28 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </section>
         ))}
+      </aside>
+    );
+  }
+  const rootComponent = selection.id.startsWith('root:') ? snapshot.components.find((c) => `root:${c.id}` === selection.id) : undefined;
+  if (rootComponent) {
+    return (
+      <aside className="details">
+        <h2>{rootComponent.name}</h2>
+        {rootComponent.summary && <p className="summary">{rootComponent.summary}</p>}
+        {rootComponent.description && <p>{rootComponent.description}</p>}
+        {rootComponent.keyFiles.length > 0 && (
+          <>
+            <h3>Key files</h3>
+            <ul>
+              {rootComponent.keyFiles.map((path) => (
+                <li key={path}>
+                  <code>{path}</code>
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
       </aside>
     );
   }

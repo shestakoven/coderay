@@ -253,6 +253,7 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
       entryMissing,
       files: closure.size,
       components: [],
+      componentLinks: [],
       group: null,
       evidence: [
         ...[...new Set(defs.map((d) => d.file))].map((file) => ({ path: file, note: `service ${name}` })),
@@ -272,6 +273,20 @@ export function buildC4(root: string, files: IndexedFile[], edges: FileEdge[], c
       if ((depth?.get(path) ?? 99) <= NEAR_DEPTH) near.set(id, (near.get(id) ?? 0) + 1);
     }
     container.components = [...counts].map(([id, count]) => ({ id, files: count, near: near.get(id) ?? 0, containers: 0 }));
+    const closure = closures.get(container.name) ?? new Set<string>();
+    const between = new Map<string, number>();
+    for (const from of closure) {
+      for (const to of out.get(from) ?? []) {
+        const a = owner.get(from) ?? 'unassigned';
+        const b = owner.get(to) ?? 'unassigned';
+        if (a === b || !closure.has(to)) continue;
+        between.set(`${a}\0${b}`, (between.get(`${a}\0${b}`) ?? 0) + 1);
+      }
+    }
+    container.componentLinks = [...between].map(([key, count]) => {
+      const [from, to] = key.split('\0') as [string, string];
+      return { from, to, count };
+    });
     for (const id of counts.keys()) reach.set(id, (reach.get(id) ?? 0) + 1);
   }
   for (const container of containers) {

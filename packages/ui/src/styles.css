@@ -157,3 +157,12 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 
 .c4-card.group.external { background: rgba(13, 17, 23, 0.9); border-style: dashed; }
 .c4-card.group.external.expanded { background: rgba(13, 17, 23, 0.5); }
+.c4 .react-flow__edge.c4-import .react-flow__edge-path { stroke: #8b949e; stroke-opacity: 0.4; }
+.c4 .react-flow__edge.c4-import.c4-edge-focus .react-flow__edge-path { stroke: #c9d1d9; stroke-opacity: 0.9; }
+.c4-card.dim { opacity: 0.6; }
+.c4-card.root { border-color: var(--acc); box-shadow: 0 0 0 1px var(--acc), 0 8px 24px rgba(0, 0, 0, 0.35); }
+.c4-menu { position: absolute; z-index: 10; background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 4px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.c4-menu button { display: block; width: 100%; text-align: left; border: none; background: none; padding: 4px 10px; }
+.c4-menu button:hover { background: #1d3550; }
+.c4-crumbs { font-size: 13px; }
+.c4-crumbs button.link:disabled { color: var(--text); opacity: 1; cursor: default; }
