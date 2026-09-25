@@ -78,7 +78,7 @@ export const canStop = (state: ChatState): boolean => openTurns(state).some((tur
 // An interrupt also kills running async subagents; background shells keep running (spike c5b, c6).
 export function stopControl(state: ChatState): { label: string; title: string } {
   const subagents = runningTasks(state).filter((task) => task.kind === 'subagent').length;
-  if (subagents === 0) return { label: 'Stop', title: 'Stop the current turn. Background shells keep running.' };
+  if (subagents === 0 || !canStop(state)) return { label: 'Stop', title: 'Stop the current turn. Background shells keep running.' };
   const noun = subagents === 1 ? 'subagent' : 'subagents';
   return {
     label: `Stop (+${subagents} ${noun})`,

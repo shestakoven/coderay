@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -71,6 +72,13 @@ describe('openStore', () => {
     store.saveTurn('s1', { id: 't1', kind: 'agent-initiated', openedAt: 1, startedAt: null, closedAt: null, resultSubtype: null });
     store.saveTurn('s1', { id: 't1', kind: 'user', openedAt: 1, startedAt: 2, closedAt: 5, resultSubtype: 'success' });
     expect(store.history('s1').turns).toEqual([{ id: 't1', kind: 'user', openedAt: 1, startedAt: 2, closedAt: 5, resultSubtype: 'success' }]);
+  });
+
+  it('creates the project dir 0700 and the history db 0600, since both hold full tool inputs', () => {
+    const dir = join(tempDir('ide-home-'), 'projects', 'abc123');
+    freshStore(dir);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+    expect(statSync(join(dir, 'history.sqlite')).mode & 0o777).toBe(0o600);
   });
 
   it('can be closed twice', () => {

@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
+import { chmodSync, closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from 'node:fs';
 import { join } from 'node:path';
 import { isAlive } from './os-process';
 
@@ -10,9 +10,11 @@ export interface CoreLock {
 }
 
 export const LOCK_FILE = 'core.lock';
+const PROJECT_DIR_MODE = 0o700;
 
 export function acquireCoreLock(dir: string): CoreLock {
   mkdirSync(dir, { recursive: true });
+  chmodSync(dir, PROJECT_DIR_MODE);
   const path = join(dir, LOCK_FILE);
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {

@@ -117,6 +117,8 @@ try {
     }
   };
 
+  let closing: Promise<void> | undefined;
+
   let version = 1;
   let snapshot = buildSnapshot(version, projectName, indexer.files(), adapters);
   const server = await startServer({
@@ -127,6 +129,10 @@ try {
     snapshot: () => snapshot,
     greeting: () => [{ type: 'session.snapshot', state: session.state() }, settingsSnapshot()],
     onClientMessage: (message, reply) => {
+      if (closing) {
+        reply({ type: 'error', message: 'The IDE core is shutting down.' });
+        return;
+      }
       handle(message, reply).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));
     },
   });
@@ -152,8 +158,14 @@ try {
     lock.release();
     process.exit(0);
   };
-  let closing: Promise<void> | undefined;
-  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => { closing ??= shutdown(); });
+  let closingSince = 0;
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
+    process.on(signal, () => {
+      if (closing && signal === 'SIGINT' && Date.now() - closingSince > 1000) process.exit(130);
+      if (!closing) closingSince = Date.now();
+      closing ??= shutdown();
+    });
+  }
 } catch (error) {
   lock.release();
   console.error(`IDE core failed to start: ${(error as Error).message}`);

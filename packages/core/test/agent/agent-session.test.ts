@@ -440,6 +440,18 @@ describe('AgentSession', () => {
     );
   });
 
+  it('logs instead of crashing when a listener throws while claude exits', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => errors.mockRestore());
+    const h = await harness('crash-mid-turn');
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.session?.status === 'crashed') throw new Error('boom');
+    });
+    h.session.send('go');
+    await waitFor(() => h.session.state().session?.status === 'crashed', 'session crashed');
+    expect(errors).toHaveBeenCalledWith('agent: could not process claude exit', expect.any(Error));
+  });
+
   it('keeps the chat going in memory and logs when the history cannot be saved', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => errors.mockRestore());

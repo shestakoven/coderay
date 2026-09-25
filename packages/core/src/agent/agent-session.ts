@@ -205,7 +205,7 @@ export class AgentSession {
     this.exitReason = null;
     this.versionChecked = false;
     this.update({ status: 'running', pid: child.pid ?? null, launchId: session.claudeSessionId });
-    void child.exited.then((exit) => this.onExit(child, exit));
+    void child.exited.then((exit) => this.onExit(child, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 
   private onLine(line: string): void {

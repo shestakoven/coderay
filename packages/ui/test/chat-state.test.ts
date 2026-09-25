@@ -64,7 +64,14 @@ describe('canSend and canStop', () => {
 
   it('names on the Stop control the running background subagents an interrupt also stops', () => {
     const tasks = [task('a1', 'subagent'), task('a2', 'subagent'), task('a3', 'subagent', 5), task('b1', 'shell')];
-    expect([stopControl(chat({})).label, stopControl(chat({ tasks })).label]).toEqual(['Stop', 'Stop (+2 subagents)']);
-    expect(stopControl(chat({ tasks })).title).toContain('also stops 2 running background subagents');
+    const running = { turns: [turn('t1', 'user', 'running')] };
+    expect([stopControl(chat(running)).label, stopControl(chat({ ...running, tasks })).label]).toEqual(['Stop', 'Stop (+2 subagents)']);
+    expect(stopControl(chat({ ...running, tasks })).title).toContain('also stops 2 running background subagents');
+  });
+
+  it('keeps the Stop label plain when Stop is disabled, even with running subagents', () => {
+    const tasks = [task('a1', 'subagent')];
+    expect(stopControl(chat({ tasks })).label).toBe('Stop');
+    expect(stopControl(chat({ turns: [turn('t1', 'user', 'waiting')], tasks })).label).toBe('Stop');
   });
 });

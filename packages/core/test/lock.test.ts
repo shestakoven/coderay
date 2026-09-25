@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { chmodSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { acquireCoreLock, LOCK_FILE } from '../src/lock';
@@ -28,5 +28,18 @@ describe('acquireCoreLock', () => {
     const dir = tempDir('ide-lock-');
     acquireCoreLock(dir).release();
     expect(acquireCoreLock(dir).acquired).toBe(true);
+  });
+
+  it('creates the project dir 0700, since it holds full tool inputs', () => {
+    const dir = join(tempDir('ide-home-'), 'projects', 'abc123');
+    acquireCoreLock(dir);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
+  });
+
+  it('fixes the project dir to 0700 when it already exists with looser permissions', () => {
+    const dir = tempDir('ide-lock-');
+    chmodSync(dir, 0o755);
+    acquireCoreLock(dir);
+    expect(statSync(dir).mode & 0o777).toBe(0o700);
   });
 });

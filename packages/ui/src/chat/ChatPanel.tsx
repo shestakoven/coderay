@@ -29,10 +29,9 @@ export function ChatPanel({ chat, send, onDismissError }: {
     if (send({ type: 'chat.send', text: draft })) setDraft('');
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      submit();
-    }
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    event.preventDefault();
+    submit();
   };
 
   return (

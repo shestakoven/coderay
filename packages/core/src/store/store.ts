@@ -1,4 +1,4 @@
-import { mkdirSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type { PromptAnswer, PromptBody, PromptStatus, SessionStatus, TaskKind, TaskView, ToolStatus, TurnKind, TurnView } from '@ide/protocol';
 import { DatabaseSync } from './sqlite';
@@ -70,6 +70,8 @@ export interface Store {
 }
 
 const BUSY_TIMEOUT_MS = 5000;
+const PROJECT_DIR_MODE = 0o700;
+const DB_FILE_MODE = 0o600;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -214,9 +216,13 @@ const toPrompt = (row: Row): PromptRecord => ({
 
 export function openStore(dir: string): Store {
   mkdirSync(dir, { recursive: true });
-  const db = new DatabaseSync(join(dir, 'history.sqlite'), { timeout: BUSY_TIMEOUT_MS });
+  chmodSync(dir, PROJECT_DIR_MODE);
+  const dbPath = join(dir, 'history.sqlite');
+  const db = new DatabaseSync(dbPath, { timeout: BUSY_TIMEOUT_MS });
   db.exec('PRAGMA journal_mode = WAL');
   db.exec(SCHEMA);
+  chmodSync(dbPath, DB_FILE_MODE);
+  for (const suffix of ['-wal', '-shm']) if (existsSync(dbPath + suffix)) chmodSync(dbPath + suffix, DB_FILE_MODE);
   let open = true;
 
   const upsertSession = db.prepare(`
