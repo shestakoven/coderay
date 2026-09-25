@@ -42,5 +42,5 @@ export function DetailsPanel({ state }: { state: MapState }) {
       </aside>
     );
   }
-  return <aside className="details muted">Select a component or a file</aside>;
+  return null;
 }

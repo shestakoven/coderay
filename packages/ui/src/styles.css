@@ -20,8 +20,9 @@ html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(-
 .topbar .status { margin-left: auto; color: var(--muted); }
 .topbar .status.open { color: var(--ok); }
 .body { flex: 1; display: flex; min-height: 0; }
-.map { flex: 1; min-width: 0; }
-.details { width: 320px; overflow: auto; padding: 12px 14px; border-left: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.map-area { flex: 1; min-width: 0; position: relative; }
+.map { position: absolute; inset: 0; }
+.details { position: absolute; top: 12px; right: 12px; bottom: 12px; width: 320px; overflow: auto; padding: 12px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--panel); font-size: 13px; z-index: 5; }
 .details h2 { font-size: 14px; margin: 0 0 4px; word-break: break-all; }
 .details ul { padding-left: 16px; }
 .muted { color: var(--muted); }
@@ -33,3 +34,39 @@ html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(-
 .node.component.expanded { background: rgba(106, 176, 255, 0.05); border-style: dashed; }
 .node.selected { border-color: var(--accent); }
 .node.file.error { border-color: var(--warn); }
+
+button { background: #232b38; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 10px; font: inherit; cursor: pointer; }
+button:disabled { opacity: 0.45; cursor: default; }
+.badge { padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.badge.danger { background: #5a1d1d; color: #ff8a8a; border: 1px solid #a33; }
+.badge.plan { background: #1d3550; color: #8cc4ff; border: 1px solid #3a6ea5; }
+.no-token { padding: 24px; color: var(--muted); }
+
+.chat { width: 400px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); font-size: 13px; }
+.chat-header { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
+.chat-header .spacer { flex: 1; }
+.chat-log { flex: 1; overflow: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 12px; }
+.turn { display: flex; flex-direction: column; gap: 6px; }
+.turn.agent-initiated { border-left: 2px solid var(--accent); padding-left: 8px; }
+.turn-marker, .turn-end { color: var(--muted); font-size: 11px; }
+.msg { white-space: pre-wrap; word-break: break-word; }
+.msg.user { background: #1f2735; border-radius: 6px; padding: 6px 8px; }
+.notice { color: var(--muted); font-style: italic; white-space: pre-wrap; }
+.tool-row { font-family: ui-monospace, monospace; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tool.ok .tool-status { color: var(--ok); }
+.tool.error .tool-status, .tool.rejected .tool-status, .tool.unfinished .tool-status { color: var(--warn); }
+.tool-children { margin: 4px 0 0 14px; border-left: 1px dashed var(--line); padding-left: 8px; display: flex; flex-direction: column; gap: 4px; }
+.prompt { border: 1px solid var(--accent); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.prompt.done { border-color: var(--line); color: var(--muted); }
+.prompt fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.prompt legend { font-weight: 600; margin-bottom: 3px; }
+.prompt .chip { background: #1f2735; border-radius: 8px; padding: 0 6px; font-size: 11px; font-weight: 400; }
+.prompt .option { display: flex; gap: 6px; align-items: baseline; }
+.prompt .other, .prompt textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
+.prompt .plan { white-space: pre-wrap; background: var(--bg); border-radius: 5px; padding: 6px; margin: 0; max-height: 240px; overflow: auto; }
+.prompt-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.problem { color: var(--warn); margin: 4px 0; }
+.chat-error { border-radius: 0; border: none; border-top: 1px solid var(--line); background: #4a2a12; color: var(--warn); text-align: left; padding: 6px 10px; }
+.composer { border-top: 1px solid var(--line); padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; }
+.composer textarea { width: 100%; resize: vertical; background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 6px; padding: 6px; font: inherit; }
+.composer-actions { display: flex; justify-content: flex-end; gap: 8px; }
