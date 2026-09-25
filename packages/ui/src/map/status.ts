@@ -1,4 +1,4 @@
-import type { MapStatus } from '@ide/protocol';
+import type { MapProgress, MapStatus } from '@ide/protocol';
 
 export type ChipTone = 'ok' | 'muted' | 'warn' | 'error';
 
@@ -56,4 +56,23 @@ function groupingChip({ sending }: MapStatus): StatusChip {
     title:
       'Haiku receives the project name, file paths, exported symbol names, import counts between groups, and the names and summaries of previous components. File contents are never sent.',
   };
+}
+
+export function describeProgress(progress: MapProgress): StatusChip[] {
+  const chips: StatusChip[] = [];
+  if (progress.indexing) {
+    chips.push({
+      text: `indexing… ${progress.indexing.indexed} files`,
+      tone: 'muted',
+      title: 'Reading and parsing source files; the map appears when this finishes',
+    });
+  }
+  if (progress.embedding) {
+    chips.push({
+      text: `embedding ${progress.embedding.done} / ${progress.embedding.total} files`,
+      tone: 'muted',
+      title: 'Computing file embeddings with the local model; nothing leaves this machine',
+    });
+  }
+  return chips;
 }
