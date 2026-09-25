@@ -16,7 +16,7 @@ import { identifierKey, type Classification, type Classify, type Identifier } fr
 import { readDeploy, type ServiceDef } from './deploy';
 
 // Literal URL hosts are names like package names; file contents never leave this process.
-const URL_LITERAL = /['"`]https?:\/\/([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi;
+const URL_LITERAL = /['"`]https?:\/\/(?:[^\s'"`@/]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi;
 const literalHosts = new Map<string, { hash: string; hosts: string[] }>();
 
 function hostsIn(root: string, file: IndexedFile): string[] {

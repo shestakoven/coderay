@@ -106,6 +106,8 @@ export class IdentifierClassifier {
   private readonly cache = new Map<string, Classification | null>();
   private readonly queued = new Map<string, Identifier>();
   private readonly inFlight = new Set<string>();
+  // Asked but left out of the model's answer: not asked again until the core restarts.
+  private readonly unanswered = new Set<string>();
   private timer: NodeJS.Timeout | undefined;
   private abort: AbortController | undefined;
   private failedAt = 0;
@@ -139,7 +141,7 @@ export class IdentifierClassifier {
     if (this.stopped) return;
     for (const id of ids) {
       const key = identifierKey(id);
-      if (!this.cache.has(key) && !this.inFlight.has(key)) this.queued.set(key, id);
+      if (!this.cache.has(key) && !this.inFlight.has(key) && !this.unanswered.has(key)) this.queued.set(key, id);
     }
     if (this.queued.size === 0 || this.timer || this.abort) return;
     const wait = Math.max(DEBOUNCE_MS, this.failedAt + RETRY_AFTER_MS - (this.options.now ?? Date.now)());
@@ -164,7 +166,9 @@ export class IdentifierClassifier {
     this.abort = new AbortController();
     try {
       const raw = await this.options.model.generate({ prompt: classificationPrompt(batch), schema: SCHEMA }, { signal: this.abort.signal });
-      for (const [key, value] of parseClassification(raw, batch)) this.cache.set(key, value);
+      const answers = parseClassification(raw, batch);
+      for (const [key, value] of answers) this.cache.set(key, value);
+      for (const id of batch) if (!answers.has(identifierKey(id))) this.unanswered.add(identifierKey(id));
       this.failure = null;
       this.save();
     } catch (error) {

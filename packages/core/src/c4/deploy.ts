@@ -105,7 +105,7 @@ function serviceDef(root: string, file: string, name: string, raw: Record<string
         : [dockerfile?.entrypoint ?? '', dockerfile?.cmd ?? ''].join(' ').trim();
   const commands = launch ? [launch] : [];
   for (const script of scriptsIn(launch)) {
-    const body = dockerfile?.scripts.get(script) ?? repoScript(root, build?.context ?? base, script);
+    const body = dockerfile?.scripts.get(script) ?? scriptOnPath(dockerfile?.scripts, script) ?? repoScript(root, build?.context ?? base, script);
     if (body) commands.push(body);
   }
   return {
@@ -168,6 +168,12 @@ function scriptsIn(command: string): string[] {
   return [...command.matchAll(/(?:^|[\s"'])((?:\/|\.\/)?[\w./-]+\.sh)\b/g)].map((m) => m[1]!);
 }
 
+// A command may run a script by its bare name when the Dockerfile wrote it into a directory on the PATH.
+function scriptOnPath(scripts: Map<string, string> | undefined, script: string): string | undefined {
+  if (!scripts || script.includes('/')) return undefined;
+  return [...scripts].find(([path]) => path.endsWith(`/${script}`))?.[1];
+}
+
 function repoScript(root: string, context: string, script: string): string | null {
   if (script.startsWith('/')) return null;
   const path = join(root, context, script);
@@ -196,11 +202,12 @@ function readDockerfile(root: string, path: string, target: string | null): Dock
   let pending = '';
   for (let i = 0; i < lines.length; i += 1) {
     const line = pending + lines[i]!;
-    const heredoc = /^\s*RUN\b.*<<-?\s*['"]?(\w+)['"]?.*>\s*(\S+)/.exec(line);
-    if (heredoc) {
+    const marker = /^\s*RUN\b.*<<-?\s*['"]?(\w+)['"]?/.exec(line)?.[1];
+    const target = marker ? /[^<]>\s*([^\s<>]+)/.exec(line)?.[1] : undefined;
+    if (marker && target) {
       const body: string[] = [];
-      for (i += 1; i < lines.length && lines[i]!.trim() !== heredoc[1]; i += 1) body.push(lines[i]!);
-      scripts.set(heredoc[2]!, body.join('\n'));
+      for (i += 1; i < lines.length && lines[i]!.trim() !== marker; i += 1) body.push(lines[i]!);
+      scripts.set(target, body.join('\n'));
       pending = '';
       continue;
     }

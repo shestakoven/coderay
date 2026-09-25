@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from 'vitest';
 import type { FileEdge } from '@ide/protocol';
-import { computeFileEdges } from '../../src/graph/edges';
+import { computeFileEdges, unresolvedImports } from '../../src/graph/edges';
 import { createPythonAdapter } from '../../src/lang/python';
 import { createTypeScriptAdapter } from '../../src/lang/typescript';
 import type { LanguageAdapter } from '../../src/lang/types';
@@ -46,5 +46,27 @@ describe('computeFileEdges', () => {
   it('ignores self-imports and imports of files that are not indexed', () => {
     const files = [indexed('src/a.ts', 'typescript', ['./a', './missing'])];
     expect(computeFileEdges(files, adapters)).toEqual([]);
+  });
+});
+
+describe('unresolvedImports', () => {
+  it('lists the Python imports of a file that resolve to no indexed file, as written', () => {
+    const files = [indexed('app/main.py', 'python', ['.db', 'sqlalchemy.orm', 'os']), indexed('app/db.py', 'python', [])];
+    expect(unresolvedImports(files, adapters).get('app/main.py')).toEqual(['sqlalchemy.orm', 'os']);
+  });
+
+  it('lists the TypeScript imports of a file that resolve to no indexed file, as written', () => {
+    const files = [indexed('src/main.ts', 'typescript', ['./server', 'express', '@aws-sdk/client-s3']), indexed('src/server.ts', 'typescript', [])];
+    expect(unresolvedImports(files, adapters).get('src/main.ts')).toEqual(['express', '@aws-sdk/client-s3']);
+  });
+
+  it('omits files whose imports all resolve', () => {
+    const files = [indexed('src/main.ts', 'typescript', ['./server']), indexed('src/server.ts', 'typescript', [])];
+    expect([...unresolvedImports(files, adapters).keys()]).toEqual([]);
+  });
+
+  it('lists a relative import of a file that is not indexed', () => {
+    const files = [indexed('src/main.ts', 'typescript', ['./missing'])];
+    expect(unresolvedImports(files, adapters).get('src/main.ts')).toEqual(['./missing']);
   });
 });
