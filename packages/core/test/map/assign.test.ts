@@ -123,6 +123,19 @@ describe('assignFiles', () => {
     expect([result.owner.get('tools/gen.ts'), result.owner.get('tools/nested/gen.ts')]).toEqual(['ai:custom', undefined]);
   });
 
+  it('falls back to a general glob matcher when the "dir/**" prefix itself contains glob metacharacters', () => {
+    const generated = ai('ai:generated', [], ['src/*/generated/**']);
+    const result = assignFiles({
+      paths: [...generated.files, 'src/a/generated/x.ts'],
+      ai: [generated],
+      manualOwner: new Map(),
+      imports: new Map(),
+      vector: () => undefined,
+      rule: null,
+    });
+    expect(result.owner.get('src/a/generated/x.ts')).toBe('ai:generated');
+  });
+
   it('places 2,000 files under 300 "dir/**" AI globs well under the cost of a general glob matcher', () => {
     const components = Array.from({ length: 300 }, (_, i) => ai(`ai:d${i}`, [], [`d${i}/**`]));
     const paths = Array.from({ length: 2000 }, (_, i) => `d${i % 300}/f${i}.ts`);

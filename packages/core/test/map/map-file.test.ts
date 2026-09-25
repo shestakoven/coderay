@@ -84,6 +84,38 @@ describe('map.json', () => {
     expect(read.warnings).toEqual(['.ide/map.json: components[1] is invalid; it was ignored']);
   });
 
+  it('keeps a manual component name written in Cyrillic', async () => {
+    const root = await rootWithMap(
+      JSON.stringify({ version: 1, components: [], manual: [{ id: 'auth', name: 'Аутентификация', files: [], globs: [] }] }),
+    );
+    expect((await readMapFile(root)).manual[0]?.name).toBe('Аутентификация');
+  });
+
+  it('keeps a manual component name written in CJK', async () => {
+    const root = await rootWithMap(JSON.stringify({ version: 1, components: [], manual: [{ id: 'auth', name: '认证服务', files: [], globs: [] }] }));
+    expect((await readMapFile(root)).manual[0]?.name).toBe('认证服务');
+  });
+
+  it('keeps accented Latin characters in a manual component name', async () => {
+    const root = await rootWithMap(
+      JSON.stringify({ version: 1, components: [], manual: [{ id: 'reports', name: 'Génération de rapports', files: [], globs: [] }] }),
+    );
+    expect((await readMapFile(root)).manual[0]?.name).toBe('Génération de rapports');
+  });
+
+  it('cleans a bidi override and a zero-width character from a manual component name without touching its script', async () => {
+    const root = await rootWithMap(
+      JSON.stringify({ version: 1, components: [], manual: [{ id: 'auth', name: '\u202eАутент\u200bификация', files: [], globs: [] }] }),
+    );
+    expect((await readMapFile(root)).manual[0]?.name).toBe('Аутентификация');
+  });
+
+  it('still bounds an AI component name to its Latin whitelist, unlike a manual name', async () => {
+    const root = await rootWithMap(JSON.stringify({ version: 1, components: [{ ...API, name: 'Аутентификация' }] }));
+    const read = await readMapFile(root);
+    expect([read.ai, read.warnings]).toEqual([null, ['.ide/map.json: components[0] is invalid; it was ignored']]);
+  });
+
   it('ignores an invalid manual entry and says why', async () => {
     const root = await rootWithMap(
       JSON.stringify({

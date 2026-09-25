@@ -180,7 +180,7 @@ function toManual(value: unknown): ManualComponent | null {
   const files = optionalStrings(value.files);
   const globs = optionalStrings(value.globs);
   const id = clean(value.id, NAME_MAX);
-  const name = cleanName(value.name);
+  const name = clean(value.name, NAME_MAX);
   if (id === '' || name === '' || !files || !globs) return null;
   if (RESERVED_ID_PREFIXES.some((prefix) => id.startsWith(prefix))) return null;
   return { id, name, summary: clean(value.summary, SUMMARY_MAX), description: clean(value.description, DESCRIPTION_MAX), files, globs };

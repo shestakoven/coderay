@@ -124,10 +124,13 @@ function globOwner(path: string, ai: AiComponent[]): string | undefined {
   return best?.id;
 }
 
+const GLOB_META = /[*?[\]{}!]/;
+
 // ownedGlobs (component-map.ts) only ever stores "dir/**" or "**"; a prefix check avoids the cost of a general glob matcher on the hot path.
+// Falls back for a hand-edited "dir/**" whose "dir" is itself a pattern (e.g. "src/*/generated/**").
 function ownsPath(path: string, glob: string): boolean {
   if (glob === '**') return true;
-  if (glob.endsWith('/**')) return path.startsWith(glob.slice(0, -2));
+  if (glob.endsWith('/**') && !GLOB_META.test(glob.slice(0, -3))) return path.startsWith(glob.slice(0, -2));
   return posix.matchesGlob(path, glob);
 }
 
