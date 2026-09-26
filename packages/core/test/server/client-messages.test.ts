@@ -49,4 +49,16 @@ describe('parseClientMessage', () => {
     ];
     expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null, null]);
   });
+
+  it('parses a policy save for a level with the policy object, leaving validation to PolicyStore', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.save', requestId: 'r1', level: 'project', policy: { mode: 'A' } })))
+      .toEqual({ type: 'policy.save', requestId: 'r1', level: 'project', policy: { mode: 'A' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.save', requestId: 'r1', level: 'team', policy: {} }))).toBeNull();
+  });
+
+  it('parses a confirmation of outside policy edits with both hashes', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a', project: 'b' } })))
+      .toEqual({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a', project: 'b' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a' } }))).toBeNull();
+  });
 });

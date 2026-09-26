@@ -1,4 +1,4 @@
-import type { ClientMessage, FileHashes, McpEntry, McpLevel, PromptAnswer } from '@ide/protocol';
+import type { ClientMessage, FileHashes, McpEntry, McpLevel, Policy, PromptAnswer } from '@ide/protocol';
 import { isRecord } from '../json';
 
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
@@ -11,7 +11,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes } = value;
+  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes } = value;
   switch (type) {
     case 'chat.send':
       return typeof text === 'string' ? { type, text } : null;
@@ -38,6 +38,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof name === 'string' && typeof entryHash === 'string' ? { type, requestId, name, entryHash } : null;
     case 'mcp.confirm-external-edits':
       return isFileHashes(fileHashes) ? { type, requestId, fileHashes } : null;
+    case 'policy.save':
+      return isLevel(level) && isRecord(policy) ? { type, requestId, level, policy: policy as Partial<Policy> } : null;
+    case 'policy.confirm-external-edits':
+      return isRecord(hashes) && typeof hashes.ide === 'string' && typeof hashes.project === 'string'
+        ? { type, requestId, hashes: { ide: hashes.ide, project: hashes.project } }
+        : null;
     default:
       return null;
   }

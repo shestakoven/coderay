@@ -18,6 +18,7 @@ import { buildC4 } from './c4/model';
 import { McpRegistry } from './mcp/registry';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
+import { PolicyStore } from './policy/policy';
 import { ProgressReporter } from './progress';
 import { startServer, type RunningServer } from './server/server';
 import { openStore } from './store/store';
@@ -62,6 +63,7 @@ const token = randomBytes(24).toString('base64url');
 try {
   const store = openStore(projectDir(home, root));
   const registry = new McpRegistry({ home, root });
+  const policy = new PolicyStore({ home, root });
   const session = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
@@ -70,9 +72,9 @@ try {
   await session.start();
   const models = createModelProvider(home);
 
-  const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: registry.view() });
+  const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: { ...registry.view(), policy: policy.view() } });
 
-  const changeSettings = (message: Extract<ClientMessage, { requestId: string; type: `mcp.${string}` }>): void => {
+  const changeSettings = (message: Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` }>): void => {
     switch (message.type) {
       case 'mcp.save':
         registry.save(message.level, message.name, message.entry, message.previousName);
@@ -85,6 +87,12 @@ try {
         return;
       case 'mcp.confirm-external-edits':
         registry.confirmExternalEdits(message.fileHashes);
+        return;
+      case 'policy.save':
+        policy.save(message.level, message.policy);
+        return;
+      case 'policy.confirm-external-edits':
+        policy.confirmExternalEdits(message.hashes);
         return;
     }
   };
