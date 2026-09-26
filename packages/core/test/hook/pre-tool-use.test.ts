@@ -13,6 +13,7 @@ interface Run {
   stderr: string;
 }
 
+const SECRET = 's3cret';
 const INPUT = JSON.stringify({ tool_name: 'Write', tool_use_id: 'toolu_1', tool_input: { file_path: '/p/a.ts' }, cwd: '/p' });
 const answer = (permissionDecision: string, permissionDecisionReason = 'IDE: test') => JSON.stringify({ permissionDecision, permissionDecisionReason });
 
@@ -44,7 +45,7 @@ async function core(reply: (req: IncomingMessage, body: string, res: ServerRespo
 
 function config(url: string, extra: object = {}): string {
   const path = join(tempDir('ide-hook-'), 'hook.json');
-  writeFileSync(path, JSON.stringify({ url, secret: 's3cret', ...extra }));
+  writeFileSync(path, JSON.stringify({ url, secret: SECRET, ...extra }));
   return path;
 }
 
@@ -59,7 +60,7 @@ describe('pre-tool-use hook script', () => {
     expect([run.code, JSON.parse(run.stdout), seen]).toEqual([
       0,
       { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'IDE: allowed by plan p, step s.' } },
-      { auth: 'Bearer s3cret', body: INPUT },
+      { auth: `Bearer ${SECRET}`, body: INPUT },
     ]);
   });
 
@@ -76,27 +77,32 @@ describe('pre-tool-use hook script', () => {
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const run = await runHook(config(`http://127.0.0.1:${port}/hook`));
     expect([run.code, run.stdout, run.stderr]).toEqual([2, '', expect.stringContaining('IDE core unreachable')]);
+    expect(run.stderr).not.toContain(SECRET);
   });
 
   it.each([
-    ['an error status', (res: ServerResponse) => res.writeHead(500).end(answer('allow'))],
-    ['a body that is not JSON', (res: ServerResponse) => res.writeHead(200).end('nope')],
-    ['a decision other than allow or deny', (res: ServerResponse) => res.writeHead(200).end(answer('ask'))],
-    ['a decision without a reason', (res: ServerResponse) => res.writeHead(200).end(JSON.stringify({ permissionDecision: 'allow' }))],
-  ])('blocks with exit 2 on %s', async (_name, reply) => {
+    ['an error status', (res: ServerResponse) => res.writeHead(500).end(answer('allow')), 'IDE: the IDE core answered 500'],
+    ['a body that is not JSON', (res: ServerResponse) => res.writeHead(200).end('nope'), undefined],
+    ['a decision other than allow or deny', (res: ServerResponse) => res.writeHead(200).end(answer('ask')), 'IDE: the IDE core sent an answer the hook cannot read'],
+    ['a decision without a reason', (res: ServerResponse) => res.writeHead(200).end(JSON.stringify({ permissionDecision: 'allow' })), 'IDE: the IDE core sent an answer the hook cannot read'],
+  ])('blocks with exit 2 on %s', async (_name, reply, exactStderr) => {
     const url = await core((_req, _body, res) => reply(res));
     const run = await runHook(config(url));
     expect([run.code, run.stdout]).toEqual([2, '']);
+    expect(run.stderr).not.toContain(SECRET);
+    if (exactStderr !== undefined) expect(run.stderr).toBe(exactStderr);
   });
 
   it('blocks with exit 2 when its config file is missing', async () => {
     const run = await runHook(join(tempDir('ide-hook-'), 'missing.json'));
     expect([run.code, run.stderr]).toEqual([2, expect.stringContaining('IDE:')]);
+    expect(run.stderr).not.toContain(SECRET);
   });
 
   it('blocks with exit 2 at its own deadline when the core does not answer', async () => {
     const url = await core(() => undefined);
     const run = await runHook(config(url, { deadlineMs: 300 }));
     expect([run.code, run.stderr]).toEqual([2, expect.stringContaining('the user did not respond')]);
+    expect(run.stderr).not.toContain(SECRET);
   });
 });
