@@ -370,3 +370,40 @@ describe('server', () => {
     expect(socket.readyState).toBe(WebSocket.OPEN);
   });
 });
+
+describe('HTTP routes', () => {
+  async function routed(handle: (res: import('node:http').ServerResponse) => void) {
+    const running = await startServer({
+      port: 0, token: TOKEN, snapshot: () => null,
+      routes: [{ path: '/hook', handle: (_req, res) => handle(res) }],
+    });
+    onTestFinished(() => running.close());
+    return running;
+  }
+
+  function post(port: number, path: string, host = `127.0.0.1:${port}`): Promise<{ status: number; body: string }> {
+    return new Promise((resolve, reject) => {
+      const req = request({ host: '127.0.0.1', port, path, method: 'POST', headers: { host } }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body }));
+      });
+      req.on('error', reject);
+      req.end('{}');
+    });
+  }
+
+  it("hands a request for a route's path to that route", async () => {
+    const running = await routed((res) => res.writeHead(200).end('routed'));
+    expect(await post(running.port, '/hook')).toEqual({ status: 200, body: 'routed' });
+  });
+
+  it('keeps the host check in front of the routes', async () => {
+    let called = false;
+    const running = await routed((res) => {
+      called = true;
+      res.writeHead(200).end();
+    });
+    expect([(await post(running.port, '/hook', 'evil.example')).status, called]).toEqual([401, false]);
+  });
+});
