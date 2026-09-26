@@ -1,4 +1,5 @@
 import { execFileSync } from 'node:child_process';
+import { request } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -46,6 +47,21 @@ async function connect(port: number, secret = SECRET): Promise<Client> {
 }
 
 const text = (result: unknown) => (((result as { content?: unknown }).content ?? []) as { text?: string }[]).map((part) => part.text ?? '').join('');
+
+function rawPost(port: number, headers: Record<string, string>, body: string | Buffer): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const req = request(
+      { host: '127.0.0.1', port, path: '/mcp', method: 'POST', headers: { host: `127.0.0.1:${port}`, ...headers } },
+      (res) => {
+        let responseBody = '';
+        res.on('data', (chunk) => (responseBody += chunk));
+        res.on('end', () => resolve({ status: res.statusCode ?? 0, body: responseBody }));
+      },
+    );
+    req.on('error', reject);
+    req.end(body);
+  });
+}
 
 describe('idecore', () => {
   it('offers propose_plan and step', async () => {
@@ -101,6 +117,37 @@ describe('idecore', () => {
   });
 
   it('refuses a client without the agent secret', async () => {
-    await expect(connect((await setup()).port, 'wrong')).rejects.toThrow();
+    await expect(connect((await setup()).port, 'wrong')).rejects.toMatchObject({ code: 401 });
+  });
+
+  it('refuses a raw request with no Authorization header', async () => {
+    const { port } = await setup();
+    const result = await rawPost(port, {}, '{}');
+    expect(result.status).toBe(401);
+  });
+
+  it('refuses a raw request whose secret is a prefix of the real one', async () => {
+    const { port } = await setup();
+    const result = await rawPost(port, { authorization: `Bearer ${SECRET.slice(0, -1)}` }, '{}');
+    expect(result.status).toBe(401);
+  });
+
+  it('answers 413 for a request body over the 4 MiB limit', async () => {
+    const { port } = await setup();
+    const big = Buffer.alloc(4 * 1024 * 1024 + 1, 'x');
+    const result = await rawPost(port, { authorization: `Bearer ${SECRET}` }, big);
+    expect(result.status).toBe(413);
+  });
+
+  it('answers 400 for a request body that is not JSON', async () => {
+    const { port } = await setup();
+    const result = await rawPost(port, { authorization: `Bearer ${SECRET}` }, 'not json');
+    expect(result.status).toBe(400);
+  });
+
+  it('answers 404 for an unknown mcp-session-id, so the client initializes again', async () => {
+    const { port } = await setup();
+    const result = await rawPost(port, { authorization: `Bearer ${SECRET}`, 'mcp-session-id': 'nope' }, '{}');
+    expect(result.status).toBe(404);
   });
 });
