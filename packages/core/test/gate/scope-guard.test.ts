@@ -70,8 +70,14 @@ describe('decide', () => {
   });
 
   it('never counts an outside or unresolved target as in scope', () => {
-    const decision = run('Bash', [target('enforced', 'src/app.ts'), target('outside', null)]);
-    expect([decision.outcome, decision.outOfScope.map((t) => t.kind)]).toEqual(['ask', ['outside']]);
+    const decision = run('Bash', [target('enforced', 'src/app.ts'), target('outside', null), target('unresolved', null)]);
+    expect([decision.outcome, decision.outOfScope.map((t) => t.kind)]).toEqual(['ask', ['outside', 'unresolved']]);
+  });
+
+  it('denies a directory delete under a bare wildcard glob in mode A', () => {
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope: { paths: [], globs: ['*'] }, activeStep: 'edit' };
+    const decision = run('Bash', [target('enforced', 'packages', { dir: true })], gate, 'A');
+    expect([decision.outcome, decision.outOfScope.map((t) => t.rel)]).toEqual(['deny', ['packages']]);
   });
 
   it('counts a git work-tree rewrite in scope only when the whole tree is', () => {
@@ -130,5 +136,12 @@ describe('covers', () => {
 
   it('covers a mkdir target that the scope lists as a path', () => {
     expect(covers({ paths: ['newdir'], globs: [] }, { rel: 'newdir', dir: false, mkdir: true })).toBe(true);
+  });
+
+  it('does not let a bare wildcard glob cover a directory delete', () => {
+    expect([
+      covers({ paths: [], globs: ['*'] }, { rel: 'packages', dir: true, mkdir: false }),
+      covers({ paths: [], globs: ['src/*'] }, { rel: 'src/sub', dir: true, mkdir: false }),
+    ]).toEqual([false, false]);
   });
 });

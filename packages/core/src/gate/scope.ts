@@ -55,9 +55,9 @@ function wholeDirectory(glob: string): string | null {
 }
 
 export function covers(scope: FrozenScope, target: ScopeTarget): boolean {
-  if (scope.globs.some((glob) => posix.matchesGlob(target.rel, glob))) return true;
   if (target.mkdir) {
-    return scope.paths.includes(target.rel)
+    return scope.globs.some((glob) => posix.matchesGlob(target.rel, glob))
+      || scope.paths.includes(target.rel)
       || scope.paths.some((path) => isAncestorOrSelf(target.rel, posix.dirname(path)))
       || scope.globs.some((glob) => isAncestorOrSelf(target.rel, globBase(glob)));
   }
@@ -67,5 +67,6 @@ export function covers(scope: FrozenScope, target: ScopeTarget): boolean {
       return dir !== null && isAncestorOrSelf(dir, target.rel);
     });
   }
+  if (scope.globs.some((glob) => posix.matchesGlob(target.rel, glob))) return true;
   return scope.paths.includes(target.rel);
 }
