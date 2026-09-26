@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { PlanView, Policy } from '@ide/protocol';
+import { covers } from '../../src/gate/scope';
 import { reviewPlan } from '../../src/plans/freeze';
 import type { ComponentRef } from '../../src/plans/plan-input';
 import { PlanError, PlanService } from '../../src/plans/plan-service';
@@ -116,6 +117,27 @@ describe('PlanService', () => {
     expect(() => service.answer(plan.id, 1, { kind: 'changes', feedback: ' ' })).toThrow(PlanError);
   });
 
+  it('rejects a plan whose latest version is changes-requested, closing the plan', async () => {
+    const { service } = await setup();
+    const call = service.propose(big);
+    const plan = await waiting(service);
+    service.answer(plan.id, 1, { kind: 'changes', feedback: 'not now' });
+    expect(await call).toEqual({ ok: true, value: { status: 'changes_requested', feedback: 'not now' } });
+    service.answer('plan-1', 1, { kind: 'reject', feedback: '' });
+    expect([latest(service)?.status, service.gate()]).toEqual(['rejected', { state: 'rejected', planId: 'plan-1' }]);
+  });
+
+  it('supersedes an older waiting proposal when a second one arrives', async () => {
+    const { service } = await setup();
+    const call = service.propose(big);
+    await waiting(service);
+    void service.propose(big);
+    await waitFor(() => latest(service)?.version === 2, 'version 2');
+    expect(await call).toEqual({ ok: true, value: { status: 'rejected', feedback: 'Superseded by version 2.' } });
+    expect(service.plans().find((plan) => plan.version === 1)?.status).toBe('superseded');
+    expect(() => service.answer('plan-1', 1, { kind: 'approve' })).toThrow(PlanError);
+  });
+
   it('closes a rejected plan: writes are denied as rejected and the next proposal starts a new plan', async () => {
     const { service } = await setup();
     const call = service.propose(big);
@@ -171,8 +193,21 @@ describe('PlanService', () => {
     const call = service.propose(big, abort.signal);
     await waiting(service);
     abort.abort();
+    expect([await call, latest(service)?.status]).toEqual([
+      { ok: true, value: { status: 'rejected', feedback: 'Cancelled.' } },
+      'withdrawn',
+    ]);
+  });
+
+  it('refuses to approve a version that was cancelled', async () => {
+    const { service } = await setup();
+    const abort = new AbortController();
+    const call = service.propose(big, abort.signal);
+    await waiting(service);
+    abort.abort();
     await call;
-    expect(latest(service)?.status).toBe('withdrawn');
+    expect(() => service.answer('plan-1', 1, { kind: 'approve' })).toThrow(PlanError);
+    expect(service.gate().state).not.toBe('approved');
   });
 
   it('answers rejected and withdraws the plan when the user does not answer in time', async () => {
@@ -183,12 +218,22 @@ describe('PlanService', () => {
     expect(latest(service)?.status).toBe('withdrawn');
   });
 
+  it('refuses to approve a version that already withdrew after the deadline', async () => {
+    const { service } = await setup({ deadlineMs: 50 });
+    await service.propose(big);
+    expect(() => service.answer('plan-1', 1, { kind: 'approve' })).toThrow(PlanError);
+    expect(service.gate().state).not.toBe('approved');
+  });
+
   it('withdraws waiting proposals when the agent process ends', async () => {
     const { service } = await setup();
     const call = service.propose(big);
     await waiting(service);
     service.withdrawPending("The agent's process ended.");
-    expect([(await call).ok, latest(service)?.status]).toEqual([true, 'withdrawn']);
+    expect([await call, latest(service)?.status]).toEqual([
+      { ok: true, value: { status: 'rejected', feedback: "The agent's process ended." } },
+      'withdrawn',
+    ]);
   });
 
   it('runs steps one at a time and marks the plan done after the last one', async () => {
@@ -226,6 +271,19 @@ describe('PlanService', () => {
     expect(service.gate()).toMatchObject({ version: 2, scope: { paths: ['src/app.ts', 'src/lib/new.ts', 'src/other.ts'], globs: [] } });
   });
 
+  it('expands into a directory, escaping glob metacharacters, and covers a new mkdir target', async () => {
+    const { service } = await setup();
+    await service.propose(small);
+    service.step({ key: 'edit', phase: 'start' });
+    const expanded = service.expand([
+      { rel: 'src/[id]', exists: true, dir: true },
+      { rel: 'src/newdir', exists: false, dir: true },
+    ]);
+    expect(expanded.scope.globs).toEqual(['src/[[]id[]]/**', 'src/newdir/**']);
+    expect(covers(expanded.scope, { rel: 'src/i/x.ts', dir: false, mkdir: false })).toBe(false);
+    expect(covers(expanded.scope, { rel: 'src/newdir', dir: false, mkdir: true })).toBe(true);
+  });
+
   it('does not offer to expand while an agent-proposed version waits', async () => {
     const { service } = await setup();
     await service.propose(small);
@@ -244,6 +302,13 @@ describe('PlanService', () => {
     const next = setupResult.restart();
     expect(next.plans().map((plan) => [plan.version, plan.status])).toEqual([[1, 'approved'], [2, 'withdrawn']]);
     expect(next.gate()).toMatchObject({ state: 'approved', version: 1 });
+  });
+
+  it('starts a step of an approved plan after a core restart', async () => {
+    const { service, restart } = await setup();
+    await service.propose(small);
+    const next = restart();
+    expect(next.step({ key: 'edit', phase: 'start' })).toEqual({ ok: true });
   });
 
   it('starts a new session with no plan', async () => {

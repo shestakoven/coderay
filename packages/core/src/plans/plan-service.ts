@@ -139,6 +139,7 @@ export class PlanService {
     if (!enforced.steps.some((step) => step.key === key)) {
       return { ok: false, error: `IDE: plan ${gate.planId} has no step "${key}". Its steps: ${enforced.steps.map((step) => step.key).join(', ')}.` };
     }
+    if (!this.stepStates.has(gate.planId)) this.stepStates.set(gate.planId, new Map());
     const states = this.stepStates.get(gate.planId)!;
     const status = states.get(key) ?? 'pending';
     if (status === 'done') return { ok: false, error: `IDE: step "${key}" is already done.` };
@@ -285,7 +286,7 @@ export class PlanService {
   }
 
   private reject(record: PlanRecord, feedback: string): void {
-    const open = this.versions(record.id).filter((candidate) => candidate.status === 'proposed' || candidate.status === 'approved');
+    const open = this.versions(record.id).filter((candidate) => OPEN_LATEST.has(candidate.status) || candidate.status === 'approved');
     if (!open.includes(record)) throw new PlanError('Only a waiting or approved plan can be rejected.');
     const result: ProposeResult = feedback ? { status: 'rejected', feedback } : { status: 'rejected' };
     for (const version of open) {
@@ -329,7 +330,8 @@ export class PlanService {
   }
 
   private setStep(planId: string, key: string, status: StepStatus): void {
-    this.stepStates.get(planId)?.set(key, status);
+    if (!this.stepStates.has(planId)) this.stepStates.set(planId, new Map());
+    this.stepStates.get(planId)!.set(key, status);
     try {
       this.options.store.saveStepState(planId, key, status);
     } catch (error) {
