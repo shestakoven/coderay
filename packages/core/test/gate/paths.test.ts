@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, symlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Policy } from '@ide/protocol';
@@ -53,6 +53,18 @@ describe('realTarget', () => {
   it('normalizes .. before resolving', () => {
     const root = tempDir('ide-gate-');
     expect(realTarget('src/../../escape.txt', root)).toBe(join(dirname(root), 'escape.txt'));
+  });
+
+  it('resolves a wrong-case existing path to the on-disk case (or a different, new path on a case-sensitive filesystem)', () => {
+    const root = tempDir('ide-gate-');
+    writeFileSync(join(root, 'CaseFile.txt'), '');
+    const caseInsensitive = existsSync(join(root, 'casefile.txt'));
+    const target = realTarget('casefile.txt', root);
+    if (caseInsensitive) {
+      expect(target).toBe(join(root, 'CaseFile.txt'));
+    } else {
+      expect(target).toBe(join(root, 'casefile.txt'));
+    }
   });
 });
 

@@ -43,7 +43,7 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 const projectArg = resolve(values.project.at(-1) ?? '.');
 let root: string;
 try {
-  root = realpathSync(projectArg);
+  root = realpathSync.native(projectArg);
   if (!statSync(root).isDirectory()) throw new Error('not a directory');
 } catch {
   console.error(`IDE core: project directory not found: ${projectArg}`);

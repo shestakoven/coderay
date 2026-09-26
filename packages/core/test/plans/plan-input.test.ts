@@ -1,4 +1,4 @@
-import { symlinkSync } from 'node:fs';
+import { existsSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parsePlanInput, type ComponentRef } from '../../src/plans/plan-input';
@@ -60,6 +60,15 @@ describe('parsePlanInput', () => {
     symlinkSync(join(dir, 'src/lib'), join(dir, 'src/alias'));
     expect(parsePlanInput({ goal: 'g', steps: [step([{ path: 'src/alias/util.ts', op: 'modify' }])] }, dir, components))
       .toMatchObject({ steps: [{ targets: [{ path: 'src/lib/util.ts', op: 'modify' }] }] });
+  });
+
+  it('normalizes a wrong-case path to the case stored on disk (or a different, new path on a case-sensitive filesystem)', async () => {
+    const dir = await root();
+    const caseInsensitive = existsSync(join(dir, 'SRC/APP.TS'));
+    const plan = parsePlanInput({ goal: 'g', steps: [step([{ path: 'SRC/APP.TS', op: 'modify' }])] }, dir, components);
+    expect(plan).toMatchObject({
+      steps: [{ targets: [{ path: caseInsensitive ? 'src/app.ts' : 'SRC/APP.TS', op: 'modify' }] }],
+    });
   });
 
   it('refuses wildcards in a path but allows brackets', async () => {

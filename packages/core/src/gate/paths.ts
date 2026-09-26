@@ -36,7 +36,7 @@ export function realTarget(path: string, cwd: string): string {
   const rest: string[] = [];
   for (let dir = abs; ; dir = dirname(dir)) {
     try {
-      return join(realpathSync(dir), ...[...rest].reverse());
+      return join(realpathSync.native(dir), ...[...rest].reverse());
     } catch {
       if (dirname(dir) === dir) return abs;
       rest.push(basename(dir));
@@ -49,7 +49,7 @@ export function defaultTempRoots(env: NodeJS.ProcessEnv = process.env): string[]
   for (const candidate of [tmpdir(), '/tmp', env.TMPDIR, env.TMP]) {
     if (!candidate) continue;
     try {
-      roots.add(realpathSync(candidate));
+      roots.add(realpathSync.native(candidate));
     } catch {
       // A configured temp directory that does not exist holds nothing to classify.
     }

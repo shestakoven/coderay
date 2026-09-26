@@ -1,8 +1,10 @@
 import { execFileSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PlanStep, PlanTarget, Policy } from '@ide/protocol';
 import { freezeScope, reviewPlan } from '../../src/plans/freeze';
-import type { ComponentRef } from '../../src/plans/plan-input';
+import { parsePlanInput, type ComponentRef } from '../../src/plans/plan-input';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { tempDir, writeTree } from '../helpers';
 
@@ -45,6 +47,16 @@ describe('reviewPlan', () => {
     expect(result).toEqual({ review: { auto: true, notes: ['2 files in App'] }, owners: { 'src/app.ts': 'app', 'src/other.ts': 'app' } });
   });
 
+  it('approves exactly three changed files of one component, the default limit', async () => {
+    const result = await review(await project(), steps([
+      { path: 'src/app.ts', op: 'modify' }, { path: 'src/other.ts', op: 'modify' }, { path: 'src/extra.ts', op: 'modify' },
+    ]));
+    expect(result).toEqual({
+      review: { auto: true, notes: ['3 files in App'] },
+      owners: { 'src/app.ts': 'app', 'src/other.ts': 'app', 'src/extra.ts': 'app' },
+    });
+  });
+
   it('counts an existing file the map does not index as no component', async () => {
     const result = await review(await project(), steps([{ path: 'src/app.ts', op: 'modify' }, { path: 'README.md', op: 'modify' }]));
     expect(result).toEqual({ review: { auto: true, notes: ['2 files in App'] }, owners: { 'src/app.ts': 'app', 'README.md': null } });
@@ -68,6 +80,18 @@ describe('reviewPlan', () => {
     expect(result.review.auto).toBe(true);
   });
 
+  it('does not place a new file when its indexed siblings belong to different components', async () => {
+    const mixed: ComponentRef[] = [
+      { id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts', 'src/extra.ts', 'src/ui/one.ts', 'src/mixed/a.ts', 'src/mixed/b.ts'], globs: [] },
+      { id: 'lib', name: 'Lib', files: ['src/lib/util.ts', 'src/mixed/c.ts'], globs: ['src/lib/**'] },
+    ];
+    const result = await reviewPlan(steps([{ path: 'src/mixed/new.ts', op: 'create' }]), {
+      root: await project(), policy: DEFAULT_POLICY, components: mixed, tempRoots: [],
+    });
+    expect(result.owners).toEqual({ 'src/mixed/new.ts': null });
+    expect(result.review).toEqual({ auto: false, notes: ['the map cannot place the new file src/mixed/new.ts in a component'] });
+  });
+
   it('waits for the user when the map cannot place a new file', async () => {
     const result = await review(await project(), steps([{ path: 'src/ui/two.ts', op: 'create' }]));
     expect(result.review).toEqual({ auto: false, notes: ['the map cannot place the new file src/ui/two.ts in a component'] });
@@ -86,5 +110,26 @@ describe('reviewPlan', () => {
   ] as const)('waits for the user for %s', async (_name, targets, note, policy) => {
     const result = await review(await project(), steps([...targets] as PlanTarget[]), policy);
     expect([result.review.auto, result.review.notes]).toEqual([false, expect.arrayContaining([note])]);
+  });
+
+  it('does not let letter case hide that a plan spans two components', async () => {
+    const root = await project();
+    const caseInsensitive = existsSync(join(root, 'SRC/APP.TS'));
+    const raw = {
+      goal: 'g',
+      steps: [{ key: 's1', title: 'Step 1', rationale: '', targets: [{ path: 'SRC/APP.TS', op: 'modify' }, { path: 'src/lib/util.ts', op: 'modify' }] }],
+    };
+    const parsed = parsePlanInput(raw, root, components);
+    if (typeof parsed === 'string') throw new Error(parsed);
+    const result = await review(root, parsed.steps);
+    expect(result.review.auto).toBe(false);
+    if (caseInsensitive) {
+      expect(result.owners).toEqual({ 'src/app.ts': 'app', 'src/lib/util.ts': 'lib' });
+      expect(result.review.notes).toEqual(expect.arrayContaining(['files in 2 components (App, Lib)']));
+    } else {
+      // A case-sensitive filesystem treats "SRC/APP.TS" as a new, unindexed path rather than src/app.ts.
+      expect(result.owners).toEqual({ 'SRC/APP.TS': null, 'src/lib/util.ts': 'lib' });
+      expect(result.review.notes).toEqual(expect.arrayContaining(['the map cannot place the new file SRC/APP.TS in a component']));
+    }
   });
 });
