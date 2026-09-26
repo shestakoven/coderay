@@ -47,11 +47,13 @@ const UNCHECKED = new Set<ToolClass>(['subagent', 'read', 'mcp', 'interactive'])
 const MAX_LISTED = 5;
 const NONE = { relevant: [], outOfScope: [], planId: null, version: null, stepKey: null };
 
+export const targetName = (target: ClassifiedTarget): string => target.rel ?? target.abs ?? target.raw;
+
 export function describeTargets(targets: ClassifiedTarget[]): string {
   const names = targets.map((target) => {
     if (target.kind === 'all-tracked') return 'every tracked file (a git command that rewrites the work tree)';
     if (target.kind === 'unresolved') return `${target.raw} (${target.why})`;
-    return target.rel ?? target.abs ?? target.raw;
+    return targetName(target);
   });
   const shown = names.slice(0, MAX_LISTED).join(', ');
   return names.length > MAX_LISTED ? `${shown} and ${names.length - MAX_LISTED} more` : shown;
