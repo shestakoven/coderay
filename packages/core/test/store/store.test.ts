@@ -185,4 +185,25 @@ describe('openStore', () => {
     db.close();
     expect(() => openStore(dir)).toThrow('history.sqlite has schema version 99, newer than this IDE understands (2)');
   });
+
+  it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
+    const dir = tempDir('ide-store-');
+    const first = openStore(dir);
+    first.saveSession(session('s1', 1));
+    first.close();
+    const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec('DROP TABLE plans; DROP TABLE step_states; DROP TABLE tool_decisions; DROP TABLE gate_events; PRAGMA user_version = 1;');
+    db.exec('CREATE INDEX step_states ON sessions (id)');
+    db.close();
+
+    expect(() => openStore(dir)).toThrow();
+
+    const check = new DatabaseSync(join(dir, 'history.sqlite'));
+    const userVersion = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+    const plansTable = check.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'plans'").all();
+    check.close();
+
+    expect(userVersion).toBe(1);
+    expect(plansTable).toEqual([]);
+  });
 });
