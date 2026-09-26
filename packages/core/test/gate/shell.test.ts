@@ -107,4 +107,43 @@ describe('shellWrites', () => {
   it('ignores comments', () => {
     expect(targets('ls # > not-a-file')).toEqual([]);
   });
+
+  it('treats "((" as two subshell opens unless the inner paren closes as arithmetic', () => {
+    expect(targets('((cd a && make) || rm -rf b); rm -rf c')).toEqual(['/p/b', '/p/c']);
+    expect(targets('(( i > 0 )) && rm -rf d')).toEqual(['/p/d']);
+  });
+
+  it('finds the chmod target when the mode itself looks like an option', () => {
+    expect(targets('chmod -x f')).toEqual(['/p/f']);
+    expect(targets('chmod -R -w dir')).toEqual(['/p/dir']);
+  });
+
+  it('scans every find -exec, looks through wrappers, and counts a shell as a writer', () => {
+    expect(targets('find . -name x -exec echo {} \\; -exec rm {} \\;')).toEqual(['? find deletes or changes the files it finds']);
+    expect(targets('find . -exec sudo rm {} \\;')).toEqual(['? find deletes or changes the files it finds']);
+    expect(targets("find . -exec sh -c 'rm \"$0\"' {} \\;")).toEqual(['? find deletes or changes the files it finds']);
+  });
+
+  it('counts a shell run by xargs as a writer', () => {
+    expect(targets("ls | xargs sh -c 'rm $0'")).toEqual(['? xargs runs a command that writes files it reads from its input']);
+  });
+
+  it('treats TMPDIR, TMP and HOME as unresolved once the command reassigns them', () => {
+    expect(targets('TMPDIR=/p/src; rm -rf $TMPDIR/core')).toEqual(['? the variable $TMPDIR']);
+    expect(targets('export TMPDIR=$PWD/tmp; echo > $TMPDIR/log')).toEqual(['? the variable $TMPDIR']);
+    expect(targets('HOME=/p; rm -rf ~/src')).toEqual(['? the variable $HOME']);
+  });
+
+  it('accepts sudo and env assignments with a non-literal value, and gives exec -a its value', () => {
+    expect(targets('env A=$X rm y')).toEqual(['/p/y']);
+    expect(targets('sudo FOO=bar rm -rf /x')).toEqual(['/x']);
+    expect(targets('exec -a nm rm x')).toEqual(['/p/x']);
+  });
+
+  it('treats >& file, >|, &>> and <> as write targets', () => {
+    expect(targets('cmd >& out.txt')).toEqual(['/p/out.txt']);
+    expect(targets('cmd >| out.txt')).toEqual(['/p/out.txt']);
+    expect(targets('cmd &>> out.txt')).toEqual(['/p/out.txt']);
+    expect(targets('cmd <> out.txt')).toEqual(['/p/out.txt']);
+  });
 });

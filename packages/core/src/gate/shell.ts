@@ -42,6 +42,7 @@ interface State {
   env: ShellEnv;
   cwd: (string | null)[];
   mktemp: Set<string>;
+  poisoned: Set<string>;
   targets: ShellTarget[];
   allTracked: boolean;
 }
@@ -59,6 +60,9 @@ const WORK_TREE_REWRITES = new Set(['checkout', 'switch', 'restore', 'reset', 's
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
 const PLAIN_MKTEMP_FLAGS = new Set(['-d', '-q', '-u', '--directory', '--quiet', '--dry-run', '--tmpdir']);
+const CHMOD_OPTIONS = new Set(['-c', '--changes', '-f', '--silent', '--quiet', '-v', '--verbose', '--no-preserve-root', '--preserve-root', '-R', '--recursive', '-H', '-L', '-P', '-h', '--help', '--version']);
+const PROTECTED_VARS = new Set(['HOME', 'TMPDIR', 'TMP']);
+const ENV_SETTERS = new Set(['export', 'declare', 'typeset', 'readonly', 'local']);
 const DEVICE = /^\/dev\/(null|stdout|stderr|tty|zero|fd\/\d+)$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
@@ -66,7 +70,7 @@ const MAX_DEPTH = 8;
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [cwd], mktemp: new Set(), targets: [], allTracked: false };
+  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], allTracked: false };
   run(command, state, 0);
   return { targets: state.targets, allTracked: state.allTracked };
 }
@@ -119,9 +123,14 @@ function lex(src: string): Token[] {
       i += 1;
       for (const doc of heredocs.splice(0)) i = skipHeredoc(src, i, doc);
     } else if (src.startsWith('((', i)) {
-      const end = src.indexOf('))', i + 2);
-      i = end === -1 ? src.length : end + 2;
-      tokens.push({ t: 'word', word: { parts: [{ kind: 'lit', text: '((…))' }], raw: '((…))' } });
+      const innerClose = closing(src, i + 2, ')');
+      if (src[innerClose + 1] === ')') {
+        i = innerClose + 2;
+        tokens.push({ t: 'word', word: { parts: [{ kind: 'lit', text: '((…))' }], raw: '((…))' } });
+      } else {
+        tokens.push({ t: 'op', op: '(' }, { t: 'op', op: '(' });
+        i += 2;
+      }
     } else {
       const long = LONG_OPERATORS.find((op) => src.startsWith(op, i));
       const redirect = long ? undefined : REDIRECTS.find((op) => src.startsWith(op, i));
@@ -306,7 +315,12 @@ function command(name: string, args: Word[], state: State, depth: number): void 
     case 'truncate':
       for (const word of operands(args, ['-s', '-r'])) addTarget(word, state);
       return;
-    case 'chmod':
+    case 'chmod': {
+      const byReference = args.some((word) => literalText(word)?.startsWith('--reference') ?? false);
+      const words = chmodOperands(args);
+      for (const word of byReference ? words : words.slice(1)) addTarget(word, state);
+      return;
+    }
     case 'chown':
     case 'chgrp': {
       const byReference = args.some((word) => literalText(word)?.startsWith('--reference') ?? false);
@@ -328,7 +342,12 @@ function command(name: string, args: Word[], state: State, depth: number): void 
       find(args, state);
       return;
     case 'xargs':
-      if (args.some((word) => WRITERS.has(posix.basename(literalText(word) ?? '')))) {
+      if (
+        args.some((word) => {
+          const base = posix.basename(literalText(word) ?? '');
+          return WRITERS.has(base) || SHELLS.has(base);
+        })
+      ) {
         state.targets.push(unresolved('xargs', 'xargs runs a command that writes files it reads from its input'));
       }
       return;
@@ -336,6 +355,10 @@ function command(name: string, args: Word[], state: State, depth: number): void 
       state.targets.push(unresolved('eval', 'eval runs text the IDE cannot read'));
       return;
     default:
+      if (ENV_SETTERS.has(name)) {
+        for (const word of args) if (isAssignment(word)) assign(word, state);
+        return;
+      }
       if (SHELLS.has(name)) nestedShell(args, state, depth);
   }
 }
@@ -349,6 +372,17 @@ function operands(args: Word[], valueOptions: string[]): Word[] {
       if (valueOptions.includes(text)) i += 1;
       continue;
     }
+    found.push(args[i]!);
+  }
+  return found;
+}
+
+function chmodOperands(args: Word[]): Word[] {
+  const found: Word[] = [];
+  for (let i = 0; i < args.length; i += 1) {
+    const text = literalText(args[i]!);
+    if (text === '--') return [...found, ...args.slice(i + 1)];
+    if (text !== null && (CHMOD_OPTIONS.has(text) || text.startsWith('--reference'))) continue;
     found.push(args[i]!);
   }
   return found;
@@ -435,9 +469,20 @@ function git(args: Word[], state: State): void {
 
 function find(args: Word[], state: State): void {
   const texts = args.map((word) => literalText(word));
-  const exec = texts.findIndex((text) => text === '-exec' || text === '-execdir' || text === '-ok' || text === '-okdir');
-  const runsWriter = exec !== -1 && WRITERS.has(posix.basename(texts[exec + 1] ?? ''));
-  if (texts.includes('-delete') || runsWriter) state.targets.push(unresolved('find', 'find deletes or changes the files it finds'));
+  if (texts.includes('-delete')) {
+    state.targets.push(unresolved('find', 'find deletes or changes the files it finds'));
+    return;
+  }
+  for (let i = 0; i < args.length; i += 1) {
+    const text = texts[i];
+    if (text !== '-exec' && text !== '-execdir' && text !== '-ok' && text !== '-okdir') continue;
+    const rest = unwrap(args.slice(i + 1));
+    const base = posix.basename(literalText(rest[0] ?? EMPTY) ?? '');
+    if (WRITERS.has(base) || SHELLS.has(base)) {
+      state.targets.push(unresolved('find', 'find deletes or changes the files it finds'));
+      return;
+    }
+  }
 }
 
 function nestedShell(args: Word[], state: State, depth: number): void {
@@ -483,10 +528,13 @@ function wordValue(word: Word, state: State): WordValue {
   let text = '';
   for (const part of word.parts) {
     if (part.kind === 'lit') text += part.text;
-    else if (part.kind === 'tilde') text += state.env.home;
-    else if (part.kind === 'glob') return { problem: 'a wildcard' };
+    else if (part.kind === 'tilde') {
+      if (state.poisoned.has('HOME')) return { problem: 'the variable $HOME' };
+      text += state.env.home;
+    } else if (part.kind === 'glob') return { problem: 'a wildcard' };
     else if (part.kind === 'sub') return { problem: 'command substitution' };
     else if (text === '' && state.mktemp.has(part.name)) return { temp: true };
+    else if (state.poisoned.has(part.name)) return { problem: `the variable $${part.name}` };
     else if (part.name === 'HOME') text += state.env.home;
     else if ((part.name === 'TMPDIR' || part.name === 'TMP') && state.env.vars[part.name]) text += state.env.vars[part.name];
     else return { problem: `the variable $${part.name}` };
@@ -519,15 +567,18 @@ function unwrap(args: Word[]): Word[] {
   for (;;) {
     const name = literalText(args[i] ?? EMPTY);
     if (!name || !WRAPPERS.has(posix.basename(name))) return args.slice(i);
-    const isEnv = posix.basename(name) === 'env';
+    const base = posix.basename(name);
+    const acceptsAssignments = base === 'env' || base === 'sudo';
     i += 1;
     while (i < args.length) {
-      const text = literalText(args[i]!);
-      if (text === null) break;
-      if (isEnv && ASSIGNMENT.test(text)) {
+      const word = args[i]!;
+      if (acceptsAssignments && isAssignment(word)) {
         i += 1;
-      } else if (text.startsWith('-')) {
-        i += text === '-n' || text === '-u' || text === '-g' ? 2 : 1;
+        continue;
+      }
+      const text = literalText(word);
+      if (text !== null && text.startsWith('-')) {
+        i += text === '-n' || text === '-u' || text === '-g' || (base === 'exec' && text === '-a') ? 2 : 1;
       } else {
         break;
       }
@@ -543,6 +594,7 @@ function assign(word: Word, state: State): void {
   const only = value.length === 1 ? value[0] : undefined;
   if (only?.kind === 'sub' && isPlainMktemp(only.body)) state.mktemp.add(name);
   else state.mktemp.delete(name);
+  if (PROTECTED_VARS.has(name)) state.poisoned.add(name);
 }
 
 function isPlainMktemp(body: string): boolean {
