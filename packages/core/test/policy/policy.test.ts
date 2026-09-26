@@ -101,4 +101,11 @@ describe('PolicyStore', () => {
     const view = policy.view();
     expect([view.effective, view.problems]).toEqual([DEFAULT_POLICY, [`project level: ${join(projectDir(home, root), 'policy.json')} is not valid JSON`]]);
   });
+
+  it('does not let a corrupt ledger and an absent IDE-level policy file cancel each other out to hide an outside edit', () => {
+    const { home, policy } = setup();
+    policy.save('project', { mode: 'C' });
+    writeFileSync(join(home, 'policy-ledger.json'), '{ corrupt');
+    expect(policy.view().externalEdits.ide).toBe(true);
+  });
 });
