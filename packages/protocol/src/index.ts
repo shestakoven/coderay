@@ -3,6 +3,7 @@ import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 
 export * from './session';
 export * from './settings';
+export * from './plans';
 
 export type Lang = 'typescript' | 'python';
 

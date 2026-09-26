@@ -1,9 +1,7 @@
 import { posix } from 'node:path';
+import type { FrozenScope } from '@ide/protocol';
 
-export interface FrozenScope {
-  paths: string[];
-  globs: string[];
-}
+export type { FrozenScope };
 
 export interface ScopeTarget {
   rel: string;
