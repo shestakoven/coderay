@@ -113,7 +113,9 @@ describe('idecore', () => {
     await client.callTool({ name: 'propose_plan', arguments: small });
     const started = await client.callTool({ name: 'step', arguments: { key: 'edit', phase: 'start' } });
     const unknown = await client.callTool({ name: 'step', arguments: { key: 'nope', phase: 'start' } });
-    expect([JSON.parse(text(started)), unknown.isError, text(unknown)]).toEqual([{ ok: true }, true, expect.stringContaining('has no step "nope"')]);
+    const finished = await client.callTool({ name: 'step', arguments: { key: 'edit', phase: 'done' } });
+    expect([JSON.parse(text(started)), unknown.isError, text(unknown), JSON.parse(text(finished))])
+      .toEqual([{ ok: true }, true, expect.stringContaining('has no step "nope"'), { ok: true }]);
   });
 
   it('refuses a client without the agent secret', async () => {

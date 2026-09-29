@@ -92,7 +92,7 @@ export class PolicyStore {
     const read = (level: PolicyLevel): Partial<Policy> => {
       const path = this.pathOf(level);
       if (externalEdits[level]) {
-        problems.push(`${path} was edited outside Settings; the IDE uses the default policy for that level until you confirm the edit`);
+        problems.push(`${path} was edited outside Settings and is ignored until you confirm it: the IDE level falls back to the defaults, the project level to the IDE level`);
         return {};
       }
       return this.read(path, level === 'ide' ? 'IDE level' : 'project level', problems);

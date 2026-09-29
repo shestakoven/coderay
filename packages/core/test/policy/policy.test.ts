@@ -73,7 +73,7 @@ describe('PolicyStore', () => {
     writeFileSync(join(home, 'policy.json'), JSON.stringify({ mode: 'C', guarded: [] }));
     const view = policy.view();
     expect([view.effective, view.externalEdits]).toEqual([DEFAULT_POLICY, { ide: true, project: false }]);
-    expect(view.problems).toEqual([`${join(home, 'policy.json')} was edited outside Settings; the IDE uses the default policy for that level until you confirm the edit`]);
+    expect(view.problems).toEqual([`${join(home, 'policy.json')} was edited outside Settings and is ignored until you confirm it: the IDE level falls back to the defaults, the project level to the IDE level`]);
     expect(view.edited).toEqual({ ide: JSON.stringify({ mode: 'C', guarded: [] }), project: null });
     policy.confirmExternalEdits(view.hashes);
     expect(policy.effective()).toEqual({ ...DEFAULT_POLICY, mode: 'C', guarded: [] });

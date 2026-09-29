@@ -56,7 +56,7 @@ export function PolicySection({ view, busy, onSave, onConfirm }: {
       {(view.externalEdits.ide || view.externalEdits.project) && (
         <div className="banner warn">
           <div>
-            A policy file changed outside Settings, so the IDE uses the default policy for that level until you confirm it. The file now says:
+            A policy file changed outside Settings and is ignored until you confirm it: the IDE level falls back to the defaults, the project level to the IDE level. The file now says:
             {view.edited.ide !== null && <pre className="entry">IDE level: {view.edited.ide}</pre>}
             {view.edited.project !== null && <pre className="entry">This project: {view.edited.project}</pre>}
           </div>

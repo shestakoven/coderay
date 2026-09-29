@@ -229,7 +229,7 @@ describe('HookGate', () => {
     expect((await pending()).targets.map((target) => [target.path, target.inScope])).toEqual([['src/app.ts', true], ['src/lib/app.ts', false]]);
   });
 
-  it('keeps waiting for an answer, and drops normally, even when a change listener throws', async () => {
+  it('keeps waiting for an answer, and answers normally, even when a change listener throws', async () => {
     const { root, call, approve, pending, gate } = await setup();
     await approve();
     gate.onChange(() => {
