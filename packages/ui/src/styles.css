@@ -48,7 +48,6 @@ html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(-
 button { background: #232b38; color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 10px; font: inherit; cursor: pointer; }
 button:disabled { opacity: 0.45; cursor: default; }
 .badge { padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
-.badge.danger { background: #5a1d1d; color: #ff8a8a; border: 1px solid #a33; }
 .badge.plan { background: #1d3550; color: #8cc4ff; border: 1px solid #3a6ea5; }
 .no-token { padding: 24px; color: var(--muted); }
 
@@ -227,3 +226,11 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .decision { color: var(--muted); }
 .decision.deny, .decision.ask-denied { color: var(--warn); }
 .decision.flag { color: var(--plan); }
+
+.chip.mode select { background: none; color: var(--text); border: none; font: inherit; }
+.policy-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+.policy-level { display: flex; flex-direction: column; gap: 8px; }
+.policy-level h4 { margin: 0; font-size: 12px; }
+.policy-level label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
+.policy-level textarea, .policy-level input, .policy-level select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
+.policy-level .inherit { flex-direction: row; gap: 4px; color: var(--muted); font-size: 11px; }

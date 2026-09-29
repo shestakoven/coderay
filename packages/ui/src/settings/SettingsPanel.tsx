@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ClientMessage, McpLevel, McpServerState, McpServerView, McpTransport, SettingsView } from '@ide/protocol';
+import { PolicySection } from './PolicySection';
 import { emptyForm, entryFromForm, formFromServer, type EntryForm } from './entry-form';
 
 export interface SettingsResult {
@@ -25,7 +26,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
   const [previousName, setPreviousName] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [panelError, setPanelError] = useState<string | null>(null);
-  const [awaiting, setAwaiting] = useState<{ requestId: string; fromForm: boolean } | null>(null);
+  const [awaiting, setAwaiting] = useState<{ requestId: string; fromForm: boolean; needsRestart: boolean } | null>(null);
   const [changed, setChanged] = useState(false);
   const edits = settings?.externalEdits;
 
@@ -33,7 +34,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
     if (!awaiting || lastResult?.requestId !== awaiting.requestId) return;
     setAwaiting(null);
     if (lastResult.error === null) {
-      setChanged(true);
+      if (awaiting.needsRestart) setChanged(true);
       if (awaiting.fromForm) setForm(null);
     } else if (awaiting.fromForm) {
       setFormError(lastResult.error);
@@ -42,9 +43,9 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
     }
   }, [lastResult, awaiting]);
 
-  const request = (message: ClientMessage & { requestId: string }, fromForm: boolean): void => {
+  const request = (message: ClientMessage & { requestId: string }, fromForm: boolean, needsRestart = true): void => {
     setPanelError(null);
-    if (send(message)) setAwaiting({ requestId: message.requestId, fromForm });
+    if (send(message)) setAwaiting({ requestId: message.requestId, fromForm, needsRestart });
   };
   const edit = (level: McpLevel, server: McpServerView | null): void => {
     setForm(server ? formFromServer(server) : emptyForm(level));
@@ -66,7 +67,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
     <div className="modal" onClick={onClose}>
       <div className="settings" onClick={(event) => event.stopPropagation()}>
         <header className="settings-header">
-          <h2>MCP servers</h2>
+          <h2>Settings</h2>
           <button onClick={onClose}>Close</button>
         </header>
         {settings && edits && (edits.ideServers || edits.trust) && (
@@ -99,6 +100,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
           </div>
         )}
         {panelError && <p className="problem">{panelError}</p>}
+        <h3>MCP servers</h3>
         {LEVELS.map(({ level, title }) => (
           <section key={level}>
             <h3>{title}</h3>
@@ -135,6 +137,14 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
             <button onClick={() => edit(level, null)}>Add server</button>
           </section>
         ))}
+        {settings && (
+          <PolicySection
+            view={settings.policy}
+            busy={awaiting !== null}
+            onSave={(level, policy) => request({ type: 'policy.save', requestId: crypto.randomUUID(), level, policy }, false, false)}
+            onConfirm={(hashes) => request({ type: 'policy.confirm-external-edits', requestId: crypto.randomUUID(), hashes }, false, false)}
+          />
+        )}
         {settings?.problems.map((problem, index) => <p key={index} className="problem">{problem}</p>)}
         {form && (
           <EntryEditor

@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ClientMessage, GateAnswer, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
+import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
 import { DetailsPanel } from './map/DetailsPanel';
@@ -13,6 +13,7 @@ import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
+import { MODE_LABEL, withMode } from './settings/policy-form';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
 
 export function App() {
@@ -100,7 +101,8 @@ export function App() {
     setSettingsOpen(true);
   };
   const toReview = (settings?.servers.filter((server) => server.status === 'unapproved').length ?? 0)
-    + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0);
+    + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0)
+    + (settings?.policy.externalEdits.ide || settings?.policy.externalEdits.project ? 1 : 0);
 
   const planKey = shown ? `${shown.id}@${shown.version}@${shown.status}` : '';
   const panelOpen = panel.key === planKey ? panel.open : shown !== null && panelOpenByDefault(shown);
@@ -135,16 +137,25 @@ export function App() {
             <button className={view === 'components' ? 'on' : ''} onClick={() => setView('components')}>Components</button>
           </span>
         )}
-        <span className="badge danger" title="No pre-execution gate yet (Plan 4): the agent runs with --dangerously-skip-permissions.">
-          unguarded
-        </span>
+        {settings && (
+          <label className="chip mode" title="Control mode for this project: what happens to a write outside the approved plan">
+            Mode{' '}
+            <select
+              value={settings.policy.effective.mode}
+              onChange={(event) => send({ type: 'policy.save', requestId: crypto.randomUUID(), level: 'project', policy: withMode(settings.policy, event.target.value as ControlMode) })}
+            >
+              {(['A', 'B', 'C'] as const).map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
+            </select>
+            {Object.hasOwn(settings.policy.project, 'mode') ? ' (this project)' : ''}
+          </label>
+        )}
         {shown && (
           <button className={`chip plan-chip ${shown.status}`} onClick={() => setPanelOpen(!panelOpen)}>
             {planTitle(shown)}
           </button>
         )}
         <button className="link" onClick={openSettings}>
-          MCP servers{toReview > 0 ? ` · ${toReview} to review` : ''}
+          Settings{toReview > 0 ? ` · ${toReview} to review` : ''}
         </button>
         <span className={`status ${status}`}>{status === 'open' ? 'live ●' : status}</span>
       </header>
