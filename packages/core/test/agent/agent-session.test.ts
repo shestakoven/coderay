@@ -442,16 +442,30 @@ describe('AgentSession', () => {
     );
   });
 
-  it('logs instead of crashing when a listener throws while claude exits', async () => {
+  it('logs and still tells the exit, tool-end and idle listeners when a message listener throws', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => errors.mockRestore());
     const h = await harness('crash-mid-turn');
+    let armed = false;
+    const ended: string[] = [];
+    let idles = 0;
+    let exits = 0;
     h.session.onMessage((message) => {
-      if (message.type === 'session.patch' && message.patch.session?.status === 'crashed') throw new Error('boom');
+      if (armed && message.type === 'session.patch') throw new Error('boom');
+    });
+    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onIdle(() => {
+      idles += 1;
+    });
+    h.session.onProcessExit(() => {
+      exits += 1;
     });
     h.session.send('go');
-    await waitFor(() => h.session.state().session?.status === 'crashed', 'session crashed');
-    expect(errors).toHaveBeenCalledWith('agent: could not process claude exit', expect.any(Error));
+    armed = true;
+    const handled = () => exits === 1 || errors.mock.calls.some(([line]) => line === 'agent: could not process claude exit');
+    await waitFor(handled, 'claude exit handled');
+    expect([exits, ended, idles, h.session.state().session?.status]).toEqual([1, ['toolu_fx_crash'], 1, 'crashed']);
+    expect(errors).toHaveBeenCalledWith('agent: a session listener threw', expect.any(Error));
   });
 
   it('keeps the chat going in memory and logs when the history cannot be saved', async () => {

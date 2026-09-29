@@ -427,7 +427,7 @@ export class AgentSession {
   }
 
   private emit(message: SessionServerMessage): void {
-    for (const listener of this.listeners) listener(message);
+    notify(this.listeners, message);
   }
 
   private configPath(sessionId: string): string {
