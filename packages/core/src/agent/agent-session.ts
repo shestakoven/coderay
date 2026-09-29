@@ -338,7 +338,7 @@ export class AgentSession {
     this.apply(this.tracker.processExited());
     if (reason === null) this.apply(this.tracker.notice(crashNotice(exit)));
     this.update({ status: reason === null ? 'crashed' : reason === 'new' ? 'ended' : 'stopped', pid: null, launchId: null });
-    for (const listener of this.exitListeners) listener();
+    notify(this.exitListeners);
   }
 
   private async terminate(reason: ExitReason): Promise<void> {
@@ -408,13 +408,13 @@ export class AgentSession {
       }
     }
     this.emit({ type: 'session.patch', patch });
-    for (const toolUseId of ended) for (const listener of this.toolEndListeners) listener(toolUseId);
+    for (const toolUseId of ended) notify(this.toolEndListeners, toolUseId);
     this.checkIdle();
   }
 
   private checkIdle(): void {
     const idle = this.isIdle();
-    if (idle && !this.idle) for (const listener of this.idleListeners) listener();
+    if (idle && !this.idle) notify(this.idleListeners);
     this.idle = idle;
   }
 
@@ -432,6 +432,16 @@ export class AgentSession {
 
   private configPath(sessionId: string): string {
     return join(runDir(this.options.home), `${basename(projectDir(this.options.home, this.options.root))}-${sessionId}.mcp.json`);
+  }
+}
+
+function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>, ...args: Args): void {
+  for (const listener of listeners) {
+    try {
+      listener(...args);
+    } catch (error) {
+      console.error('agent: a session listener threw', error);
+    }
   }
 }
 

@@ -494,15 +494,20 @@ const decision = (toolUseId: string) => ({
 });
 
 describe('AgentSession with the gate', () => {
-  it('passes the hook settings, the IDE system prompt and a fresh system prompt on resume, before the permission flags', async () => {
+  it('passes the hook settings, the IDE system prompt and a fresh system prompt before the permission flags, on the first spawn and on resume', async () => {
     const h = await gatedHarness('multi-turn');
     h.session.send('hi');
-    const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
+    await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
+    await h.session.restart();
+    h.session.send('again');
+    const [first, resumed] = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude resumed');
     const files = gateFiles(h.home, h.root, h.session.sessionId());
-    expect(argv?.slice(argv.indexOf('--disallowedTools') + 2)).toEqual([
+    const tail = (argv: string[] | undefined) => argv?.slice(argv.indexOf('--disallowedTools') + 2);
+    const expected = [
       '--settings', files[0], '--append-system-prompt', systemPrompt(COMPONENTS), '--system-prompt-snapshot', 'off',
       '--dangerously-skip-permissions', '--permission-prompt-tool', 'stdio',
-    ]);
+    ];
+    expect([flag(resumed, '--resume'), tail(first), tail(resumed)]).toEqual([flag(first, '--session-id'), expected, expected]);
     expect(files.map((file) => existsSync(file))).toEqual([true, true]);
   });
 
@@ -555,7 +560,11 @@ describe('AgentSession with the gate', () => {
     await waitFor(() => h.session.state().items.some((candidate) => candidate.kind === 'tool'), 'tool row');
     h.session.recordDecision({ ...decision('toolu_fx_bash'), decision: 'ask-approved' });
     const patched = h.broadcasts.flatMap((message) => (message.type === 'session.patch' ? (message.patch.items ?? []) : []));
-    expect(patched.at(-1)).toMatchObject({ id: 'toolu_fx_bash', decision: 'ask-approved' });
+    const row = h.session.state().items.find((candidate) => candidate.id === 'toolu_fx_bash');
+    expect([patched.at(-1), row]).toMatchObject([
+      { id: 'toolu_fx_bash', decision: 'ask-approved', targets: ['src/app.ts'] },
+      { id: 'toolu_fx_bash', decision: 'ask-approved', targets: ['src/app.ts'] },
+    ]);
   });
 
   it('keeps the decisions of a session across a core restart', async () => {
@@ -615,5 +624,29 @@ describe('AgentSession with the gate', () => {
     h.session.send('go');
     await waitFor(() => exits === 1, 'claude exited');
     expect(ended).toEqual(['toolu_fx_crash']);
+  });
+
+  it('still ends the session and tells the other listeners when a tool-end, idle or exit listener throws', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => errors.mockRestore());
+    const h = await harness('crash-mid-turn');
+    let exits = 0;
+    h.session.onToolEnd(() => {
+      throw new Error('tool-end listener');
+    });
+    h.session.onIdle(() => {
+      throw new Error('idle listener');
+    });
+    h.session.onProcessExit(() => {
+      throw new Error('exit listener');
+    });
+    h.session.onProcessExit(() => {
+      exits += 1;
+    });
+    h.session.send('go');
+    await waitFor(() => errors.mock.calls.length > 0, 'an error logged');
+    expect([exits, h.session.state().session?.status, texts(h.session.state().items).at(-1)]).toEqual([
+      1, 'crashed', 'claude stopped unexpectedly (exit code 1): fatal: simulated crash',
+    ]);
   });
 });
