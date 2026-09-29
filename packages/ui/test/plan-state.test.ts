@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import type { C4Container, PlanView } from '@ide/protocol';
+import type { C4Container, GatePromptView, PlanView } from '@ide/protocol';
 import {
-  circled, containerMark, EMPTY_MARKS, initialPlanState, panelOpenByDefault, planMarks, planOnMap, planReducer, planTitle,
+  circled, containerMark, drawsOverlay, EMPTY_MARKS, initialPlanState, panelOpenByDefault, pendingPrompts, planMarks, planOnMap, planReducer, planTitle,
+  waitsForUser,
 } from '../src/plan/plan-state';
 import { demoSnapshot } from './snapshot';
 
@@ -103,5 +104,26 @@ describe('plan state', () => {
 
   it('numbers steps with circled digits up to twenty', () => {
     expect([circled(1), circled(20), circled(21)]).toEqual(['①', '⑳', '(21)']);
+  });
+});
+
+const prompt = (id: string, status: GatePromptView['status']): GatePromptView => ({
+  id, toolUseId: id, parentToolUseId: null, tool: 'Write', summary: '', preview: { kind: 'command', command: 'ls', truncated: false },
+  reason: null, targets: [], canExpand: false, planId: null, mode: 'A', status, answer: null, ts: 1,
+});
+
+describe('plan predicates', () => {
+  it('keeps only the pending prompts', () => {
+    expect(pendingPrompts([prompt('a', 'pending'), prompt('b', 'answered'), prompt('c', 'dropped'), prompt('d', 'pending')]).map((p) => p.id)).toEqual(['a', 'd']);
+  });
+
+  it('waits for the user only while the plan is proposed', () => {
+    expect([waitsForUser(plan({ status: 'proposed' })), waitsForUser(plan()), waitsForUser(plan({ status: 'changes-requested' })), waitsForUser(null)]).toEqual([true, false, false, false]);
+  });
+
+  it('draws the overlay for a proposed or approved plan only', () => {
+    expect([
+      drawsOverlay(plan({ status: 'proposed' })), drawsOverlay(plan()), drawsOverlay(plan({ status: 'rejected' })), drawsOverlay(plan({ status: 'done' })), drawsOverlay(null),
+    ]).toEqual([true, true, false, false, false]);
   });
 });
