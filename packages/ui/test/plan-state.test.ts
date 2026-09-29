@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { C4Container, GatePromptView, PlanView } from '@ide/protocol';
 import {
-  circled, containerMark, drawsOverlay, EMPTY_MARKS, initialPlanState, panelOpenByDefault, pendingPrompts, planMarks, planOnMap, planReducer, planTitle,
+  badgeText, circled, classifyTargets, containerMark, drawsOverlay, EMPTY_MARKS, initialPlanState, panelOpenByDefault, pendingPrompts, planMarks, planOnMap, planReducer, planTitle,
   waitsForUser,
 } from '../src/plan/plan-state';
 import { demoSnapshot } from './snapshot';
@@ -125,5 +125,31 @@ describe('plan predicates', () => {
     expect([
       drawsOverlay(plan({ status: 'proposed' })), drawsOverlay(plan()), drawsOverlay(plan({ status: 'rejected' })), drawsOverlay(plan({ status: 'done' })), drawsOverlay(null),
     ]).toEqual([true, true, false, false, false]);
+  });
+});
+
+describe('classifyTargets', () => {
+  it('sorts targets into whole components, files by owner, directories and files off the map', () => {
+    const p = plan({
+      steps: [{ key: 'a', order: 1, title: 'All', rationale: '', status: 'pending', targets: [
+        { componentId: 'folder:src/db', op: 'modify' }, { path: 'src/api/a.ts', op: 'modify' }, { path: 'README.md', op: 'delete' },
+        { path: 'src', op: 'modify' }, { path: 'nowhere', op: 'create' }, { path: 'src/x.ts', op: 'create' },
+      ] }],
+      owners: { 'src/api/a.ts': 'folder:src/api', 'README.md': null, 'src/x.ts': 'gone' },
+    });
+    expect(classifyTargets(p.steps[0]!, p, demoSnapshot())).toEqual([
+      { kind: 'component', op: 'modify', componentId: 'folder:src/db' },
+      { kind: 'file', op: 'modify', path: 'src/api/a.ts', owner: 'folder:src/api' },
+      { kind: 'other', op: 'delete', path: 'README.md' },
+      { kind: 'directory', op: 'modify', path: 'src', componentIds: ['folder:src/api', 'folder:src/db'] },
+      { kind: 'directory', op: 'create', path: 'nowhere', componentIds: [] },
+      { kind: 'other', op: 'create', path: 'src/x.ts' },
+    ]);
+  });
+});
+
+describe('badgeText', () => {
+  it('shows a check and the number for a done step and a circled number otherwise', () => {
+    expect([badgeText({ n: 2, status: 'done' }), badgeText({ n: 3, status: 'active' })]).toEqual(['✓2', '③']);
   });
 });

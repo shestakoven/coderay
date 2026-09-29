@@ -1,4 +1,4 @@
-import type { C4Container, GatePromptView, MapSnapshot, PlanView, StepStatus, TargetOp } from '@ide/protocol';
+import type { C4Container, GatePromptView, MapSnapshot, PlanStepView, PlanView, StepStatus, TargetOp } from '@ide/protocol';
 
 export interface PlanState {
   plans: PlanView[];
@@ -62,6 +62,28 @@ function addStep(list: StepMark[], mark: StepMark): void {
   list.sort((a, b) => a.n - b.n);
 }
 
+export type ClassifiedTarget =
+  | { kind: 'component'; op: TargetOp; componentId: string }
+  | { kind: 'directory'; op: TargetOp; path: string; componentIds: string[] }
+  | { kind: 'file'; op: TargetOp; path: string; owner: string }
+  | { kind: 'other'; op: TargetOp; path: string };
+
+export function classifyTargets(step: PlanStepView, plan: PlanView, snapshot: MapSnapshot | null): ClassifiedTarget[] {
+  const known = new Set(snapshot?.components.map((component) => component.id));
+  return step.targets.map((target): ClassifiedTarget => {
+    if (target.componentId !== undefined) return { kind: 'component', op: target.op, componentId: target.componentId };
+    const path = target.path as string;
+    // owners has no entry for a directory target.
+    if (!Object.hasOwn(plan.owners, path)) {
+      const componentIds = (snapshot?.components ?? []).filter((component) => component.files.some((file) => file.startsWith(`${path}/`))).map((component) => component.id);
+      return { kind: 'directory', op: target.op, path, componentIds };
+    }
+    const owner = plan.owners[path] ?? null;
+    if (owner === null || (snapshot !== null && !known.has(owner))) return { kind: 'other', op: target.op, path };
+    return { kind: 'file', op: target.op, path, owner };
+  });
+}
+
 export function planMarks(plan: PlanView | null, snapshot: MapSnapshot | null): Marks {
   if (!plan || !snapshot || !drawsOverlay(plan)) return EMPTY_MARKS;
   const byId = new Map(snapshot.components.map((component) => [component.id, component]));
@@ -78,43 +100,35 @@ export function planMarks(plan: PlanView | null, snapshot: MapSnapshot | null): 
   plan.steps.forEach((step, index) => {
     const stepMark: StepMark = { n: index + 1, status: step.status };
     const touched = new Set<string>();
-    for (const target of step.targets) {
-      if (target.componentId !== undefined) {
+    for (const target of classifyTargets(step, plan, snapshot)) {
+      if (target.kind === 'component') {
         const mark = componentMark(target.componentId);
         addStep(mark.steps, stepMark);
         mark.whole = true;
         for (const path of byId.get(target.componentId)?.files ?? []) mark.files.add(path);
         touched.add(target.componentId);
-        continue;
-      }
-      const path = target.path as string;
-      // owners has no entry for a directory target: mark every component with files under it.
-      if (!Object.hasOwn(plan.owners, path)) {
-        const inside = snapshot.components.filter((component) => component.files.some((file) => file.startsWith(`${path}/`)));
-        for (const component of inside) {
-          const mark = componentMark(component.id);
+      } else if (target.kind === 'directory') {
+        for (const id of target.componentIds) {
+          const mark = componentMark(id);
           addStep(mark.steps, stepMark);
-          for (const file of component.files) if (file.startsWith(`${path}/`)) mark.files.add(file);
-          touched.add(component.id);
+          for (const file of byId.get(id)?.files ?? []) if (file.startsWith(`${target.path}/`)) mark.files.add(file);
+          touched.add(id);
         }
-        if (inside.length === 0) marks.other.push({ path, op: target.op, step: stepMark.n });
-        continue;
-      }
-      const owner = plan.owners[path] ?? null;
-      if (owner === null || !byId.has(owner)) {
-        marks.other.push({ path, op: target.op, step: stepMark.n });
-        continue;
-      }
-      const mark = componentMark(owner);
-      addStep(mark.steps, stepMark);
-      mark.files.add(path);
-      touched.add(owner);
-      const fileSteps = marks.files.get(path) ?? [];
-      addStep(fileSteps, stepMark);
-      marks.files.set(path, fileSteps);
-      if (target.op === 'create' && !indexed.has(path)) {
-        mark.creates += 1;
-        marks.ghosts.push({ path, componentId: owner, step: stepMark });
+        if (target.componentIds.length === 0) marks.other.push({ path: target.path, op: target.op, step: stepMark.n });
+      } else if (target.kind === 'other') {
+        marks.other.push({ path: target.path, op: target.op, step: stepMark.n });
+      } else {
+        const mark = componentMark(target.owner);
+        addStep(mark.steps, stepMark);
+        mark.files.add(target.path);
+        touched.add(target.owner);
+        const fileSteps = marks.files.get(target.path) ?? [];
+        addStep(fileSteps, stepMark);
+        marks.files.set(target.path, fileSteps);
+        if (target.op === 'create' && !indexed.has(target.path)) {
+          mark.creates += 1;
+          marks.ghosts.push({ path: target.path, componentId: target.owner, step: stepMark });
+        }
       }
     }
     marks.stepComponents.push([...touched]);
@@ -145,3 +159,5 @@ export function containerMark(containers: C4Container[], marks: Marks): Containe
 }
 
 export const circled = (n: number): string => (n >= 1 && n <= 20 ? String.fromCharCode(0x2460 + n - 1) : `(${n})`);
+
+export const badgeText = (step: StepMark): string => (step.status === 'done' ? `✓${step.n}` : circled(step.n));
