@@ -6,6 +6,7 @@ import { chatReducer, initialChatState } from './chat/chat-state';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
+import { initialPlanState, planReducer } from './plan/plan-state';
 import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
@@ -16,6 +17,7 @@ export function App() {
   const token = useMemo(launchToken, []);
   const [state, dispatch] = useReducer(mapReducer, initialMapState);
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
+  const [plans, dispatchPlans] = useReducer(planReducer, initialPlanState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -53,6 +55,12 @@ export function App() {
           break;
         case 'settings.result':
           setSettingsResult({ requestId: message.requestId, error: message.error });
+          break;
+        case 'plans.snapshot':
+          dispatchPlans({ type: 'plans', plans: message.plans });
+          break;
+        case 'gate.snapshot':
+          dispatchPlans({ type: 'prompts', prompts: message.prompts });
           break;
         case 'error':
           dispatchChat({ type: 'error', message: message.message });
