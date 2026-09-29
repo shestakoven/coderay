@@ -38,17 +38,29 @@ export async function startCore(scenario: string): Promise<Core> {
   const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
   const url = await new Promise<string>((resolveUrl, reject) => {
     let output = '';
-    const timer = setTimeout(() => reject(new Error(`the core printed no address:\n${output}`)), 60_000);
+    let settled = false;
+    const fail = async (reason: string) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill();
+      // The core still writes to its home while it shuts down.
+      await exited;
+      rmSync(base, { recursive: true, force: true });
+      reject(new Error(`${reason}:\n${output}`));
+    };
+    const timer = setTimeout(() => void fail('the core printed no address'), 60_000);
     const read = (chunk: Buffer) => {
       output += String(chunk);
       const match = /open: (http:\/\/\S+)/.exec(output);
-      if (!match) return;
+      if (!match || settled) return;
+      settled = true;
       clearTimeout(timer);
       resolveUrl(match[1]!);
     };
     child.stdout?.on('data', read);
     child.stderr?.on('data', read);
-    void exited.then(() => reject(new Error(`the core exited:\n${output}`)));
+    void exited.then(() => fail('the core exited'));
   });
   return {
     url,
