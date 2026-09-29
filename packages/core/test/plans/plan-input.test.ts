@@ -55,6 +55,13 @@ describe('parsePlanInput', () => {
     }
   });
 
+  it('refuses a dangling symlink in the project that points outside it', async () => {
+    const dir = await root();
+    symlinkSync(join(tempDir('ide-outside-'), 'out.ts'), join(dir, 'src/out.ts'));
+    expect(parsePlanInput({ goal: 'g', steps: [step([{ path: 'src/out.ts', op: 'create' }])] }, dir, components))
+      .toBe('IDE: "src/out.ts" in step "edit" is not a path inside the project.');
+  });
+
   it('stores a path through a symlink inside the project as its real path', async () => {
     const dir = await root();
     symlinkSync(join(dir, 'src/lib'), join(dir, 'src/alias'));

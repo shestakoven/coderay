@@ -1,4 +1,4 @@
-import { realpathSync, statSync, type Stats } from 'node:fs';
+import { lstatSync, readlinkSync, realpathSync, statSync, type Stats } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { basename, dirname, join, posix, relative, resolve, sep } from 'node:path';
 import ignore from 'ignore';
@@ -31,16 +31,33 @@ export function expandHome(path: string, home = homedir()): string {
   return path.startsWith('~/') ? join(home, path.slice(2)) : path;
 }
 
+const MAX_LINK_HOPS = 40;
+
+function danglingLink(path: string): string | null {
+  try {
+    if (!lstatSync(path).isSymbolicLink()) return null;
+    return resolve(realpathSync.native(dirname(path)), readlinkSync(path));
+  } catch {
+    return null;
+  }
+}
+
 export function realTarget(path: string, cwd: string): string {
-  const abs = resolve(cwd, path);
-  const rest: string[] = [];
-  for (let dir = abs; ; dir = dirname(dir)) {
-    try {
-      return join(realpathSync.native(dir), ...[...rest].reverse());
-    } catch {
-      if (dirname(dir) === dir) return abs;
-      rest.push(basename(dir));
+  let abs = resolve(cwd, path);
+  for (let hops = 0; ; hops += 1) {
+    const rest: string[] = [];
+    let next: string | null = null;
+    for (let dir = abs; next === null; dir = dirname(dir)) {
+      try {
+        return join(realpathSync.native(dir), ...[...rest].reverse());
+      } catch {
+        const link = hops < MAX_LINK_HOPS ? danglingLink(dir) : null;
+        if (link !== null) next = join(link, ...[...rest].reverse());
+        else if (dirname(dir) === dir) return abs;
+        else rest.push(basename(dir));
+      }
     }
+    abs = next;
   }
 }
 

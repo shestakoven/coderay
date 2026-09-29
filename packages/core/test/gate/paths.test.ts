@@ -173,6 +173,35 @@ describe('classifyPaths', () => {
     expect(await classes(root, [realTarget('link/f.txt', root)])).toEqual([[join(outside, 'f.txt'), 'outside', 'outside the project']]);
   });
 
+  it('classifies a dangling symlink in a temp directory by the missing project file it points to', async () => {
+    const root = await project();
+    const scratch = tempDir('ide-scratch-');
+    symlinkSync(join(root, 'src/new.ts'), join(scratch, 'link'));
+    expect(await classes(root, [realTarget(join(scratch, 'link'), '/')], { tempRoots: [scratch] })).toEqual([['src/new.ts', 'enforced', 'a project file']]);
+  });
+
+  it('classifies a dangling symlink in the project by the missing file outside it points to', async () => {
+    const root = await project();
+    const outside = tempDir('ide-outside-');
+    symlinkSync(join(outside, 'out.ts'), join(root, 'src/out.ts'));
+    expect(await classes(root, [realTarget('src/out.ts', root)])).toEqual([[join(outside, 'out.ts'), 'outside', 'outside the project']]);
+  });
+
+  it('follows a chain of dangling symlinks, relative targets from the directory of each link', async () => {
+    const root = await project();
+    const scratch = tempDir('ide-scratch-');
+    symlinkSync(join(root, 'src/second'), join(scratch, 'first'));
+    symlinkSync('new.ts', join(root, 'src/second'));
+    expect(await classes(root, [realTarget(join(scratch, 'first'), '/')], { tempRoots: [scratch] })).toEqual([['src/new.ts', 'enforced', 'a project file']]);
+  });
+
+  it('stops following a loop of symlinks', () => {
+    const scratch = tempDir('ide-scratch-');
+    symlinkSync(join(scratch, 'b'), join(scratch, 'a'));
+    symlinkSync(join(scratch, 'a'), join(scratch, 'b'));
+    expect([join(scratch, 'a'), join(scratch, 'b')]).toContain(realTarget(join(scratch, 'a'), '/'));
+  });
+
   it('leaves every path enforced when the project is not a git repository', async () => {
     const root = await project({ '.gitignore': 'dist/\n' }, false);
     expect(await classes(root, ['dist/app.js'])).toEqual([['dist/app.js', 'enforced', 'a project file']]);
