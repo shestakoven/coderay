@@ -166,6 +166,7 @@ export function App() {
             {shown && (
               <div className="plan-float">
                 <PlanPanel
+                  key={planKey}
                   plan={shown}
                   snapshot={snapshot}
                   open={panelOpen}

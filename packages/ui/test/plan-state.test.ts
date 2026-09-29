@@ -153,3 +153,21 @@ describe('badgeText', () => {
     expect([badgeText({ n: 2, status: 'done' }), badgeText({ n: 3, status: 'active' })]).toEqual(['✓2', '③']);
   });
 });
+
+describe('directory targets', () => {
+  const withSibling = () => {
+    const snapshot = demoSnapshot();
+    return { ...snapshot, components: [...snapshot.components, { ...snapshot.components[0]!, id: 'folder:srcx', name: 'srcx', files: ['srcx/y.ts'] }] };
+  };
+  const directory = plan({
+    steps: [{ key: 'a', order: 1, title: 'All', rationale: '', status: 'pending', targets: [{ path: 'src', op: 'modify' }] }],
+    owners: {},
+  });
+
+  it('claims only components with files inside the directory, not a sibling sharing its prefix', () => {
+    expect(classifyTargets(directory.steps[0]!, directory, withSibling())).toEqual([
+      { kind: 'directory', op: 'modify', path: 'src', componentIds: ['folder:src/api', 'folder:src/db'] },
+    ]);
+    expect([...planMarks(directory, withSibling()).components.keys()]).toEqual(['folder:src/api', 'folder:src/db']);
+  });
+});
