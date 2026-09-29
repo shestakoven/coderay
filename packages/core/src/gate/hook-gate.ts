@@ -262,7 +262,13 @@ export class HookGate {
       stepKey: judged.decision.stepKey, targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
       reason, decidedAt: this.now(),
     };
-    for (const listener of this.decisionListeners) listener(record);
+    for (const listener of this.decisionListeners) {
+      try {
+        listener(record);
+      } catch (error) {
+        console.error('gate: a decision listener threw', error);
+      }
+    }
   }
 
   private event(input: HookInput, judged: Judged, mode: ControlMode, resolution: GateResolution): void {
@@ -292,7 +298,13 @@ export class HookGate {
 
   private emit(): void {
     const prompts = this.prompts();
-    for (const listener of this.promptListeners) listener(prompts);
+    for (const listener of this.promptListeners) {
+      try {
+        listener(prompts);
+      } catch (error) {
+        console.error('gate: a prompt listener threw', error);
+      }
+    }
   }
 }
 

@@ -22,6 +22,7 @@ interface Options {
   mode?: ControlMode;
   holdMs?: number;
   context?: GateContext;
+  throwPolicy?: boolean;
 }
 
 async function setup(options: Options = {}) {
@@ -38,14 +39,19 @@ async function setup(options: Options = {}) {
     review: (steps) => reviewPlan(steps, { root, policy, components, home, tempRoots: [] }),
   });
   const gate = new HookGate({
-    root, store, sessionId: () => 's1', policy: () => policy, plans, components: () => components,
+    root, store, sessionId: () => 's1',
+    policy: () => {
+      if (options.throwPolicy) throw new Error('boom: policy() failed');
+      return policy;
+    },
+    plans, components: () => components,
     context: () => options.context ?? { parentToolUseId: null, lastMessage: 'Fixing the greeting.' },
     home, tempRoots: [], holdMs: options.holdMs,
   });
   const decisions: ToolDecisionRecord[] = [];
   gate.onDecision((decision) => decisions.push(decision));
-  const call = (tool: string, input: object, signal = new AbortController().signal, id = 'toolu_1') =>
-    gate.evaluate({ tool_name: tool, tool_input: input, tool_use_id: id, cwd: root }, signal);
+  const call = (tool: string, input: object, signal = new AbortController().signal, id = 'toolu_1', cwd = root) =>
+    gate.evaluate({ tool_name: tool, tool_input: input, tool_use_id: id, cwd }, signal);
   const approve = async (targets: PlanTarget[] = [{ path: 'src/app.ts', op: 'modify' }]) => {
     await plans.propose({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets }] });
     plans.step({ key: 'edit', phase: 'start' });
@@ -207,15 +213,87 @@ describe('HookGate', () => {
     void call('Bash', { command: 'mv src/app.ts src/lib' });
     expect((await pending()).targets.map((target) => [target.path, target.inScope])).toEqual([['src/app.ts', true], ['src/lib/app.ts', false]]);
   });
+
+  it('keeps waiting for an answer, and drops normally, even when a change listener throws', async () => {
+    const { root, call, approve, pending, gate } = await setup();
+    await approve();
+    gate.onChange(() => {
+      throw new Error('a UI listener blew up');
+    });
+    const answer = call('Write', { file_path: join(root, 'src/other.ts') });
+    const prompt = await pending();
+    gate.answer(prompt.id, 'allow-once');
+    expect((await answer)?.permissionDecision).toBe('allow');
+    expect(gate.prompts().map((view) => view.status)).toEqual(['answered']);
+  });
+
+  it('does not let a throwing decision listener turn an allow into a deny', async () => {
+    const { root, call, approve, gate } = await setup();
+    await approve();
+    gate.onDecision(() => {
+      throw new Error('a UI listener blew up');
+    });
+    const answer = await call('Edit', { file_path: join(root, 'src/app.ts'), old_string: 'a', new_string: 'b' });
+    expect(answer?.permissionDecision).toBe('allow');
+  });
+
+  it("resolves a relative shell write target against the hook's cwd, not the project root", async () => {
+    const { root, call, approve } = await setup();
+    await approve();
+    const answer = await call('Bash', { command: 'echo x > app.ts' }, new AbortController().signal, 'toolu_1', join(root, 'src'));
+    expect(answer?.permissionDecision).toBe('allow');
+  });
+
+  it("resolves a relative Write file_path against the hook's cwd, not the project root", async () => {
+    const { root, call, approve } = await setup();
+    await approve();
+    const answer = await call('Write', { file_path: 'app.ts', content: 'x' }, new AbortController().signal, 'toolu_1', join(root, 'src'));
+    expect(answer?.permissionDecision).toBe('allow');
+  });
+
+  it('does not let a target land in scope just because resolving it against the project root would put it there', async () => {
+    const { root, call, approve, pending } = await setup();
+    await approve();
+    void call('Bash', { command: 'echo x > src/app.ts' }, new AbortController().signal, 'toolu_1', join(root, 'nested'));
+    const prompt = await pending();
+    expect(prompt.targets.map((target) => [target.path, target.inScope])).toEqual([['nested/src/app.ts', false]]);
+  });
+
+  it('never offers to expand the plan for an unresolved shell target', async () => {
+    const { call, approve, pending, gate } = await setup();
+    await approve();
+    void call('Bash', { command: 'echo x > $UNSET/x' });
+    const prompt = await pending();
+    expect(prompt.canExpand).toBe(false);
+    expect(() => gate.answer(prompt.id, 'expand-plan')).toThrow(GateError);
+  });
+
+  it('never offers to expand the plan for a git command that rewrites the whole work tree', async () => {
+    const { call, approve, pending, gate } = await setup();
+    await approve();
+    void call('Bash', { command: 'git checkout .' });
+    const prompt = await pending();
+    expect(prompt.canExpand).toBe(false);
+    expect(() => gate.answer(prompt.id, 'expand-plan')).toThrow(GateError);
+  });
+
+  it('records no gate event for a denial caused by a missing plan or an inactive step (R10)', async () => {
+    const { root, call, plans, store } = await setup();
+    await call('Write', { file_path: join(root, 'src/app.ts'), content: 'x' });
+    await plans.propose({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ path: 'src/app.ts', op: 'modify' }] }] });
+    await call('Write', { file_path: join(root, 'src/app.ts'), content: 'x' });
+    expect(store.gateEvents('s1')).toEqual([]);
+  });
 });
 
 describe('hookRoute', () => {
-  async function served() {
-    const { gate, root } = await setup();
+  async function served(options: Options = {}) {
+    const { gate, root, approve } = await setup(options);
     const server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: [hookRoute({ secret: 's3cret', gate })] });
     onTestFinished(() => server.close());
-    const post = (secret: string, body: object) => new Promise<{ status: number; body: string }>((resolve, reject) => {
-      const req = request({ host: '127.0.0.1', port: server.port, path: '/hook', method: 'POST', headers: { authorization: `Bearer ${secret}` } }, (res) => {
+    const post = (secret: string | null, body: object) => new Promise<{ status: number; body: string }>((resolve, reject) => {
+      const headers = secret === null ? {} : { authorization: `Bearer ${secret}` };
+      const req = request({ host: '127.0.0.1', port: server.port, path: '/hook', method: 'POST', headers }, (res) => {
         let text = '';
         res.on('data', (chunk) => (text += chunk));
         res.on('end', () => resolve({ status: res.statusCode ?? 0, body: text }));
@@ -223,12 +301,23 @@ describe('hookRoute', () => {
       req.on('error', reject);
       req.end(JSON.stringify(body));
     });
-    return { post, root };
+    const postRaw = (secret: string, body: object) => {
+      const req = request({ host: '127.0.0.1', port: server.port, path: '/hook', method: 'POST', headers: { authorization: `Bearer ${secret}` } });
+      req.on('error', () => {});
+      req.end(JSON.stringify(body));
+      return req;
+    };
+    return { post, postRaw, root, gate, approve };
   }
 
   it('refuses a hook call without the agent secret', async () => {
     const { post } = await served();
     expect((await post('wrong', {})).status).toBe(401);
+  });
+
+  it('refuses a hook call with no Authorization header at all', async () => {
+    const { post } = await served();
+    expect((await post(null, {})).status).toBe(401);
   });
 
   it('answers a hook call with the decision as JSON', async () => {
@@ -244,6 +333,23 @@ describe('hookRoute', () => {
       tool_input: { file_path: join(root, 'src/app.ts'), content: 'x'.repeat(5_000_000) },
     });
     expect(response.status).toBe(200);
-    expect(typeof JSON.parse(response.body).permissionDecision).toBe('string');
+    expect(JSON.parse(response.body).permissionDecision).toBe('deny');
+  });
+
+  it('drops the prompt when the client socket is destroyed mid-hold, and refuses a late answer', async () => {
+    const { postRaw, root, gate, approve } = await served();
+    await approve();
+    const req = postRaw('s3cret', { tool_name: 'Write', tool_use_id: 'toolu_http', tool_input: { file_path: join(root, 'src/other.ts') }, cwd: root });
+    const prompt = await waitFor(() => gate.prompts().find((view) => view.status === 'pending'), 'prompt shown');
+    req.destroy();
+    await waitFor(() => gate.prompts().some((view) => view.id === prompt.id && view.status === 'dropped'), 'prompt dropped');
+    expect(() => gate.answer(prompt.id, 'allow-once')).toThrow(GateError);
+  });
+
+  it('answers "gate failed" over HTTP when the gate throws while judging the call', async () => {
+    const { post, root } = await served({ throwPolicy: true });
+    const response = await post('s3cret', { tool_name: 'Write', tool_use_id: 't3', tool_input: { file_path: join(root, 'src/app.ts') }, cwd: root });
+    expect(response.status).toBe(200);
+    expect(JSON.parse(response.body)).toEqual({ permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' });
   });
 });
