@@ -18,6 +18,8 @@ import { c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from
 import { focusOf, type Selection } from './focus';
 import { c4NodePlans, componentCard, locateComponent, type NodePlan } from '../plan/c4-marks';
 import { usePlanOverlay } from '../plan/overlay';
+import { PromptPopover } from '../plan/PromptPopover';
+import { promptTarget } from '../plan/prompt-text';
 import { StepBadges } from '../plan/StepBadges';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
@@ -132,6 +134,8 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
   const overlay = usePlanOverlay();
   const nodePlans = useMemo(() => c4NodePlans(nodes, model, overlay.marks), [nodes, model, overlay.marks]);
   const nodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
+  const promptTargetId = overlay.prompt ? promptTarget(overlay.prompt)?.componentId ?? null : null;
+  const promptNode = promptTargetId ? locateComponent(promptTargetId, model, { expanded: root ? null : expanded, root, nodeIds }).node : null;
   const shownNodes = useMemo(
     () =>
       nodes.map((n) => {
@@ -139,9 +143,10 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         const className = focus
           ? focus.nodes.has(n.id) ? 'c4-focus' : focus.context.has(n.id) ? '' : 'c4-dim'
           : overlay.dimOthers && !inPlan ? 'c4-dim' : '';
-        return n.className === className ? n : { ...n, className };
+        const withPrompt = n.id === promptNode ? `${className} oop-target`.trim() : className;
+        return n.className === withPrompt ? n : { ...n, className: withPrompt };
       }),
-    [nodes, focus, nodePlans, overlay.dimOthers],
+    [nodes, focus, nodePlans, overlay.dimOthers, promptNode],
   );
   const shownEdges = useMemo(
     () =>
@@ -235,6 +240,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       >
         <Background gap={24} />
         <Controls showInteractive={false} />
+        <PromptPopover nodeId={promptNode} />
       </ReactFlow>
       <div className="c4-toolbar">
         <span className="c4-crumbs">

@@ -29,7 +29,7 @@ export function App() {
   const connection = useRef<Connection | null>(null);
   const [panel, setPanel] = useState<{ key: string; open: boolean }>({ key: '', open: false });
   const [focus, setFocus] = useState<{ componentIds: string[]; nonce: number } | null>(null);
-  const [, setAnchored] = useState(false);
+  const [anchored, setAnchored] = useState(false);
   const snapshot = state.snapshot;
   const shown = useMemo(() => planOnMap(plans.plans), [plans.plans]);
   const marks = useMemo(() => planMarks(shown, snapshot), [shown, snapshot]);
@@ -182,6 +182,13 @@ export function App() {
           chat={chat}
           send={send}
           onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
+          prompts={pendingPrompts(plans.prompts)}
+          promptAnchored={anchored}
+          onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
+          onFocusTargets={(paths) => {
+            const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
+            if (owners.size > 0) focusComponents([...owners]);
+          }}
           planRow={shown ? { text: `${planTitle(shown)} · on the map`, onOpen: () => setPanelOpen(true) } : null}
         />
       </main>

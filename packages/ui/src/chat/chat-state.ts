@@ -1,4 +1,4 @@
-import type { ChatItem, McpServerState, SessionPatch, SessionState, SessionView, TaskView, TurnView } from '@ide/protocol';
+import type { ChatItem, McpServerState, SessionPatch, SessionState, SessionView, TaskView, ToolDecision, TurnView } from '@ide/protocol';
 
 export interface ChatState {
   session: SessionView | null;
@@ -85,3 +85,9 @@ export function stopControl(state: ChatState): { label: string; title: string } 
     title: `Stop the current turn. This also stops ${subagents} running background ${noun}; background shells keep running.`,
   };
 }
+
+const DECISION_LABEL: Record<ToolDecision, string> = {
+  allow: '', unchecked: '', deny: 'blocked', 'ask-approved': 'allowed by you', 'ask-denied': 'denied by you', flag: 'flagged',
+};
+
+export const decisionLabel = (decision: ToolDecision | null): string => (decision ? DECISION_LABEL[decision] : '');

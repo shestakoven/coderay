@@ -13,6 +13,8 @@ import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, type Dispatch } from 'react';
 import { usePlanOverlay } from '../plan/overlay';
+import { PromptPopover } from '../plan/PromptPopover';
+import { mapAnchor } from '../plan/prompt-text';
 import { fitKey, layoutBounds, layoutGraph, type Bounds, type MapFlowNode } from './layout';
 import type { MapAction, MapState } from './map-state';
 import { nodeTypes } from './nodes';
@@ -30,15 +32,20 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     [state.snapshot, state.expanded, overlay.marks.ghosts],
   );
   const signature = useMemo(() => (graph ? graphSignature(graph) : null), [graph]);
+  const promptNode = useMemo(
+    () => (overlay.prompt ? mapAnchor(overlay.prompt, new Set(nodes.map((node) => node.id))) : null),
+    [overlay.prompt, nodes],
+  );
   const flowNodes = useMemo(
     () =>
       nodes.map((node) => {
         const selected = node.id === state.selected;
         const componentId = node.parentId ?? node.id;
-        const className = overlay.dimOthers && !overlay.marks.components.has(componentId) ? 'plan-dim' : '';
+        const dim = overlay.dimOthers && !overlay.marks.components.has(componentId) ? 'plan-dim' : '';
+        const className = [dim, node.id === promptNode && 'oop-target'].filter(Boolean).join(' ');
         return !!node.selected === selected && (node.className ?? '') === className ? node : { ...node, selected, className };
       }),
-    [nodes, state.selected, overlay.dimOthers, overlay.marks],
+    [nodes, state.selected, overlay.dimOthers, overlay.marks, promptNode],
   );
   const bounds = useMemo(() => layoutBounds(nodes), [nodes]);
   const key = useMemo(() => fitKey(nodes), [nodes]);
@@ -95,6 +102,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         <MiniMap pannable zoomable />
         <FitOnNewComponents fitKey={key} bounds={bounds} />
         <CenterOnFocus />
+        <PromptPopover nodeId={promptNode} />
       </ReactFlow>
     </div>
   );

@@ -211,3 +211,19 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .node.file.ghost { border-style: dashed; border-color: var(--plan); background: transparent; color: var(--plan); }
 .plan-meta { color: var(--plan); }
 .react-flow__node.plan-dim { opacity: 0.2; }
+
+.oop-popover { width: 380px; background: #1c1712; border: 1px solid var(--warn); border-radius: 8px; padding: 8px 10px; font-size: 12px; display: flex; flex-direction: column; gap: 6px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6); color: var(--text); font-family: ui-sans-serif, system-ui, sans-serif; }
+.oop-head code { word-break: break-all; }
+.oop-tag { background: var(--warn); color: #1a1000; border-radius: 3px; padding: 0 5px; font-weight: 700; font-size: 11px; }
+.oop-diff { margin: 0; background: var(--bg); border-radius: 5px; padding: 5px 7px; font-size: 11px; max-height: 200px; overflow: auto; }
+.oop-diff .del { color: var(--error); }
+.oop-diff .add { color: var(--ok); }
+.oop-hint { font-size: 11px; }
+.react-flow__node.oop-target .c4-card, .react-flow__node.oop-target .node { border-color: var(--error); box-shadow: 0 0 0 2px var(--error); }
+.prompt.gate { border-color: var(--warn); margin: 0 10px 6px; }
+.prompt.gate summary { cursor: pointer; color: var(--warn); }
+.tool-row.link-row { background: none; border: none; padding: 0; text-align: left; width: 100%; color: inherit; font: inherit; font-family: ui-monospace, monospace; font-size: 12px; }
+.tool-row.link-row:hover b { text-decoration: underline; }
+.decision { color: var(--muted); }
+.decision.deny, .decision.ask-denied { color: var(--warn); }
+.decision.flag { color: var(--plan); }
