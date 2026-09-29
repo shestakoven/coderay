@@ -41,3 +41,5 @@ export function policyFromForm(form: PolicyForm): { policy: Partial<Policy> } | 
 }
 
 export const withMode = (view: PolicyView, mode: ControlMode): Partial<Policy> => ({ ...view.project, mode });
+
+export const levelKey = (view: PolicyView, level: PolicyLevel): string => `${view.hashes[level]}|${view.externalEdits[level]}`;

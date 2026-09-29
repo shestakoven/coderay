@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ControlMode, Policy, PolicyHashes, PolicyLevel, PolicyView } from '@ide/protocol';
-import { MODE_LABEL, policyForm, policyFromForm, type PolicyForm } from './policy-form';
+import { MODE_LABEL, levelKey, policyForm, policyFromForm, type PolicyForm } from './policy-form';
 
 const LEVELS: { level: PolicyLevel; title: string }[] = [
   { level: 'ide', title: 'IDE level — every project (~/.ide/policy.json)' },
@@ -21,8 +21,20 @@ export function PolicySection({ view, busy, onSave, onConfirm }: {
 }) {
   const [forms, setForms] = useState(() => ({ ide: policyForm(view, 'ide'), project: policyForm(view, 'project') }));
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => setForms({ ide: policyForm(view, 'ide'), project: policyForm(view, 'project') }), [view]);
-  const update = (level: PolicyLevel, change: Partial<PolicyForm>) => setForms({ ...forms, [level]: { ...forms[level], ...change } });
+  const keys = useRef({ ide: levelKey(view, 'ide'), project: levelKey(view, 'project') });
+  const ideKey = levelKey(view, 'ide');
+  const projectKey = levelKey(view, 'project');
+  useEffect(() => {
+    if (keys.current.ide === ideKey) return;
+    keys.current.ide = ideKey;
+    setForms((f) => ({ ...f, ide: policyForm(view, 'ide') }));
+  }, [ideKey, view]);
+  useEffect(() => {
+    if (keys.current.project === projectKey) return;
+    keys.current.project = projectKey;
+    setForms((f) => ({ ...f, project: policyForm(view, 'project') }));
+  }, [projectKey, view]);
+  const update = (level: PolicyLevel, change: Partial<PolicyForm>) => setForms((f) => ({ ...f, [level]: { ...f[level], ...change } }));
   const save = (level: PolicyLevel) => {
     const result = policyFromForm(forms[level]);
     if ('error' in result) setError(result.error);

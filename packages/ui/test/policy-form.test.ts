@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { Policy, PolicyView } from '@ide/protocol';
-import { policyForm, policyFromForm, withMode } from '../src/settings/policy-form';
+import { levelKey, policyForm, policyFromForm, withMode } from '../src/settings/policy-form';
 
 const ide: Policy = { mode: 'B', guarded: ['.env*', '.claude/'], harness: ['.omc/'], outsideAllowed: ['~/.claude/plans/'], autoApproveMaxFiles: 3 };
 const view = (project: Partial<Policy> = {}): PolicyView => ({
@@ -21,6 +21,19 @@ describe('policy form', () => {
 
   it('refuses a limit outside 0–50', () => {
     expect(policyFromForm({ ...policyForm(view(), 'ide'), autoApproveMaxFiles: '51' })).toEqual({ error: 'The automatic approval limit must be a whole number from 0 to 50.' });
+  });
+
+  it.each(['1.5', '', '-1'])('refuses the limit %j', (value) => {
+    expect('error' in policyFromForm({ ...policyForm(view(), 'ide'), autoApproveMaxFiles: value })).toBe(true);
+  });
+
+  it('keys a level by its own hash and external-edit flag, so saving one level leaves the other key alone', () => {
+    const before = view();
+    const ideSaved: PolicyView = { ...before, hashes: { ...before.hashes, ide: 'a2' } };
+    expect(levelKey(ideSaved, 'ide')).not.toBe(levelKey(before, 'ide'));
+    expect(levelKey(ideSaved, 'project')).toBe(levelKey(before, 'project'));
+    expect(levelKey({ ...before, externalEdits: { ide: false, project: true } }, 'project')).not.toBe(levelKey(before, 'project'));
+    expect(levelKey({ ...before, externalEdits: { ide: false, project: true } }, 'ide')).toBe(levelKey(before, 'ide'));
   });
 
   it('changes only the mode of the project override', () => {
