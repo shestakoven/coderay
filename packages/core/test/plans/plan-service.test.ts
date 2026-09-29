@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { PlanView, Policy } from '@ide/protocol';
 import { covers } from '../../src/gate/scope';
 import { reviewPlan } from '../../src/plans/freeze';
@@ -316,6 +316,61 @@ describe('PlanService', () => {
     await service.propose(small);
     setSession('s2');
     expect([service.plans(), service.gate()]).toEqual([[], { state: 'none' }]);
+  });
+
+  describe('when a plan listener throws', () => {
+    const throwing = (service: PlanService, when: (plans: PlanView[]) => boolean = () => true) => {
+      const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+      onTestFinished(() => errors.mockRestore());
+      service.onChange((plans) => {
+        if (when(plans)) throw new Error('listener failed');
+      });
+      return errors;
+    };
+
+    it('still answers the waiting call on approve, and logs', async () => {
+      const { service } = await setup();
+      const call = service.propose(big);
+      const plan = await waiting(service);
+      const errors = throwing(service);
+      service.answer(plan.id, plan.version, { kind: 'approve' });
+      expect(await call).toEqual({ ok: true, value: { status: 'approved' } });
+      expect(errors).toHaveBeenCalledWith('plans: a plan listener threw', expect.any(Error));
+    });
+
+    it('still answers the waiting call on a request for changes', async () => {
+      const { service } = await setup();
+      const call = service.propose(big);
+      const plan = await waiting(service);
+      throwing(service);
+      service.answer(plan.id, plan.version, { kind: 'changes', feedback: 'smaller' });
+      expect(await call).toEqual({ ok: true, value: { status: 'changes_requested', feedback: 'smaller' } });
+    });
+
+    it('still answers the waiting call on Reject', async () => {
+      const { service } = await setup();
+      const call = service.propose(big);
+      const plan = await waiting(service);
+      throwing(service);
+      service.answer(plan.id, plan.version, { kind: 'reject', feedback: '' });
+      expect(await call).toEqual({ ok: true, value: { status: 'rejected' } });
+    });
+
+    it('still answers the waiting call when the deadline passes', async () => {
+      const { service } = await setup({ deadlineMs: 50 });
+      throwing(service, (plans) => plans.some((plan) => plan.status === 'withdrawn'));
+      expect(await service.propose(big)).toEqual({
+        ok: true, value: { status: 'rejected', feedback: "The user did not answer within 59 minutes. Stop and wait for the user's next message." },
+      });
+    });
+
+    it('still returns the expanded version', async () => {
+      const { service } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      throwing(service);
+      expect(service.expand([{ rel: 'src/other.ts', exists: true, dir: false }])).toMatchObject({ version: 2, status: 'approved' });
+    });
   });
 
   it('returns the validation error for an unknown component', async () => {

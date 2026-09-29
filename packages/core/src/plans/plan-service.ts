@@ -358,7 +358,13 @@ export class PlanService {
 
   private emit(): void {
     const plans = this.records.map((record) => this.view(record));
-    for (const listener of this.listeners) listener(plans);
+    for (const listener of this.listeners) {
+      try {
+        listener(plans);
+      } catch (error) {
+        console.error('plans: a plan listener threw', error);
+      }
+    }
   }
 
   private view(record: PlanRecord): PlanView {
