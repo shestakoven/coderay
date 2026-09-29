@@ -1,4 +1,4 @@
-import type { ClientMessage, FileHashes, McpEntry, McpLevel, Policy, PromptAnswer } from '@ide/protocol';
+import type { ClientMessage, FileHashes, McpEntry, McpLevel, PlanAnswer, Policy, PromptAnswer } from '@ide/protocol';
 import { isRecord } from '../json';
 
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
@@ -11,7 +11,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes } = value;
+  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId } = value;
   switch (type) {
     case 'chat.send':
       return typeof text === 'string' ? { type, text } : null;
@@ -24,6 +24,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       const parsed = parseAnswer(answer);
       return typeof requestId === 'string' && parsed ? { type, requestId, answer: parsed } : null;
     }
+    case 'plan.answer': {
+      const parsed = parsePlanAnswer(answer);
+      return typeof planId === 'string' && typeof version === 'number' && Number.isInteger(version) && parsed ? { type, planId, version, answer: parsed } : null;
+    }
+    case 'gate.answer':
+      return typeof promptId === 'string' && (answer === 'allow-once' || answer === 'expand-plan' || answer === 'deny') ? { type, promptId, answer } : null;
   }
   if (typeof requestId !== 'string') return null;
   switch (type) {
@@ -60,4 +66,11 @@ function parseAnswer(value: unknown): PromptAnswer | null {
   const answers = value.answers;
   if (value.kind !== 'answers' || !isRecord(answers) || !Object.values(answers).every((item) => typeof item === 'string')) return null;
   return { kind: 'answers', answers: answers as Record<string, string> };
+}
+
+function parsePlanAnswer(value: unknown): PlanAnswer | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'approve') return { kind: 'approve' };
+  if ((value.kind === 'changes' || value.kind === 'reject') && typeof value.feedback === 'string') return { kind: value.kind, feedback: value.feedback };
+  return null;
 }

@@ -4,6 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
 import { AgentSession } from './agent/agent-session';
+import { createGateRuntime } from './gate/runtime';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { Indexer } from './indexer/indexer';
@@ -62,17 +63,32 @@ const token = randomBytes(24).toString('base64url');
 
 try {
   const store = openStore(projectDir(home, root));
-  const registry = new McpRegistry({ home, root });
   const policy = new PolicyStore({ home, root });
+  let server: RunningServer | undefined;
+  let snapshot: MapSnapshot | undefined;
+  const runtime = createGateRuntime({
+    root, home, store,
+    policy: () => policy.effective(),
+    components: () => (snapshot?.components ?? []).map(({ id, name, files, globs }) => ({ id, name, files, globs })),
+    port: () => {
+      if (!server) throw new Error('the IDE core is not listening yet');
+      return server.port;
+    },
+  });
+  const registry = new McpRegistry({ home, root, builtins: () => ({ idecore: runtime.mcpEntry() }) });
   const session = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
     mcpServers: () => registry.sessionServers(),
+    gate: runtime.sessionGate,
   });
+  runtime.attach(session);
   await session.start();
   const models = createModelProvider(home);
 
   const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: { ...registry.view(), policy: policy.view() } });
+  const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: runtime.plans.plans() });
+  const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: runtime.gate.prompts() });
 
   const changeSettings = (message: Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` }>): void => {
     switch (message.type) {
@@ -97,9 +113,7 @@ try {
     }
   };
 
-  let server: RunningServer | undefined;
   let closing: Promise<void> | undefined;
-  let snapshot: MapSnapshot | undefined;
   let indexer: Indexer | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
@@ -123,6 +137,12 @@ try {
       case 'prompt.answer':
         session.answerPrompt(message.requestId, message.answer);
         return;
+      case 'plan.answer':
+        runtime.plans.answer(message.planId, message.version, message.answer);
+        return;
+      case 'gate.answer':
+        runtime.gate.answer(message.promptId, message.answer);
+        return;
       case 'settings.get':
         reply(settingsSnapshot());
         return;
@@ -145,9 +165,12 @@ try {
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
     snapshot: () => snapshot ?? null,
+    routes: runtime.routes,
     greeting: () => [
       { type: 'map.progress', progress: progress.get() },
       { type: 'session.snapshot', state: session.state() },
+      plansSnapshot(),
+      gateSnapshot(),
       settingsSnapshot(),
     ],
     onClientMessage: (message, reply) => {
@@ -159,10 +182,16 @@ try {
     },
   });
   server = running;
-  session.onMessage((message) => running.broadcast(message));
+  session.onMessage((message) => {
+    running.broadcast(message);
+    if (message.type === 'session.snapshot') running.broadcast(plansSnapshot());
+  });
+  runtime.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
+  runtime.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
 
   const shutdown = async (): Promise<void> => {
     await session.close();
+    await runtime.close();
     progress.stop();
     classifier?.stop();
     await deployWatch?.close();
@@ -187,7 +216,7 @@ try {
   }
 
   console.log(`IDE core: ${root}`);
-  console.log(`  agent: ${values.claude} (unguarded until Plan 4) · IDE home: ${home}`);
+  console.log(`  agent: ${values.claude} · control mode ${policy.effective().mode} · IDE home: ${home}`);
   if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
   for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
 
@@ -219,11 +248,12 @@ try {
       stateDir: projectDir(home, root),
       reasoning: models.reasoning,
       embed: models.embed,
-      isAgentIdle: () => true,
+      isAgentIdle: () => session.isIdle(),
       onChange: () => publish(),
       onEmbeddingProgress: (embedding) => progress.set({ embedding }),
     });
     mapService = service;
+    session.onIdle(() => service.onAgentIdle());
     function publish(): MapSnapshot {
       version += 1;
       const view = service.view();

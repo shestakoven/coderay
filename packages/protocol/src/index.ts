@@ -1,3 +1,4 @@
+import type { PlanClientMessage, PlanServerMessage } from './plans';
 import type { ChatClientMessage, SessionServerMessage } from './session';
 import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 
@@ -158,6 +159,7 @@ export type ServerMessage =
   | { type: 'map.snapshot'; snapshot: MapSnapshot }
   | { type: 'map.progress'; progress: MapProgress }
   | SessionServerMessage
-  | SettingsServerMessage;
+  | SettingsServerMessage
+  | PlanServerMessage;
 
-export type ClientMessage = ChatClientMessage | SettingsClientMessage;
+export type ClientMessage = ChatClientMessage | SettingsClientMessage | PlanClientMessage;

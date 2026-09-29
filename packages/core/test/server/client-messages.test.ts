@@ -61,4 +61,19 @@ describe('parseClientMessage', () => {
       .toEqual({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a', project: 'b' } });
     expect(parseClientMessage(JSON.stringify({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a' } }))).toBeNull();
   });
+
+  it('parses a plan answer with its plan id, version and answer', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'changes', feedback: 'less' } })))
+      .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'changes', feedback: 'less' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'approve' } })))
+      .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'approve' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 1.5, answer: { kind: 'approve' } }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 1, answer: { kind: 'reject' } }))).toBeNull();
+  });
+
+  it('parses a gate answer and refuses an unknown one', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'gate.answer', promptId: 'g', answer: 'expand-plan' })))
+      .toEqual({ type: 'gate.answer', promptId: 'g', answer: 'expand-plan' });
+    expect(parseClientMessage(JSON.stringify({ type: 'gate.answer', promptId: 'g', answer: 'always' }))).toBeNull();
+  });
 });

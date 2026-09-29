@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process';
 import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
