@@ -125,7 +125,7 @@ export function planMarks(plan: PlanView | null, snapshot: MapSnapshot | null): 
         const fileSteps = marks.files.get(target.path) ?? [];
         addStep(fileSteps, stepMark);
         marks.files.set(target.path, fileSteps);
-        if (target.op === 'create' && !indexed.has(target.path)) {
+        if (target.op === 'create' && !indexed.has(target.path) && !marks.ghosts.some((ghost) => ghost.path === target.path)) {
           mark.creates += 1;
           marks.ghosts.push({ path: target.path, componentId: target.owner, step: stepMark });
         }

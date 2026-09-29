@@ -45,6 +45,19 @@ describe('planMarks', () => {
     expect([[...marks.components].map(([id, mark]) => [id, mark.files.size]), marks.other]).toEqual([[['folder:src/api', 2], ['folder:src/db', 1]], []]);
   });
 
+  it('plans a new file created by two steps as one ghost that carries both steps', () => {
+    const twice = plan({
+      steps: [
+        { key: 'a', order: 1, title: 'A', rationale: '', status: 'done', targets: [{ path: 'src/api/new.ts', op: 'create' }] },
+        { key: 'b', order: 2, title: 'B', rationale: '', status: 'active', targets: [{ path: 'src/api/new.ts', op: 'create' }] },
+      ],
+    });
+    const marks = planMarks(twice, demoSnapshot());
+    expect([marks.ghosts.map((ghost) => ghost.path), marks.components.get('folder:src/api')?.creates, marks.files.get('src/api/new.ts')?.map((step) => step.n)]).toEqual([
+      ['src/api/new.ts'], 1, [1, 2],
+    ]);
+  });
+
   it('draws nothing for a rejected, withdrawn or finished plan', () => {
     for (const status of ['rejected', 'withdrawn', 'done'] as const) expect(planMarks(plan({ status }), demoSnapshot())).toBe(EMPTY_MARKS);
   });

@@ -14,6 +14,8 @@ const model: C4Model = {
     container('backend', [['folder:src/api', 2], ['folder:src/db', 0]]),
     container('worker-a', [['folder:src/db', 1]], 'workers'),
     container('worker-b', [['folder:src/db', 1]], 'workers'),
+    container('solo', [['folder:src/tie', 1]]),
+    container('grouped', [['folder:src/tie', 1]], 'gg'),
   ],
   externals: [], links: [], tooling: [], warnings: [],
 };
@@ -63,6 +65,11 @@ describe('locateComponent', () => {
   it("points at a group's node when its member holds the component and is not drawn on its own", () => {
     expect(locateComponent('folder:src/db', model, { expanded: null, root: null, nodeIds: nodeIds('backend', 'workers') }))
       .toEqual({ container: 'worker-a', node: 'workers' });
+  });
+
+  it('prefers a container to a group when the distance ties', () => {
+    expect(locateComponent('folder:src/tie', { ...model, containers: [model.containers[4]!, model.containers[3]!] }, { expanded: null, root: null, nodeIds: nodeIds('solo', 'gg') }))
+      .toEqual({ container: 'solo', node: 'solo' });
   });
 
   it("points at the component's card in an open container, or at its Libraries card", () => {
