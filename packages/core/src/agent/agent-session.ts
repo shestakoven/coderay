@@ -6,7 +6,7 @@ import type {
 } from '@ide/protocol';
 import { projectDir, runDir } from '../home';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
-import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolEventRecord } from '../store/store';
+import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { parseStreamLine, type StreamEvent } from './stream';
@@ -15,6 +15,12 @@ import { TurnTracker, type Change } from './tracker';
 
 export type McpServers = Record<string, object>;
 
+export interface SessionGate {
+  write(sessionId: string): { settingsPath: string };
+  remove(sessionId: string): void;
+  systemPrompt(): string;
+}
+
 export interface AgentSessionOptions {
   root: string;
   home: string;
@@ -22,6 +28,7 @@ export interface AgentSessionOptions {
   claude: ClaudeCommand;
   mcpServers?: () => McpServers;
   killGraceMs?: number;
+  gate?: SessionGate;
 }
 
 const SESSION_ERRORS = {
@@ -30,6 +37,7 @@ const SESSION_ERRORS = {
   restarting: 'The session is restarting. Try again in a moment.',
   'prompt-gone': 'That question is no longer waiting for an answer.',
   'bad-answer': 'That answer does not fit the question.',
+  'no-gate': 'The IDE could not prepare the hook settings for claude, so the agent was not started.',
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -60,6 +68,10 @@ export class AgentSession {
   private readonly listeners = new Set<(message: SessionServerMessage) => void>();
   private readonly reportedUnknown = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
+  private readonly decisions = new Map<string, ToolDecisionRecord>();
+  private readonly idleListeners = new Set<() => void>();
+  private readonly exitListeners = new Set<() => void>();
+  private readonly toolEndListeners = new Set<(toolUseId: string) => void>();
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -71,6 +83,7 @@ export class AgentSession {
   private exitReason: ExitReason | null = null;
   private terminating = false;
   private versionChecked = false;
+  private idle = true;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -87,6 +100,7 @@ export class AgentSession {
     if (latest.status === 'running') {
       await stopStale(latest, this.options.killGraceMs ?? KILL_GRACE_MS);
       rmSync(this.configPath(latest.id), { force: true });
+      this.options.gate?.remove(latest.id);
     }
     this.load(latest);
     this.apply(this.tracker.processExited());
@@ -103,12 +117,57 @@ export class AgentSession {
     };
   }
 
+  sessionId(): string | null {
+    return this.session?.id ?? null;
+  }
+
+  isIdle(): boolean {
+    return !this.tracker.hasOpenTurn() && ![...this.tasks.values()].some((task) => task.endedAt === null);
+  }
+
+  onIdle(listener: () => void): () => void {
+    this.idleListeners.add(listener);
+    return () => this.idleListeners.delete(listener);
+  }
+
+  onProcessExit(listener: () => void): () => void {
+    this.exitListeners.add(listener);
+    return () => this.exitListeners.delete(listener);
+  }
+
+  onToolEnd(listener: (toolUseId: string) => void): () => void {
+    this.toolEndListeners.add(listener);
+    return () => this.toolEndListeners.delete(listener);
+  }
+
+  recordDecision(record: ToolDecisionRecord): void {
+    const session = this.session;
+    if (!session) return;
+    this.persist(() => this.options.store.saveToolDecision(session.id, record));
+    this.decisions.set(record.toolUseId, record);
+    const item = this.items.get(record.toolUseId);
+    if (item?.kind !== 'tool') return;
+    const updated: ChatItem = { ...item, decision: record.decision, targets: record.targets };
+    this.items.set(updated.id, updated);
+    this.emit({ type: 'session.patch', patch: { items: [updated] } });
+  }
+
+  context(toolUseId: string): { parentToolUseId: string | null; lastMessage: string | null } {
+    const items = [...this.items.values()].sort((a, b) => a.seq - b.seq);
+    const tool = this.items.get(toolUseId);
+    const parentToolUseId = tool?.kind === 'tool' ? tool.parentToolUseId : null;
+    const before = tool ? items.filter((item) => item.seq < tool.seq && item.parentToolUseId === parentToolUseId) : items;
+    const message = before.findLast((item) => item.kind === 'message' && item.role === 'assistant');
+    return { parentToolUseId, lastMessage: message?.kind === 'message' ? message.text : null };
+  }
+
   send(text: string): void {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.tracker.hasOpenTurn()) throw new SessionError('turn-open');
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
+    if (!this.process) throw new SessionError('no-gate');
     this.process?.write({ type: 'user', message: { role: 'user', content: text } });
     this.apply(this.tracker.userMessage(text));
   }
@@ -164,6 +223,7 @@ export class AgentSession {
     this.mcpServers = [];
     this.permissionMode = null;
     this.pendingPrompts.clear();
+    this.decisions.clear();
     this.emit({ type: 'session.snapshot', state: this.state() });
   }
 
@@ -172,9 +232,11 @@ export class AgentSession {
     const lastSeq = [...history.messages, ...history.toolEvents, ...history.prompts].reduce((max, record) => Math.max(max, record.seq), 0);
     this.session = session;
     this.turns = new Map(history.turns.map((turn) => [turn.id, turn]));
+    this.decisions.clear();
+    for (const decision of history.decisions) this.decisions.set(decision.toolUseId, decision);
     this.items = new Map([
       ...history.messages.map(messageItem),
-      ...history.toolEvents.map((event) => toolItem(event, this.options.root)),
+      ...history.toolEvents.map((event) => toolItem(event, this.options.root, this.decisions.get(event.toolUseId))),
       ...history.prompts.map(promptItem),
     ].map((item) => [item.id, item]));
     this.tasks = new Map(history.tasks.map((task) => [task.id, task]));
@@ -192,13 +254,24 @@ export class AgentSession {
   private spawn(): void {
     const session = this.session;
     if (!session) return;
+    let gateArgs: string[] = [];
+    if (this.options.gate) {
+      try {
+        const { settingsPath } = this.options.gate.write(session.id);
+        gateArgs = ['--settings', settingsPath, '--append-system-prompt', this.options.gate.systemPrompt(), '--system-prompt-snapshot', 'off'];
+      } catch (error) {
+        console.error('agent: could not write the hook settings', error);
+        this.apply(this.tracker.notice(`The IDE could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));
+        return;
+      }
+    }
     const dir = runDir(this.options.home);
     mkdirSync(dir, { recursive: true });
     chmodSync(dir, RUN_DIR_MODE);
     const configPath = this.configPath(session.id);
     rmSync(configPath, { force: true });
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
-    const child = startClaude(this.options.claude, claudeArgs(session, configPath), session.cwd, (line) => this.onLine(line), {
+    const child = startClaude(this.options.claude, claudeArgs(session, configPath, gateArgs), session.cwd, (line) => this.onLine(line), {
       killGraceMs: this.options.killGraceMs,
     });
     this.process = child;
@@ -260,10 +333,12 @@ export class AgentSession {
     this.process = null;
     this.terminating = false;
     rmSync(this.configPath(this.session.id), { force: true });
+    this.options.gate?.remove(this.session.id);
     const reason = this.exitReason;
     this.apply(this.tracker.processExited());
     if (reason === null) this.apply(this.tracker.notice(crashNotice(exit)));
     this.update({ status: reason === null ? 'crashed' : reason === 'new' ? 'ended' : 'stopped', pid: null, launchId: null });
+    for (const listener of this.exitListeners) listener();
   }
 
   private async terminate(reason: ExitReason): Promise<void> {
@@ -287,6 +362,7 @@ export class AgentSession {
     if (!session || changes.length === 0) return;
     const store = this.options.store;
     const patch: SessionPatch = {};
+    const ended: string[] = [];
     for (const change of changes) {
       if (change.kind === 'turn') {
         this.persist(() => store.saveTurn(session.id, change.turn));
@@ -299,9 +375,10 @@ export class AgentSession {
         (patch.items ??= []).push(item);
       } else if (change.kind === 'tool') {
         this.persist(() => store.saveToolEvent(session.id, change.tool));
-        const item = toolItem(change.tool, this.options.root);
+        const item = toolItem(change.tool, this.options.root, this.decisions.get(change.tool.toolUseId));
         this.items.set(item.id, item);
         (patch.items ??= []).push(item);
+        if (change.tool.endedAt !== null) ended.push(change.tool.toolUseId);
       } else if (change.kind === 'task') {
         this.persist(() => store.saveTask(session.id, change.task));
         this.tasks.set(change.task.id, change.task);
@@ -331,6 +408,14 @@ export class AgentSession {
       }
     }
     this.emit({ type: 'session.patch', patch });
+    for (const toolUseId of ended) for (const listener of this.toolEndListeners) listener(toolUseId);
+    this.checkIdle();
+  }
+
+  private checkIdle(): void {
+    const idle = this.isIdle();
+    if (idle && !this.idle) for (const listener of this.idleListeners) listener();
+    this.idle = idle;
   }
 
   private persist(write: () => void): void {
@@ -350,12 +435,13 @@ export class AgentSession {
   }
 }
 
-function claudeArgs(session: SessionRecord, mcpConfigPath: string): string[] {
+function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {
   return [
     '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
     session.conversationStarted ? '--resume' : '--session-id', session.claudeSessionId,
     '--mcp-config', mcpConfigPath, '--strict-mcp-config',
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
+    ...gateArgs,
     '--dangerously-skip-permissions',
     '--permission-prompt-tool', 'stdio',
   ];
@@ -373,10 +459,11 @@ function messageItem(message: MessageRecord): ChatItem {
   return message.role === 'notice' ? { kind: 'notice', ...base } : { kind: 'message', role: message.role, ...base };
 }
 
-function toolItem(event: ToolEventRecord, root: string): ChatItem {
+function toolItem(event: ToolEventRecord, root: string, decision?: ToolDecisionRecord): ChatItem {
   return {
     kind: 'tool', id: event.toolUseId, seq: event.seq, turnId: event.turnId, parentToolUseId: event.parentToolUseId,
     tool: event.tool, summary: summarizeToolInput(event.input, root), status: event.status, startedAt: event.toolUseAt, endedAt: event.endedAt,
+    decision: decision?.decision ?? null, targets: decision?.targets ?? [],
   };
 }
 

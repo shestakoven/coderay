@@ -25,7 +25,7 @@ export type StreamEvent =
   | { type: 'ignored' }
   | { type: 'unknown'; label: string };
 
-const IGNORED_TYPES = new Set(['stream_event', 'rate_limit_event', 'control_response']);
+const IGNORED_TYPES = new Set(['stream_event', 'rate_limit_event', 'control_response', 'tool_progress']);
 const IGNORED_SYSTEM = new Set([
   'hook_started', 'hook_progress', 'hook_response', 'thinking_tokens', 'status',
   'task_progress', 'background_tasks_changed', 'compact_boundary', 'commands_changed',

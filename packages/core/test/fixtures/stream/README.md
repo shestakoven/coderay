@@ -43,3 +43,4 @@ The fake then skips to the next `await-user`. An interrupt with no turn open get
 | `hang.jsonl` | A claude that never answers. | Synthetic, for stale-process and kill tests. |
 | `stubborn.jsonl` | A claude that ignores SIGTERM and has a child process. | Synthetic, for the SIGKILL fallback. |
 | `keeps-running.jsonl` | A claude that outlives its stdin. | Synthetic, for the core-exit test. |
+| `explain-then-bash.jsonl` | An assistant message, a Bash call, its result and a closing message. | Synthetic, with the event shapes of multi-turn.jsonl and interrupt-bash.jsonl. |

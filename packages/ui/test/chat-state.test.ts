@@ -11,7 +11,7 @@ const turn = (id: string, kind: TurnView['kind'], state: 'waiting' | 'running' |
 const message = (id: string, seq: number, turnId: string | null, text: string): ChatItem =>
   ({ kind: 'message', id, seq, turnId, parentToolUseId: null, role: 'assistant', text, ts: seq });
 const tool = (id: string, seq: number, turnId: string | null, parentToolUseId: string | null = null, status: ToolStatus = 'ok'): ChatItem =>
-  ({ kind: 'tool', id, seq, turnId, parentToolUseId, tool: 'Bash', summary: 'npm test', status, startedAt: seq, endedAt: status === 'running' ? null : seq });
+  ({ kind: 'tool', id, seq, turnId, parentToolUseId, tool: 'Bash', summary: 'npm test', status, startedAt: seq, endedAt: status === 'running' ? null : seq, decision: null, targets: [] });
 const task = (id: string, kind: TaskKind, endedAt: number | null = null): TaskView =>
   ({ id, toolUseId: null, kind, description: id, status: endedAt === null ? 'running' : 'completed', startedAt: 1, endedAt });
 const chat = (partial: Partial<SessionState>) =>

@@ -1,3 +1,5 @@
+import type { ToolDecision } from './plans';
+
 export const MAX_CLIENT_FRAME_BYTES = 64 * 1024;
 
 export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended';
@@ -52,6 +54,8 @@ export interface ToolItem extends ItemBase {
   status: ToolStatus;
   startedAt: number;
   endedAt: number | null;
+  decision: ToolDecision | null;
+  targets: string[];
 }
 
 export interface AskOption {
