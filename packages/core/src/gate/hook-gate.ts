@@ -146,6 +146,10 @@ export class HookGate {
     }
   }
 
+  dropAll(): void {
+    for (const pending of [...this.pending.values()]) pending.settle('tool-ended');
+  }
+
   private async ask(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
     const view = this.promptView(input, judged, mode);
     const event: GateEventRecord = {

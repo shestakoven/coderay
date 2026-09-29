@@ -1,0 +1,9 @@
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}
+{"fake":"mcp","id":"toolu_fx_plan","tool":"propose_plan","input":{"goal":"Fix the greeting","steps":[{"key":"edit","title":"Fix the greeting","rationale":"It has a typo","targets":[{"path":"src/app.ts","op":"modify"}]}]}}
+{"fake":"mcp","id":"toolu_fx_start","tool":"step","input":{"key":"edit","phase":"start"}}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"src/other.ts has the same typo."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"fake":"tool","id":"toolu_fx_other","name":"Write","input":{"file_path":"$CWD/src/other.ts","content":"export const other = 'hello';\n"},"result":"The file was updated.","apply":true,"streamed":false}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Done."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"$SESSION"}
+{"fake":"await-user"}

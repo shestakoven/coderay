@@ -166,6 +166,21 @@ describe('HookGate', () => {
     expect((await answer)?.permissionDecisionReason).toBe('IDE: the call ended before the user answered.');
   });
 
+  it('drops every waiting prompt and denies its call when the agent process ends', async () => {
+    const { root, call, approve, gate, decisions } = await setup();
+    await approve();
+    const answers = Promise.all([
+      call('Write', { file_path: join(root, 'src/other.ts') }, undefined, 'toolu_1'),
+      call('Write', { file_path: join(root, 'src/lib/util.ts') }, undefined, 'toolu_2'),
+    ]);
+    await waitFor(() => gate.prompts().filter((prompt) => prompt.status === 'pending').length === 2, 'two prompts shown');
+    gate.dropAll();
+    expect((await answers).map((answer) => answer?.permissionDecisionReason)).toEqual([
+      'IDE: the call ended before the user answered.', 'IDE: the call ended before the user answered.',
+    ]);
+    expect([gate.prompts().map((prompt) => prompt.status), decisions.map((decision) => decision.decision)]).toEqual([['dropped', 'dropped'], ['deny', 'deny']]);
+  });
+
   it('denies with "did not respond" at the hold limit', async () => {
     const { root, call, approve } = await setup({ holdMs: 50 });
     await approve();
