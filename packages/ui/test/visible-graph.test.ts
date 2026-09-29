@@ -51,4 +51,12 @@ describe('visibleGraph', () => {
 
     expect(graphSignature(visibleGraph(after, new Set()))).not.toBe(graphSignature(visibleGraph(before, new Set())));
   });
+
+  it('adds planned new files as ghost nodes, only inside expanded components', () => {
+    const ghosts = [{ path: 'src/api/new.ts', componentId: 'folder:src/api' }, { path: 'src/db/new.ts', componentId: 'folder:src/db' }];
+    const graph = visibleGraph(demoSnapshot(), new Set(['folder:src/api']), ghosts);
+    expect(graph.nodes.filter((node) => node.ghost).map((node) => [node.id, node.parentId, node.label])).toEqual([
+      ['new:src/api/new.ts', 'folder:src/api', 'new.ts'],
+    ]);
+  });
 });

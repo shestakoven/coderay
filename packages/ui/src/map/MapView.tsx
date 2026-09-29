@@ -12,6 +12,7 @@ import {
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, type Dispatch } from 'react';
+import { usePlanOverlay } from '../plan/overlay';
 import { fitKey, layoutBounds, layoutGraph, type Bounds, type MapFlowNode } from './layout';
 import type { MapAction, MapState } from './map-state';
 import { nodeTypes } from './nodes';
@@ -21,23 +22,34 @@ const elk = new ELK({ workerUrl: elkWorkerUrl });
 const FIT_PADDING = 0.1;
 
 export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
+  const overlay = usePlanOverlay();
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const graph = useMemo(
-    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded) : null),
-    [state.snapshot, state.expanded],
+    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts) : null),
+    [state.snapshot, state.expanded, overlay.marks.ghosts],
   );
   const signature = useMemo(() => (graph ? graphSignature(graph) : null), [graph]);
   const flowNodes = useMemo(
     () =>
       nodes.map((node) => {
         const selected = node.id === state.selected;
-        return !!node.selected === selected ? node : { ...node, selected };
+        const componentId = node.parentId ?? node.id;
+        const className = overlay.dimOthers && !overlay.marks.components.has(componentId) ? 'plan-dim' : '';
+        return !!node.selected === selected && (node.className ?? '') === className ? node : { ...node, selected, className };
       }),
-    [nodes, state.selected],
+    [nodes, state.selected, overlay.dimOthers, overlay.marks],
   );
   const bounds = useMemo(() => layoutBounds(nodes), [nodes]);
   const key = useMemo(() => fitKey(nodes), [nodes]);
+
+  useEffect(() => {
+    const componentId = overlay.focus?.componentIds[0];
+    if (!componentId) return;
+    dispatch({ type: 'select', id: componentId });
+    const size = state.snapshot?.components.find((component) => component.id === componentId)?.files.length ?? 0;
+    if (size <= 40 && !state.expanded.has(componentId)) dispatch({ type: 'toggle', componentId });
+  }, [overlay.focus?.nonce]);
 
   // Keyed on the signature, not the graph: a snapshot that leaves the visible graph unchanged must not re-run ELK.
   useEffect(() => {
@@ -82,9 +94,22 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         </Controls>
         <MiniMap pannable zoomable />
         <FitOnNewComponents fitKey={key} bounds={bounds} />
+        <CenterOnFocus />
       </ReactFlow>
     </div>
   );
+}
+
+function CenterOnFocus() {
+  const { focus } = usePlanOverlay();
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    const ids = focus?.componentIds ?? [];
+    if (ids.length === 0) return;
+    const timer = setTimeout(() => void fitView({ nodes: ids.map((id) => ({ id })), padding: 0.8, maxZoom: 1, duration: 300 }), 400);
+    return () => clearTimeout(timer);
+  }, [focus?.nonce, fitView]);
+  return null;
 }
 
 function FitOnNewComponents({ fitKey: key, bounds }: { fitKey: string; bounds: Bounds | null }) {

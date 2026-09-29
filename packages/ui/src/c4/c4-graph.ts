@@ -2,6 +2,8 @@ import type { Edge, Node } from '@xyflow/react';
 import type { ELK, ElkNode } from 'elkjs/lib/elk-api.js';
 import type { C4Container, C4Model, ExternalKind, MapSnapshot } from '@ide/protocol';
 
+export const OWN_COMPONENT_CARDS = 14;
+
 export type C4Kind = 'person' | 'container' | 'group' | 'external' | 'component' | 'shared';
 
 export type C4NodeData = {
@@ -157,7 +159,7 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
     const own = c.components.filter((p) => p.near > 0);
     const shared = c.components.filter((p) => !own.includes(p));
     const byComponent = new Map<string, string>();
-    for (const p of own.slice(0, 14)) {
+    for (const p of own.slice(0, OWN_COMPONENT_CARDS)) {
       const id = `${c.id}/${p.id}`;
       nodes.push({
         id,
@@ -174,7 +176,7 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
       });
       byComponent.set(p.id, id);
     }
-    const rest = [...own.slice(14), ...shared];
+    const rest = [...own.slice(OWN_COMPONENT_CARDS), ...shared];
     if (rest.length > 0) {
       const id = `${c.id}/shared`;
       nodes.push({

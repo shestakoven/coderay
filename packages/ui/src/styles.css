@@ -202,3 +202,12 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .chip.plan-chip.rejected, .chip.plan-chip.withdrawn, .chip.plan-chip.done { color: var(--muted); border-color: var(--line); }
 .plan-row { text-align: left; background: #221a22; border: 1px solid #5a3050; border-radius: 6px; padding: 5px 8px; margin: 6px 10px 0; color: #ffd1ea; font-size: 12px; }
 .c4-toolbar { left: 50%; transform: translateX(-50%); }
+.c4-card.in-plan { border-color: var(--plan); box-shadow: 0 0 0 1px var(--plan), 0 8px 24px rgba(0, 0, 0, 0.35); overflow: visible; }
+.c4-card.in-plan.expanded { box-shadow: 0 0 0 1px var(--plan); }
+.c4-card .c4-plan-line, .c4-card.warn .c4-plan-line { color: var(--plan); }
+.node.in-plan { border-color: var(--plan); overflow: visible; position: relative; }
+.node.component.in-plan { box-shadow: 0 0 0 1px var(--plan); }
+.node.file.in-plan { background: var(--plan-soft); }
+.node.file.ghost { border-style: dashed; border-color: var(--plan); background: transparent; color: var(--plan); }
+.plan-meta { color: var(--plan); }
+.react-flow__node.plan-dim { opacity: 0.2; }
