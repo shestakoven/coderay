@@ -7,7 +7,7 @@ import { fileHash, writeFileNoFollow } from '../mcp/config';
 
 export const DEFAULT_POLICY: Policy = {
   mode: 'B',
-  guarded: ['.env*', '.git/hooks/', '.git/config', '.ide/mcp.json', '.claude/'],
+  guarded: ['.env*', '.git/hooks/', '.git/config', '.git/info/', '.ide/mcp.json', '.claude/'],
   harness: ['.omc/'],
   outsideAllowed: ['~/.claude/plans/', '~/.claude/projects/*/memory/'],
   autoApproveMaxFiles: 3,

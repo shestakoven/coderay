@@ -122,6 +122,11 @@ describe('classifyPaths', () => {
     ]);
   });
 
+  it('guards the git exclude file, which could otherwise turn enforcement off for new files', async () => {
+    const root = await project();
+    expect(await classes(root, ['.git/info/exclude'])).toEqual([['.git/info/exclude', 'enforced', 'a guarded path']]);
+  });
+
   it('keeps a guarded path enforced when it is also a harness path', async () => {
     const root = await project();
     expect(await classes(root, ['.claude/settings.json'], { policy: { harness: ['.claude/'] } })).toEqual([

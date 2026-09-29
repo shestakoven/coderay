@@ -104,6 +104,7 @@ describe('reviewPlan', () => {
     ['four files', ['src/app.ts', 'src/other.ts', 'src/extra.ts', 'src/ui/one.ts'].map((path) => ({ path, op: 'modify' })), '4 files (the limit is 3)', {}],
     ['two components', [{ path: 'src/app.ts', op: 'modify' }, { path: 'src/lib/util.ts', op: 'modify' }], 'files in 2 components (App, Lib)', {}],
     ['a guarded file', [{ path: '.env', op: 'modify' }], '.env is a guarded path', {}],
+    ['the git exclude file', [{ path: '.git/info/exclude', op: 'modify' }], '.git/info/exclude is a guarded path', {}],
     ['a gitignored file', [{ path: 'dist/out.js', op: 'modify' }], 'dist/out.js is gitignored', {}],
     ['a harness file', [{ path: '.omc/state.json', op: 'create' }], '.omc/state.json is a harness path', {}],
     ['automatic approval off', [{ path: 'src/app.ts', op: 'modify' }], 'automatic approval is off', { autoApproveMaxFiles: 0 }],

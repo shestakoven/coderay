@@ -15,10 +15,10 @@ describe('PolicyStore', () => {
     expect(setup().policy.effective()).toEqual(DEFAULT_POLICY);
   });
 
-  it('protects secrets, git hooks, the IDE config and Claude settings by default, and allows Claude plan and memory files outside the project', () => {
+  it('protects secrets, git hooks, config and exclude rules, the IDE config and Claude settings by default, and allows Claude plan and memory files outside the project', () => {
     expect(DEFAULT_POLICY).toEqual({
       mode: 'B',
-      guarded: ['.env*', '.git/hooks/', '.git/config', '.ide/mcp.json', '.claude/'],
+      guarded: ['.env*', '.git/hooks/', '.git/config', '.git/info/', '.ide/mcp.json', '.claude/'],
       harness: ['.omc/'],
       outsideAllowed: ['~/.claude/plans/', '~/.claude/projects/*/memory/'],
       autoApproveMaxFiles: 3,
