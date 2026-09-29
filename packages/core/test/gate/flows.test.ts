@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { ControlMode, ToolItem } from '@ide/protocol';
@@ -19,6 +19,7 @@ interface Flow {
   runtime: GateRuntime;
   server: RunningServer;
   file(rel: string): string;
+  exists(rel: string): boolean;
   tool(id: string): ToolItem | undefined;
   records(): ReturnType<typeof readRecords>;
 }
@@ -54,6 +55,7 @@ async function flow(scenario: string, options: { mode?: ControlMode } = {}): Pro
   return {
     session, runtime, server: running,
     file: (rel) => readFileSync(join(root, rel), 'utf8'),
+    exists: (rel) => existsSync(join(root, rel)),
     tool: (id) => session.state().items.find((item): item is ToolItem => item.kind === 'tool' && item.id === id),
     records: () => readRecords(recordFile),
   };
@@ -129,6 +131,17 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
     expect([f.file('src/other.ts'), f.tool('toolu_fx_other')?.decision]).toEqual(["export const other = 'hello';\n", 'flag']);
   });
 
+  it('withdraws a waiting plan when the claude process dies', async () => {
+    const f = await flow('gate-big-plan');
+    f.session.send('fix them');
+    await waitFor(() => f.runtime.plans.plans().some((plan) => plan.status === 'proposed'), 'plan proposed', 10_000);
+    process.kill(f.records().find((record) => record.pid !== undefined)?.pid as number, 'SIGKILL');
+    await waitFor(() => f.session.state().session?.status === 'crashed', 'claude exited', 10_000);
+    expect(f.runtime.plans.plans().map((plan) => [plan.status, plan.feedback])).toEqual([
+      ['withdrawn', "The agent's process ended while the plan waited for an answer."],
+    ]);
+  });
+
   it('drops the prompt when Stop ends the waiting call', async () => {
     const f = await flow('gate-out-of-plan');
     f.session.send('fix it');
@@ -151,7 +164,7 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
     const f = await flow('gate-bash');
     f.session.send('look around');
     await turnClosed(f);
-    expect([f.tool('toolu_fx_ls')?.decision, f.tool('toolu_fx_echo')?.status, f.tool('toolu_fx_echo')?.decision]).toEqual(['unchecked', 'error', 'deny']);
+    expect([f.tool('toolu_fx_ls')?.decision, f.tool('toolu_fx_echo')?.status, f.tool('toolu_fx_echo')?.decision, f.exists('src/new.ts')]).toEqual(['unchecked', 'error', 'deny', false]);
   });
 
   it('blocks every call when the core cannot be reached', async () => {

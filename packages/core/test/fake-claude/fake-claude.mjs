@@ -142,11 +142,11 @@ function runHook(hook, payload) {
     child.stderr.on('data', (chunk) => { stderr += chunk; });
     child.on('close', (code) => {
       running = null;
-      // Exit 2 blocks with stderr as the reason; exit 1 or output that is not a decision lets the call run (spike 1e, v1, v2).
+      // Exit 2 blocks with stderr as the reason; JSON is read only on exit 0; exit 1 or output that is not a decision lets the call run (spike 1e, c15, c17, v1, v2).
       if (code === 2) return resolve({ allowed: false, reason: stderr.trim(), exit: 2 });
       let output = null;
       try {
-        output = JSON.parse(stdout).hookSpecificOutput;
+        output = code === 0 ? JSON.parse(stdout).hookSpecificOutput : null;
       } catch {
         output = null;
       }
@@ -162,7 +162,7 @@ async function runHooks(name, input, id) {
     .filter((entry) => entry.matcher === '*' || new RegExp(`^(?:${entry.matcher})$`).test(name))
     .flatMap((entry) => entry.hooks ?? []);
   const payload = JSON.stringify({
-    session_id: sessionId, transcript_path: '', cwd: process.cwd(), permission_mode: 'bypassPermissions',
+    session_id: sessionId, transcript_path: '', cwd: process.cwd(), prompt_id: '', permission_mode: 'bypassPermissions',
     hook_event_name: 'PreToolUse', tool_name: name, tool_input: input, tool_use_id: id,
   });
   for (const hook of hooks) {
