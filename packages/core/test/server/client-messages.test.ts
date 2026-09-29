@@ -76,4 +76,22 @@ describe('parseClientMessage', () => {
       .toEqual({ type: 'gate.answer', promptId: 'g', answer: 'expand-plan' });
     expect(parseClientMessage(JSON.stringify({ type: 'gate.answer', promptId: 'g', answer: 'always' }))).toBeNull();
   });
+
+  it('refuses a plan answer without a string plan id or with a version below 1', () => {
+    const bad = [
+      { type: 'plan.answer', version: 1, answer: { kind: 'approve' } },
+      { type: 'plan.answer', planId: 7, version: 1, answer: { kind: 'approve' } },
+      { type: 'plan.answer', planId: 'p', version: 0, answer: { kind: 'approve' } },
+      { type: 'plan.answer', planId: 'p', version: -1, answer: { kind: 'approve' } },
+    ];
+    expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null, null, null]);
+  });
+
+  it('refuses a gate answer without a string prompt id', () => {
+    const bad = [
+      { type: 'gate.answer', answer: 'deny' },
+      { type: 'gate.answer', promptId: 7, answer: 'deny' },
+    ];
+    expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null]);
+  });
 });

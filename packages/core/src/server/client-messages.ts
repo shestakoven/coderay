@@ -26,7 +26,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     }
     case 'plan.answer': {
       const parsed = parsePlanAnswer(answer);
-      return typeof planId === 'string' && typeof version === 'number' && Number.isInteger(version) && parsed ? { type, planId, version, answer: parsed } : null;
+      return typeof planId === 'string' && typeof version === 'number' && Number.isInteger(version) && version >= 1 && parsed ? { type, planId, version, answer: parsed } : null;
     }
     case 'gate.answer':
       return typeof promptId === 'string' && (answer === 'allow-once' || answer === 'expand-plan' || answer === 'deny') ? { type, promptId, answer } : null;
