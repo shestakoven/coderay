@@ -5,3 +5,5 @@ node_modules/
 spike/out/
 spike/.cache/
 packages/ui/dist/
+test-results/
+playwright-report/

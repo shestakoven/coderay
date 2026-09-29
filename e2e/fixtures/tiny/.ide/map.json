@@ -1,0 +1,6 @@
+{
+  "version": 1,
+  "manual": [
+    { "id": "app", "name": "App", "summary": "The greeting app", "description": "Greets people.", "files": [], "globs": ["src/**"] }
+  ]
+}

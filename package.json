@@ -6,8 +6,9 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "test": "vitest run --allowOnly=false",
-    "typecheck": "tsc -p packages/core && tsc -p packages/ui",
+    "typecheck": "tsc -p packages/core && tsc -p packages/ui && tsc -p e2e",
     "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
+    "e2e": "pnpm --filter @ide/ui build && playwright test",
     "dev:core": "node --watch --import tsx packages/core/src/main.ts --project . --allow-origin http://localhost:5173",
     "core": "node --import tsx packages/core/src/main.ts",
     "dev": "pnpm run \"/^dev:/\"",
@@ -15,6 +16,7 @@
     "start": "pnpm --filter @ide/ui build && node --import tsx packages/core/src/main.ts --ui packages/ui/dist"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^24.0.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
