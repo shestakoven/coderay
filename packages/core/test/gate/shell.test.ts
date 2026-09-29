@@ -86,6 +86,7 @@ describe('shellWrites', () => {
   it('marks git commands that rewrite the work tree, and no others', () => {
     expect(writes('git checkout main').allTracked).toBe(true);
     expect(writes('git -C sub reset --hard').allTracked).toBe(true);
+    expect(writes('git revert HEAD').allTracked).toBe(true);
     expect(writes('git status && git log --oneline && git commit -m "a > b"').allTracked).toBe(false);
   });
 
