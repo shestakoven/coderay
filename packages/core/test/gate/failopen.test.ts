@@ -83,6 +83,7 @@ async function fixture(o: { mode?: ControlMode; detector?: Partial<ConstructorPa
     toolInfo: () => undefined, settleMs: 50, newId: () => `ev${++n}`,
   });
   const decisions: ToolDecisionRecord[] = [];
+  gate.onDecision((r) => decisions.push(r));
   const detector = new FailOpenDetector({ gate, ledger, changes, watchdog, record: (r) => decisions.push(r), ...o.detector });
   const feed = async (rel: string, at = performance.now()): Promise<ChangeView> => {
     mkdirSync(join(root, rel, '..'), { recursive: true });
@@ -121,15 +122,17 @@ describe('FailOpenDetector', () => {
     expect(f.decisions).toMatchObject([{ toolUseId: 'ide1', decision: 'hook-missing' }]);
   });
 
-  it('drops a pending prompt and records hook-pending', async () => {
+  it('drops a pending prompt and keeps hook-pending as the final decision, although the gate settles the prompt afterwards', async () => {
     const f = await fixture();
     await approve(f);
     const answer = hookCall(f, 'Edit', { file_path: join(f.root, 'a.ts'), old_string: 'a', new_string: 'b' }, 'edit1');
     await waitFor(() => f.gate.pending()[0], 'prompt');
     f.detector.toolEnded(end({ toolUseId: 'edit1', tool: 'Edit' }));
-    expect(f.decisions).toMatchObject([{ toolUseId: 'edit1', decision: 'hook-pending' }]);
     expect(f.gate.pending()).toEqual([]);
     expect((await answer)?.permissionDecision).toBe('deny');
+    await sleepMs(30);
+    expect(f.decisions.filter((d) => d.toolUseId === 'edit1').at(-1)).toMatchObject({ decision: 'hook-pending' });
+    expect(f.decisions.filter((d) => d.toolUseId === 'edit1')).toHaveLength(1);
   });
 
   it.each(['error', 'rejected', 'unfinished'] as const)('ignores a %s result', async (status) => {
@@ -145,16 +148,18 @@ describe('FailOpenDetector', () => {
     const f = await fixture();
     await hookCall(f, 'Read', {}, 'r1');
     f.detector.toolEnded(end({ toolUseId: 'r1', tool: 'Read' }));
-    expect(f.decisions).toEqual([]);
+    expect(f.decisions.map((d) => [d.toolUseId, d.decision === 'hook-missing' || d.decision === 'hook-pending'])).toEqual([['r1', false]]);
   });
 
-  it('ignores a call that ended while a watchdog event was pending', async () => {
+  it('records the decision but raises no second event for a call that ended while a watchdog event was pending', async () => {
     const f = await fixture();
     const change = await f.feed('src/x.ts');
     f.watchdog.raiseFailOpen('other', [change]);
-    f.detector.toolEnded(end({}));
+    const old = { toolUseAt: 1e9, endedAt: 1e9 + 1 };
+    f.detector.toolEnded(end(old));
+    f.detector.toolEnded(end(old));
     await sleepMs(80);
-    expect(f.decisions).toEqual([]);
+    expect(f.decisions).toMatchObject([{ toolUseId: 'mcp1', decision: 'hook-missing' }]);
     expect(f.watchdog.events()).toHaveLength(1);
   });
 
@@ -197,16 +202,20 @@ describe('FailOpenDetector', () => {
     expect(f.watchdog.events()).toHaveLength(1);
   });
 
-  it('raises for the changes already linked to the call when re-attribution fails, and never rejects unhandled', async () => {
+  it('fails closed when re-attribution fails: the window human changes are judged as the call own and hold the agent', async () => {
     const f = await fixture();
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
-    f.ledger.allowed(call({ toolUseId: 'mcp1', tool: 'mcp__x__write', toolClass: 'mcp' }));
-    await f.feed('src/x.ts');
-    expect(f.changes.changes()[0]).toMatchObject({ origin: 'agent-tool', toolUseIds: ['mcp1'] });
-    vi.spyOn(f.changes, 'reattribute').mockRejectedValue(new Error('disk full'));
-    f.detector.toolEnded(end({}));
+    const at = performance.now();
+    await f.feed('src/x.ts', at);
+    vi.spyOn(f.store, 'saveChanges').mockImplementationOnce(() => { throw new Error('disk full'); });
+    f.detector.toolEnded(end({ toolUseAt: at - 10, endedAt: at + 10 }));
     await waitFor(() => f.watchdog.events()[0], 'event');
+    expect(f.changes.changes()[0]!.origin).toBe('human');
     expect(f.watchdog.events()[0]).toMatchObject({ kind: 'fail-open', changes: [{ path: 'src/x.ts' }] });
+    expect(f.watchdog.events()[0]!.phase).not.toBe('resolved');
+    expect(f.hold.isHeld()).toBe(true);
+    const pending = await waitFor(() => f.watchdog.events().find((e) => e.phase === 'pending'), 'pending');
+    expect(pending.reason).toContain('disk full');
     expect(f.decisions).toHaveLength(1);
     expect(error).toHaveBeenCalled();
     error.mockRestore();

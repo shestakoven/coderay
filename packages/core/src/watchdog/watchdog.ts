@@ -269,9 +269,9 @@ export class Watchdog {
     }
   }
 
-  raiseFailOpen(toolUseId: string, changes: ChangeView[]): void {
+  raiseFailOpen(toolUseId: string, changes: ChangeView[], failure?: string): void {
     try {
-      const notes: string[] = [];
+      const notes: string[] = failure ? [failure] : [];
       const out = changes.filter((change) => {
         if (change.enforcement !== 'enforced' || isGitState(change.path)) return false;
         try {

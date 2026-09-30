@@ -94,6 +94,14 @@ export class ChangeService {
     return [...this.all];
   }
 
+  humanIn(from: number, to: number): ChangeView[] {
+    this.sync();
+    return this.all.filter((change) => {
+      const at = this.stamps.get(change.id);
+      return change.origin === 'human' && at !== undefined && at >= from && at <= to + this.graceMs;
+    });
+  }
+
   async reattribute(toolUseId: string, from: number, to: number): Promise<ChangeView[]> {
     this.sync();
     const stamp = this.stampFor();

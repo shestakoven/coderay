@@ -19,7 +19,7 @@ import { FILE_PATH_FIELD, toolClass, type ToolClass } from './tools';
 export const GATE_HOLD_MS = 3_530_000;
 const PREVIEW_CHARS = 20_000;
 const KEPT_CLOSED = 50;
-const KEPT_DECIDED = 10_000;
+const KEPT_DECIDED = 100_000;
 const NO_RESPONSE = "IDE: the user did not respond in time. Stop and wait for the user's next message.";
 const CALL_ENDED = 'IDE: the call ended before the user answered.';
 
@@ -71,7 +71,7 @@ interface Landing {
   deleting: boolean;
 }
 
-type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended' | 'withdrawn';
+type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended' | 'withdrawn' | 'fail-open';
 
 interface Pending {
   view: GatePromptView;
@@ -212,9 +212,9 @@ export class HookGate {
     pending.settle(answer);
   }
 
-  dropForTool(toolUseId: string): void {
+  dropForTool(toolUseId: string, options: { record?: boolean } = {}): void {
     for (const pending of [...this.waiting.values()]) {
-      if (pending.view.toolUseId === toolUseId) pending.settle('tool-ended');
+      if (pending.view.toolUseId === toolUseId) pending.settle(options.record === false ? 'fail-open' : 'tool-ended');
     }
   }
 
@@ -252,6 +252,10 @@ export class HookGate {
     if (outcome === 'withdrawn') {
       this.close(view, event, null, 'dropped');
       return this.admit(input, signal, deadline);
+    }
+    if (outcome === 'fail-open') {
+      this.close(view, event, null, 'dropped');
+      return deny(CALL_ENDED);
     }
     if (outcome === 'timeout' || outcome === 'tool-ended') {
       const reason = outcome === 'timeout' ? NO_RESPONSE : CALL_ENDED;
