@@ -194,12 +194,12 @@ function runHook(hook, payload) {
   });
 }
 
-async function runHooks(name, input, id) {
+async function runHooks(name, input, id, cwd = process.cwd()) {
   const hooks = (settings?.hooks?.PreToolUse ?? [])
     .filter((entry) => entry.matcher === '*' || new RegExp(`^(?:${entry.matcher})$`).test(name))
     .flatMap((entry) => entry.hooks ?? []);
   const payload = JSON.stringify({
-    session_id: sessionId, transcript_path: '', cwd: process.cwd(), prompt_id: '', permission_mode: 'bypassPermissions',
+    session_id: sessionId, transcript_path: '', cwd, prompt_id: '', permission_mode: 'bypassPermissions',
     hook_event_name: 'PreToolUse', tool_name: name, tool_input: input, tool_use_id: id,
   });
   for (const hook of hooks) {
@@ -209,15 +209,15 @@ async function runHooks(name, input, id) {
   return { allowed: true, reason: '', exit: 0 };
 }
 
-function perform(step) {
+function perform(step, cwd = process.cwd()) {
   const input = step.input;
   if (step.name === 'Write') writeFileSync(input.file_path, input.content);
   else if (step.name === 'Edit') writeFileSync(input.file_path, readFileSync(input.file_path, 'utf8').replace(input.old_string, () => input.new_string));
-  else if (step.name === 'Bash') execFileSync('/bin/sh', ['-c', input.command], { cwd: process.cwd(), stdio: 'ignore' });
+  else if (step.name === 'Bash') execFileSync('/bin/sh', ['-c', input.command], { cwd, stdio: 'ignore' });
 }
 
-function spawnBackground(step) {
-  const child = spawn('/bin/sh', ['-c', step.input.command], { cwd: process.cwd(), detached: true, stdio: 'ignore' });
+function spawnBackground(step, cwd = process.cwd()) {
+  const child = spawn('/bin/sh', ['-c', step.input.command], { cwd, detached: true, stdio: 'ignore' });
   const shell = { taskId: `task_bg_${step.id}`, pid: child.pid, exited: false, onExit: [] };
   child.on('exit', () => {
     shell.exited = true;
@@ -252,17 +252,18 @@ function endShellTask(step) {
 
 async function runTool(step) {
   const parent = step.parent ?? null;
+  const cwd = step.cwd ? join(process.cwd(), step.cwd) : process.cwd();
   // "streamed": false stands for a tool_use still in claude's output buffer when its hook runs.
   if (step.streamed !== false) startTool(step.id, step.name, step.input, parent);
   let verdict = { allowed: true, reason: '', exit: 0 };
   if (!step.skipHook) {
-    verdict = await runHooks(step.name, step.input, step.id);
+    verdict = await runHooks(step.name, step.input, step.id, cwd);
     record({ hook: { id: step.id, tool: step.name, ...verdict } });
   }
   if (interrupt !== null) return;
   if (!verdict.allowed) return finishTool(step.id, `PreToolUse:${step.name} hook error: ${verdict.reason}`, true, parent);
-  if (step.background && step.name === 'Bash') spawnBackground(step);
-  else if (step.apply) perform(step);
+  if (step.background && step.name === 'Bash') spawnBackground(step, cwd);
+  else if (step.apply) perform(step, cwd);
   finishTool(step.id, step.result ?? 'ok', false, parent);
 }
 

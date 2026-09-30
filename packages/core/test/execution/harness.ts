@@ -43,6 +43,9 @@ export interface BuildOptions {
   mode?: ControlMode;
   runtime?: Partial<ExecutionRuntimeOptions>;
   start?: boolean;
+  files?: Record<string, string>;
+  claudeEnv?: Record<string, string>;
+  canaryMs?: number;
 }
 
 let builds = 0;
@@ -52,7 +55,7 @@ export async function build(options: BuildOptions): Promise<Built> {
   const home = options.from?.home ?? tempDir('rt-home-');
   const root = options.from?.root ?? tempDir('rt-root-');
   if (!options.from) {
-    await writeTree(root, FILES);
+    await writeTree(root, { ...FILES, ...options.files });
     execFileSync('git', ['init', '-q'], { cwd: root });
   }
   const scenarioPath = Array.isArray(options.scenario) ? join(home, `scenario-${n}.jsonl`) : options.scenario;
@@ -70,8 +73,9 @@ export async function build(options: BuildOptions): Promise<Built> {
     ...options.runtime,
   });
   const recordFile = join(home, `record-${n}.jsonl`);
+  const fake = fakeClaude(scenarioPath, recordFile);
   const session = new AgentSession({
-    root, home, store, claude: fakeClaude(scenarioPath, recordFile), canaryMs: 5_000,
+    root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000,
     mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), gate: rt.sessionGate,
   });
   rt.attach(session);
