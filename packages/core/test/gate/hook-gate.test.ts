@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { ControlMode, PlanTarget } from '@ide/protocol';
 import { GateError, HookGate, type GateContext } from '../../src/gate/hook-gate';
-import type { ToolCall } from '../../src/watchdog/activity';
+import { ActivityLedger, type ToolCall } from '../../src/watchdog/activity';
 import { hookRoute } from '../../src/gate/hook-route';
 import { reviewPlan } from '../../src/plans/freeze';
 import type { ComponentRef } from '../../src/plans/plan-input';
@@ -526,13 +526,13 @@ describe('HookGate onAllowed', () => {
     expect(calls).toMatchObject([{ targets: ['src/other.ts'], allowedOnce: true }]);
   });
 
-  it('reports a call that the plan expansion let through with allowedOnce', async () => {
+  it('reports a call that the plan expansion let through without allowedOnce', async () => {
     const { root, call, approve, pending, gate, calls } = await watched();
     await approve();
     const answer = call('Write', { file_path: join(root, 'src/other.ts') });
     gate.answer((await pending()).id, 'expand-plan');
     await answer;
-    expect(calls.map((c) => [c.targets, c.allowedOnce])).toEqual([[['src/other.ts'], true]]);
+    expect(calls.map((c) => [c.targets, c.allowedOnce])).toEqual([[['src/other.ts'], false]]);
   });
 
   it('does not report a call denied for lack of a plan, or one whose prompt timed out', async () => {
@@ -574,6 +574,28 @@ describe('HookGate onAllowed', () => {
     const { call, calls } = await watched();
     await call('Monitor', { command: 'tail -f log.txt' }, undefined, 'mon');
     expect(calls).toEqual([{ ...base, toolUseId: 'mon', tool: 'Monitor', toolClass: 'shell', targets: [], background: true, cwdRel: '' }]);
+  });
+
+  it('marks an Agent or Task call as background, without targets or directory', async () => {
+    const { call, calls } = await watched();
+    await call('Agent', { description: 'x', prompt: 'y' }, undefined, 'ag');
+    await call('Task', { description: 'x', prompt: 'y' }, undefined, 'tk');
+    expect(calls).toEqual([
+      { ...base, toolUseId: 'ag', tool: 'Agent', toolClass: 'subagent', targets: [], background: true },
+      { ...base, toolUseId: 'tk', tool: 'Task', toolClass: 'subagent', targets: [], background: true },
+    ]);
+  });
+
+  it('feeds a ledger so an async subagent counts as running until its task ends, and a root Monitor covers no path', async () => {
+    const { root, call, gate } = await watched();
+    const ledger = new ActivityLedger();
+    gate.onAllowed((c) => ledger.allowed(c));
+    await call('Agent', { description: 'x', prompt: 'y' }, undefined, 'ag');
+    await call('Monitor', { command: 'tail -f log.txt' }, undefined, 'mon', root);
+    ledger.ended('ag');
+    expect([ledger.runningSubagents(), ledger.runningShell(), ledger.attribute('src/app.ts', performance.now()).origin]).toEqual([1, true, 'human']);
+    ledger.taskEnded('ag');
+    expect(ledger.runningSubagents()).toBe(0);
   });
 
   it('gives no directory for a background shell that runs outside the project', async () => {

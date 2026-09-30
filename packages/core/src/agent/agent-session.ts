@@ -168,7 +168,7 @@ export class AgentSession {
   }
 
   runningShell(): boolean {
-    return this.openTasks('shell') > 0;
+    return this.openTasks('shell') + this.openTasks('monitor') > 0;
   }
 
   onUserMessage(listener: () => void): () => void {

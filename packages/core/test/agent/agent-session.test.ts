@@ -782,13 +782,13 @@ describe('AgentSession waiting for the session-start hook', () => {
 describe('AgentSession feeds for the watchdog', () => {
   const S = '$SESSION';
   const line = (o: object) => JSON.stringify(o);
-  const backgroundShell = () => {
+  const backgroundShell = (kind = 'shell') => {
     const file = join(tempDir('ide-scenario-'), 'background-shell.jsonl');
     writeFileSync(file, [
       line({ fake: 'await-user' }),
       line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
-      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: 'Bash', input: { command: 'sleep 5', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
-      line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 5', is_backgrounded: true, task_type: 'local_bash', session_id: S }),
+      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: kind === 'monitor' ? 'Monitor' : 'Bash', input: { command: 'sleep 5', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
+      line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 5', is_backgrounded: true, task_type: kind === 'monitor' ? 'monitor' : 'local_bash', session_id: S }),
       line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),
       line({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: S }),
       line({ fake: 'sleep', ms: 20 }),
@@ -858,6 +858,17 @@ describe('AgentSession feeds for the watchdog', () => {
     h.session.send('start a shell');
     await waitFor(() => taskEnds.length === 1, 'shell task ended');
     expect([shell, taskEnds, h.session.runningShell(), h.session.runningSubagents()]).toEqual([[true, false], ['toolu_sh'], false, 0]);
+  });
+
+  it('counts a running Monitor as a shell too', async () => {
+    const h = await harness('async-subagent', {}, backgroundShell('monitor'));
+    const shell: boolean[] = [];
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) shell.push(h.session.runningShell());
+    });
+    h.session.send('start a monitor');
+    await waitFor(() => shell.length === 2, 'monitor task ended');
+    expect([shell, h.session.runningShell()]).toEqual([[true, false], false]);
   });
 
   it('stops telling a listener that unsubscribed, and tells the others when one throws', async () => {

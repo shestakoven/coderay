@@ -77,9 +77,9 @@ export class ActivityLedger {
   interrupted(): void {
     const now = this.now();
     for (const entry of this.entries.values()) {
-      if (entry.to !== null) continue;
-      if (entry.call.toolClass === 'mcp') entry.interruptedAt = now;
-      else entry.to = now;
+      if (entry.to !== null || entry.call.background) continue;
+      if (entry.call.toolClass !== 'mcp') entry.to = now;
+      else entry.interruptedAt ??= now;
     }
   }
 
@@ -122,7 +122,7 @@ export class ActivityLedger {
 
   private reaches(call: ToolCall, rel: string): boolean {
     if (!call.background) return true;
-    return call.allTracked || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && under(rel, call.cwdRel));
+    return call.allTracked || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel));
   }
 }
 

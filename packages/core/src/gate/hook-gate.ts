@@ -215,7 +215,7 @@ export class HookGate {
     const again = await this.judge(input);
     this.close(view, event, 'expand-plan', 'plan-expanded');
     if (again.decision.outcome === 'allow') {
-      this.record(input, again, 'ask-approved', again.decision.reason);
+      this.record(input, again, 'ask-approved', again.decision.reason, false);
       return allow(again.decision.reason);
     }
     return this.resolve(input, again, this.options.policy().mode, signal);
@@ -282,7 +282,10 @@ export class HookGate {
     };
   }
 
-  private record(input: HookInput, judged: Judged, decision: ToolDecision, reason = judged.decision.reason): void {
+  private record(
+    input: HookInput, judged: Judged, decision: ToolDecision, reason = judged.decision.reason,
+    allowedOnce = decision === 'ask-approved' || decision === 'flag',
+  ): void {
     const record: ToolDecisionRecord = {
       toolUseId: input.toolUseId, decision, planId: judged.decision.planId, planVersion: judged.decision.version,
       stepKey: judged.decision.stepKey, targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
@@ -295,17 +298,17 @@ export class HookGate {
         console.error('gate: a decision listener threw', error);
       }
     }
-    if (ALLOWED.has(decision)) this.announce(input, judged, decision);
+    if (ALLOWED.has(decision)) this.announce(input, judged, allowedOnce);
   }
 
-  private announce(input: HookInput, judged: Judged, decision: ToolDecision): void {
+  private announce(input: HookInput, judged: Judged, allowedOnce: boolean): void {
     const cls = toolClass(input.toolName);
-    const background = cls === 'shell' && (input.toolName === 'Monitor' || input.toolInput.run_in_background === true);
+    const background = cls === 'subagent' || (cls === 'shell' && (input.toolName === 'Monitor' || input.toolInput.run_in_background === true));
     const call: ToolCall = {
       toolUseId: input.toolUseId, parentToolUseId: this.options.context(input.toolUseId).parentToolUseId, tool: input.toolName, toolClass: cls,
       targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
       allTracked: judged.targets.some((target) => target.kind === 'all-tracked'),
-      cwdRel: background ? this.relativeCwd(input.cwd) : null, background, allowedOnce: decision === 'ask-approved' || decision === 'flag',
+      cwdRel: background && cls === 'shell' ? this.relativeCwd(input.cwd) : null, background, allowedOnce,
     };
     for (const listener of this.allowedListeners) {
       try {

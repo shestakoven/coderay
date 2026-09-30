@@ -113,10 +113,21 @@ describe('ActivityLedger attribution', () => {
       expect(ledger.attribute('src/y.ts', 5).origin).toBe('human');
     });
 
-    it('a background shell at the project root covers the whole tree', () => {
+    it('a background shell at the project root covers only its targets, so a dev server leaves human saves human', () => {
       const { ledger } = make();
-      ledger.allowed(bg({ cwdRel: '' }));
-      expect(ledger.attribute('src/y.ts', 5).origin).toBe('agent-tool');
+      ledger.allowed(bg({ cwdRel: '', targets: ['out/log.txt'] }));
+      expect(ledger.attribute('src/y.ts', 5).origin).toBe('human');
+      expect(ledger.attribute('out/log.txt', 5).origin).toBe('agent');
+    });
+
+    it('survive an interrupt', () => {
+      const { clock, ledger } = make();
+      ledger.allowed(bg());
+      clock.now = 10;
+      ledger.interrupted();
+      expect(ledger.windowOf('t1')).toEqual({ from: 0, to: null });
+      expect(ledger.attribute('server/x.ts', 100_000).origin).toBe('agent-tool');
+      expect(ledger.runningShell()).toBe(true);
     });
 
     it('keep counting after the tool call itself ended, until taskEnded', () => {
@@ -154,6 +165,17 @@ describe('ActivityLedger attribution', () => {
       expect(ledger.attribute('a.ts', 61_000).origin).toBe('human');
       expect(ledger.attribute('a.ts', 2_009).toolUseIds).toEqual(['m', 'b']);
       expect(ledger.attribute('a.ts', 2_011).toolUseIds).toEqual(['m']);
+    });
+
+    it('does not extend the linger on a second interrupt', () => {
+      const { clock, ledger } = make();
+      ledger.allowed(call({ tool: 'mcp__x__y', toolClass: 'mcp' }));
+      clock.now = 10;
+      ledger.interrupted();
+      clock.now = 30_000;
+      ledger.interrupted();
+      expect(ledger.attribute('a.ts', 60_010).origin).toBe('agent-tool');
+      expect(ledger.attribute('a.ts', 60_011).origin).toBe('human');
     });
 
     it('lets an interrupted mcp call end early, with the usual grace', () => {
