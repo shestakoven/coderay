@@ -308,6 +308,30 @@ describe('Watchdog.answer refusals', () => {
     expect(f.read('a.ts')).toBe('a');
     expect(event(f, e.id).resolution).toBe('reverted');
   });
+
+  it('opens a new event, and keeps the hold, for a change that arrives while the revert runs', async () => {
+    const f = await fixture();
+    const e = await f.raise(await f.produce(['a.ts']));
+    const o = (f.watchdog as unknown as { o: { reverts: { revertChanges: (input: never) => Promise<unknown> } } }).o;
+    const real = o.reverts.revertChanges.bind(o.reverts);
+    let started!: () => void;
+    let release!: () => void;
+    const reverting = new Promise<void>((resolve) => { started = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    o.reverts = { revertChanges: async (input) => { started(); await released; return real(input); } };
+    const done = answer(f, e.id, all('revert'));
+    await reverting;
+    const [late] = await f.produce(['b.ts']);
+    f.watchdog.consider(late!);
+    release();
+    await done;
+    const second = f.watchdog.events().find((x) => x.id !== e.id);
+    expect(event(f, e.id)).toMatchObject({ phase: 'resolved', resolution: 'reverted' });
+    expect(event(f, e.id).changes.map((c) => c.path)).toEqual(['a.ts']);
+    expect(second?.changes.map((c) => c.path)).toEqual(['b.ts']);
+    expect(f.changes.changes().findLast((c) => c.path === 'b.ts')).toMatchObject({ outOfPlan: true, eventId: second?.id, resolution: null });
+    expect(f.hold.isHeld()).toBe(true);
+  });
 });
 
 describe('Watchdog.answer delivery', () => {

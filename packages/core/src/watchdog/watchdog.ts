@@ -343,7 +343,10 @@ export class Watchdog {
   }
 
   private joinable(): WatchdogEventView | null {
-    return this.open ?? this.all.findLast((event) => event.phase === 'pending' && !event.unknownOrigin) ?? null;
+    // An event being answered was decided on its current files; a later change needs its own answer.
+    const free = (event: WatchdogEventView): boolean => !this.answering.has(event.id);
+    if (this.open && free(this.open)) return this.open;
+    return this.all.findLast((event) => event.phase === 'pending' && !event.unknownOrigin && free(event)) ?? null;
   }
 
   private markFailOpen(event: WatchdogEventView, toolUseId: string): void {
