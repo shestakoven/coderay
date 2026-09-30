@@ -316,6 +316,14 @@ describe('history tables (schema 3)', () => {
     expect(store.changes('s1').map((c) => c.resolution)).toEqual(['reverted']);
   });
 
+  it('saves many changes in one transaction and none when one fails', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveChanges('s1', [change('a', 1), change('b', 2)]);
+    expect(() => store.saveChanges('s1', [change('c', 3), { ...change('d', 4), path: null as never }])).toThrow();
+    expect(store.changes('s1').map((c) => c.id)).toEqual(['a', 'b']);
+  });
+
   it('writes baselines and removals in one transaction', () => {
     const store = freshStore();
     store.saveBaselines([baseline('a.ts')], []);

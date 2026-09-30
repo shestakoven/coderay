@@ -18,6 +18,11 @@ export interface Attribution {
   allowedOnce: boolean;
 }
 
+export interface AttributionScope {
+  tracked?: boolean;
+  enforced?: boolean;
+}
+
 export interface ActivityLedgerOptions {
   now?: () => number;
   graceMs?: number;
@@ -87,11 +92,12 @@ export class ActivityLedger {
     this.entries.clear();
   }
 
-  attribute(rel: string, at: number): Attribution {
-    const active = [...this.entries.values()].filter((entry) => this.active(entry, at) && this.reaches(entry.call, rel));
-    const covering = active.filter((entry) => WRITING.has(entry.call.toolClass) && (entry.call.allTracked || entry.call.targets.some((target) => under(rel, target))));
+  attribute(rel: string, at: number, scope: AttributionScope = {}): Attribution {
+    const allTracked = scope.tracked !== false;
+    const active = [...this.entries.values()].filter((entry) => this.active(entry, at) && this.reaches(entry.call, rel, allTracked));
+    const covering = active.filter((entry) => WRITING.has(entry.call.toolClass) && ((allTracked && entry.call.allTracked) || entry.call.targets.some((target) => under(rel, target))));
     if (covering.length > 0) return { origin: 'agent', toolUseIds: ids(covering), allowedOnce: covering.some((entry) => entry.call.allowedOnce) };
-    const once = active.filter((entry) => entry.call.allowedOnce);
+    const once = scope.enforced === false ? [] : active.filter((entry) => entry.call.allowedOnce);
     if (once.length > 0) return { origin: 'agent', toolUseIds: ids(once), allowedOnce: true };
     if (active.length > 0) return { origin: 'agent-tool', toolUseIds: ids(active), allowedOnce: false };
     return { origin: 'human', toolUseIds: [], allowedOnce: false };
@@ -120,9 +126,9 @@ export class ActivityLedger {
     return entry.interruptedAt === null || at <= entry.interruptedAt + this.lingerMs;
   }
 
-  private reaches(call: ToolCall, rel: string): boolean {
+  private reaches(call: ToolCall, rel: string, allTracked: boolean): boolean {
     if (!call.background) return true;
-    return call.allTracked || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel));
+    return (allTracked && call.allTracked) || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel));
   }
 }
 

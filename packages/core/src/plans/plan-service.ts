@@ -18,6 +18,8 @@ export type StepOutcome = { ok: true } | { ok: false; error: string };
 
 export class PlanError extends Error {}
 
+export interface StepEvent { planId: string; version: number; key: string; phase: 'start' | 'done' }
+
 export interface ExpandTarget {
   rel: string;
   exists: boolean;
@@ -49,11 +51,12 @@ export class PlanService {
   private readonly now: () => number;
   private readonly newId: () => string;
   private readonly listeners = new Set<(plans: PlanView[]) => void>();
+  private readonly stepListeners = new Set<(event: StepEvent) => void>();
   private readonly waiters = new Map<string, Waiter>();
   private loadedFor: string | null | undefined = undefined;
   private rejectPause = false;
   private records: PlanRecord[] = [];
-  private stepStates = new Map<string, Map<string, StepStatus>>();
+  private states = new Map<string, Map<string, StepStatus>>();
 
   constructor(options: PlanServiceOptions) {
     this.options = options;
@@ -100,7 +103,7 @@ export class PlanService {
       feedback: null, proposedAt: this.now(), decidedAt: null,
     };
     this.records.push(record);
-    if (!this.stepStates.has(id)) this.stepStates.set(id, new Map());
+    if (!this.states.has(id)) this.states.set(id, new Map());
     if (review.auto) {
       this.approve(record, 'auto');
       return { ok: true, value: { status: 'approved' } };
@@ -149,20 +152,22 @@ export class PlanService {
     if (!enforced.steps.some((step) => step.key === key)) {
       return { ok: false, error: `IDE: plan ${gate.planId} has no step "${key}". Its steps: ${enforced.steps.map((step) => step.key).join(', ')}.` };
     }
-    if (!this.stepStates.has(gate.planId)) this.stepStates.set(gate.planId, new Map());
-    const states = this.stepStates.get(gate.planId)!;
+    if (!this.states.has(gate.planId)) this.states.set(gate.planId, new Map());
+    const states = this.states.get(gate.planId)!;
     const status = states.get(key) ?? 'pending';
     if (status === 'done') return { ok: false, error: `IDE: step "${key}" is already done.` };
     if (input.phase === 'start') {
       if (gate.activeStep !== null && gate.activeStep !== key) return { ok: false, error: `IDE: step "${gate.activeStep}" is still active; mark it done first.` };
       if (status !== 'active') {
         this.setStep(gate.planId, key, 'active');
+        this.emitStep({ planId: gate.planId, version: gate.version, key, phase: 'start' });
         this.emit();
       }
       return { ok: true };
     }
     if (status !== 'active') return { ok: false, error: `IDE: step "${key}" is not active; start it first.` };
     this.setStep(gate.planId, key, 'done');
+    this.emitStep({ planId: gate.planId, version: gate.version, key, phase: 'done' });
     if (enforced.steps.every((step) => states.get(step.key) === 'done')) {
       enforced.status = 'done';
       enforced.decidedAt = this.now();
@@ -171,6 +176,16 @@ export class PlanService {
     }
     this.emit();
     return { ok: true };
+  }
+
+  onStep(listener: (event: StepEvent) => void): () => boolean {
+    this.stepListeners.add(listener);
+    return () => this.stepListeners.delete(listener);
+  }
+
+  stepStates(): Record<string, Record<string, StepStatus>> {
+    this.load();
+    return Object.fromEntries([...this.states].map(([planId, states]) => [planId, Object.fromEntries(states)]));
   }
 
   gate(): PlanGate {
@@ -250,7 +265,7 @@ export class PlanService {
     this.rejectPause = false;
     const saved = sessionId === null ? { plans: [], stepStates: {} } : this.options.store.plans(sessionId);
     this.records = saved.plans;
-    this.stepStates = new Map(Object.entries(saved.stepStates).map(([planId, states]) => [planId, new Map(Object.entries(states))]));
+    this.states = new Map(Object.entries(saved.stepStates).map(([planId, states]) => [planId, new Map(Object.entries(states))]));
     for (const record of this.records) {
       if (record.status !== 'proposed') continue;
       record.status = 'withdrawn';
@@ -340,7 +355,7 @@ export class PlanService {
 
   private keepsProgress(planId: string, steps: PlanStep[]): string | null {
     const keys = new Set(steps.map((step) => step.key));
-    for (const [key, status] of this.stepStates.get(planId) ?? []) {
+    for (const [key, status] of this.states.get(planId) ?? []) {
       if (status !== 'pending' && !keys.has(key)) return `IDE: the new version must keep step "${key}", which is ${status}.`;
     }
     return null;
@@ -349,23 +364,33 @@ export class PlanService {
   private expandStep(planId: string): string | null {
     const active = this.activeStep(planId);
     if (active !== null) return active;
-    const states = this.stepStates.get(planId);
+    const states = this.states.get(planId);
     const steps = [...(this.enforced(planId)?.steps ?? [])].sort((a, b) => a.order - b.order);
     return steps.find((step) => (states?.get(step.key) ?? 'pending') === 'pending')?.key ?? null;
   }
 
   private activeStep(planId: string): string | null {
-    for (const [key, status] of this.stepStates.get(planId) ?? []) if (status === 'active') return key;
+    for (const [key, status] of this.states.get(planId) ?? []) if (status === 'active') return key;
     return null;
   }
 
   private setStep(planId: string, key: string, status: StepStatus): void {
-    if (!this.stepStates.has(planId)) this.stepStates.set(planId, new Map());
-    this.stepStates.get(planId)!.set(key, status);
+    if (!this.states.has(planId)) this.states.set(planId, new Map());
+    this.states.get(planId)!.set(key, status);
     try {
       this.options.store.saveStepState(planId, key, status);
     } catch (error) {
       console.error('plans: could not save a step state', error);
+    }
+  }
+
+  private emitStep(event: StepEvent): void {
+    for (const listener of this.stepListeners) {
+      try {
+        listener(event);
+      } catch (error) {
+        console.error('plans: a step listener failed', error);
+      }
     }
   }
 
@@ -398,7 +423,7 @@ export class PlanService {
   }
 
   private view(record: PlanRecord): PlanView {
-    const states = this.stepStates.get(record.id);
+    const states = this.states.get(record.id);
     return {
       id: record.id, version: record.version, goal: record.goal, status: record.status, approvedBy: record.approvedBy,
       steps: record.steps.map((step) => ({ ...step, status: states?.get(step.key) ?? 'pending' })),

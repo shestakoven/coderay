@@ -130,6 +130,7 @@ export interface Store {
   saveGateEvent(sessionId: string, event: GateEventRecord): void;
   gateEvents(sessionId: string): GateEventRecord[];
   saveChange(sessionId: string, change: ChangeView): void;
+  saveChanges(sessionId: string, changes: ChangeView[]): void;
   changes(sessionId: string, limit?: number): ChangeView[];
   saveBaselines(rows: BaselineRecord[], removed?: string[]): void;
   baselines(): BaselineRecord[];
@@ -542,6 +543,14 @@ export function openStore(dir: string): Store {
       enforcement = excluded.enforcement, out_of_plan = excluded.out_of_plan, tool_use_ids = excluded.tool_use_ids, plan_id = excluded.plan_id,
       plan_version = excluded.plan_version, step_key = excluded.step_key, event_id = excluded.event_id, resolution = excluded.resolution,
       added = excluded.added, removed = excluded.removed, stored = excluded.stored, unreadable = excluded.unreadable`);
+  const writeChange = (sessionId: string, change: ChangeView): void => {
+    upsertChange.run({
+      sessionId, id: change.id, path: change.path, beforeHash: change.beforeHash, afterHash: change.afterHash, at: change.at,
+      origin: change.origin, enforcement: change.enforcement, outOfPlan: change.outOfPlan ? 1 : 0, toolUseIds: JSON.stringify(change.toolUseIds),
+      planId: change.planId, planVersion: change.planVersion, stepKey: change.stepKey, eventId: change.eventId, resolution: change.resolution,
+      added: change.added, removed: change.removed, stored: change.stored ? 1 : 0, unreadable: change.unreadable ? 1 : 0,
+    });
+  };
   const upsertBaseline = db.prepare(`
     INSERT INTO baselines (path, hash, stored, size, mode, updated_at) VALUES (:path, :hash, :stored, :size, :mode, :updatedAt)
     ON CONFLICT (path) DO UPDATE SET hash = excluded.hash, stored = excluded.stored, size = excluded.size, mode = excluded.mode, updated_at = excluded.updated_at`);
@@ -641,12 +650,17 @@ export function openStore(dir: string): Store {
       return db.prepare("SELECT * FROM gate_events WHERE session_id = ? AND kind = 'pre-execution' ORDER BY ts, rowid").all(sessionId).map(toGateEvent);
     },
     saveChange(sessionId, change) {
-      upsertChange.run({
-        sessionId, id: change.id, path: change.path, beforeHash: change.beforeHash, afterHash: change.afterHash, at: change.at,
-        origin: change.origin, enforcement: change.enforcement, outOfPlan: change.outOfPlan ? 1 : 0, toolUseIds: JSON.stringify(change.toolUseIds),
-        planId: change.planId, planVersion: change.planVersion, stepKey: change.stepKey, eventId: change.eventId, resolution: change.resolution,
-        added: change.added, removed: change.removed, stored: change.stored ? 1 : 0, unreadable: change.unreadable ? 1 : 0,
-      });
+      writeChange(sessionId, change);
+    },
+    saveChanges(sessionId, changes) {
+      db.exec('BEGIN');
+      try {
+        for (const change of changes) writeChange(sessionId, change);
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
     },
     changes(sessionId, limit) {
       const rows = limit === undefined

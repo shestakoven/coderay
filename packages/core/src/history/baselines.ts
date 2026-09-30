@@ -42,8 +42,9 @@ export class Baselines {
     this.map.delete(rel);
   }
 
-  setMany(records: BaselineRecord[]): void {
-    this.store.saveBaselines(records, []);
+  setMany(records: BaselineRecord[], removed: string[] = []): void {
+    this.store.saveBaselines(records, removed);
+    for (const path of removed) this.map.delete(path);
     for (const record of records) this.map.set(record.path, record);
   }
 }

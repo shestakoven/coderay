@@ -210,6 +210,42 @@ describe('PlanService', () => {
     });
   });
 
+  describe('step events', () => {
+    it('emits start and done with the plan version and reports the step states', async () => {
+      const { service } = await setup();
+      const events: unknown[] = [];
+      service.onStep((e) => events.push(e));
+      await service.propose(small);
+      expect(service.stepStates()).toEqual({ 'plan-1': {} });
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'start' });
+      expect(service.stepStates()).toEqual({ 'plan-1': { edit: 'active' } });
+      service.step({ key: 'edit', phase: 'done' });
+      expect(events).toEqual([
+        { planId: 'plan-1', version: 1, key: 'edit', phase: 'start' },
+        { planId: 'plan-1', version: 1, key: 'edit', phase: 'done' },
+      ]);
+      expect(service.stepStates()).toEqual({ 'plan-1': { edit: 'done' } });
+    });
+
+    it('emits nothing for a refused step and survives a throwing listener', async () => {
+      const { service, store } = await setup();
+      const events: unknown[] = [];
+      service.onStep(() => { throw new Error('listener'); });
+      service.onStep((e) => events.push(e));
+      const saved = vi.spyOn(store, 'saveStepState');
+      await service.propose(small);
+      expect(service.step({ key: 'edit', phase: 'done' }).ok).toBe(false);
+      expect(service.step({ key: 'nope', phase: 'start' }).ok).toBe(false);
+      expect(events).toEqual([]);
+      const seen: number[] = [];
+      service.onStep(() => seen.push(saved.mock.calls.length));
+      expect(service.step({ key: 'edit', phase: 'start' })).toEqual({ ok: true });
+      expect(events).toHaveLength(1);
+      expect(seen).toEqual([1]);
+    });
+  });
+
   describe('when the last step is done', () => {
     const more = { ...small, steps: [...small.steps, { key: 'more', title: 'More', rationale: '', targets: [{ componentId: 'lib', op: 'modify' }] }] };
     const done = 'The plan was completed before this revision was answered.';

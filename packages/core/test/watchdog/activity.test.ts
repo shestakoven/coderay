@@ -266,3 +266,26 @@ describe('ActivityLedger attribution', () => {
     });
   });
 });
+
+describe('ActivityLedger attribution scope', () => {
+  it('lets a shell that touches every tracked path cover only tracked paths', () => {
+    const { ledger } = make();
+    ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', allTracked: true }));
+    expect(ledger.attribute('new.ts', 100, { tracked: false }).origin).toBe('agent-tool');
+    expect(ledger.attribute('old.ts', 100, { tracked: true }).origin).toBe('agent');
+    expect(ledger.attribute('old.ts', 100).origin).toBe('agent');
+  });
+
+  it('applies a call allowed once only to enforced paths', () => {
+    const { ledger } = make();
+    ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', allowedOnce: true }));
+    expect(ledger.attribute('a.ts', 100, { enforced: false }).origin).toBe('agent-tool');
+    expect(ledger.attribute('a.ts', 100, { enforced: true }).origin).toBe('agent');
+  });
+
+  it('keeps a background call with all tracked paths from reaching untracked ones', () => {
+    const { ledger } = make();
+    ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', allTracked: true, background: true }));
+    expect(ledger.attribute('new.ts', 100, { tracked: false }).origin).toBe('human');
+  });
+});
