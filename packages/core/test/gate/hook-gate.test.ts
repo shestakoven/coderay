@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { request } from 'node:http';
 import { join } from 'node:path';
-import { describe, expect, it, onTestFinished } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ControlMode, PlanTarget } from '@ide/protocol';
 import { GateError, HookGate, type GateContext } from '../../src/gate/hook-gate';
 import { Hold } from '../../src/gate/hold';
@@ -15,6 +15,17 @@ import { startServer } from '../../src/server/server';
 import { openStore, type ToolDecisionRecord } from '../../src/store/store';
 import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
 
+vi.mock('../../src/gate/paths', async (original) => {
+  const actual = await original<typeof import('../../src/gate/paths')>();
+  return {
+    ...actual,
+    classifyPaths: async (...args: Parameters<typeof actual.classifyPaths>) => {
+      if (args[0].some((path) => path.includes('slow-judge'))) await new Promise((resolve) => setTimeout(resolve, 120));
+      return actual.classifyPaths(...args);
+    },
+  };
+});
+
 const components: ComponentRef[] = [
   { id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts'], globs: [] },
   { id: 'lib', name: 'Lib', files: ['src/lib/util.ts'], globs: ['src/lib/**'] },
@@ -26,6 +37,7 @@ interface Options {
   context?: GateContext;
   throwPolicy?: boolean;
   hold?: Hold;
+  onPolicy?: () => void;
 }
 
 async function setup(options: Options = {}) {
@@ -44,6 +56,7 @@ async function setup(options: Options = {}) {
   const gate = new HookGate({
     root, store, sessionId: () => 's1',
     policy: () => {
+      options.onPolicy?.();
       if (options.throwPolicy) throw new Error('boom: policy() failed');
       return policy;
     },
@@ -298,6 +311,7 @@ describe('HookGate', () => {
       void promise.then(() => (state.done = true));
       return state;
     };
+    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const pause = () => new Promise((resolve) => setTimeout(resolve, 40));
 
     it('answers a held call only after the release, and judges it then', async () => {
@@ -333,19 +347,47 @@ describe('HookGate', () => {
       expect(decisions).toHaveLength(1);
     });
 
-    it('judges the waiting calls in arrival order after the release', async () => {
+    it('judges the waiting calls in arrival order after each release, although the first judges slowest', async () => {
       const hold = new Hold();
       const { root, call, decisions } = await setup({ hold });
-      hold.hold('event');
-      const answers = Promise.all([
-        call('Write', { file_path: join(root, 'src/lib/deep/a/b/c.ts') }, undefined, 'toolu_1'),
-        call('Bash', { command: 'ls' }, undefined, 'toolu_2'),
-        call('Write', { file_path: join(root, 'src/app.ts') }, undefined, 'toolu_3'),
-      ]);
+      const round = async (ids: string[]) => {
+        hold.hold('event');
+        const answers = Promise.all([
+          call('Write', { file_path: join(root, 'src/slow-judge.ts') }, undefined, ids[0]),
+          call('Bash', { command: 'ls' }, undefined, ids[1]),
+          call('Write', { file_path: join(root, 'src/app.ts') }, undefined, ids[2]),
+        ]);
+        await pause();
+        hold.release();
+        await answers;
+      };
+      await round(['a1', 'a2', 'a3']);
+      await round(['b1', 'b2', 'b3']);
+      expect(decisions.map((decision) => decision.toolUseId)).toEqual(['a1', 'a2', 'a3', 'b1', 'b2', 'b3']);
+    });
+
+    it('re-judges a call when a hold started and ended while it was being judged', async () => {
+      const hold = new Hold();
+      let judgings = 0;
+      const { root, call, decisions } = await setup({ hold, onPolicy: () => judgings++ });
+      await call('Write', { file_path: join(root, 'src/slow-judge.ts') }, undefined, 'plain');
+      const once = judgings;
+      judgings = 0;
+      const answer = call('Write', { file_path: join(root, 'src/slow-judge.ts') }, undefined, 'raced');
       await pause();
+      hold.hold('event');
       hold.release();
-      await answers;
-      expect(decisions.map((decision) => decision.toolUseId)).toEqual(['toolu_1', 'toolu_2', 'toolu_3']);
+      await answer;
+      expect([decisions.map((decision) => decision.toolUseId), judgings]).toEqual([['plain', 'raced'], once * 2]);
+    });
+
+    it('answers nothing for a call whose connection closed while it was being judged', async () => {
+      const { root, call, decisions } = await setup({ hold: new Hold() });
+      const closed = new AbortController();
+      const answer = call('Write', { file_path: join(root, 'src/slow-judge.ts') }, closed.signal);
+      closed.abort();
+      expect(await answer).toBeNull();
+      expect(decisions).toEqual([]);
     });
 
     it('denies with "did not respond" when the call is still held at the deadline', async () => {
@@ -391,6 +433,52 @@ describe('HookGate', () => {
       gate.answer(second.id, 'allow-once');
       expect((await answer)?.permissionDecision).toBe('allow');
       expect(decisions.map((decision) => decision.decision)).toEqual(['ask-approved']);
+    });
+
+    it('gives a call one budget in all: a prompt, its withdrawal, the hold and the fresh prompt share holdMs', async () => {
+      const hold = new Hold();
+      const { root, call, approve, pending, gate } = await setup({ hold, holdMs: 400 });
+      await approve();
+      const started = Date.now();
+      const answer = call('Write', { file_path: join(root, 'src/other.ts') });
+      await pending();
+      await sleep(150);
+      hold.hold('event');
+      gate.withdrawPending('x');
+      await sleep(100);
+      hold.release();
+      const reply = await answer;
+      expect(reply?.permissionDecisionReason).toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
+      expect(Date.now() - started).toBeLessThan(520);
+    });
+
+    it('denies when the budget ran out while the call waited for the release', async () => {
+      const hold = new Hold();
+      const { root, call, approve, pending, gate, decisions } = await setup({ hold, holdMs: 150 });
+      await approve();
+      const answer = call('Write', { file_path: join(root, 'src/other.ts') });
+      await pending();
+      hold.hold('event');
+      gate.withdrawPending('x');
+      expect((await answer)?.permissionDecisionReason).toMatch(/did not respond/);
+      expect(decisions.map((decision) => decision.decision)).toEqual([]);
+    });
+
+    it('returns null for a withdrawn call whose connection closes before the release, leaving nothing behind', async () => {
+      const hold = new Hold();
+      const { root, call, approve, pending, gate, decisions } = await setup({ hold });
+      await approve();
+      const closed = new AbortController();
+      const answer = call('Write', { file_path: join(root, 'src/other.ts') }, closed.signal);
+      await pending();
+      hold.hold('event');
+      gate.withdrawPending('x');
+      await waitFor(() => hold.waiting() === 1, 'call waits for the release');
+      closed.abort();
+      expect(await answer).toBeNull();
+      hold.release();
+      await pause();
+      expect([gate.prompts().map((view) => view.status), hold.waiting(), decisions]).toEqual([['dropped'], 0, []]);
     });
 
     it('does nothing when withdrawing with no prompt open', async () => {

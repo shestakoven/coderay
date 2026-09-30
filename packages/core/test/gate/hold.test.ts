@@ -30,7 +30,7 @@ describe('Hold', () => {
     const hold = new Hold();
     hold.hold('x');
     expect(await hold.wait(new AbortController().signal, 20)).toBe('timeout');
-    hold.release();
+    expect(hold.waiting()).toBe(0);
   });
 
   it('answers aborted when the signal fires, also when it already fired', async () => {
@@ -40,6 +40,7 @@ describe('Hold', () => {
     const wait = hold.wait(controller.signal, 5000);
     controller.abort();
     expect(await wait).toBe('aborted');
+    expect(hold.waiting()).toBe(0);
     expect(await hold.wait(controller.signal, 5000)).toBe('aborted');
   });
 

@@ -862,6 +862,22 @@ describe('AgentSession feeds for the watchdog', () => {
     expect(closed).toEqual([false, false]);
   });
 
+  it('tells once when an interrupted turn ends with its result, and not when a crash closes the turn', async () => {
+    const interrupted = await harness('interrupt-bash');
+    const closed: string[] = [];
+    interrupted.session.onTurnClosed(() => closed.push('interrupted'));
+    interrupted.session.send('run it');
+    await waitFor(() => interrupted.session.state().items.some((item) => item.kind === 'tool'), 'tool call started');
+    interrupted.session.stop();
+    await waitFor(() => closedTurns(interrupted).length === 1, 'turn closed');
+    const crashed = await harness('crash-mid-turn');
+    crashed.session.onTurnClosed(() => closed.push('crashed'));
+    crashed.session.send('go');
+    await waitFor(() => crashed.session.state().session?.status === 'crashed', 'session crashed');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect([closed, crashed.session.state().turns[0]?.resultSubtype]).toEqual([['interrupted'], 'crashed']);
+  });
+
   it('counts running background shell calls', async () => {
     const h = await harness('async-subagent', {}, backgroundShell());
     const shell: boolean[] = [];

@@ -2,11 +2,13 @@ export type HoldWait = 'released' | 'timeout' | 'aborted';
 
 export class Hold {
   private reasonText: string | null = null;
+  private started = 0;
   private readonly waiters = new Set<() => void>();
   private readonly listeners = new Set<() => void>();
 
   hold(reason: string): void {
     this.reasonText = reason;
+    this.started += 1;
     this.emit();
   }
 
@@ -18,6 +20,14 @@ export class Hold {
 
   isHeld(): boolean {
     return this.reasonText !== null;
+  }
+
+  generation(): number {
+    return this.started;
+  }
+
+  waiting(): number {
+    return this.waiters.size;
   }
 
   reason(): string | null {

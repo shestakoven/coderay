@@ -127,24 +127,28 @@ export class HookGate {
   async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
     const input = parseHookInput(raw, this.options.root);
     if (!input) return deny('IDE: the hook input could not be read.');
-    return this.admit(input, signal);
+    return this.admit(input, signal, this.now() + (this.options.holdMs ?? GATE_HOLD_MS));
   }
 
-  private async admit(input: HookInput, signal: AbortSignal): Promise<HookAnswer | null> {
+  private async admit(input: HookInput, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
     const hold = this.options.hold;
     const held = hold !== undefined && toolClass(input.toolName) !== 'ide';
     for (;;) {
       let waited = false;
       if (held) {
         waited = hold.isHeld();
-        const wait = await hold.wait(signal, this.options.holdMs ?? GATE_HOLD_MS);
+        const remaining = deadline - this.now();
+        if (remaining <= 0) return deny(NO_RESPONSE);
+        const wait = await hold.wait(signal, remaining);
         if (wait === 'aborted') return null;
         if (wait === 'timeout') return deny(NO_RESPONSE);
       }
       const mode = this.options.policy().mode;
+      const generation = hold?.generation();
       const judged = waited ? await this.judgeInArrivalOrder(input) : await this.judge(input);
-      if (held && hold.isHeld()) continue;
-      return this.resolve(input, judged, mode, signal);
+      if (signal.aborted) return null;
+      if (held && (hold.isHeld() || hold.generation() !== generation)) continue;
+      return this.resolve(input, judged, mode, signal, deadline);
     }
   }
 
@@ -164,7 +168,7 @@ export class HookGate {
     for (const pending of [...this.waiting.values()]) pending.settle('withdrawn');
   }
 
-  private async resolve(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
+  private async resolve(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
     const { decision } = judged;
     if (decision.outcome === 'allow' || decision.outcome === 'unchecked') {
       this.record(input, judged, decision.outcome);
@@ -180,7 +184,7 @@ export class HookGate {
       this.event(input, judged, mode, 'flagged');
       return allow(decision.reason);
     }
-    return this.ask(input, judged, mode, signal);
+    return this.ask(input, judged, mode, signal, deadline);
   }
 
   answer(promptId: string, answer: GateAnswer): void {
@@ -203,7 +207,7 @@ export class HookGate {
     for (const pending of [...this.waiting.values()]) pending.settle('tool-ended');
   }
 
-  private async ask(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
+  private async ask(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
     const view = this.promptView(input, judged, mode);
     const event: GateEventRecord = {
       id: view.id, toolUseId: input.toolUseId, kind: 'pre-execution', mode, targets: judged.decision.outOfScope.map(targetName),
@@ -211,7 +215,7 @@ export class HookGate {
     };
     const outcome = await new Promise<Outcome>((resolve) => {
       const onAbort = () => settle('closed');
-      const timer = setTimeout(() => settle('timeout'), this.options.holdMs ?? GATE_HOLD_MS);
+      const timer = setTimeout(() => settle('timeout'), Math.max(0, deadline - this.now()));
       timer.unref();
       const settle = (value: Outcome) => {
         if (!this.waiting.has(view.id)) return;
@@ -232,7 +236,7 @@ export class HookGate {
     }
     if (outcome === 'withdrawn') {
       this.close(view, event, null, 'dropped');
-      return this.admit(input, signal);
+      return this.admit(input, signal, deadline);
     }
     if (outcome === 'timeout' || outcome === 'tool-ended') {
       const reason = outcome === 'timeout' ? NO_RESPONSE : CALL_ENDED;
@@ -251,13 +255,16 @@ export class HookGate {
       this.record(input, judged, 'ask-approved', 'IDE: the user allowed this call once.');
       return allow('IDE: the user allowed this call once.');
     }
+    const generation = this.options.hold?.generation();
     const again = await this.judge(input);
     this.close(view, event, 'expand-plan', 'plan-expanded');
+    if (signal.aborted) return null;
+    if (this.options.hold && (this.options.hold.isHeld() || this.options.hold.generation() !== generation)) return this.admit(input, signal, deadline);
     if (again.decision.outcome === 'allow') {
       this.record(input, again, 'ask-approved', again.decision.reason, false);
       return allow(again.decision.reason);
     }
-    return this.resolve(input, again, this.options.policy().mode, signal);
+    return this.resolve(input, again, this.options.policy().mode, signal, deadline);
   }
 
   private async judge(input: HookInput): Promise<Judged> {

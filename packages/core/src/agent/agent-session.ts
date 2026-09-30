@@ -456,7 +456,7 @@ export class AgentSession {
       if (change.kind === 'turn') {
         this.persist(() => store.saveTurn(session.id, change.turn));
         const before = this.turns.get(change.turn.id);
-        if (change.turn.closedAt !== null && (before === undefined || before.closedAt === null)) turnClosed = true;
+        if (change.turn.closedAt !== null && change.turn.resultSubtype !== 'crashed' && (before === undefined || before.closedAt === null)) turnClosed = true;
         this.turns.set(change.turn.id, change.turn);
         (patch.turns ??= []).push(change.turn);
       } else if (change.kind === 'message') {
