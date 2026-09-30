@@ -293,6 +293,45 @@ export class Watchdog {
     }
   }
 
+  raiseUnknown(changes: ChangeView[]): void {
+    try {
+      if (changes.length === 0) return;
+      const event: WatchdogEventView = {
+        id: this.newId(), kind: 'watchdog', mode: this.mode(), phase: 'pending', resolution: 'pending', changes: [], toolCalls: [],
+        interrupted: false, paused: false, runningSubagents: 0, backgroundShell: false, unknownOrigin: true,
+        snapshotSha: null, canExpand: false, defaultAction: null,
+        reason: 'These files changed while the IDE was not running; it does not know who changed them.', ts: this.now(), resolvedAt: null,
+      };
+      this.all.push(event);
+      this.step(event, 'store the decision', () => { this.o.changes.markOutOfPlan(changes.map((c) => c.id), event.id); });
+      event.changes = changes.map((change) => this.fresh(change));
+      this.persist(event);
+      this.emit(event);
+    } catch (error) {
+      console.error('watchdog: could not raise an unknown-origin event', error);
+    }
+  }
+
+  restore(): void {
+    let stored: WatchdogEventView[] = [];
+    try {
+      const sessionId = this.o.sessionId();
+      if (sessionId !== null) stored = this.o.store.watchdogEvents(sessionId);
+    } catch (error) {
+      console.error('watchdog: could not load the stored events', error);
+      return;
+    }
+    for (const event of stored) {
+      if (this.all.some((e) => e.id === event.id)) continue;
+      this.all.push(event);
+      if (event.phase === 'resolved') continue;
+      event.phase = 'pending';
+      event.paused = false;
+      this.persist(event);
+      this.emit(event);
+    }
+  }
+
   private flagFailOpen(toolUseId: string, changes: ChangeView[], outOfPlan: boolean, notes: string[]): void {
     const at = this.now();
     const event: WatchdogEventView = {

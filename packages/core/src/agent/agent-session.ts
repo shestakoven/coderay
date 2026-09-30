@@ -5,6 +5,7 @@ import type {
   ChatItem, McpServerState, PromptAnswer, PromptBody, SessionPatch, SessionServerMessage, SessionState, SessionView, TaskView, TurnView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
+import { defaultTranscriptsDir, recoverTranscript } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
@@ -32,10 +33,13 @@ export interface AgentSessionOptions {
   killGraceMs?: number;
   gate?: SessionGate;
   canaryMs?: number;
+  transcriptsDir?: string;
 }
 
 const HOOK_OFF_NOTICE =
   "The IDE's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
+
+const GAP_NOTICE = "Calls made while the core was down may be missing; claude's transcript could not be read.";
 
 const SESSION_ERRORS = {
   'turn-open': 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.',
@@ -70,6 +74,7 @@ interface PendingPrompt {
 const RUN_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
+const DUPLICATE_WINDOW_MS = 2_000;
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
@@ -100,6 +105,7 @@ export class AgentSession {
   private refused = false;
   private pendingSends: string[] = [];
   private notes: string[] = [];
+  private crashed = false;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -113,14 +119,65 @@ export class AgentSession {
   async start(): Promise<void> {
     const latest = this.options.store.latestSession();
     if (!latest || latest.status === 'ended') return;
-    if (latest.status === 'running') {
+    this.crashed = latest.status === 'running';
+    if (this.crashed) {
       await stopStale(latest, this.options.killGraceMs ?? KILL_GRACE_MS);
       rmSync(this.configPath(latest.id), { force: true });
       this.options.gate?.remove(latest.id);
     }
+    const gap = this.crashed ? await this.recoverChat(latest) : null;
     this.load(latest);
     this.apply(this.tracker.processExited());
+    for (const id of gap?.ids ?? []) {
+      const item = this.items.get(id);
+      if (item?.kind === 'message' || item?.kind === 'tool') this.items.set(id, { ...item, recovered: true });
+    }
+    if (gap?.unreadable) this.apply(this.tracker.notice(GAP_NOTICE));
     if (latest.status === 'running') this.update({ status: 'crashed', pid: null, launchId: null });
+  }
+
+  startedFromCrash(): boolean {
+    return this.crashed;
+  }
+
+  private async recoverChat(session: SessionRecord): Promise<{ ids: string[]; unreadable: boolean }> {
+    const { store } = this.options;
+    try {
+      const history = store.history(session.id);
+      const stamps = [
+        ...history.messages.map((m) => m.ts),
+        ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
+      ];
+      const since = Math.max(0, ...stamps);
+      const recovered = await recoverTranscript({
+        claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.options.transcriptsDir ?? defaultTranscriptsDir(),
+      });
+      if (recovered.unreadable) return { ids: [], unreadable: true };
+      const seen = new Set([...history.messages.map((m) => m.id), ...history.toolEvents.map((t) => t.toolUseId)]);
+      const texts = new Set(history.messages.filter((m) => m.ts >= since - DUPLICATE_WINDOW_MS).map((m) => `${m.role}\n${m.text}`));
+      let seq = Math.max(0, ...history.messages.map((m) => m.seq), ...history.toolEvents.map((t) => t.seq), ...history.prompts.map((p) => p.seq));
+      const ids: string[] = [];
+      for (const item of recovered.items) {
+        if (item.kind === 'message') {
+          if (seen.has(item.id) || texts.has(`assistant\n${item.text}`)) continue;
+          seq += 1;
+          store.saveMessage(session.id, { id: item.id, seq, turnId: null, parentToolUseId: null, role: 'assistant', text: item.text, ts: item.ts });
+          ids.push(item.id);
+        } else {
+          if (seen.has(item.toolUseId)) continue;
+          seq += 1;
+          store.saveToolEvent(session.id, {
+            toolUseId: item.toolUseId, seq, turnId: null, parentToolUseId: null, tool: item.tool, input: item.input,
+            status: item.status, toolUseAt: item.toolUseAt, endedAt: item.endedAt,
+          });
+          ids.push(item.toolUseId);
+        }
+      }
+      return { ids, unreadable: false };
+    } catch (error) {
+      console.error('agent: could not recover the chat from claude\'s transcript', error);
+      return { ids: [], unreadable: true };
+    }
   }
 
   state(): SessionState {

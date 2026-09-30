@@ -1,3 +1,5 @@
+Provenance of `../transcripts/crash-gap.jsonl`: curated from the transcript shape Task 1 recorded as row c42 (claude 2.1.285), with `$SESSION` and `$CWD` placeholders, one duplicated `tool_use` id, one torn line and one unfinished call added on purpose.
+
 # Stream fixtures for the fake claude
 
 `test/fake-claude/fake-claude.mjs` replays these files (spec §8 "Integration"). Each line is one of two things:

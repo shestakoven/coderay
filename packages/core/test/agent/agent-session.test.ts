@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem, SessionServerMessage } from '@ide/protocol';
@@ -993,5 +993,95 @@ describe('AgentSession notes from the watchdog', () => {
     await h.ping();
     await waitFor(() => userWrites(h).length === 2, 'both delivered');
     expect(userWrites(h).map((m) => (m.message as { content: string }).content)).toEqual(['run it', '[IDE] note']);
+  });
+});
+
+describe('AgentSession after a core crash', () => {
+  const T = (iso: string): number => Date.parse(iso);
+
+  function crashedSession(o: { status?: 'running' | 'stopped'; transcript?: string | null; unparsable?: boolean } = {}) {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const transcriptsDir = tempDir('ide-transcripts-');
+    const claudeSessionId = randomUUID();
+    const store = openStore(projectDir(home, root));
+    store.saveSession({
+      id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, cliVersion: null,
+      pid: null, launchId: null, conversationStarted: true, startedAt: 1,
+    });
+    store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
+    store.saveMessage('session-1', { id: 'm1', seq: 1, turnId: 'turn-1', parentToolUseId: null, role: 'assistant', text: 'I will write the config.', ts: T('2026-09-30T12:00:02.000Z') });
+    store.saveToolEvent('session-1', {
+      toolUseId: 'toolu_gap_a', seq: 2, turnId: 'turn-1', parentToolUseId: null, tool: 'Write', input: { file_path: join(root, 'config.json') },
+      status: 'ok', toolUseAt: T('2026-09-30T12:00:03.000Z'), endedAt: T('2026-09-30T12:00:04.000Z'),
+    });
+    if (o.transcript !== null) {
+      const dir = join(transcriptsDir, realpathSync(root).replace(/[^A-Za-z0-9]/g, '-'));
+      mkdirSync(dir, { recursive: true });
+      const body = o.unparsable
+        ? 'torn\nalso torn\n'
+        : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', claudeSessionId).replaceAll('$CWD', root);
+      writeFileSync(join(dir, `${claudeSessionId}.jsonl`), body);
+    }
+    store.close();
+    return { home, root, transcriptsDir, claudeSessionId };
+  }
+
+  const GAP = [
+    'I will write the config.', 'Write:ok', 'Now the tests.', 'Bash:ok', 'Write:error', 'The report could not be written.', 'Read:unfinished',
+  ];
+
+  it('reports that it started from a crash only when the last session was running', async () => {
+    const crashed = crashedSession({ transcript: null });
+    const a = await harness('multi-turn', { home: crashed.home, root: crashed.root, transcriptsDir: crashed.transcriptsDir });
+    expect(a.session.startedFromCrash()).toBe(true);
+    const clean = crashedSession({ status: 'stopped', transcript: null });
+    const b = await harness('multi-turn', { home: clean.home, root: clean.root, transcriptsDir: clean.transcriptsDir });
+    expect(b.session.startedFromCrash()).toBe(false);
+    const fresh = await harness('multi-turn');
+    expect(fresh.session.startedFromCrash()).toBe(false);
+  });
+
+  it('adds the calls made in the gap after the last stored row, marked recovered, without duplicating a stored call', async () => {
+    const c = crashedSession();
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    const items = h.session.state().items;
+    expect(texts(items)).toEqual(GAP);
+    expect(items.map((item) => item.kind !== 'notice' && item.kind !== 'prompt' && item.recovered === true)).toEqual([false, false, true, true, true, true, true]);
+    expect(items.map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(items.filter((item) => item.kind === 'tool').map((item) => item.id)).toEqual(['toolu_gap_a', 'toolu_gap_b', 'toolu_gap_c', 'toolu_gap_d']);
+  });
+
+  it('adds them once: a second start of the same store adds nothing', async () => {
+    const c = crashedSession();
+    const first = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    await first.session.close();
+    const reopened = openStore(projectDir(c.home, c.root));
+    reopened.saveSession({ ...reopened.latestSession()!, status: 'running' });
+    reopened.close();
+    const second = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(second.session.startedFromCrash()).toBe(true);
+    expect(texts(second.session.state().items)).toEqual(GAP);
+  });
+
+  it('adds nothing after a clean stop', async () => {
+    const c = crashedSession({ status: 'stopped' });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(texts(h.session.state().items)).toEqual(['I will write the config.', 'Write:ok']);
+  });
+
+  it('adds one notice when the transcript is missing', async () => {
+    const c = crashedSession({ transcript: null });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(texts(h.session.state().items)).toEqual([
+      'I will write the config.', 'Write:ok', "Calls made while the core was down may be missing; claude's transcript could not be read.",
+    ]);
+  });
+
+  it('adds one notice when the transcript cannot be parsed', async () => {
+    const c = crashedSession({ unparsable: true });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(h.session.state().items.filter((item) => item.kind === 'notice')).toHaveLength(1);
+    expect(texts(h.session.state().items)).toHaveLength(3);
   });
 });

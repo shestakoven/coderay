@@ -240,11 +240,8 @@ describe('Watchdog.answer refusals', () => {
       id: 'g1', path: '.git/HEAD', beforeHash: 'x', afterHash: 'y', beforeMode: 0o644, at: 1, origin: 'agent', enforcement: 'recorded', outOfPlan: false,
       toolUseIds: [], planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, removed: null, stored: true, unreadable: false,
     };
-    const e: WatchdogEventView = {
-      id: 'evg', kind: 'watchdog', mode: 'B', phase: 'pending', resolution: 'pending', changes: [change], toolCalls: [], interrupted: false, paused: false,
-      runningSubagents: 0, backgroundShell: false, unknownOrigin: false, snapshotSha: null, canExpand: false, defaultAction: null, reason: null, ts: 1, resolvedAt: null,
-    };
-    (f.watchdog as unknown as { all: WatchdogEventView[] }).all.push(e);
+    f.watchdog.raiseUnknown([change]);
+    const e = f.watchdog.events().at(-1)!;
     return e;
   };
 

@@ -39,6 +39,7 @@ export interface MessageItem extends ItemBase {
   role: 'user' | 'assistant';
   text: string;
   ts: number;
+  recovered?: boolean;
 }
 
 export interface NoticeItem extends ItemBase {
@@ -56,6 +57,7 @@ export interface ToolItem extends ItemBase {
   endedAt: number | null;
   decision: ToolDecision | null;
   targets: string[];
+  recovered?: boolean;
 }
 
 export interface AskOption {
