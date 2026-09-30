@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { ControlMode, PlanTarget } from '@ide/protocol';
 import { GateError, HookGate, type GateContext } from '../../src/gate/hook-gate';
+import { Hold } from '../../src/gate/hold';
 import { ActivityLedger, type ToolCall } from '../../src/watchdog/activity';
 import { hookRoute } from '../../src/gate/hook-route';
 import { reviewPlan } from '../../src/plans/freeze';
@@ -24,6 +25,7 @@ interface Options {
   holdMs?: number;
   context?: GateContext;
   throwPolicy?: boolean;
+  hold?: Hold;
 }
 
 async function setup(options: Options = {}) {
@@ -47,7 +49,7 @@ async function setup(options: Options = {}) {
     },
     plans, components: () => components,
     context: () => options.context ?? { parentToolUseId: null, lastMessage: 'Fixing the greeting.' },
-    home, tempRoots: [], holdMs: options.holdMs,
+    home, tempRoots: [], holdMs: options.holdMs, hold: options.hold,
   });
   const decisions: ToolDecisionRecord[] = [];
   gate.onDecision((decision) => decisions.push(decision));
@@ -288,6 +290,116 @@ describe('HookGate', () => {
       'IDE: the call ended before the user answered.', 'IDE: the call ended before the user answered.',
     ]);
     expect([gate.prompts().map((prompt) => prompt.status), decisions.map((decision) => decision.decision)]).toEqual([['dropped', 'dropped'], ['deny', 'deny']]);
+  });
+
+  describe('while the watchdog holds', () => {
+    const quiet = (promise: Promise<unknown>) => {
+      const state = { done: false };
+      void promise.then(() => (state.done = true));
+      return state;
+    };
+    const pause = () => new Promise((resolve) => setTimeout(resolve, 40));
+
+    it('answers a held call only after the release, and judges it then', async () => {
+      const hold = new Hold();
+      const { root, call, decisions } = await setup({ hold });
+      hold.hold('event');
+      const answer = call('Write', { file_path: join(root, 'src/app.ts') });
+      const state = quiet(answer);
+      await pause();
+      expect([state.done, decisions.length]).toEqual([false, 0]);
+      hold.release();
+      expect((await answer)?.permissionDecision).toBe('deny');
+      expect(decisions.map((decision) => decision.decision)).toEqual(['deny']);
+    });
+
+    it('lets the IDE own tools through while held', async () => {
+      const hold = new Hold();
+      const { call } = await setup({ hold });
+      hold.hold('event');
+      expect((await call('mcp__idecore__propose_plan', {}))?.permissionDecision).toBe('allow');
+    });
+
+    it('also holds a call that was already being judged when the hold started', async () => {
+      const hold = new Hold();
+      const { root, call, decisions } = await setup({ hold });
+      const answer = call('Write', { file_path: join(root, 'src/app.ts') });
+      hold.hold('event');
+      const state = quiet(answer);
+      await pause();
+      expect([state.done, decisions.length]).toEqual([false, 0]);
+      hold.release();
+      await answer;
+      expect(decisions).toHaveLength(1);
+    });
+
+    it('judges the waiting calls in arrival order after the release', async () => {
+      const hold = new Hold();
+      const { root, call, decisions } = await setup({ hold });
+      hold.hold('event');
+      const answers = Promise.all([
+        call('Write', { file_path: join(root, 'src/lib/deep/a/b/c.ts') }, undefined, 'toolu_1'),
+        call('Bash', { command: 'ls' }, undefined, 'toolu_2'),
+        call('Write', { file_path: join(root, 'src/app.ts') }, undefined, 'toolu_3'),
+      ]);
+      await pause();
+      hold.release();
+      await answers;
+      expect(decisions.map((decision) => decision.toolUseId)).toEqual(['toolu_1', 'toolu_2', 'toolu_3']);
+    });
+
+    it('denies with "did not respond" when the call is still held at the deadline', async () => {
+      const hold = new Hold();
+      const { root, call, decisions } = await setup({ hold, holdMs: 30 });
+      hold.hold('event');
+      const answer = await call('Write', { file_path: join(root, 'src/app.ts') });
+      expect(answer?.permissionDecisionReason).toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
+      expect([answer?.permissionDecision, decisions]).toEqual(['deny', []]);
+    });
+
+    it('returns null for a connection that closes while held, leaving nothing behind', async () => {
+      const hold = new Hold();
+      const { root, call, gate, decisions } = await setup({ hold });
+      hold.hold('event');
+      const closed = new AbortController();
+      const answer = call('Write', { file_path: join(root, 'src/app.ts') }, closed.signal);
+      closed.abort();
+      expect(await answer).toBeNull();
+      hold.release();
+      await pause();
+      expect([gate.prompts(), decisions]).toEqual([[], []]);
+    });
+
+    it('withdraws an open prompt as dropped, keeps its call open, and asks afresh after the release', async () => {
+      const hold = new Hold();
+      const { root, call, approve, pending, gate, decisions, store } = await setup({ hold });
+      await approve();
+      const answer = call('Write', { file_path: join(root, 'src/other.ts') });
+      const state = quiet(answer);
+      const first = await pending();
+      hold.hold('event');
+      gate.withdrawPending('a watchdog event started');
+      await waitFor(() => gate.prompts().some((view) => view.status === 'dropped'), 'prompt dropped');
+      expect(gate.prompts().map((view) => [view.id, view.status])).toEqual([[first.id, 'dropped']]);
+      expect(() => gate.answer(first.id, 'allow-once')).toThrow(GateError);
+      expect(store.gateEvents('s1').map((event) => [event.id, event.resolution])).toEqual([[first.id, 'dropped']]);
+      await pause();
+      expect([state.done, decisions]).toEqual([false, []]);
+      hold.release();
+      const second = await waitFor(() => gate.pending()[0], 'fresh prompt');
+      expect(second.id).not.toBe(first.id);
+      gate.answer(second.id, 'allow-once');
+      expect((await answer)?.permissionDecision).toBe('allow');
+      expect(decisions.map((decision) => decision.decision)).toEqual(['ask-approved']);
+    });
+
+    it('does nothing when withdrawing with no prompt open', async () => {
+      const hold = new Hold();
+      const { gate } = await setup({ hold });
+      hold.hold('event');
+      gate.withdrawPending('x');
+      expect(gate.prompts()).toEqual([]);
+    });
   });
 
   it('denies with "did not respond" at the hold limit', async () => {

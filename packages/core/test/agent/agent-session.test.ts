@@ -847,6 +847,21 @@ describe('AgentSession feeds for the watchdog', () => {
     expect([taskEnds, running, h.session.runningSubagents()]).toEqual([['toolu_fx_agent'], [1, 0], 0]);
   });
 
+  it('tells when a turn closes, once per turn, and whether a turn is open', async () => {
+    const h = await harness('async-subagent');
+    const closed: boolean[] = [];
+    h.session.onTurnClosed(() => closed.push(h.session.hasOpenTurn()));
+    h.session.onTurnClosed(() => {
+      throw new Error('listener failure');
+    });
+    const opened = h.session.hasOpenTurn();
+    h.session.send('start a subagent');
+    const during = h.session.hasOpenTurn();
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect([opened, during, closed.length, h.session.hasOpenTurn()]).toEqual([false, true, 2, false]);
+    expect(closed).toEqual([false, false]);
+  });
+
   it('counts running background shell calls', async () => {
     const h = await harness('async-subagent', {}, backgroundShell());
     const shell: boolean[] = [];

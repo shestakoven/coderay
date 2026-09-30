@@ -82,6 +82,7 @@ export class AgentSession {
   private readonly userMessageListeners = new Set<() => void>();
   private readonly toolResultListeners = new Set<(info: ToolEndInfo) => void>();
   private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
+  private readonly turnClosedListeners = new Set<() => void>();
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -161,6 +162,15 @@ export class AgentSession {
   onTaskEnd(listener: (toolUseId: string) => void): () => void {
     this.taskEndListeners.add(listener);
     return () => this.taskEndListeners.delete(listener);
+  }
+
+  hasOpenTurn(): boolean {
+    return this.tracker.hasOpenTurn();
+  }
+
+  onTurnClosed(listener: () => void): () => boolean {
+    this.turnClosedListeners.add(listener);
+    return () => this.turnClosedListeners.delete(listener);
   }
 
   runningSubagents(): number {
@@ -441,9 +451,12 @@ export class AgentSession {
     const patch: SessionPatch = {};
     const ended: string[] = [];
     const endedTasks: string[] = [];
+    let turnClosed = false;
     for (const change of changes) {
       if (change.kind === 'turn') {
         this.persist(() => store.saveTurn(session.id, change.turn));
+        const before = this.turns.get(change.turn.id);
+        if (change.turn.closedAt !== null && (before === undefined || before.closedAt === null)) turnClosed = true;
         this.turns.set(change.turn.id, change.turn);
         (patch.turns ??= []).push(change.turn);
       } else if (change.kind === 'message') {
@@ -493,6 +506,7 @@ export class AgentSession {
       if (info) notify(this.toolResultListeners, info);
     }
     for (const toolUseId of endedTasks) notify(this.taskEndListeners, toolUseId);
+    if (turnClosed) notify(this.turnClosedListeners);
     this.checkIdle();
   }
 

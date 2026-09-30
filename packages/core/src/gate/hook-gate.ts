@@ -9,6 +9,7 @@ import { globOwners, ownerIndex } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
 import type { PlanService } from '../plans/plan-service';
 import type { GateEventRecord, GateResolution, Store, ToolDecisionRecord } from '../store/store';
+import type { Hold } from './hold';
 import { classifyPaths, expandHome, realTarget } from './paths';
 import { decide, describeTargets, targetName, type ClassifiedTarget, type GuardDecision } from './scope-guard';
 import type { ToolCall } from '../watchdog/activity';
@@ -43,6 +44,7 @@ export interface HookGateOptions {
   tempRoots?: string[];
   env?: NodeJS.ProcessEnv;
   holdMs?: number;
+  hold?: Hold;
   now?: () => number;
   newId?: () => string;
 }
@@ -68,7 +70,7 @@ interface Landing {
   deleting: boolean;
 }
 
-type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended';
+type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended' | 'withdrawn';
 
 interface Pending {
   view: GatePromptView;
@@ -91,6 +93,7 @@ export class HookGate {
   private readonly allowedListeners = new Set<(call: ToolCall) => void>();
   private readonly waiting = new Map<string, Pending>();
   private closed: GatePromptView[] = [];
+  private judging: Promise<void> = Promise.resolve();
 
   constructor(options: HookGateOptions) {
     this.options = options;
@@ -124,9 +127,41 @@ export class HookGate {
   async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
     const input = parseHookInput(raw, this.options.root);
     if (!input) return deny('IDE: the hook input could not be read.');
-    const mode = this.options.policy().mode;
-    const judged = await this.judge(input);
-    return this.resolve(input, judged, mode, signal);
+    return this.admit(input, signal);
+  }
+
+  private async admit(input: HookInput, signal: AbortSignal): Promise<HookAnswer | null> {
+    const hold = this.options.hold;
+    const held = hold !== undefined && toolClass(input.toolName) !== 'ide';
+    for (;;) {
+      let waited = false;
+      if (held) {
+        waited = hold.isHeld();
+        const wait = await hold.wait(signal, this.options.holdMs ?? GATE_HOLD_MS);
+        if (wait === 'aborted') return null;
+        if (wait === 'timeout') return deny(NO_RESPONSE);
+      }
+      const mode = this.options.policy().mode;
+      const judged = waited ? await this.judgeInArrivalOrder(input) : await this.judge(input);
+      if (held && hold.isHeld()) continue;
+      return this.resolve(input, judged, mode, signal);
+    }
+  }
+
+  private async judgeInArrivalOrder(input: HookInput): Promise<Judged> {
+    const before = this.judging;
+    let done!: () => void;
+    this.judging = new Promise<void>((resolve) => (done = resolve));
+    await before;
+    try {
+      return await this.judge(input);
+    } finally {
+      done();
+    }
+  }
+
+  withdrawPending(_reason: string): void {
+    for (const pending of [...this.waiting.values()]) pending.settle('withdrawn');
   }
 
   private async resolve(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
@@ -194,6 +229,10 @@ export class HookGate {
     if (outcome === 'closed') {
       this.close(view, event, null, 'dropped');
       return null;
+    }
+    if (outcome === 'withdrawn') {
+      this.close(view, event, null, 'dropped');
+      return this.admit(input, signal);
     }
     if (outcome === 'timeout' || outcome === 'tool-ended') {
       const reason = outcome === 'timeout' ? NO_RESPONSE : CALL_ENDED;
