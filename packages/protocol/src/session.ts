@@ -2,7 +2,7 @@ import type { ToolDecision } from './plans';
 
 export const MAX_CLIENT_FRAME_BYTES = 64 * 1024;
 
-export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended';
+export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended' | 'refused';
 
 export interface SessionView {
   id: string;

@@ -105,4 +105,13 @@ describe('pre-tool-use hook script', () => {
     expect([run.code, run.stderr]).toEqual([2, expect.stringContaining('the user did not respond')]);
     expect(run.stderr).not.toContain(SECRET);
   });
+
+  it('exits 2 within a second even when its stderr is a pipe nobody reads and the reason is huge', async () => {
+    const child = spawn(process.execPath, [HOOK_SCRIPT, join(tempDir('ide-hook-'), 'x'.repeat(100_000))], { stdio: ['pipe', 'ignore', 'pipe'] });
+    child.stdin.end(INPUT);
+    const started = Date.now();
+    const code = await new Promise<number | null>((resolve) => child.on('exit', (exitCode) => resolve(exitCode)));
+    expect(code).toBe(2);
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
 });

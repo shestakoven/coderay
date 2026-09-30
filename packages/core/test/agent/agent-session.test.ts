@@ -8,8 +8,10 @@ import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate 
 import { CLI_REJECTION } from '../../src/agent/prompts';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
+import { aliveRoute, Canary } from '../../src/gate/canary';
 import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
+import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
@@ -24,12 +26,13 @@ interface Harness {
   stdin: () => { type: string; [key: string]: unknown }[];
 }
 
-async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}): Promise<Harness> {
+async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}, fakeEnv: Record<string, string> = {}): Promise<Harness> {
   const home = overrides.home ?? tempDir('ide-home-');
   const root = overrides.root ?? tempDir('ide-root-');
   const store = overrides.store ?? openStore(projectDir(home, root));
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
-  const session = new AgentSession({ root, home, store, claude: fakeClaude(scenario, recordFile), ...overrides });
+  const claude = fakeClaude(scenario, recordFile);
+  const session = new AgentSession({ root, home, store, claude: { ...claude, env: { ...claude.env, ...fakeEnv } }, ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(async () => {
@@ -662,5 +665,71 @@ describe('AgentSession with the gate', () => {
     expect([exits, h.session.state().session?.status, texts(h.session.state().items).at(-1)]).toEqual([
       1, 'crashed', 'claude stopped unexpectedly (exit code 1): fatal: simulated crash',
     ]);
+  });
+});
+
+describe('AgentSession waiting for the session-start hook', () => {
+  const SECRET = 'canary-secret';
+
+  async function canaryHarness(scenario: string, hooks: 'on' | 'off', canaryMs: number) {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const canary = new Canary();
+    const server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: [aliveRoute({ secret: SECRET, canary })] });
+    onTestFinished(() => server.close());
+    const gate: SessionGate = {
+      write: (sessionId) => ({
+        settingsPath: writeGateFiles(runDir(home), gateBase(home, root, sessionId), { url: `http://127.0.0.1:${server.port}/hook`, secret: SECRET, sessionId }).settingsPath,
+      }),
+      remove: (sessionId) => removeGateFiles(runDir(home), gateBase(home, root, sessionId)),
+      systemPrompt: () => systemPrompt(COMPONENTS),
+      canary,
+    };
+    const h = await harness(scenario, { home, root, gate, canaryMs }, { FAKE_CLAUDE_HOOKS: hooks });
+    const ping = () => fetch(`http://127.0.0.1:${server.port}/hook/alive`, {
+      method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ sessionId: h.session.sessionId() }),
+    });
+    return { ...h, ping };
+  }
+
+  const userMessages = (h: Harness) => h.stdin().filter((message) => message.type === 'user');
+
+  it('holds the first message until the session-start hook has reported', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 5000);
+    h.session.send('hi');
+    await waitFor(() => h.argvs().length === 1, 'claude started');
+    expect([userMessages(h).length, h.session.state().session?.status]).toEqual([0, 'running']);
+    expect((await h.ping()).status).toBe(204);
+    await waitFor(() => userMessages(h).length === 1, 'message delivered');
+    expect(userMessages(h)[0]).toMatchObject({ message: { content: 'hi' } });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+  });
+
+  it('delivers the message at once when the real hook of the fake claude reports', async () => {
+    const h = await canaryHarness('multi-turn', 'on', 5000);
+    h.session.send('hi');
+    await waitFor(() => userMessages(h).length === 1, 'message delivered');
+  });
+
+  it('refuses the session when the hook never reports, and writes nothing to claude', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 200);
+    h.session.send('hi');
+    await waitFor(() => h.session.state().session?.status === 'refused', 'session refused');
+    expect(texts(h.session.state().items).some((text) => text.includes('hook did not start'))).toBe(true);
+    expect(() => h.session.send('again')).toThrow(new SessionError('hook-off'));
+    expect(userMessages(h)).toEqual([]);
+  });
+
+  it('starts again after restart, when the hook reports', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 200);
+    h.session.send('hi');
+    await waitFor(() => h.session.state().session?.status === 'refused', 'session refused');
+    await h.session.restart();
+    h.session.send('again');
+    await waitFor(() => h.argvs().length === 2, 'claude started again');
+    expect(h.session.state().session?.status).toBe('running');
+    await h.ping();
+    await waitFor(() => userMessages(h).length === 1, 'message delivered');
+    expect(userMessages(h)[0]).toMatchObject({ message: { content: 'again' } });
   });
 });

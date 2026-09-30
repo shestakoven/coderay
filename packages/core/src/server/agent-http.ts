@@ -11,6 +11,7 @@ export class BodyError extends Error {
 }
 
 export function isAgentRequest(req: IncomingMessage, secret: string): boolean {
+  if (secret === '') return false;
   const header = req.headers.authorization ?? '';
   const given = Buffer.from(header.startsWith('Bearer ') ? header.slice('Bearer '.length) : '');
   const expected = Buffer.from(secret);
@@ -43,4 +44,8 @@ export function readJsonBody(req: IncomingMessage, limit: number): Promise<unkno
       }
     });
   });
+}
+
+export function requireSecret(secret: string): void {
+  if (secret === '') throw new Error('the agent secret must not be empty');
 }

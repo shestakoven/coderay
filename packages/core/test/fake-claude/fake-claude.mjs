@@ -229,6 +229,16 @@ async function callIdecore(step) {
   finishTool(step.id, text, isError);
 }
 
+async function runSessionStartHooks() {
+  if (process.env.FAKE_CLAUDE_HOOKS === 'off') return;
+  const payload = JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', session_id: sessionId });
+  for (const entry of settings?.hooks?.SessionStart ?? []) {
+    for (const hook of entry.hooks ?? []) await runHook(hook, payload);
+  }
+}
+
+await runSessionStartHooks();
+
 let index = 0;
 while (index < steps.length) {
   const step = steps[index];

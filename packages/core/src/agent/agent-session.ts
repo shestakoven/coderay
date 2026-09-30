@@ -4,6 +4,7 @@ import { basename, join } from 'node:path';
 import type {
   ChatItem, McpServerState, PromptAnswer, PromptBody, SessionPatch, SessionServerMessage, SessionState, SessionView, TaskView, TurnView,
 } from '@ide/protocol';
+import { CANARY_MS } from '../gate/canary';
 import { projectDir, runDir } from '../home';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
@@ -19,6 +20,7 @@ export interface SessionGate {
   write(sessionId: string): { settingsPath: string };
   remove(sessionId: string): void;
   systemPrompt(): string;
+  canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
 }
 
 export interface AgentSessionOptions {
@@ -29,7 +31,11 @@ export interface AgentSessionOptions {
   mcpServers?: () => McpServers;
   killGraceMs?: number;
   gate?: SessionGate;
+  canaryMs?: number;
 }
+
+const HOOK_OFF_NOTICE =
+  "The IDE's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
 
 const SESSION_ERRORS = {
   'turn-open': 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.',
@@ -38,6 +44,7 @@ const SESSION_ERRORS = {
   'prompt-gone': 'That question is no longer waiting for an answer.',
   'bad-answer': 'That answer does not fit the question.',
   'no-gate': 'The IDE could not prepare the hook settings for claude, so the agent was not started.',
+  'hook-off': HOOK_OFF_NOTICE,
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -84,6 +91,9 @@ export class AgentSession {
   private terminating = false;
   private versionChecked = false;
   private idle = true;
+  private hookReady = true;
+  private refused = false;
+  private pendingSends: string[] = [];
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -164,11 +174,13 @@ export class AgentSession {
   send(text: string): void {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
+    if (this.refused) throw new SessionError('hook-off');
     if (this.tracker.hasOpenTurn()) throw new SessionError('turn-open');
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
     if (!this.process) throw new SessionError('no-gate');
-    this.process?.write({ type: 'user', message: { role: 'user', content: text } });
+    if (this.hookReady) this.process.write(userMessage(text));
+    else this.pendingSends.push(text);
     this.apply(this.tracker.userMessage(text));
   }
 
@@ -193,15 +205,37 @@ export class AgentSession {
 
   async restart(): Promise<void> {
     await this.terminate('restart');
+    this.clearRefusal();
   }
 
   async newSession(): Promise<void> {
     await this.terminate('new');
+    this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
     this.reset(null);
   }
 
   async close(): Promise<void> {
+    await this.terminate('close');
+  }
+
+  private clearRefusal(): void {
+    if (!this.refused) return;
+    this.refused = false;
+    if (this.session?.status === 'refused') this.update({ status: 'stopped' });
+  }
+
+  private async awaitCanary(child: ClaudeProcess, sessionId: string, canary: NonNullable<SessionGate['canary']>): Promise<void> {
+    const reported = await canary.wait(sessionId, this.options.canaryMs ?? CANARY_MS);
+    if (this.process !== child) return;
+    if (reported) {
+      this.hookReady = true;
+      for (const text of this.pendingSends.splice(0)) child.write(userMessage(text));
+      return;
+    }
+    this.pendingSends = [];
+    this.refused = true;
+    this.apply(this.tracker.notice(HOOK_OFF_NOTICE));
     await this.terminate('close');
   }
 
@@ -278,6 +312,13 @@ export class AgentSession {
     this.exitReason = null;
     this.versionChecked = false;
     this.update({ status: 'running', pid: child.pid ?? null, launchId: session.claudeSessionId });
+    const canary = this.options.gate?.canary;
+    this.hookReady = canary === undefined;
+    this.pendingSends = [];
+    if (canary) {
+      canary.expect(session.id);
+      void this.awaitCanary(child, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
+    }
     void child.exited.then((exit) => this.onExit(child, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 
@@ -337,7 +378,8 @@ export class AgentSession {
     const reason = this.exitReason;
     this.apply(this.tracker.processExited());
     if (reason === null) this.apply(this.tracker.notice(crashNotice(exit)));
-    this.update({ status: reason === null ? 'crashed' : reason === 'new' ? 'ended' : 'stopped', pid: null, launchId: null });
+    const status = reason === null ? 'crashed' : reason === 'new' ? 'ended' : this.refused ? 'refused' : 'stopped';
+    this.update({ status, pid: null, launchId: null });
     notify(this.exitListeners);
   }
 
@@ -443,6 +485,10 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
       console.error('agent: a session listener threw', error);
     }
   }
+}
+
+function userMessage(text: string): object {
+  return { type: 'user', message: { role: 'user', content: text } };
 }
 
 function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {

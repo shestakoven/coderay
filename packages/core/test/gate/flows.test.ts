@@ -169,7 +169,11 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
 
   it('blocks every call when the core cannot be reached', async () => {
     const f = await flow('gate-no-plan');
-    await f.server.close();
+    const ping = f.runtime.canary.ping.bind(f.runtime.canary);
+    f.runtime.canary.ping = (sessionId) => {
+      void f.server.close();
+      ping(sessionId);
+    };
     f.session.send('fix it');
     await turnClosed(f);
     expect([f.file('src/app.ts'), f.records().find((record) => record.hook)?.hook]).toEqual([
