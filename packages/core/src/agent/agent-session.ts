@@ -179,6 +179,10 @@ export class AgentSession {
     return this.openTasks('subagent');
   }
 
+  runningSubagentNames(): string[] {
+    return [...this.tasks.values()].filter((task) => task.kind === 'subagent' && task.endedAt === null).map((task) => task.description);
+  }
+
   runningShell(): boolean {
     return this.openTasks('shell') + this.openTasks('monitor') > 0;
   }
@@ -228,8 +232,13 @@ export class AgentSession {
     notify(this.userMessageListeners);
     const notes = this.notes.splice(0);
     const payload = [...notes, text].join('\n\n');
-    if (this.hookReady) this.process.write(userMessage(payload));
-    else this.pendingSends.push(payload);
+    try {
+      if (this.hookReady) this.process.write(userMessage(payload));
+      else this.pendingSends.push(payload);
+    } catch (error) {
+      this.notes.unshift(...notes);
+      throw error;
+    }
     this.apply(this.tracker.userMessage(text));
     for (const note of notes) this.apply(this.tracker.notice(note));
   }

@@ -34,13 +34,14 @@ class StubSession implements WatchdogSession {
   order: string[] = [];
   turnOpen: boolean;
   alive = true;
-  subagents: number;
+  names: string[];
   throwing = new Set<string>();
   private listeners = new Set<() => void>();
-  constructor(o: { turnOpen: boolean; subagents: number }) { this.turnOpen = o.turnOpen; this.subagents = o.subagents; }
+  constructor(o: { turnOpen: boolean; subagents: number }) { this.turnOpen = o.turnOpen; this.names = Array.from({ length: o.subagents }, (_, i) => `subagent ${i}`); }
   private guard(name: string): void { if (this.throwing.has(name)) throw new Error(`${name} exploded`); }
   hasOpenTurn(): boolean { return this.turnOpen; }
-  runningSubagents(): number { return this.subagents; }
+  runningSubagents(): number { return this.names.length; }
+  runningSubagentNames(): string[] { return [...this.names]; }
   runningShell(): boolean { return false; }
   processAlive(): boolean { return this.alive; }
   interrupt(): boolean { this.order.push('interrupt'); return true; }
@@ -161,8 +162,20 @@ describe('Watchdog.answer', () => {
     expect(f.read('a.ts')).toBe('the user typed this');
     expect(f.read('b.ts')).toBe('b');
     expect(event(f, e.id).reason).toContain('a.ts');
+    expect(event(f, e.id).resolution).toBe('mixed');
     expect(f.session.of('note:')[0]).toMatch(/Not restored: a\.ts \(/);
     expect(f.session.of('note:')[0]).toContain('Restored to their earlier content: b.ts.');
+  });
+
+  it('records kept, not reverted, when a revert restored nothing because every file conflicted', async () => {
+    const f = await fixture();
+    const e = await f.raise(await f.produce(['a.ts']));
+    writeFileSync(join(f.root, 'a.ts'), 'the user typed this');
+    await answer(f, e.id, all('revert'));
+    expect(event(f, e.id).resolution).toBe('kept');
+    expect(f.read('a.ts')).toBe('the user typed this');
+    expect(f.changes.changes().find((c) => c.path === 'a.ts')?.resolution).toBe('kept');
+    expect(f.session.of('note:')[0]).toContain('Not restored: a.ts');
   });
 
   it('answers per file, defaults the unlisted to keep and records a mixed event', async () => {
@@ -378,6 +391,28 @@ describe('Watchdog.answer delivery', () => {
     expect(f.read('a.ts')).toBe('a');
   });
 
+  it('queues the note when sending it fails, still records the error and releases the hold', async () => {
+    const f = await fixture({ turnOpen: true });
+    const e = await f.raise(await f.produce(['a.ts']));
+    f.session.throwing.add('send');
+    const done = answer(f, e.id, all('revert'));
+    f.session.closeTurn();
+    await done;
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'note', 'release']);
+    expect(event(f, e.id).reason).toContain('send exploded');
+    expect(f.hold.isHeld()).toBe(false);
+  });
+
+  it('queues the note when absorbing it fails', async () => {
+    const f = await fixture({ turnOpen: true, subagents: 1 });
+    const e = await f.raise(await f.produce(['a.ts']));
+    f.session.throwing.add('sendAbsorbed');
+    await answer(f, e.id, all('revert'));
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['note', 'release']);
+    expect(event(f, e.id).reason).toContain('sendAbsorbed exploded');
+    expect(f.hold.isHeld()).toBe(false);
+  });
+
   it('keeps the hold and the event open when the revert itself throws', async () => {
     const f = await fixture();
     const e = await f.raise(await f.produce(['a.ts']));
@@ -418,6 +453,20 @@ describe('Watchdog.stopAgent', () => {
     f.session.closeTurn();
     await done;
     expect(f.session.of('send:')[0]).toContain('their unfinished work is lost');
+    expect(f.session.of('send:')[0]).toContain('subagent 0, subagent 1');
+  });
+
+  it('names the subagents that were running when the agent was stopped, not those that had ended by then', async () => {
+    const f = await fixture({ turnOpen: true, subagents: 2 });
+    const e = await f.raise(await f.produce(['a.ts']));
+    f.session.names = ['subagent 1'];
+    f.watchdog.stopAgent(e.id);
+    const done = answer(f, e.id, all('keep'));
+    f.session.closeTurn();
+    await done;
+    const note = f.session.of('send:')[0]!;
+    expect(note).toContain('Stopped with it: subagent 1;');
+    expect(note).not.toContain('subagent 0');
   });
 
   it('refuses an unknown or resolved event', async () => {

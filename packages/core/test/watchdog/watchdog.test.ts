@@ -38,6 +38,7 @@ class StubSession implements WatchdogSession {
   private guard(name: string): void { if (this.throwing.has(name)) throw new Error(`${name} exploded`); }
   hasOpenTurn(): boolean { return this.turnOpen; }
   runningSubagents(): number { return this.subagents; }
+  runningSubagentNames(): string[] { return Array.from({ length: this.subagents }, (_, i) => `subagent ${i}`); }
   runningShell(): boolean { return this.shell; }
   processAlive(): boolean { return true; }
   interrupt(): boolean { this.guard('interrupt'); this.calls.push('interrupt'); return true; }

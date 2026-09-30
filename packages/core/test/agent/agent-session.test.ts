@@ -847,6 +847,18 @@ describe('AgentSession feeds for the watchdog', () => {
     expect([taskEnds, running, h.session.runningSubagents()]).toEqual([['toolu_fx_agent'], [1, 0], 0]);
   });
 
+  it('names the running subagents by their description', async () => {
+    const h = await harness('async-subagent');
+    const names: string[][] = [];
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) names.push(h.session.runningSubagentNames());
+    });
+    h.session.send('start a subagent');
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect(names).toEqual([['Create sub.txt with hello'], []]);
+    expect(h.session.runningSubagents()).toBe(0);
+  });
+
   it('tells when a turn closes, once per turn, and whether a turn is open', async () => {
     const h = await harness('async-subagent');
     const closed: boolean[] = [];
@@ -932,6 +944,21 @@ describe('AgentSession notes from the watchdog', () => {
     h.session.send('and once more');
     await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
     expect(userWrites(h)[1]).toMatchObject({ message: { content: 'and once more' } });
+  });
+
+  it('keeps the queued notes when writing the message to claude fails', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    h.session.queueNote('[IDE] note');
+    const child = (h.session as unknown as { process: { write: (m: object) => void } }).process;
+    const write = child.write.bind(child);
+    child.write = () => { throw new Error('pipe closed'); };
+    expect(() => h.session.send('again')).toThrow('pipe closed');
+    child.write = write;
+    h.session.send('again');
+    await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
+    expect(userWrites(h)[1]).toMatchObject({ message: { content: '[IDE] note\n\nagain' } });
   });
 
   it('writes an absorbed note into the open turn without opening a turn of its own', async () => {

@@ -19,6 +19,7 @@ export class WatchdogError extends Error {}
 export interface WatchdogSession {
   hasOpenTurn(): boolean;
   runningSubagents(): number;
+  runningSubagentNames(): string[];
   runningShell(): boolean;
   processAlive(): boolean;
   interrupt(): boolean;
@@ -66,6 +67,8 @@ export class Watchdog {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private settling: Promise<void> | null = null;
   private readonly answering = new Set<string>();
+  private readonly subagentNames = new Map<string, string[]>();
+  private readonly killed = new Map<string, string[]>();
   private readonly settleMs: number;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -107,10 +110,22 @@ export class Watchdog {
     const event = this.all.find((e) => e.id === eventId);
     if (!event || event.phase === 'resolved') throw new WatchdogError('That question is no longer open.');
     if (event.interrupted) return;
-    this.step(event, 'interrupt the agent', () => { event.interrupted = this.o.session.interrupt(); });
+    this.step(event, 'interrupt the agent', () => { event.interrupted = this.interrupt(event); });
     if (!event.interrupted) return;
     this.persist(event);
     this.emit(event);
+  }
+
+  private interrupt(event: WatchdogEventView): boolean {
+    let names = this.subagentNames.get(event.id) ?? [];
+    try {
+      names = this.o.session.runningSubagentNames();
+    } catch (error) {
+      console.error('watchdog: could not read the running subagents', error);
+    }
+    const interrupted = this.o.session.interrupt();
+    if (interrupted) this.killed.set(event.id, names);
+    return interrupted;
   }
 
   async answer(eventId: string, answer: WatchdogAnswer): Promise<void> {
@@ -152,7 +167,7 @@ export class Watchdog {
     const idsOf = (paths: string[]): string[] => event.changes.filter((c) => paths.includes(c.path)).map((c) => c.id);
     const input: ResumeInput = {
       kept: pathsOf('keep'), reverted: [], added: pathsOf('expand-plan'), mine: pathsOf('mine'), conflicts: [],
-      interrupted: event.interrupted, killedSubagents: event.interrupted && event.runningSubagents > 0 ? [`${event.runningSubagents} async subagents`] : [],
+      interrupted: event.interrupted, killedSubagents: event.interrupted ? this.killed.get(event.id) ?? [] : [],
       backgroundShell: event.backgroundShell, unknownOrigin: event.unknownOrigin, failOpen: event.kind === 'fail-open',
     };
     const revertPaths = pathsOf('revert');
@@ -173,7 +188,9 @@ export class Watchdog {
       }
       this.o.changes.setResolution(idsOf(input.added), 'plan-expanded', event.id);
     }
-    const resolutions = new Set([...decisions.values()].map((v) => RESOLUTION[v]));
+    const unrestored = new Set(input.conflicts.map((c) => c.path));
+    if (unrestored.size > 0) this.o.changes.setResolution(idsOf([...unrestored]), 'kept', event.id);
+    const resolutions = new Set([...decisions].map(([path, v]) => (unrestored.has(path) ? RESOLUTION.keep : RESOLUTION[v])));
     const resolution: EventResolution = resolutions.size === 1 ? [...resolutions][0]! : resolutions.size === 0 ? (answer.kind === 'all' ? RESOLUTION[answer.answer] : 'kept') : 'mixed';
     this.step(event, 'refresh the changes', () => { event.changes = event.changes.map((c) => this.fresh(c)); });
     if (input.conflicts.length > 0) {
@@ -204,10 +221,19 @@ export class Watchdog {
     if (!session.processAlive()) return session.queueNote(text);
     if (event.interrupted) {
       if (!(await this.turnClosed()) || !session.processAlive()) return session.queueNote(text);
-      return session.send(text);
+      return this.orQueue(() => session.send(text), text);
     }
-    if (session.hasOpenTurn()) return session.sendAbsorbed(text);
+    if (session.hasOpenTurn()) return this.orQueue(() => session.sendAbsorbed(text), text);
     session.queueNote(text);
+  }
+
+  private orQueue(deliver: () => void, text: string): void {
+    try {
+      deliver();
+    } catch (error) {
+      this.o.session.queueNote(text);
+      throw error;
+    }
   }
 
   private turnClosed(): Promise<boolean> {
@@ -272,10 +298,11 @@ export class Watchdog {
     this.step(event, 'read the running subagents', () => {
       event.runningSubagents = session.runningSubagents();
       event.paused = event.runningSubagents > 0;
+      this.subagentNames.set(event.id, session.runningSubagentNames());
     });
     this.step(event, 'withdraw the open prompts', () => this.o.gate.withdrawPending('the watchdog opened an event'));
     this.step(event, 'interrupt the agent', () => {
-      if (session.hasOpenTurn() && !event.paused) event.interrupted = session.interrupt();
+      if (session.hasOpenTurn() && !event.paused) event.interrupted = this.interrupt(event);
     });
     return event;
   }
