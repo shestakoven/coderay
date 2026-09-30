@@ -13,6 +13,8 @@ const EXEC = 0o111;
 const MAX_OUTPUT = 128 * 1024 * 1024;
 const HASH = /^[0-9a-f]{40,64}$/;
 const INHERITED_GIT_ENV = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SHALLOW_FILE|GRAFT_FILE|REPLACE_REF_BASE|NO_REPLACE_OBJECTS|AUTHOR_\w+|COMMITTER_\w+|INTERNAL_\w+)$/;
+const GIT_TIMEOUT_MS = 60_000;
+const SYMLINK_MODE = 0o120000;
 let tempCounter = 0;
 
 const isHash = (value: string): boolean => HASH.test(value);
@@ -29,7 +31,9 @@ function cleanEnv(extra: Record<string, string> | undefined): NodeJS.ProcessEnv 
 
 export interface StoredBlob { hash: string; stored: boolean; size: number; mode: number }
 
-interface GitOptions { input?: string | Buffer; env?: Record<string, string> }
+interface GitOptions { input?: string | Buffer; env?: Record<string, string>; timeoutMs?: number }
+
+export type RestoreGuard = () => Promise<boolean>;
 
 function git(args: string[], options: GitOptions = {}): Promise<Buffer> {
   return new Promise((resolve, reject) => {
@@ -37,16 +41,20 @@ function git(args: string[], options: GitOptions = {}): Promise<Buffer> {
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let size = 0;
+    let timedOut = false;
+    const timer = setTimeout(() => { timedOut = true; child.kill('SIGKILL'); }, options.timeoutMs ?? GIT_TIMEOUT_MS);
     child.stdout.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_OUTPUT) child.kill();
       else out.push(chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
-    child.on('error', reject);
+    child.on('error', (error) => { clearTimeout(timer); reject(error); });
     child.stdin.on('error', () => undefined);
     child.on('close', (code) => {
-      if (code === 0 && size <= MAX_OUTPUT) resolve(Buffer.concat(out));
+      clearTimeout(timer);
+      if (timedOut) reject(new Error(`git ${args[0]} timed out`));
+      else if (code === 0 && size <= MAX_OUTPUT) resolve(Buffer.concat(out));
       else reject(new Error(`git ${args[0]} failed (${code}): ${Buffer.concat(err).toString().trim()}`));
     });
     child.stdin.end(options.input);
@@ -82,20 +90,20 @@ function parseHunks(text: string): { hunks: DiffHunk[]; truncated: boolean } {
 }
 
 export class ShadowRepo {
-  private constructor(private readonly dir: string, private readonly emptyBlob: string) {}
+  private constructor(private readonly dir: string, private readonly emptyBlob: string, private readonly timeoutMs: number | undefined) {}
 
-  static async open(dir: string): Promise<ShadowRepo> {
+  static async open(dir: string, options: { timeoutMs?: number } = {}): Promise<ShadowRepo> {
     mkdirSync(dir, { recursive: true });
     await git(['init', '--bare', '-q', '--', dir]);
     for (const [key, value] of [['gc.auto', '0'], ['core.autocrlf', 'false'], ['user.name', 'ide'], ['user.email', 'ide@localhost']]) {
       await git(['--git-dir', dir, 'config', key!, value!]);
     }
     const empty = (await git(['--git-dir', dir, 'hash-object', '-t', 'blob', '-w', '--stdin'], { input: '' })).toString().trim();
-    return new ShadowRepo(dir, empty);
+    return new ShadowRepo(dir, empty, options.timeoutMs);
   }
 
   private run(args: string[], options?: GitOptions): Promise<Buffer> {
-    return git(['--git-dir', this.dir, ...args], options);
+    return git(['--git-dir', this.dir, ...args], { timeoutMs: this.timeoutMs, ...options });
   }
 
   async put(abs: string): Promise<StoredBlob | null> { return this.blob(abs, true); }
@@ -116,7 +124,7 @@ export class ShadowRepo {
 
   private async text(content: string, store: boolean): Promise<StoredBlob> {
     const out = await this.run(['hash-object', ...(store ? ['-w'] : []), '--stdin', '--no-filters'], { input: content });
-    return { hash: out.toString().trim(), stored: store, size: Buffer.byteLength(content), mode: 0o644 };
+    return { hash: out.toString().trim(), stored: store, size: Buffer.byteLength(content), mode: SYMLINK_MODE };
   }
 
   async putMany(paths: string[]): Promise<Map<string, StoredBlob | null>> {
@@ -166,8 +174,9 @@ export class ShadowRepo {
     return found;
   }
 
-  async restore(hash: string | null, abs: string, mode: number): Promise<'restored' | 'deleted' | 'missing-blob'> {
+  async restore(hash: string | null, abs: string, mode: number, guard?: RestoreGuard): Promise<'restored' | 'deleted' | 'missing-blob' | 'changed'> {
     if (hash === null) {
+      if (guard && !(await guard())) return 'changed';
       await rm(abs, { force: true });
       return 'deleted';
     }
@@ -178,6 +187,10 @@ export class ShadowRepo {
     try {
       await writeFile(temp, content, { flag: 'wx' });
       await chmod(temp, mode);
+      if (guard && !(await guard())) {
+        await rm(temp, { force: true });
+        return 'changed';
+      }
       await rename(temp, abs);
     } catch (error) {
       await rm(temp, { force: true });

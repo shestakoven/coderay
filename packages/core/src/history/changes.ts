@@ -63,7 +63,6 @@ export class ChangeService {
   private readonly queue: Queued[] = [];
   private readonly lastRecorded = new Map<string, string | null>();
   private readonly unreadableSeen = new Set<string>();
-  private readonly deletedModes = new Map<string, number>();
   private readonly stamps = new Map<string, number>();
   private readonly graceMs: number;
   private draining: Promise<void> | null = null;
@@ -77,10 +76,6 @@ export class ChangeService {
   onChange(listener: (changes: ChangeView[]) => void): () => boolean {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
-  }
-
-  deletedMode(rel: string): number | undefined {
-    return this.deletedModes.get(rel);
   }
 
   handle(event: FsEvent): Promise<void> {
@@ -122,12 +117,11 @@ export class ChangeService {
     for (const d of drift) {
       const change = this.build({
         path: d.path, beforeHash: d.before?.hash ?? null, afterHash: d.after?.hash ?? null, at: Date.now(), origin, enforcement: 'enforced',
-        toolUseIds: [], stamp: null, resolution: null, stored: d.after?.stored ?? false, unreadable: false,
+        toolUseIds: [], stamp: null, resolution: null, stored: d.after?.stored ?? false, unreadable: false, beforeMode: d.before?.mode ?? null,
       });
       made.push(change);
       if (d.after) rows.push({ path: d.path, hash: d.after.hash, stored: d.after.stored, size: d.after.size, mode: d.after.mode });
       else removed.push(d.path);
-      if (!d.after && d.before) this.deletedModes.set(d.path, d.before.mode);
     }
     await this.countLines(made, new Map(drift.map((d) => [d.path, { before: d.before?.stored ?? true }])));
     this.persistStrict(made, { rows, removed });
@@ -231,7 +225,7 @@ export class ChangeService {
       const flagged = isGitState(rel) && byAgent;
       made.push(this.build({
         path: rel, beforeHash, afterHash, at: event.wall, origin, enforcement: enforced ? 'enforced' : 'recorded', toolUseIds,
-        stamp: byAgent ? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable,
+        stamp: byAgent ? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable, beforeMode: base?.mode ?? null,
       }));
       newStamps.set(made.at(-1)!.id, event.at);
       if (isUnreadable) continue;
@@ -241,10 +235,7 @@ export class ChangeService {
       }
       checks.set(rel, { before: base?.stored ?? true });
       if (blob) rows.push({ path: rel, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
-      else {
-        removed.push(rel);
-        if (base) this.deletedModes.set(rel, base.mode);
-      }
+      else removed.push(rel);
     }
     if (made.length === 0) return;
     try {
@@ -273,12 +264,12 @@ export class ChangeService {
   private build(o: {
     path: string; beforeHash: string | null; afterHash: string | null; at: number; origin: ChangeOrigin; enforcement: 'enforced' | 'recorded';
     toolUseIds: string[]; stamp: Stamp; resolution: ChangeResolution | null;
-    stored: boolean; unreadable: boolean;
+    stored: boolean; unreadable: boolean; beforeMode: number | null;
   }): ChangeView {
     return {
       id: randomUUID(), path: o.path, beforeHash: o.beforeHash, afterHash: o.afterHash, at: o.at, origin: o.origin, enforcement: o.enforcement,
       outOfPlan: false, toolUseIds: o.toolUseIds, planId: o.stamp?.planId ?? null, planVersion: o.stamp?.planVersion ?? null,
-      stepKey: o.stamp?.stepKey ?? null, eventId: null, resolution: o.resolution, added: null, removed: null, stored: o.stored, unreadable: o.unreadable,
+      stepKey: o.stamp?.stepKey ?? null, eventId: null, resolution: o.resolution, added: null, removed: null, stored: o.stored, unreadable: o.unreadable, beforeMode: o.beforeMode,
     };
   }
 

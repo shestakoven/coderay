@@ -213,7 +213,7 @@ describe('openStore', () => {
 const change = (id: string, at: number): ChangeView => ({
   id, path: `src/${id}.ts`, beforeHash: 'b'.repeat(40), afterHash: null, at, origin: 'agent-tool', enforcement: 'recorded', outOfPlan: true,
   toolUseIds: ['toolu_1', 'toolu_2'], planId: 'plan-1', planVersion: 2, stepKey: 'edit', eventId: 'ev-9', resolution: 'kept',
-  added: 3, removed: null, stored: true, unreadable: true,
+  added: 3, removed: null, stored: true, unreadable: true, beforeMode: 0o755,
 });
 
 const baseline = (path: string) => ({ path, hash: `h-${path}`, stored: true, size: 10, mode: 0o644 });
@@ -255,11 +255,11 @@ describe('history tables (schema 3)', () => {
     const store = freshStore();
     store.saveSession(session('s1', 1));
     for (let i = 0; i < 5; i += 1) store.saveChange('s1', change(`c${i}`, i));
-    store.saveChange('s1', { ...change('null-fields', 9), planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, stored: false, unreadable: false });
+    store.saveChange('s1', { ...change('null-fields', 9), planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, stored: false, unreadable: false, beforeMode: null });
     expect(store.changes('s1', 3).map((c) => c.id)).toEqual(['c3', 'c4', 'null-fields']);
     expect(store.changes('s1').find((c) => c.id === 'c1')).toEqual(change('c1', 1));
     expect(store.changes('s1').find((c) => c.id === 'null-fields')).toEqual({
-      ...change('null-fields', 9), planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, stored: false, unreadable: false,
+      ...change('null-fields', 9), planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, stored: false, unreadable: false, beforeMode: null,
     });
   });
 
@@ -267,7 +267,7 @@ describe('history tables (schema 3)', () => {
     const store = freshStore();
     store.saveSession(session('s1', 1));
     const created = { ...change('created', 1), beforeHash: null, afterHash: 'a'.repeat(40), outOfPlan: false, resolution: null, stored: false };
-    const both = { ...change('both', 2), beforeHash: null, afterHash: null, outOfPlan: false, resolution: 'flagged' as const, unreadable: false };
+    const both = { ...change('both', 2), beforeHash: null, afterHash: null, outOfPlan: false, resolution: 'flagged' as const, unreadable: false, beforeMode: 0o120000 };
     store.saveChange('s1', created);
     store.saveChange('s1', both);
     expect(store.changes('s1')).toEqual([created, both]);

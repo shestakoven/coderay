@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { ChangeView, RevertRecordView } from '@ide/protocol';
@@ -7,7 +7,7 @@ import { Baselines, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
 import { Checkpoints } from '../../src/history/checkpoints';
 import { IdeWrites } from '../../src/history/ide-writes';
-import { RevertError, RevertService } from '../../src/history/revert';
+import { RevertError, RevertService, type RevertServiceOptions } from '../../src/history/revert';
 import { ShadowRepo } from '../../src/history/shadow';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { openStore } from '../../src/store/store';
@@ -28,35 +28,50 @@ const put = (root: string, rel: string, text: string | Buffer, mode?: number): v
 };
 const read = (root: string, rel: string): string => readFileSync(join(root, rel), 'utf8');
 
-async function fixture(o: { files?: Record<string, string | Buffer>; modes?: Record<string, number>; shadow?: (real: ShadowRepo) => ShadowRepo } = {}) {
-  const root = tempDir('rev-root-');
-  sh(root, 'init', '-q');
-  const files = o.files ?? { 'a.ts': 'original', 'b.ts': 'b-original' };
-  for (const [rel, text] of Object.entries(files)) put(root, rel, text, o.modes?.[rel]);
-  sh(root, 'add', '-A');
+async function fixture(o: {
+  files?: Record<string, string | Buffer>; modes?: Record<string, number>; shadow?: (real: ShadowRepo) => ShadowRepo;
+  root?: string; revert?: Partial<RevertServiceOptions>;
+} = {}) {
+  let root = o.root;
+  if (!root) {
+    root = tempDir('rev-root-');
+    sh(root, 'init', '-q');
+    const files = o.files ?? { 'a.ts': 'original', 'b.ts': 'b-original' };
+    for (const [rel, text] of Object.entries(files)) put(root, rel, text, o.modes?.[rel]);
+    sh(root, 'add', '-A');
+  }
   const store = openStore(tempDir('rev-store-'));
   store.saveSession(sessionRecord('s1', root));
   const real = await ShadowRepo.open(tempDir('rev-shadow-'));
   const shadow = o.shadow ? o.shadow(real) : real;
-  const baselines = new Baselines(store);
-  await scanTree(root, DEFAULT_POLICY, shadow, baselines);
   const ideWrites = new IdeWrites();
-  const service = new ChangeService({
-    root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites, ledger: new ActivityLedger({ now: () => 1000 }), store,
-    checkpoints: new Checkpoints(store, () => 's1'), sessionId: () => 's1', plans: { gate: () => ({ state: 'none' }) },
-  });
-  const reverts = new RevertService({ root, shadow, baselines, ideWrites, changes: service, store, sessionId: () => 's1' });
+  const boot = async (seed: boolean) => {
+    const baselines = new Baselines(store);
+    if (seed) await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    const service = new ChangeService({
+      root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites, ledger: new ActivityLedger({ now: () => 1000 }), store,
+      checkpoints: new Checkpoints(store, () => 's1'), sessionId: () => 's1', plans: { gate: () => ({ state: 'none' }) },
+    });
+    const reverts = new RevertService({ root, shadow, baselines, ideWrites, changes: service, store, sessionId: () => 's1', ...o.revert });
+    return { baselines, service, reverts };
+  };
+  const first = await boot(true);
+  const state = { ...first };
   const feed = async (rel: string): Promise<void> => {
     const ev: FsEvent = { rel, exists: existsSync(join(root, rel)), at: 1000, wall: Date.now() };
-    await service.handle(ev);
+    await state.service.handle(ev);
   };
   const change = async (rel: string, text: string | null, mode?: number): Promise<ChangeView> => {
     if (text === null) rmSync(join(root, rel), { force: true });
     else put(root, rel, text, mode);
     await feed(rel);
-    return service.changes().filter((c) => c.path === rel).at(-1)!;
+    return state.service.changes().filter((c) => c.path === rel).at(-1)!;
   };
-  return { root, store, shadow, baselines, service, reverts, ideWrites, feed, change };
+  const restart = async (): Promise<void> => { Object.assign(state, await boot(false)); };
+  return {
+    root, store, shadow, ideWrites, feed, change, restart,
+    get baselines() { return state.baselines; }, get service() { return state.service; }, get reverts() { return state.reverts; },
+  };
 }
 
 const ids = (...changes: ChangeView[]): string[] => changes.map((c) => c.id);
@@ -244,6 +259,153 @@ describe('RevertService.revertChanges', () => {
     ]);
     expect(r1.files[0]?.outcome).toBe('restored');
     expect(r2.files[0]?.outcome).toBe('conflict');
+  });
+});
+
+describe('RevertService review fixes', () => {
+  it('refuses when an unselected change of the path lies between the selected ones', async () => {
+    const f = await fixture();
+    const c1 = await f.change('a.ts', 'one');
+    await f.change('a.ts', 'human edit');
+    const c3 = await f.change('a.ts', 'three');
+    const record = await f.reverts.revertChanges({ changeIds: ids(c1, c3), eventId: 'e1' });
+    expect(record.files).toEqual([{ path: 'a.ts', outcome: 'conflict', reason: 'changed again after the agent\'s change' }]);
+    expect(read(f.root, 'a.ts')).toBe('three');
+  });
+
+  it('keeps an edit made between the check and the commit and reports a conflict', async () => {
+    const f = await fixture({ revert: { beforeCommit: async (rel) => { put(f.root, rel, 'user typed this just now'); } } });
+    const c = await f.change('a.ts', 'agent version');
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files).toEqual([{ path: 'a.ts', outcome: 'conflict', reason: 'changed again after the agent\'s change' }]);
+    expect(read(f.root, 'a.ts')).toBe('user typed this just now');
+    expect(readdirSync(f.root).filter((n) => n.includes('.ide-'))).toEqual([]);
+  });
+
+  it('keeps an edit made between the check and the delete of a created file', async () => {
+    const f = await fixture({ revert: { beforeCommit: async (rel) => { put(f.root, rel, 'user typed this just now'); } } });
+    const c = await f.change('new.ts', 'fresh');
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files[0]).toMatchObject({ path: 'new.ts', outcome: 'conflict' });
+    expect(read(f.root, 'new.ts')).toBe('user typed this just now');
+  });
+
+  it('restores the before mode when the agent changed the exec bit along with the content', async () => {
+    const f = await fixture({ files: { 'a.sh': 'echo 1' } });
+    const c = await f.change('a.sh', 'echo 2', 0o755);
+    expect(c.beforeMode).toBe(0o644);
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files[0]?.outcome).toBe('restored');
+    expect(statSync(join(f.root, 'a.sh')).mode & 0o777).toBe(0o644);
+  });
+
+  it('recreates a deleted executable with its mode after a restart', async () => {
+    const f = await fixture({ files: { 'run.sh': 'echo hi' }, modes: { 'run.sh': 0o755 } });
+    const c = await f.change('run.sh', null);
+    await f.restart();
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files[0]?.outcome).toBe('recreated');
+    expect(statSync(join(f.root, 'run.sh')).mode & 0o777).toBe(0o755);
+  });
+
+  it('refuses to restore a file that was a symlink before the agent changed it', async () => {
+    const f = await fixture();
+    symlinkSync('a.ts', join(f.root, 'link'));
+    await f.feed('link');
+    const c = await f.change('link', null);
+    expect(c.beforeMode).toBe(0o120000);
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files).toEqual([{ path: 'link', outcome: 'conflict', reason: 'cannot restore a symlink' }]);
+    expect(existsSync(join(f.root, 'link'))).toBe(false);
+  });
+
+  it('refuses when the agent version is not stored, since the revert could not be undone', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', Buffer.alloc(6 * 1024 * 1024, 'y') as unknown as string);
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files).toEqual([{ path: 'a.ts', outcome: 'conflict', reason: 'the agent\'s version is not stored, so the revert could not be undone' }]);
+    expect(statSync(join(f.root, 'a.ts')).size).toBe(6 * 1024 * 1024);
+  });
+
+  it('still deletes a created file whose content is not stored', async () => {
+    const f = await fixture();
+    const c = await f.change('huge.bin', Buffer.alloc(6 * 1024 * 1024, 'y') as unknown as string);
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files).toEqual([{ path: 'huge.bin', outcome: 'deleted', reason: null }]);
+  });
+
+  it('times out a hung restore, reports a conflict and keeps serving reverts', async () => {
+    const f = await fixture({
+      shadow: (real) => {
+        const wrapped = Object.create(real) as ShadowRepo;
+        wrapped.restore = (hash, abs, mode, guard) => (abs.endsWith('a.ts') ? new Promise(() => undefined) : real.restore(hash, abs, mode, guard));
+        return wrapped;
+      },
+      revert: { restoreTimeoutMs: 50 },
+    });
+    const ca = await f.change('a.ts', 'agent a');
+    const cb = await f.change('b.ts', 'agent b');
+    const first = await f.reverts.revertChanges({ changeIds: [ca.id], eventId: 'e1' });
+    expect(first.files).toEqual([{ path: 'a.ts', outcome: 'conflict', reason: 'timed out' }]);
+    const second = await f.reverts.revertChanges({ changeIds: [cb.id], eventId: 'e2' });
+    expect(second.files[0]?.outcome).toBe('restored');
+  });
+
+  it('labels every write as ide for a created-then-deleted and a deleted-then-recreated file', async () => {
+    const f = await fixture();
+    const created = await f.change('new.ts', 'fresh');
+    const removed = await f.change('a.ts', null);
+    await f.reverts.revertChanges({ changeIds: ids(created, removed), eventId: 'e1' });
+    await f.feed('new.ts');
+    await f.feed('a.ts');
+    expect(f.service.changes().slice(-2)).toMatchObject([{ path: 'new.ts', origin: 'ide', afterHash: null }, { path: 'a.ts', origin: 'ide' }]);
+  });
+
+  it('never reverts a file under .git/refs', async () => {
+    const f = await fixture();
+    mkdirSync(join(f.root, '.git/refs/heads'), { recursive: true });
+    writeFileSync(join(f.root, '.git/refs/heads/topic'), 'abc\n');
+    await f.feed('.git/refs/heads/topic');
+    const c = f.service.changes().find((x) => x.path === '.git/refs/heads/topic')!;
+    expect(c).toBeDefined();
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files[0]).toMatchObject({ outcome: 'not-rolled-back' });
+    expect(existsSync(join(f.root, '.git/refs/heads/topic'))).toBe(true);
+  });
+
+  it('reverts a guarded git file of a linked worktree through its real location', async () => {
+    const main = tempDir('rev-main-');
+    sh(main, 'init', '-q'); sh(main, 'config', 'user.email', 'a@b'); sh(main, 'config', 'user.name', 'a');
+    writeFileSync(join(main, 'a.ts'), 'a');
+    sh(main, 'add', '-A'); sh(main, 'commit', '-q', '-m', 'init');
+    const wt = join(tempDir('rev-wt-'), 'wt');
+    sh(main, 'worktree', 'add', '-q', wt, '-b', 'side');
+    const f = await fixture({ root: wt });
+    const real = sh(wt, 'rev-parse', '--path-format=absolute', '--git-path', 'info/exclude').trim();
+    const original = readFileSync(real, 'utf8');
+    writeFileSync(real, `${original}\nnope\n`);
+    await f.feed('.git/info/exclude');
+    const c = f.service.changes().find((x) => x.path === '.git/info/exclude')!;
+    expect(c).toBeDefined();
+    const record = await f.reverts.revertChanges({ changeIds: [c.id], eventId: 'e1' });
+    expect(record.files).toEqual([{ path: '.git/info/exclude', outcome: 'restored', reason: null }]);
+    expect(readFileSync(real, 'utf8')).toBe(original);
+  });
+
+  it('undoes what it can and reports a conflict for the rest', async () => {
+    const f = await fixture();
+    const ca = await f.change('a.ts', 'agent a');
+    const cb = await f.change('b.ts', 'agent b');
+    const r = await f.reverts.revertChanges({ changeIds: ids(ca, cb), eventId: 'e1' });
+    put(f.root, 'b.ts', 'user edit');
+    const undone = await f.reverts.undo(r.id);
+    expect(undone.files).toEqual([
+      { path: 'a.ts', outcome: 'restored', reason: null },
+      { path: 'b.ts', outcome: 'conflict', reason: 'changed again after the agent\'s change' },
+    ]);
+    expect(read(f.root, 'a.ts')).toBe('agent a');
+    expect(read(f.root, 'b.ts')).toBe('user edit');
+    expect(undone.record.undoneAt).not.toBeNull();
   });
 });
 

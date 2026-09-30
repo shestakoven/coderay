@@ -20,6 +20,8 @@ export interface RevertServiceOptions {
   store: Store;
   sessionId: () => string | null;
   now?: () => number;
+  restoreTimeoutMs?: number;
+  beforeCommit?: (rel: string) => Promise<void>;
 }
 
 export interface RevertRequest {
@@ -34,6 +36,9 @@ export interface UndoResult { record: RevertRecordView; files: RevertFile[] }
 
 const CHANGED_AGAIN = "changed again after the agent's change";
 const DEFAULT_MODE = 0o644;
+const SYMLINK_MODE = 0o120000;
+const RESTORE_TIMEOUT_MS = 30_000;
+const NOT_UNDOABLE = "the agent's version is not stored, so the revert could not be undone";
 
 const isGitState = (rel: string): boolean => rel === '.git/HEAD' || rel === '.git/refs' || rel.startsWith('.git/refs/');
 const conflict = (path: string, reason: string): RevertFile => ({ path, outcome: 'conflict', reason });
@@ -87,11 +92,9 @@ export class RevertService {
     const succeeded: string[] = [];
     const modes = new Map<string, number>();
     for (const [rel, group] of groups) {
-      const first = group[0]!;
-      const last = group.at(-1)!;
       let file: RevertFile;
       try {
-        file = await this.revertPath(rel, first, last, all, modes);
+        file = await this.revertPath(rel, group, all, modes);
       } catch (error) {
         file = conflict(rel, message(error));
       }
@@ -109,11 +112,16 @@ export class RevertService {
     return record;
   }
 
-  private async revertPath(rel: string, first: ChangeView, last: ChangeView, all: ChangeView[], modes: Map<string, number>): Promise<RevertFile> {
+  private async revertPath(rel: string, group: ChangeView[], all: ChangeView[], modes: Map<string, number>): Promise<RevertFile> {
+    const first = group[0]!;
+    const last = group.at(-1)!;
     if (isGitState(rel)) return { path: rel, outcome: 'not-rolled-back', reason: 'git state is never rolled back' };
     if (first.unreadable || last.unreadable) return conflict(rel, 'the content could not be read');
+    if (first.beforeMode === SYMLINK_MODE) return conflict(rel, 'cannot restore a symlink');
+    const firstIndex = all.indexOf(first);
     const lastIndex = all.indexOf(last);
-    if (all.some((c, i) => i > lastIndex && c.path === rel)) return conflict(rel, CHANGED_AGAIN);
+    const selected = new Set(group);
+    if (all.some((c, i) => c.path === rel && i >= firstIndex && (i > lastIndex || !selected.has(c)))) return conflict(rel, CHANGED_AGAIN);
     const abs = await this.absolute(rel);
     const current = await this.current(abs);
     const expected = last.afterHash;
@@ -121,10 +129,11 @@ export class RevertService {
     if (blocked) return conflict(rel, blocked);
     const target = first.beforeHash;
     if (target !== null && (await this.o.shadow.read(target)) === null) return conflict(rel, 'content not stored');
-    const mode = this.o.baselines.get(rel)?.mode ?? this.o.changes.deletedMode(rel) ?? DEFAULT_MODE;
+    if (target !== null && expected !== null && (await this.o.shadow.read(expected)) === null) return conflict(rel, NOT_UNDOABLE);
+    const mode = first.beforeMode ?? this.o.baselines.get(rel)?.mode ?? DEFAULT_MODE;
     const outcome = target === null ? 'deleted' : expected === null ? 'recreated' : 'restored';
-    await this.write(rel, abs, target, current, mode, modes);
-    return { path: rel, outcome, reason: null };
+    const refused = await this.write(rel, abs, target, current, mode, modes, expected);
+    return refused ? conflict(rel, refused) : { path: rel, outcome, reason: null };
   }
 
   private async doUndo(revertId: string): Promise<UndoResult> {
@@ -172,7 +181,8 @@ export class RevertService {
     const target = last.afterHash;
     if (target !== null && (await this.o.shadow.read(target)) === null) return conflict(rel, 'content not stored');
     const mode = prior?.get(rel) ?? this.o.baselines.get(rel)?.mode ?? DEFAULT_MODE;
-    await this.write(rel, abs, target, current, mode, new Map());
+    const refused = await this.write(rel, abs, target, current, mode, new Map(), first.beforeHash);
+    if (refused) return conflict(rel, refused);
     return { path: rel, outcome: target === null ? 'deleted' : first.beforeHash === null ? 'recreated' : 'restored', reason: null };
   }
 
@@ -183,16 +193,34 @@ export class RevertService {
     return current.hash === expected ? null : CHANGED_AGAIN;
   }
 
-  private async write(rel: string, abs: string, target: string | null, current: Current, mode: number, modes: Map<string, number>): Promise<void> {
+  private async write(rel: string, abs: string, target: string | null, current: Current, mode: number, modes: Map<string, number>, expected: string | null): Promise<string | null> {
     if (current.kind === 'file') {
       const stat = await lstat(abs).catch(() => null);
       if (stat) modes.set(rel, stat.mode & 0o111 ? 0o755 : DEFAULT_MODE);
     }
-    if (current.kind === 'absent' && target === null) return;
-    if (current.kind === 'file' && current.hash === target) return;
+    if (current.kind === 'absent' && target === null) return null;
+    if (current.kind === 'file' && current.hash === target) return null;
+    let abandoned = false;
+    const guard = async (): Promise<boolean> => {
+      if (abandoned) return false;
+      await this.o.beforeCommit?.(rel);
+      return this.mismatch(await this.current(abs), expected) === null;
+    };
     this.o.ideWrites.expect(rel, target);
-    const result = await this.o.shadow.restore(target, abs, mode);
-    if (result === 'missing-blob') throw new Error('content not stored');
+    const limit = this.o.restoreTimeoutMs ?? RESTORE_TIMEOUT_MS;
+    let timer: NodeJS.Timeout | undefined;
+    const timeout = new Promise<'timeout'>((resolve) => { timer = setTimeout(() => resolve('timeout'), limit); });
+    try {
+      const result = await Promise.race([this.o.shadow.restore(target, abs, mode, guard), timeout]);
+      if (result === 'timeout') {
+        abandoned = true;
+        return 'timed out';
+      }
+      if (result === 'missing-blob') return 'content not stored';
+      return result === 'changed' ? CHANGED_AGAIN : null;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   private async current(abs: string): Promise<Current> {

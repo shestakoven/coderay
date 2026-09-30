@@ -87,6 +87,20 @@ describe('ChangeService recording', () => {
     expect(f.store.changes('s1')).toEqual(f.service.changes());
   });
 
+  it('records the mode the file had before the change, and null for a created file', async () => {
+    const f = await fixture();
+    write(f.root, 'a.ts', 'changed');
+    chmodSync(join(f.root, 'a.ts'), 0o755);
+    write(f.root, 'new.ts', 'new');
+    await f.service.handle(f.ev('a.ts'));
+    await f.service.handle(f.ev('new.ts'));
+    expect(byPath(f.service.changes(), 'a.ts').beforeMode).toBe(0o644);
+    expect(byPath(f.service.changes(), 'new.ts').beforeMode).toBeNull();
+    write(f.root, 'a.ts', 'again');
+    await f.service.handle(f.ev('a.ts'));
+    expect(f.service.changes().filter((c) => c.path === 'a.ts').at(-1)?.beforeMode).toBe(0o755);
+  });
+
   it('makes the next Change start from the previous afterHash and keeps the baseline current', async () => {
     const f = await fixture();
     const seeded = f.baselines.get('a.ts')!.hash;

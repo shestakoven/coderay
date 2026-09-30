@@ -6,7 +6,7 @@ import { sessionRecord, tempDir } from '../helpers';
 
 const change = (path: string, beforeHash: string | null, afterHash: string | null, o: Partial<ChangeView> = {}): ChangeView => ({
   id: `${path}-${afterHash}`, path, beforeHash, afterHash, at: 1, origin: 'agent', enforcement: 'enforced', outOfPlan: false, toolUseIds: ['t'],
-  planId: 'p', planVersion: 1, stepKey: 'edit', eventId: null, resolution: null, added: null, removed: null, stored: true, unreadable: false, ...o,
+  planId: 'p', planVersion: 1, stepKey: 'edit', eventId: null, resolution: null, added: null, removed: null, stored: true, unreadable: false, beforeMode: null, ...o,
 });
 
 function setup() {

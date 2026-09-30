@@ -100,8 +100,27 @@ describe('ShadowRepo.put', () => {
     const { shadow } = await open(); const w = tempDir('w-');
     symlinkSync('some/target', join(w, 'link'));
     const blob = await shadow.put(join(w, 'link'));
-    expect(blob).toMatchObject({ stored: true, mode: 0o644 });
+    expect(blob).toMatchObject({ stored: true, mode: 0o120000 });
     expect((await shadow.read(blob!.hash))!.toString()).toBe('some/target');
+  });
+});
+
+describe('ShadowRepo timeout', () => {
+  it('gives up on a hung git call instead of waiting forever', async () => {
+    const dir = tempDir('shadow-t-');
+    const shadow = await ShadowRepo.open(join(dir, 'repo'), { timeoutMs: 200 });
+    const real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    const bin = join(dir, 'bin'); mkdirSync(bin);
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$*" in *cat-file*) exec sleep 5;; esac\nexec ${real} "$@"\n`, { mode: 0o755 });
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try {
+      const started = Date.now();
+      expect(await shadow.read('a'.repeat(40))).toBeNull();
+      expect(Date.now() - started).toBeLessThan(3000);
+    } finally {
+      process.env.PATH = path;
+    }
   });
 });
 
@@ -147,6 +166,18 @@ describe('ShadowRepo.putMany', () => {
     const got = await shadow.putMany([join(w, 'a'), join(w, 'locked'), join(w, 'c')]);
     expect([...got.values()].map((b) => b !== null)).toEqual([true, false, true]);
     expect((await shadow.read(got.get(join(w, 'c'))!.hash))!.toString()).toBe('c');
+  });
+});
+
+describe('ShadowRepo.restore guard', () => {
+  it('leaves the target and no temp file when the guard refuses', async () => {
+    const { shadow } = await open(); const w = tempDir('w-');
+    writeFileSync(join(w, 'src'), 'new'); writeFileSync(join(w, 'f'), 'mine');
+    const blob = (await shadow.put(join(w, 'src')))!;
+    expect(await shadow.restore(blob.hash, join(w, 'f'), 0o644, async () => false)).toBe('changed');
+    expect(await shadow.restore(null, join(w, 'f'), 0o644, async () => false)).toBe('changed');
+    expect(readFileSync(join(w, 'f'), 'utf8')).toBe('mine');
+    expect(readdirSync(w).sort()).toEqual(['f', 'src']);
   });
 });
 

@@ -12,6 +12,7 @@ export interface ChangeView {
   eventId: string | null; resolution: ChangeResolution | null;
   added: number | null; removed: number | null;
   stored: boolean; unreadable: boolean;
+  beforeMode: number | null;
 }
 export type WatchdogKind = 'watchdog' | 'fail-open';
 export type EventPhase = 'collecting' | 'pending' | 'resolved';

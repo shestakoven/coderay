@@ -275,7 +275,7 @@ const SCHEMA_V3 = `
 CREATE TABLE changes (session_id TEXT NOT NULL, id TEXT PRIMARY KEY, path TEXT NOT NULL, before_hash TEXT, after_hash TEXT,
   at INTEGER NOT NULL, origin TEXT NOT NULL, enforcement TEXT NOT NULL, out_of_plan INTEGER NOT NULL, tool_use_ids TEXT NOT NULL,
   plan_id TEXT, plan_version INTEGER, step_key TEXT, event_id TEXT, resolution TEXT, added INTEGER, removed INTEGER,
-  stored INTEGER NOT NULL, unreadable INTEGER NOT NULL);
+  stored INTEGER NOT NULL, unreadable INTEGER NOT NULL, before_mode INTEGER);
 CREATE INDEX changes_session ON changes (session_id);
 CREATE TABLE baselines (path TEXT PRIMARY KEY, hash TEXT NOT NULL, stored INTEGER NOT NULL, size INTEGER NOT NULL, mode INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE checkpoints (session_id TEXT NOT NULL, plan_id TEXT NOT NULL, step_key TEXT NOT NULL, cycle INTEGER NOT NULL,
@@ -441,6 +441,7 @@ const toChange = (row: Row): ChangeView => ({
   removed: optNumber(row.removed),
   stored: row.stored === 1,
   unreadable: row.unreadable === 1,
+  beforeMode: optNumber(row.before_mode),
 });
 
 const toBaseline = (row: Row): BaselineRecord => ({
@@ -536,19 +537,19 @@ export function openStore(dir: string): Store {
 
   const upsertChange = db.prepare(`
     INSERT INTO changes (session_id, id, path, before_hash, after_hash, at, origin, enforcement, out_of_plan, tool_use_ids, plan_id, plan_version,
-      step_key, event_id, resolution, added, removed, stored, unreadable)
+      step_key, event_id, resolution, added, removed, stored, unreadable, before_mode)
     VALUES (:sessionId, :id, :path, :beforeHash, :afterHash, :at, :origin, :enforcement, :outOfPlan, :toolUseIds, :planId, :planVersion,
-      :stepKey, :eventId, :resolution, :added, :removed, :stored, :unreadable)
+      :stepKey, :eventId, :resolution, :added, :removed, :stored, :unreadable, :beforeMode)
     ON CONFLICT (id) DO UPDATE SET before_hash = excluded.before_hash, after_hash = excluded.after_hash, origin = excluded.origin,
       enforcement = excluded.enforcement, out_of_plan = excluded.out_of_plan, tool_use_ids = excluded.tool_use_ids, plan_id = excluded.plan_id,
       plan_version = excluded.plan_version, step_key = excluded.step_key, event_id = excluded.event_id, resolution = excluded.resolution,
-      added = excluded.added, removed = excluded.removed, stored = excluded.stored, unreadable = excluded.unreadable`);
+      added = excluded.added, removed = excluded.removed, stored = excluded.stored, unreadable = excluded.unreadable, before_mode = excluded.before_mode`);
   const writeChange = (sessionId: string, change: ChangeView): void => {
     upsertChange.run({
       sessionId, id: change.id, path: change.path, beforeHash: change.beforeHash, afterHash: change.afterHash, at: change.at,
       origin: change.origin, enforcement: change.enforcement, outOfPlan: change.outOfPlan ? 1 : 0, toolUseIds: JSON.stringify(change.toolUseIds),
       planId: change.planId, planVersion: change.planVersion, stepKey: change.stepKey, eventId: change.eventId, resolution: change.resolution,
-      added: change.added, removed: change.removed, stored: change.stored ? 1 : 0, unreadable: change.unreadable ? 1 : 0,
+      added: change.added, removed: change.removed, stored: change.stored ? 1 : 0, unreadable: change.unreadable ? 1 : 0, beforeMode: change.beforeMode,
     });
   };
   const upsertBaseline = db.prepare(`
