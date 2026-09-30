@@ -172,7 +172,7 @@ describe('openStore', () => {
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
     db.exec('DROP TABLE plans; DROP TABLE step_states; DROP TABLE tool_decisions; DROP TABLE gate_events; PRAGMA user_version = 1;');
-    db.exec('DROP TABLE changes; DROP TABLE baselines; DROP TABLE checkpoints; DROP TABLE reverts; DROP TABLE summaries');
+    db.exec('DROP TABLE changes; DROP TABLE baselines; DROP TABLE checkpoints; DROP TABLE reverts; DROP TABLE summaries; DROP TABLE meta');
     db.close();
     const store = freshStore(dir);
     store.savePlan('s1', plan);
@@ -321,6 +321,16 @@ describe('history tables (schema 3)', () => {
     store.saveBaselines([baseline('a.ts')], []);
     expect(() => store.saveBaselines([baseline('b.ts'), { ...baseline('c.ts'), hash: null as never }], ['a.ts'])).toThrow();
     expect(store.baselines().map((b) => b.path)).toEqual(['a.ts']);
+  });
+
+  it('stores and overwrites a meta value and reads an absent one as null', () => {
+    const dir = tempDir('ide-store-');
+    const store = freshStore(dir);
+    expect(store.meta('baselines.seeded')).toBeNull();
+    store.setMeta('baselines.seeded', '1');
+    store.setMeta('baselines.seeded', '2');
+    store.close();
+    expect(openStore(dir).meta('baselines.seeded')).toBe('2');
   });
 
   it('upserts baselines and deletes removed paths', () => {

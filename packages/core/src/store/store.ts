@@ -133,6 +133,8 @@ export interface Store {
   changes(sessionId: string, limit?: number): ChangeView[];
   saveBaselines(rows: BaselineRecord[], removed?: string[]): void;
   baselines(): BaselineRecord[];
+  meta(key: string): string | null;
+  setMeta(key: string, value: string): void;
   saveCheckpoint(sessionId: string, checkpoint: CheckpointRecord): void;
   checkpoints(sessionId: string): CheckpointRecord[];
   saveRevert(sessionId: string, revert: RevertRecordView): void;
@@ -280,6 +282,7 @@ CREATE TABLE checkpoints (session_id TEXT NOT NULL, plan_id TEXT NOT NULL, step_
 CREATE TABLE reverts (session_id TEXT NOT NULL, id TEXT PRIMARY KEY, kind TEXT NOT NULL, event_id TEXT, plan_id TEXT, step_key TEXT,
   change_ids TEXT NOT NULL, files TEXT NOT NULL, ts INTEGER NOT NULL, undone_at INTEGER);
 CREATE TABLE summaries (key TEXT PRIMARY KEY, scope TEXT NOT NULL, ref TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ALTER TABLE gate_events ADD COLUMN change_ids TEXT;
 ALTER TABLE gate_events ADD COLUMN tool_use_ids TEXT;
 ALTER TABLE gate_events ADD COLUMN snapshot_sha TEXT;
@@ -664,6 +667,13 @@ export function openStore(dir: string): Store {
         db.exec('ROLLBACK');
         throw error;
       }
+    },
+    meta(key) {
+      const row = db.prepare('SELECT value FROM meta WHERE key = ?').get(key) as { value?: string } | undefined;
+      return row?.value ?? null;
+    },
+    setMeta(key, value) {
+      db.prepare('INSERT INTO meta (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value);
     },
     baselines() {
       return db.prepare('SELECT * FROM baselines ORDER BY path').all().map(toBaseline);

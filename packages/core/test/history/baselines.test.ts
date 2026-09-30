@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
-import { Baselines, EXCLUDED_DIRS, hashCandidates, scanTree } from '../../src/history/baselines';
+import { Baselines, EXCLUDED_DIRS, ScanError, hashCandidates, scanTree } from '../../src/history/baselines';
 import { ShadowRepo } from '../../src/history/shadow';
 import { openStore } from '../../src/store/store';
 import { tempDir, writeTree } from '../helpers';
@@ -26,10 +26,11 @@ async function setup(files: Record<string, string>, repo = true) {
 }
 
 const FILES = {
-  '.gitignore': 'dist/\n.env\nnode_modules/\nsecret.txt\n.claude/\n',
+  '.gitignore': 'dist/\n.env\nbackend/.env\nnode_modules/\nsecret.txt\n.claude/\n',
   'a.ts': 'a',
   'dist/x.js': 'x',
   '.env': 'K=1',
+  'backend/.env': 'K=3',
   'secret.txt': 's',
   '.claude/settings.json': '{}',
   'node_modules/p/i.js': 'i',
@@ -69,7 +70,7 @@ describe('scanTree', () => {
     const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
     expect(result).toEqual({ seeded: true, drift: [], unreadable: [] });
     const paths = store.baselines().map((b) => b.path);
-    expect(paths).toEqual(expect.arrayContaining(['a.ts', 'b.ts', '.env', '.claude/settings.json', '.gitignore']));
+    expect(paths).toEqual(expect.arrayContaining(['a.ts', 'b.ts', '.env', 'backend/.env', '.claude/settings.json', '.gitignore']));
     expect(paths).not.toContain('dist/x.js');
     expect(paths).not.toContain('secret.txt');
     expect(paths.some((p) => p.startsWith('node_modules'))).toBe(false);
@@ -120,12 +121,12 @@ describe('scanTree', () => {
     expect(drift.map((d) => [d.path, d.after])).toEqual([['a.ts', null]]);
   });
 
-  it('reports a mode change as drift', async () => {
+  it('does not report a mode-only change as drift', async () => {
     const { root, shadow, baselines } = await seededRepo();
     await scanTree(root, DEFAULT_POLICY, shadow, baselines);
     chmodSync(join(root, 'a.ts'), 0o755);
     const { drift } = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
-    expect(drift.map((d) => d.path)).toEqual(['a.ts']);
+    expect(drift).toEqual([]);
   });
 
   it('handles file names with newlines and quotes', async () => {
@@ -160,16 +161,122 @@ describe('scanTree', () => {
   });
 
   it('lists an unreadable file in unreadable and skips it', async () => {
-    if (process.getuid?.() === 0) return;
     const { root, shadow, baselines, store } = await setup({ 'ok.ts': 'ok', 'locked.ts': 'no' });
     chmodSync(join(root, 'locked.ts'), 0o000);
     try {
       const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
-      expect(result.unreadable).toEqual(['locked.ts']);
+      expect(result.unreadable).toEqual(process.getuid?.() === 0 ? [] : ['locked.ts']);
       const paths = store.baselines().map((b) => b.path);
       expect(paths).toContain('ok.ts');
-      expect(paths).not.toContain('locked.ts');
+      if (process.getuid?.() !== 0) expect(paths).not.toContain('locked.ts');
     } finally { chmodSync(join(root, 'locked.ts'), 0o644); }
+  });
+});
+
+describe('scanTree seeding marker', () => {
+  it('seeds an empty project once and treats a later file as drift', async () => {
+    const { root, shadow, baselines } = await setup({});
+    expect((await scanTree(root, DEFAULT_POLICY, shadow, baselines)).seeded).toBe(true);
+    await writeTree(root, { 'new.ts': 'n' });
+    const second = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    expect(second.seeded).toBe(false);
+    expect(second.drift.map((d) => d.path)).toEqual(['new.ts']);
+  });
+
+  it('does not re-seed after the last baseline is removed', async () => {
+    const { root, shadow, baselines } = await setup({ 'only.ts': 'o' });
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    for (const path of baselines.paths()) baselines.remove(path);
+    const second = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    expect(second.seeded).toBe(false);
+    expect(second.drift.map((d) => d.path)).toContain('only.ts');
+  });
+
+  it('drops a baseline that no longer belongs to the candidate rules, only while seeding', async () => {
+    const { root, shadow, baselines, store } = await setup({ 'a.ts': 'a', 'stale.ts': 's' });
+    baselines.set({ path: 'stale.ts', hash: 'x'.repeat(40), stored: true, size: 1, mode: 0o644 });
+    writeFileSync(join(root, '.gitignore'), 'stale.ts\n');
+    sh(root, 'rm', '-q', '--cached', 'stale.ts');
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    expect(store.baselines().map((b) => b.path)).not.toContain('stale.ts');
+  });
+});
+
+describe('scanTree removed drift', () => {
+  it('does not call a file removed when it still exists but left the candidate rules', async () => {
+    const { root, shadow, baselines } = await seededRepo();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    writeFileSync(join(root, '.gitignore'), 'dist/\nb.ts\n');
+    const { drift } = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    expect(drift.map((d) => d.path)).not.toContain('b.ts');
+    expect(baselines.get('b.ts')).toBeDefined();
+  });
+});
+
+describe('scanTree git failures', () => {
+  it('throws instead of walking when the repository is broken', async () => {
+    const { root, shadow, baselines, store } = await seededRepo();
+    writeFileSync(join(root, '.git/HEAD'), 'garbage\n');
+    await expect(scanTree(root, DEFAULT_POLICY, shadow, baselines)).rejects.toThrow(ScanError);
+    await expect(scanTree(root, DEFAULT_POLICY, shadow, baselines)).rejects.toThrow(/git ls-files failed/);
+    expect(store.baselines()).toEqual([]);
+  });
+});
+
+describe('scanTree special layouts', () => {
+  it('baselines the guarded git files of a linked worktree under their logical names', async () => {
+    const main = tempDir('scan-main-');
+    sh(main, 'init', '-q'); sh(main, 'config', 'user.email', 'a@b'); sh(main, 'config', 'user.name', 'a');
+    writeFileSync(join(main, 'a.ts'), 'a');
+    sh(main, 'add', '-A'); sh(main, 'commit', '-q', '-m', 'init');
+    writeFileSync(join(main, '.git/hooks/pre-commit'), '#!/bin/sh\n');
+    const root = join(tempDir('scan-wt-'), 'wt');
+    sh(main, 'worktree', 'add', '-q', root, '-b', 'feature');
+    const store = openStore(tempDir('scan-store-'));
+    const shadow = await ShadowRepo.open(tempDir('scan-shadow-'));
+    await scanTree(root, DEFAULT_POLICY, shadow, new Baselines(store));
+    const paths = store.baselines().map((b) => b.path);
+    expect(paths).toEqual(expect.arrayContaining(['a.ts', '.git/config', '.git/hooks/pre-commit', '.git/info/exclude']));
+    expect(paths.filter((p) => p.startsWith('.git/') && !/^\.git\/(hooks\/|info\/|config$)/.test(p))).toEqual([]);
+  });
+
+  it('records a symlink by its target text without following it', async () => {
+    const { root, shadow, baselines, store } = await setup({ 'a.ts': 'a' });
+    symlinkSync('a.ts', join(root, 'link'));
+    symlinkSync('missing', join(root, 'dangling'));
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    const rows = new Map(store.baselines().map((b) => [b.path, b]));
+    const target = await shadow.hash(join(root, 'link'));
+    expect(rows.get('link')?.hash).toBe(target?.hash);
+    expect(rows.get('link')?.hash).not.toBe(rows.get('a.ts')?.hash);
+    expect(rows.get('dangling')).toBeDefined();
+  });
+
+  it('reports a change to .git/info/exclude', async () => {
+    const { root, shadow, baselines } = await seededRepo();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    writeFileSync(join(root, '.git/info/exclude'), '*.secret\n');
+    const { drift } = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    expect(drift.map((d) => d.path)).toEqual(['.git/info/exclude']);
+  });
+
+  it('silently skips a nested repository directory', async () => {
+    const { root, shadow, baselines, store } = await setup({ 'a.ts': 'a' });
+    mkdirSync(join(root, 'nested'));
+    sh(join(root, 'nested'), 'init', '-q');
+    writeFileSync(join(root, 'nested/inner.ts'), 'i');
+    const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines);
+    expect(result.unreadable).toEqual([]);
+    expect(store.baselines().map((b) => b.path).filter((p) => p.startsWith('nested'))).toEqual([]);
+  });
+});
+
+describe('Baselines.setMany', () => {
+  it('is one Store call', () => {
+    const store = openStore(tempDir('bl-store-'));
+    const spy = vi.spyOn(store, 'saveBaselines');
+    new Baselines(store).setMany([1, 2, 3].map((n) => ({ path: `f${n}`, hash: `h${n}`, stored: true, size: 1, mode: 0o644 })));
+    expect(spy).toHaveBeenCalledTimes(1);
   });
 });
 

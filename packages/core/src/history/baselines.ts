@@ -10,7 +10,9 @@ import type { ShadowRepo, StoredBlob } from './shadow';
 export const EXCLUDED_DIRS = ['node_modules', '.venv', 'venv', '__pycache__'];
 
 const GIT_BUFFER = 256 * 1024 * 1024;
-const GIT_SKIPPED = new Set(['objects', 'refs', 'logs', 'modules']);
+const SEEDED_KEY = 'baselines.seeded';
+
+export class ScanError extends Error {}
 
 export interface Drift { path: string; before: BaselineRecord | null; after: StoredBlob | null }
 export interface ScanResult { seeded: boolean; drift: Drift[]; unreadable: string[] }
@@ -25,6 +27,10 @@ export class Baselines {
   get(rel: string): BaselineRecord | undefined { return this.map.get(rel); }
 
   paths(): string[] { return [...this.map.keys()]; }
+
+  meta(key: string): string | null { return this.store.meta(key); }
+
+  setMeta(key: string, value: string): void { this.store.setMeta(key, value); }
 
   set(record: BaselineRecord): void {
     this.store.saveBaselines([record], []);
@@ -68,19 +74,43 @@ async function walk(root: string, dir: string, skip: (rel: string) => boolean, o
   }
 }
 
-async function gitCandidates(root: string, policy: Policy): Promise<string[] | null> {
+function gitPath(root: string, name: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    execFile('git', ['-C', root, 'rev-parse', '--path-format=absolute', '--git-path', name], { encoding: 'utf8' }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(stdout.trim());
+    });
+  });
+}
+
+async function gitInternals(root: string): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  const config = await gitPath(root, 'config');
+  if (await lstat(config).then((s) => s.isFile(), () => false)) out.set('.git/config', config);
+  for (const name of ['hooks', 'info']) {
+    const dir = await gitPath(root, name);
+    const files: string[] = [];
+    await walk(dir, '', () => false, files);
+    for (const rel of files) out.set(`.git/${name}/${rel}`, join(dir, rel));
+  }
+  return out;
+}
+
+interface Candidates { rels: string[]; abs: Map<string, string> }
+
+async function gitCandidates(root: string, policy: Policy): Promise<Candidates | null> {
   if (!existsSync(join(root, '.git'))) return null;
   const guarded = guardedMatcher(policy);
   const isGuarded = (rel: string): boolean => guarded.ignores(rel);
   try {
     const tracked = await lsFiles(root, ['-c', '-o', '--exclude-standard']);
     const ignored = (await lsFiles(root, ['-o', '-i', '--exclude-standard'])).filter((rel) => !excluded(rel, isGuarded) && isGuarded(rel));
-    const inner: string[] = [];
-    await walk(root, '.git', (rel) => rel.split('/').length === 2 && GIT_SKIPPED.has(rel.slice(5)), inner);
-    const all = new Set([...tracked, ...ignored, ...inner.filter(isGuarded)]);
-    return [...all].filter((rel) => !excluded(rel, isGuarded)).sort();
-  } catch {
-    return null;
+    const internals = await gitInternals(root);
+    const abs = new Map([...internals].filter(([rel]) => isGuarded(rel)));
+    const rels = [...new Set([...tracked, ...ignored, ...abs.keys()])].filter((rel) => !excluded(rel, isGuarded)).sort();
+    return { rels, abs };
+  } catch (error) {
+    throw new ScanError(`git ls-files failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 }
 
@@ -94,17 +124,18 @@ export async function hashCandidates(
   root: string,
   shadow: ShadowRepo,
   rels: string[],
+  abs: ReadonlyMap<string, string> = new Map(),
 ): Promise<{ blobs: Map<string, StoredBlob>; unreadable: string[] }> {
-  const hashed = await shadow.putMany(rels.map((rel) => join(root, rel)));
+  const hashed = await shadow.putMany(rels.map((rel) => abs.get(rel) ?? join(root, rel)));
   const blobs = new Map<string, StoredBlob>();
   const unreadable: string[] = [];
   for (const rel of rels) {
-    const blob = hashed.get(join(root, rel)) ?? null;
+    const blob = hashed.get(abs.get(rel) ?? join(root, rel)) ?? null;
     if (blob) {
       blobs.set(rel, blob);
       continue;
     }
-    const stat = await lstat(join(root, rel)).catch(() => null);
+    const stat = await lstat(abs.get(rel) ?? join(root, rel)).catch(() => null);
     if (stat && (stat.isFile() || stat.isSymbolicLink())) unreadable.push(rel);
   }
   return { blobs, unreadable };
@@ -113,20 +144,24 @@ export async function hashCandidates(
 const record = (path: string, blob: StoredBlob): BaselineRecord => ({ path, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
 
 export async function scanTree(root: string, policy: Policy, shadow: ShadowRepo, baselines: Baselines): Promise<ScanResult> {
-  const rels = (await gitCandidates(root, policy)) ?? (await walkCandidates(root));
-  const { blobs, unreadable } = await hashCandidates(root, shadow, rels);
-  if (baselines.paths().length === 0) {
+  const found = (await gitCandidates(root, policy)) ?? { rels: await walkCandidates(root), abs: new Map<string, string>() };
+  const { blobs, unreadable } = await hashCandidates(root, shadow, found.rels, found.abs);
+  if (baselines.meta(SEEDED_KEY) === null) {
+    for (const path of baselines.paths()) if (!blobs.has(path)) baselines.remove(path);
     baselines.setMany([...blobs].map(([path, blob]) => record(path, blob)));
+    baselines.setMeta(SEEDED_KEY, '1');
     return { seeded: true, drift: [], unreadable };
   }
   const skipped = new Set(unreadable);
   const drift: Drift[] = [];
   for (const [path, blob] of blobs) {
     const before = baselines.get(path) ?? null;
-    if (!before || before.hash !== blob.hash || before.mode !== blob.mode) drift.push({ path, before, after: blob });
+    if (!before || before.hash !== blob.hash) drift.push({ path, before, after: blob });
   }
   for (const path of baselines.paths()) {
-    if (!blobs.has(path) && !skipped.has(path)) drift.push({ path, before: baselines.get(path) ?? null, after: null });
+    if (blobs.has(path) || skipped.has(path)) continue;
+    if (await lstat(found.abs.get(path) ?? join(root, path)).then(() => true, () => false)) continue;
+    drift.push({ path, before: baselines.get(path) ?? null, after: null });
   }
   return { seeded: false, drift, unreadable };
 }
