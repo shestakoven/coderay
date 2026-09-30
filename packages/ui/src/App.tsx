@@ -19,6 +19,7 @@ import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
 import { MODE_LABEL, withMode } from './settings/policy-form';
+import { initialModeSave, modeSaveReducer } from './settings/mode-save';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
 
 export function App() {
@@ -29,6 +30,8 @@ export function App() {
   const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
+  const [modeSave, dispatchModeSave] = useReducer(modeSaveReducer, initialModeSave);
+  const modeRequest = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [view, setView] = useState<'c4' | 'components'>('c4');
@@ -72,6 +75,10 @@ export function App() {
           break;
         case 'settings.result':
           setSettingsResult({ requestId: message.requestId, error: message.error });
+          if (message.requestId === modeRequest.current) {
+            modeRequest.current = null;
+            dispatchModeSave(message.error ? { type: 'failed', message: message.error, now: Date.now() } : { type: 'saved' });
+          }
           break;
         case 'plans.snapshot':
           dispatchPlans({ type: 'plans', plans: message.plans });
@@ -116,6 +123,17 @@ export function App() {
   const openSettings = (): void => {
     send({ type: 'settings.get' });
     setSettingsOpen(true);
+  };
+  useEffect(() => {
+    if (modeSave.error === null) return;
+    const timer = setTimeout(() => dispatchModeSave({ type: 'expire', now: Date.now() }), Math.max(0, modeSave.until - Date.now()));
+    return () => clearTimeout(timer);
+  }, [modeSave]);
+  const saveMode = (mode: ControlMode) => {
+    if (!settings) return;
+    const requestId = crypto.randomUUID();
+    modeRequest.current = requestId;
+    send({ type: 'policy.save', requestId, level: 'project', policy: withMode(settings.policy, mode) });
   };
   const toReview = (settings?.servers.filter((server) => server.status === 'unapproved').length ?? 0)
     + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0)
@@ -180,11 +198,12 @@ export function App() {
             Mode{' '}
             <select
               value={settings.policy.effective.mode}
-              onChange={(event) => send({ type: 'policy.save', requestId: crypto.randomUUID(), level: 'project', policy: withMode(settings.policy, event.target.value as ControlMode) })}
+              onChange={(event) => saveMode(event.target.value as ControlMode)}
             >
               {(['A', 'B', 'C'] as const).map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
             </select>
             {Object.hasOwn(settings.policy.project, 'mode') ? ' (this project)' : ''}
+            {modeSave.error !== null && <span className="warn" role="alert"> {modeSave.error}</span>}
           </label>
         )}
         {shown && (

@@ -95,7 +95,7 @@ export function stopControl(state: ChatState): { label: string; title: string } 
 
 const DECISION_LABEL: Record<ToolDecision, string> = {
   allow: '', unchecked: '', deny: 'blocked', 'ask-approved': 'allowed by you', 'ask-denied': 'denied by you', flag: 'flagged',
-  'hook-missing': 'hook missing', 'hook-pending': 'waiting for the hook',
+  'hook-missing': 'the hook did not run', 'hook-pending': 'the hook was still waiting',
 };
 
 export const decisionLabel = (decision: ToolDecision | null): string => (decision ? DECISION_LABEL[decision] : '');

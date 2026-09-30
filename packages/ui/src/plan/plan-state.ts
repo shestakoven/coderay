@@ -57,6 +57,11 @@ export interface Marks {
 
 export const EMPTY_MARKS: Marks = { components: new Map(), files: new Map(), ghosts: [], other: [], stepComponents: [] };
 
+export function dimsNode(marks: Marks, dimOthers: boolean, nodeId: string, componentId: string): boolean {
+  if (!dimOthers || marks.components.has(componentId)) return false;
+  return !marks.files.has(nodeId.startsWith('new:') ? nodeId.slice('new:'.length) : nodeId);
+}
+
 function addStep(list: StepMark[], mark: StepMark): void {
   if (!list.some((existing) => existing.n === mark.n)) list.push(mark);
   list.sort((a, b) => a.n - b.n);
@@ -117,6 +122,9 @@ export function planMarks(plan: PlanView | null, snapshot: MapSnapshot | null): 
         if (target.componentIds.length === 0) marks.other.push({ path: target.path, op: target.op, step: stepMark.n });
       } else if (target.kind === 'other') {
         marks.other.push({ path: target.path, op: target.op, step: stepMark.n });
+        const fileSteps = marks.files.get(target.path) ?? [];
+        addStep(fileSteps, stepMark);
+        marks.files.set(target.path, fileSteps);
       } else {
         const mark = componentMark(target.owner);
         addStep(mark.steps, stepMark);

@@ -165,6 +165,21 @@ describe('HookGate', () => {
     expect(plans.gate()).toMatchObject({ version: 2, scope: { paths: ['src/app.ts', 'src/other.ts'] } });
   });
 
+  it('drops the Expand plan offer of a pending prompt when the plan changes', async () => {
+    const { root, call, approve, pending, gate, plans } = await setup();
+    await approve();
+    const answer = call('Write', { file_path: join(root, 'src/other.ts'), content: 'x' });
+    expect((await pending()).canExpand).toBe(true);
+    let notified = 0;
+    gate.onChange(() => notified++);
+    void plans.propose({ goal: 'Again', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: ['src/app.ts', 'src/other.ts', 'src/lib/util.ts', 'src/lib/more.ts'].map((path) => ({ path, op: 'modify' as const })) }] });
+    await waitFor(() => (gate.pending()[0]?.canExpand === false ? true : undefined), 'offer dropped');
+    expect(notified).toBeGreaterThan(0);
+    await expect(async () => gate.answer(gate.pending()[0]!.id, 'expand-plan')).rejects.toThrow(GateError);
+    gate.answer(gate.pending()[0]!.id, 'deny');
+    expect((await answer)?.permissionDecision).toBe('deny');
+  });
+
   describe('when the expansion leaves a file out of scope', () => {
     const twoFiles = { command: 'touch src/other.ts src/lib/util.ts' };
 
@@ -174,7 +189,7 @@ describe('HookGate', () => {
       let current = mode;
       const gate = new HookGate({
         root: base.root, store: base.store, sessionId: () => 's1', policy: () => ({ ...DEFAULT_POLICY, mode: current }),
-        plans: { gate: () => base.plans.gate(), canExpand: () => base.plans.canExpand(), expand: (targets) => base.plans.expand(targets.slice(0, 1)) },
+        plans: { gate: () => base.plans.gate(), canExpand: () => base.plans.canExpand(), expand: (targets) => base.plans.expand(targets.slice(0, 1)), onChange: (listener) => base.plans.onChange(listener) },
         components: () => components, context: () => ({ parentToolUseId: null, lastMessage: 'Touching both.' }), home: base.home, tempRoots: [],
       });
       const decisions: ToolDecisionRecord[] = [];

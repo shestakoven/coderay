@@ -226,6 +226,7 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .decision { color: var(--muted); }
 .decision.deny, .decision.ask-denied { color: var(--warn); }
 .decision.flag { color: var(--plan); }
+.decision.hook-missing, .decision.hook-pending { color: var(--error); }
 
 .chip.mode select { background: none; color: var(--text); border: none; font: inherit; }
 .policy-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
@@ -274,3 +275,4 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .rollback { width: min(520px, 94vw); }
 .rollback h4 { margin: 10px 0 2px; font-size: 12px; color: var(--muted); }
 .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+.chip.mode .warn { color: var(--warn); }

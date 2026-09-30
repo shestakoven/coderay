@@ -5,6 +5,8 @@ import { PromptBody } from '../plan/PromptBody';
 import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
 
+const RECOVERED = "recovered from claude's transcript";
+
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
@@ -46,7 +48,7 @@ export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, 
   return (
     <section className="chat">
       <header className="chat-header">
-        <span>{chat.session ? `${chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
+        <span>{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
@@ -115,7 +117,9 @@ function Item({ item, chat, send, onFocusTargets }: {
   send: (message: ClientMessage) => boolean;
   onFocusTargets: (paths: string[]) => void;
 }) {
-  if (item.kind === 'message') return <div className={`msg ${item.role}`}>{item.text}</div>;
+  if (item.kind === 'message') {
+    return <div className={`msg ${item.role}`} title={item.recovered ? RECOVERED : undefined}>{item.text}{item.recovered && <span className="muted"> · {RECOVERED}</span>}</div>;
+  }
   if (item.kind === 'notice') return <div className="notice">{item.text}</div>;
   if (item.kind === 'prompt') {
     return <PromptCard item={item} onAnswer={(answer) => send({ type: 'prompt.answer', requestId: item.id, answer })} />;
@@ -125,7 +129,7 @@ function Item({ item, chat, send, onFocusTargets }: {
   const row = (
     <>
       <span className="tool-status">{STATUS_MARK[item.status]}</span> <b>{item.tool}</b>
-      {label && <span className={`decision ${item.decision}`}> · {label}</span>} <span className="muted">{item.summary}</span>
+      {label && <span className={`decision ${item.decision}`}> · {label}</span>}{item.recovered && <span className="muted"> · {RECOVERED}</span>} <span className="muted">{item.summary}</span>
     </>
   );
   return (

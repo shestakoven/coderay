@@ -14,6 +14,7 @@ import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, type Dispatch } from 'react';
 import { markCounts } from '../history/dialog-state';
 import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
+import { dimsNode } from '../plan/plan-state';
 import { PromptPopover } from '../plan/PromptPopover';
 import { mapAnchor } from '../plan/prompt-text';
 import { fitKey, layoutBounds, layoutGraph, type Bounds, type MapFlowNode } from './layout';
@@ -52,7 +53,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
       nodes.map((node) => {
         const selected = node.id === state.selected;
         const componentId = node.parentId ?? node.id;
-        const dim = overlay.dimOthers && !overlay.marks.components.has(componentId) ? 'plan-dim' : '';
+        const dim = dimsNode(overlay.marks, overlay.dimOthers, node.id, componentId) ? 'plan-dim' : '';
         const className = [dim, pendingCounts.has(node.id) && 'oop-target'].filter(Boolean).join(' ');
         return !!node.selected === selected && (node.className ?? '') === className ? node : { ...node, selected, className };
       }),

@@ -81,4 +81,8 @@ describe('decisionLabel', () => {
     expect([null, 'allow', 'unchecked', 'deny', 'ask-approved', 'ask-denied', 'flag'].map((decision) => decisionLabel(decision as never)))
       .toEqual(['', '', '', 'blocked', 'allowed by you', 'denied by you', 'flagged']);
   });
+
+  it.each([['hook-missing', 'the hook did not run'], ['hook-pending', 'the hook was still waiting']])('labels %s', (decision, text) => {
+    expect(decisionLabel(decision as never)).toBe(text);
+  });
 });

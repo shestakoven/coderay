@@ -1,5 +1,5 @@
 import type { GateAnswer, GatePreview, GatePromptView } from '@ide/protocol';
-import { prefixed, promptHint, promptTarget } from './prompt-text';
+import { agentReason, prefixed, promptHint, promptTarget } from './prompt-text';
 
 export function PromptBody({ prompt, onAnswer }: { prompt: GatePromptView; onAnswer: (answer: GateAnswer) => void }) {
   const target = promptTarget(prompt);
@@ -8,12 +8,10 @@ export function PromptBody({ prompt, onAnswer }: { prompt: GatePromptView; onAns
       <div className="oop-head">
         <span className="oop-tag">Out of plan</span> {prompt.tool} <code>{target?.path ?? prompt.summary}</code>
       </div>
-      {prompt.reason && (
-        <div className="oop-reason">
-          <span className="muted">Agent: </span>
-          {prompt.reason}
-        </div>
-      )}
+      <div className="oop-reason">
+        <span className="muted">Agent: </span>
+        {agentReason(prompt)}
+      </div>
       <Preview preview={prompt.preview} />
       <div className="muted oop-hint">{promptHint(prompt)}</div>
       <div className="prompt-actions">

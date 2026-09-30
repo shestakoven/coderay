@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { C4Container, GatePromptView, PlanView } from '@ide/protocol';
 import {
-  badgeText, circled, classifyTargets, containerMark, drawsOverlay, EMPTY_MARKS, initialPlanState, panelOpenByDefault, pendingPrompts, planMarks, planOnMap, planReducer, planTitle,
+  badgeText, circled, classifyTargets, containerMark, dimsNode, drawsOverlay, EMPTY_MARKS, initialPlanState, panelOpenByDefault, pendingPrompts, planMarks, planOnMap, planReducer, planTitle,
   waitsForUser,
 } from '../src/plan/plan-state';
 import { demoSnapshot } from './snapshot';
@@ -34,6 +34,16 @@ describe('planMarks', () => {
     expect(marks.ghosts).toEqual([{ path: 'src/api/new.ts', componentId: 'folder:src/api', step: { n: 1, status: 'done' } }]);
     expect(marks.other).toEqual([{ path: 'README.md', op: 'modify', step: 2 }]);
     expect(marks.stepComponents).toEqual([['folder:src/api'], ['folder:src/db']]);
+  });
+
+  it('does not dim an unassigned file that a waiting plan targets', () => {
+    const marks = planMarks(plan({ status: 'proposed' }), demoSnapshot());
+    expect([
+      dimsNode(marks, true, 'README.md', 'README.md'),
+      dimsNode(marks, true, 'elsewhere.md', 'elsewhere.md'),
+      dimsNode(marks, true, 'src/api/a.ts', 'folder:src/api'),
+      dimsNode(marks, false, 'elsewhere.md', 'elsewhere.md'),
+    ]).toEqual([false, true, false, false]);
   });
 
   it('marks every component with files under a directory target', () => {

@@ -38,7 +38,7 @@ export interface HookGateOptions {
   store: Store;
   sessionId: () => string | null;
   policy: () => Policy;
-  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand'>;
+  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand' | 'onChange'>;
   components: () => ComponentRef[];
   context: (toolUseId: string) => GateContext;
   home?: string;
@@ -77,6 +77,7 @@ interface Pending {
   view: GatePromptView;
   event: GateEventRecord;
   judged: Judged;
+  expandable: boolean;
   settle(outcome: Outcome): void;
 }
 
@@ -102,6 +103,7 @@ export class HookGate {
     this.options = options;
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? randomUUID;
+    options.plans.onChange(() => this.refreshExpand());
   }
 
   onChange(listener: (prompts: GatePromptView[]) => void): () => void {
@@ -239,7 +241,7 @@ export class HookGate {
         this.waiting.delete(view.id);
         resolve(value);
       };
-      this.waiting.set(view.id, { view, event, judged, settle });
+      this.waiting.set(view.id, { view, event, judged, expandable: isExpandable(judged), settle });
       this.saveEvent(event);
       this.emit();
       if (signal.aborted) settle('closed');
@@ -326,6 +328,18 @@ export class HookGate {
     }));
   }
 
+  private refreshExpand(): void {
+    const canExpand = this.options.plans.canExpand();
+    let changed = false;
+    for (const pending of this.waiting.values()) {
+      const next = pending.expandable && canExpand;
+      if (pending.view.canExpand === next) continue;
+      pending.view = { ...pending.view, canExpand: next };
+      changed = true;
+    }
+    if (changed) this.emit();
+  }
+
   private promptView(input: HookInput, judged: Judged, mode: ControlMode): GatePromptView {
     const context = this.options.context(input.toolUseId);
     const owner = ownerIndex(this.options.components());
@@ -337,12 +351,10 @@ export class HookGate {
       deleting: target.deleting,
       componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.rel, target.exists) : null,
     }));
-    const expandable = judged.decision.outOfScope.length > 0
-      && judged.decision.outOfScope.every((target) => target.kind === 'enforced' && target.rel !== null);
     return {
       id: this.newId(), toolUseId: input.toolUseId, parentToolUseId: context.parentToolUseId, tool: input.toolName,
       summary: summarizeToolInput(input.toolInput, this.options.root), preview: preview(input), reason: context.lastMessage,
-      targets, canExpand: expandable && this.options.plans.canExpand(), planId: judged.decision.planId, mode,
+      targets, canExpand: isExpandable(judged) && this.options.plans.canExpand(), planId: judged.decision.planId, mode,
       status: 'pending', answer: null, ts: this.now(),
     };
   }
@@ -426,6 +438,11 @@ export class HookGate {
       }
     }
   }
+}
+
+function isExpandable(judged: Judged): boolean {
+  const { outOfScope } = judged.decision;
+  return outOfScope.length > 0 && outOfScope.every((target) => target.kind === 'enforced' && target.rel !== null);
 }
 
 function parseHookInput(raw: unknown, root: string): HookInput | null {
