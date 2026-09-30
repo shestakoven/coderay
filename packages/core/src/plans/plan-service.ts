@@ -18,7 +18,7 @@ export type StepOutcome = { ok: true } | { ok: false; error: string };
 
 export class PlanError extends Error {}
 
-export interface StepEvent { planId: string; version: number; key: string; phase: 'start' | 'done' }
+export interface StepEvent { planId: string; version: number; key: string; phase: 'start' | 'done' | 'reset' }
 
 export interface ExpandTarget {
   rel: string;
@@ -176,6 +176,27 @@ export class PlanService {
     }
     this.emit();
     return { ok: true };
+  }
+
+  resetStep(planId: string, key: string): void {
+    this.load();
+    const enforced = this.enforced(planId) ?? this.versions(planId).findLast((record) => record.status === 'done');
+    if (!enforced || !enforced.steps.some((step) => step.key === key)) throw new PlanError(`Plan ${planId} has no step "${key}".`);
+    const status = this.states.get(planId)?.get(key) ?? 'pending';
+    if (status === 'pending') throw new PlanError(`Step "${key}" has not run.`);
+    this.setStep(planId, key, 'pending');
+    try {
+      this.options.store.bumpStepCycle(planId, key);
+    } catch (error) {
+      console.error('plans: could not bump a step cycle', error);
+    }
+    if (enforced.status === 'done') {
+      enforced.status = 'approved';
+      enforced.decidedAt = this.now();
+      this.save(enforced);
+    }
+    this.emitStep({ planId, version: enforced.version, key, phase: 'reset' });
+    this.emit();
   }
 
   onStep(listener: (event: StepEvent) => void): () => boolean {

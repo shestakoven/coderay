@@ -13,7 +13,7 @@ export class Checkpoints {
 
   begin(planId: string, key: string): void {
     this.load();
-    const cycle = (this.latest(planId, key)?.cycle ?? -1) + 1;
+    const cycle = Math.max((this.latest(planId, key)?.cycle ?? -1) + 1, this.storedCycle(planId, key));
     const record: CheckpointRecord = { planId, stepKey: key, cycle, before: {}, after: {}, startedAt: this.now(), sealedAt: null };
     this.records.push(record);
     this.save(record);
@@ -56,6 +56,15 @@ export class Checkpoints {
       planId: record.planId, stepKey: record.stepKey, cycle: record.cycle, before: Object.keys(record.before).length,
       after: record.sealedAt === null ? null : Object.keys(record.after).length, startedAt: record.startedAt, sealedAt: record.sealedAt,
     }));
+  }
+
+  private storedCycle(planId: string, key: string): number {
+    try {
+      return this.store.stepCycle(planId, key);
+    } catch (error) {
+      console.error('checkpoints: could not read the step cycle', error);
+      return 0;
+    }
   }
 
   private latest(planId: string, key: string): CheckpointRecord | undefined {

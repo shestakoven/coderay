@@ -2,16 +2,31 @@ import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { ChangeView, RevertFile, RevertRecordView } from '@ide/protocol';
+import type { ChangeView, RevertFile, RevertRecordView, RollbackPreview, StepStatus } from '@ide/protocol';
 import type { Store } from '../store/store';
+import { rollbackMessage } from '../watchdog/resume';
 import type { Baselines } from './baselines';
 import type { ChangeService } from './changes';
+import type { Checkpoints } from './checkpoints';
 import type { IdeWrites } from './ide-writes';
 import type { ShadowRepo } from './shadow';
 
 export class RevertError extends Error {}
 
+export interface StepRollbackDeps {
+  checkpoints: Checkpoints;
+  plans: {
+    plans(): { id: string; version: number; status: string; steps: { key: string }[] }[];
+    stepStates(): Record<string, Record<string, StepStatus>>;
+    resetStep(planId: string, key: string): void;
+  };
+  isIdle: () => boolean;
+  watchdogPending: () => boolean;
+  queueNote: (text: string) => void;
+}
+
 export interface RevertServiceOptions {
+  steps?: StepRollbackDeps;
   root: string;
   shadow: ShadowRepo;
   baselines: Baselines;
@@ -71,6 +86,14 @@ export class RevertService {
     return this.serialized(() => this.doUndo(revertId));
   }
 
+  previewStepRollback(planId: string, stepKey: string): Promise<RollbackPreview> {
+    return this.serialized(async () => (await this.plan(planId, stepKey)).preview);
+  }
+
+  rollbackStep(planId: string, stepKey: string, confirm: string[]): Promise<RevertRecordView> {
+    return this.serialized(() => this.doRollback(planId, stepKey, confirm));
+  }
+
   private serialized<T>(work: () => Promise<T>): Promise<T> {
     const run = this.chain.then(work, work);
     this.chain = run.catch(() => undefined);
@@ -122,17 +145,27 @@ export class RevertService {
     const lastIndex = all.indexOf(last);
     const selected = new Set(group);
     if (all.some((c, i) => c.path === rel && i >= firstIndex && (i > lastIndex || !selected.has(c)))) return conflict(rel, CHANGED_AGAIN);
+    const expected = last.afterHash;
+    const target = first.beforeHash;
+    const mode = first.beforeMode ?? this.o.baselines.get(rel)?.mode ?? DEFAULT_MODE;
+    return this.restoreTo(rel, target, expected, mode, modes);
+  }
+
+  private async inspect(rel: string, target: string | null, expected: string | null): Promise<{ reason: string | null; abs: string; current: Current }> {
     const abs = await this.absolute(rel);
     const current = await this.current(abs);
-    const expected = last.afterHash;
     const blocked = this.mismatch(current, expected);
-    if (blocked) return conflict(rel, blocked);
-    const target = first.beforeHash;
-    if (target !== null && (await this.o.shadow.read(target)) === null) return conflict(rel, 'content not stored');
-    if (target !== null && expected !== null && (await this.o.shadow.read(expected)) === null) return conflict(rel, NOT_UNDOABLE);
-    const mode = first.beforeMode ?? this.o.baselines.get(rel)?.mode ?? DEFAULT_MODE;
+    if (blocked) return { reason: blocked, abs, current };
+    if (target !== null && (await this.o.shadow.read(target)) === null) return { reason: 'content not stored', abs, current };
+    if (target !== null && expected !== null && (await this.o.shadow.read(expected)) === null) return { reason: NOT_UNDOABLE, abs, current };
+    return { reason: null, abs, current };
+  }
+
+  private async restoreTo(rel: string, target: string | null, expected: string | null, mode: number, modes: Map<string, number>): Promise<RevertFile> {
+    const seen = await this.inspect(rel, target, expected);
+    if (seen.reason) return conflict(rel, seen.reason);
     const outcome = target === null ? 'deleted' : expected === null ? 'recreated' : 'restored';
-    const refused = await this.write(rel, abs, target, current, mode, modes, expected);
+    const refused = await this.write(rel, seen.abs, target, seen.current, mode & 0o777, modes, expected);
     return refused ? conflict(rel, refused) : { path: rel, outcome, reason: null };
   }
 
@@ -258,4 +291,90 @@ export class RevertService {
       }
     }
   }
+
+  private async plan(planId: string, stepKey: string): Promise<StepPlan> {
+    const deps = this.o.steps;
+    if (!deps) throw new RevertError('step rollback is not available');
+    const blank = (reason: string | null): StepPlan => ({
+      preview: { planId, stepKey, allowed: reason === null, reason, autoFiles: [], confirmFiles: [], notRolledBack: [], conflicts: [] },
+      restores: new Map(),
+    });
+    const plans = deps.plans.plans();
+    const versions = plans.filter((plan) => plan.id === planId);
+    if (!versions.some((plan) => plan.steps.some((step) => step.key === stepKey))) throw new RevertError('unknown step');
+    if (!deps.isIdle()) return blank('the agent is still working');
+    if (deps.watchdogPending()) return blank('a watchdog question is open');
+    if (plans.at(-1)?.id !== planId || !versions.at(-1)!.steps.some((step) => step.key === stepKey)) return blank('this step belongs to an older version of the plan');
+    if (!versions.some((plan) => plan.status === 'approved' || plan.status === 'done')) return blank('the plan is not active');
+    if ((deps.plans.stepStates()[planId]?.[stepKey] ?? 'pending') === 'pending') return blank('this step has not run');
+    const result = blank(null);
+    const cp = deps.checkpoints.manifests(planId, stepKey);
+    if (!cp) return result;
+    const all = this.o.changes.changes();
+    for (const [rel, beforeHash] of Object.entries(cp.before)) {
+      const afterHash = cp.after[rel] ?? null;
+      const own = all.filter((c) => c.path === rel && c.planId === planId && c.stepKey === stepKey && c.at >= cp.startedAt);
+      const first = own[0];
+      if (!first) continue;
+      if (isGitState(rel)) { result.preview.notRolledBack.push({ path: rel, why: 'git state is never rolled back' }); continue; }
+      if (own.some((c) => c.enforcement === 'recorded')) { result.preview.notRolledBack.push({ path: rel, why: 'the IDE only records this file, it cannot restore it' }); continue; }
+      if (beforeHash === afterHash) continue;
+      const firstAt = all.indexOf(first);
+      const ownSet = new Set(own);
+      if (all.some((c, i) => c.path === rel && i > firstAt && !ownSet.has(c))) { result.preview.conflicts.push({ path: rel, reason: CHANGED_AGAIN }); continue; }
+      if (own.some((c) => c.unreadable)) { result.preview.conflicts.push({ path: rel, reason: 'the content could not be read' }); continue; }
+      if (first.beforeMode === SYMLINK_MODE) { result.preview.conflicts.push({ path: rel, reason: 'cannot restore a symlink' }); continue; }
+      const seen = await this.inspect(rel, beforeHash, afterHash);
+      if (seen.reason) { result.preview.conflicts.push({ path: rel, reason: seen.reason }); continue; }
+      const mode = first.beforeMode ?? this.o.baselines.get(rel)?.mode ?? DEFAULT_MODE;
+      result.restores.set(rel, { target: beforeHash, expected: afterHash, mode, changeIds: own.map((c) => c.id) });
+      (own.every((c) => c.origin === 'agent') ? result.preview.autoFiles : result.preview.confirmFiles).push(rel);
+    }
+    return result;
+  }
+
+  private async doRollback(planId: string, stepKey: string, confirm: string[]): Promise<RevertRecordView> {
+    const sessionId = this.requireSession();
+    const deps = this.o.steps!;
+    const { preview, restores } = await this.plan(planId, stepKey);
+    if (!preview.allowed) throw new RevertError(preview.reason ?? 'the step cannot be rolled back');
+    const confirmed = new Set(confirm);
+    const files: RevertFile[] = [];
+    const succeeded: string[] = [];
+    const modes = new Map<string, number>();
+    for (const rel of [...preview.autoFiles, ...preview.confirmFiles]) {
+      if (preview.confirmFiles.includes(rel) && !confirmed.has(rel)) {
+        files.push({ path: rel, outcome: 'not-rolled-back', reason: 'not confirmed' });
+        continue;
+      }
+      const plan = restores.get(rel)!;
+      let file: RevertFile;
+      try {
+        file = await this.restoreTo(rel, plan.target, plan.expected, plan.mode, modes);
+      } catch (error) {
+        file = conflict(rel, message(error));
+      }
+      files.push(file);
+      if (file.outcome === 'restored' || file.outcome === 'deleted' || file.outcome === 'recreated') succeeded.push(...plan.changeIds);
+    }
+    for (const c of preview.conflicts) files.push(conflict(c.path, c.reason));
+    for (const n of preview.notRolledBack) files.push({ path: n.path, outcome: 'not-rolled-back', reason: n.why });
+    const record: RevertRecordView = {
+      id: randomUUID(), kind: 'step', eventId: null, planId, stepKey, changeIds: succeeded, files, ts: (this.o.now ?? Date.now)(), undoneAt: null,
+    };
+    if (modes.size > 0) this.priorModes.set(record.id, modes);
+    this.o.store.saveRevert(sessionId, record);
+    if (succeeded.length > 0) this.o.changes.setResolution(succeeded, 'reverted', null);
+    this.emit(record);
+    deps.plans.resetStep(planId, stepKey);
+    const done = files.filter((f) => f.outcome === 'restored' || f.outcome === 'deleted' || f.outcome === 'recreated').map((f) => f.path);
+    const notRestored = files.filter((f) => !done.includes(f.path)).map((f) => ({ path: f.path, reason: f.reason ?? 'not restored' }));
+    deps.queueNote(rollbackMessage({ stepKey, restored: done, notRestored }));
+    return record;
+  }
+}
+
+interface StepPlan {
+  preview: RollbackPreview;
+  restores: Map<string, { target: string | null; expected: string | null; mode: number; changeIds: string[] }>;
 }

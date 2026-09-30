@@ -125,6 +125,8 @@ export interface Store {
   savePrompt(sessionId: string, prompt: PromptRecord): void;
   savePlan(sessionId: string, plan: PlanRecord): void;
   saveStepState(planId: string, key: string, status: StepStatus): void;
+  stepCycle(planId: string, key: string): number;
+  bumpStepCycle(planId: string, key: string): number;
   plans(sessionId: string): { plans: PlanRecord[]; stepStates: Record<string, Record<string, StepStatus>> };
   saveToolDecision(sessionId: string, decision: ToolDecisionRecord): void;
   saveGateEvent(sessionId: string, event: GateEventRecord): void;
@@ -524,6 +526,9 @@ export function openStore(dir: string): Store {
   const upsertStepState = db.prepare(`
     INSERT INTO step_states (plan_id, key, status) VALUES (:planId, :key, :status)
     ON CONFLICT (plan_id, key) DO UPDATE SET status = excluded.status`);
+  const bumpCycle = db.prepare(`
+    INSERT INTO step_states (plan_id, key, status, cycle) VALUES (:planId, :key, 'pending', 1)
+    ON CONFLICT (plan_id, key) DO UPDATE SET cycle = cycle + 1`);
   const upsertDecision = db.prepare(`
     INSERT INTO tool_decisions (session_id, tool_use_id, decision, plan_id, plan_version, step_key, targets, reason, decided_at)
     VALUES (:sessionId, :toolUseId, :decision, :planId, :planVersion, :stepKey, :targets, :reason, :decidedAt)
@@ -624,6 +629,14 @@ export function openStore(dir: string): Store {
     },
     saveStepState(planId, key, status) {
       upsertStepState.run({ planId, key, status });
+    },
+    stepCycle(planId, key) {
+      const row = db.prepare('SELECT cycle FROM step_states WHERE plan_id = ? AND key = ?').get(planId, key);
+      return Number(row?.cycle ?? 0);
+    },
+    bumpStepCycle(planId, key) {
+      bumpCycle.run({ planId, key });
+      return Number(db.prepare('SELECT cycle FROM step_states WHERE plan_id = ? AND key = ?').get(planId, key)?.cycle ?? 0);
     },
     plans(sessionId) {
       const plans = db.prepare('SELECT * FROM plans WHERE session_id = ? ORDER BY proposed_at, version').all(sessionId).map(toPlan);

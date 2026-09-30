@@ -48,3 +48,25 @@ export function resumeMessage(i: ResumeInput): string {
   }
   return sentences(i, 0).slice(0, MAX_CHARS);
 }
+
+export interface RollbackInput {
+  stepKey: string;
+  restored: string[];
+  notRestored: { path: string; reason: string }[];
+}
+
+function rollbackSentences(i: RollbackInput, maxNames: number): string {
+  const parts = [`[IDE] Step "${short(i.stepKey)}" was rolled back by the user.`];
+  if (i.restored.length) parts.push(`Restored: ${list(i.restored, maxNames, 'files')}.`);
+  if (i.notRestored.length) parts.push(`Not restored: ${list(i.notRestored.map((f) => `${f.path} (${f.reason})`), maxNames, 'files')}.`);
+  parts.push('The step is pending again; check the current state of the files before you continue.');
+  return parts.join(' ');
+}
+
+export function rollbackMessage(i: RollbackInput): string {
+  for (let maxNames = MAX_NAMES; maxNames > 0; maxNames -= 1) {
+    const text = rollbackSentences(i, maxNames);
+    if (text.length <= MAX_CHARS) return text;
+  }
+  return rollbackSentences(i, 0).slice(0, MAX_CHARS);
+}

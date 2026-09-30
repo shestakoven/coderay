@@ -246,6 +246,50 @@ describe('PlanService', () => {
     });
   });
 
+  describe('resetStep', () => {
+    it('puts a started step back to pending, bumps the stored cycle and emits reset', async () => {
+      const { service, store } = await setup();
+      await service.propose(small);
+      const events: unknown[] = [];
+      service.onStep((e) => events.push(e));
+      const changes: number[] = [];
+      service.onChange(() => changes.push(1));
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'done' });
+      expect(store.stepCycle('plan-1', 'edit')).toBe(0);
+      const before = changes.length;
+      service.resetStep('plan-1', 'edit');
+      expect(service.stepStates()).toEqual({ 'plan-1': { edit: 'pending' } });
+      expect(store.stepCycle('plan-1', 'edit')).toBe(1);
+      expect(events.at(-1)).toEqual({ planId: 'plan-1', version: 1, key: 'edit', phase: 'reset' });
+      expect(changes.length).toBeGreaterThan(before);
+      expect(service.gate()).toMatchObject({ state: 'approved', planId: 'plan-1', activeStep: null });
+      expect(latest(service)).toMatchObject({ status: 'approved' });
+    });
+
+    it('survives a restart: state pending, cycle kept, plan approved again', async () => {
+      const { service, restart } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'done' });
+      service.resetStep('plan-1', 'edit');
+      const again = restart();
+      expect(again.stepStates()).toEqual({ 'plan-1': { edit: 'pending' } });
+      expect(again.gate()).toMatchObject({ state: 'approved', activeStep: null });
+    });
+
+    it('rejects an unknown step, an unknown plan and a pending step', async () => {
+      const { service } = await setup();
+      const call = service.propose(big);
+      await waiting(service);
+      service.answer('plan-1', 1, { kind: 'approve' });
+      await call;
+      expect(() => service.resetStep('plan-1', 'nope')).toThrow(PlanError);
+      expect(() => service.resetStep('plan-9', 'a')).toThrow(PlanError);
+      expect(() => service.resetStep('plan-1', 'a')).toThrow(PlanError);
+    });
+  });
+
   describe('when the last step is done', () => {
     const more = { ...small, steps: [...small.steps, { key: 'more', title: 'More', rationale: '', targets: [{ componentId: 'lib', op: 'modify' }] }] };
     const done = 'The plan was completed before this revision was answered.';
