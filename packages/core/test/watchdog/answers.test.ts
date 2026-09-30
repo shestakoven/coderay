@@ -35,6 +35,7 @@ class StubSession implements WatchdogSession {
   turnOpen: boolean;
   alive = true;
   interruptible = true;
+  whenInterrupted: () => void = () => {};
   names: string[];
   throwing = new Set<string>();
   private listeners = new Set<() => void>();
@@ -45,7 +46,7 @@ class StubSession implements WatchdogSession {
   runningSubagentNames(): string[] { return [...this.names]; }
   runningShell(): boolean { return false; }
   processAlive(): boolean { return this.alive; }
-  interrupt(): boolean { if (!this.interruptible) return false; this.order.push('interrupt'); return true; }
+  interrupt(): boolean { if (!this.interruptible) return false; this.order.push('interrupt'); this.whenInterrupted(); return true; }
   send(text: string): void { this.guard('send'); this.order.push(`send:${text}`); }
   sendAbsorbed(text: string): void { this.guard('sendAbsorbed'); this.order.push(`absorbed:${text}`); }
   queueNote(text: string): void { this.guard('queueNote'); this.order.push(`note:${text}`); }
@@ -369,6 +370,19 @@ describe('Watchdog.answer delivery', () => {
     const e = await f.raise(await f.produce(['a.ts']));
     await answer(f, e.id, all('keep'));
     expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'release', 'note']);
+  });
+
+  it('tells the agent that the interrupt withdrew the plan it had proposed', async () => {
+    const f = await fixture({ turnOpen: true });
+    const call = new AbortController();
+    void f.plans.propose({ goal: 'Big', steps: [{ key: 'edit', title: 'Edit src', rationale: 'bug', targets: [{ path: 'src', op: 'modify' }] }] }, call.signal);
+    await waitFor(() => f.plans.plans().find((p) => p.status === 'proposed'), 'the plan waiting for the user');
+    f.session.whenInterrupted = () => call.abort();
+    const e = await f.raise(await f.produce(['a.ts']));
+    expect(f.plans.plans().map((p) => p.status)).toEqual(['withdrawn']);
+    f.session.closeTurn();
+    await answer(f, e.id, all('keep'));
+    expect(f.session.of('send:')[0]).toContain('The plan you proposed was still waiting for the user; the interrupt withdrew it');
   });
 
   it('sends the note at once when the interrupted turn had already closed', async () => {

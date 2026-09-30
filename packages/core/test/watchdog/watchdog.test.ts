@@ -93,7 +93,7 @@ async function fixture(o: Setup = {}) {
   const info = { throws: false };
   const watchdog = new Watchdog({
     store, sessionId: () => 's1', session, hold, shadow, root,
-    plans: { gate: () => { if (gate.throws) throw new Error('gate exploded'); return gate.value; }, scopeOf: (id: string, version: number) => { if (gate.throws) throw new Error('gate exploded'); return scopes.get(`${id}/${version}`) ?? null; }, canExpand: () => canExpand.value, expand: () => { throw new Error('not here'); } } as never,
+    plans: { gate: () => { if (gate.throws) throw new Error('gate exploded'); return gate.value; }, scopeOf: (id: string, version: number) => { if (gate.throws) throw new Error('gate exploded'); return scopes.get(`${id}/${version}`) ?? null; }, canExpand: () => canExpand.value, expand: () => { throw new Error('not here'); }, plans: () => [] } as never,
     changes, reverts: { revertChanges: () => { throw new Error('not here'); } },
     gate: { withdrawPending: (reason) => { withdrawn.push(reason); } }, policy: () => policy,
     toolInfo: (id) => (info.throws ? (() => { throw new Error('toolInfo exploded'); })() : id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),

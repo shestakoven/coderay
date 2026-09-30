@@ -40,7 +40,7 @@ export interface WatchdogOptions {
   hold: Hold;
   shadow: ShadowRepo;
   root: string;
-  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand' | 'scopeOf'>;
+  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand' | 'scopeOf' | 'plans'>;
   changes: ChangeService;
   reverts: Pick<RevertService, 'revertChanges'>;
   gate: Pick<HookGate, 'withdrawPending'>;
@@ -76,6 +76,7 @@ export class Watchdog {
   private readonly subagentNames = new Map<string, string[]>();
   private readonly killed = new Map<string, string[]>();
   private readonly stoppedTurnOpen = new Set<string>();
+  private readonly proposedAtInterrupt = new Map<string, string[]>();
   private readonly settleMs: number;
   private readonly maxCollectingMs: number;
   private readonly now: () => number;
@@ -132,15 +133,26 @@ export class Watchdog {
     } catch (error) {
       console.error('watchdog: could not read the running subagents', error);
     }
+    const proposed = this.proposals('proposed');
     const interrupted = this.o.session.interrupt();
     if (!interrupted) return false;
     this.killed.set(event.id, names);
+    this.proposedAtInterrupt.set(event.id, proposed);
     this.stoppedTurnOpen.add(event.id);
     const off = this.o.session.onTurnClosed(() => {
       off();
       this.stoppedTurnOpen.delete(event.id);
     });
     return true;
+  }
+
+  private proposals(status: 'proposed' | 'withdrawn'): string[] {
+    try {
+      return this.o.plans.plans().filter((plan) => plan.status === status).map((plan) => `${plan.id}/${plan.version}`);
+    } catch (error) {
+      console.error('watchdog: could not read the plans', error);
+      return [];
+    }
   }
 
   async answer(eventId: string, answer: WatchdogAnswer): Promise<void> {
@@ -180,9 +192,12 @@ export class Watchdog {
     const decisions = this.decide(event, answer);
     const pathsOf = (what: FileAnswer | 'expand-plan'): string[] => [...decisions].filter(([, v]) => v === what).map(([path]) => path);
     const idsOf = (paths: string[]): string[] => paths.flatMap((path) => event.changes.filter((c) => c.path === path).map((c) => c.id));
+    const proposed = this.proposedAtInterrupt.get(event.id) ?? [];
+    const withdrawn = proposed.length > 0 ? this.proposals('withdrawn') : [];
     const input: ResumeInput = {
       kept: pathsOf('keep'), reverted: [], added: pathsOf('expand-plan'), mine: pathsOf('mine'), conflicts: [],
-      interrupted: event.interrupted, killedSubagents: event.interrupted ? this.killed.get(event.id) ?? [] : [],
+      interrupted: event.interrupted, withdrawnPlan: event.interrupted && proposed.some((plan) => withdrawn.includes(plan)),
+      killedSubagents: event.interrupted ? this.killed.get(event.id) ?? [] : [],
       backgroundShell: event.backgroundShell, unknownOrigin: event.unknownOrigin, failOpen: event.kind === 'fail-open',
     };
     const revertPaths = pathsOf('revert');
@@ -422,6 +437,7 @@ export class Watchdog {
       this.subagentNames.delete(event.id);
       this.killed.delete(event.id);
       this.stoppedTurnOpen.delete(event.id);
+      this.proposedAtInterrupt.delete(event.id);
       excess -= 1;
     }
   }

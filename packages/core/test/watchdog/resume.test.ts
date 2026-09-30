@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resumeMessage, type ResumeInput } from '../../src/watchdog/resume';
 
 const input = (o: Partial<ResumeInput> = {}): ResumeInput => ({
-  kept: [], reverted: [], added: [], mine: [], conflicts: [], interrupted: false, killedSubagents: [], backgroundShell: false, unknownOrigin: false, failOpen: false, ...o,
+  kept: [], reverted: [], added: [], mine: [], conflicts: [], interrupted: false, withdrawnPlan: false, killedSubagents: [], backgroundShell: false, unknownOrigin: false, failOpen: false, ...o,
 });
 
 describe('resumeMessage', () => {
@@ -27,9 +27,14 @@ describe('resumeMessage', () => {
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
 
+  it('says that the interrupt withdrew the plan the agent had proposed', () => {
+    const text = resumeMessage(input({ kept: ['a.ts'], interrupted: true, withdrawnPlan: true }));
+    expect(text).toContain('The plan you proposed was still waiting for the user; the interrupt withdrew it, so propose it again if it is still needed.');
+  });
+
   it('leaves out the sentences that do not apply', () => {
     const text = resumeMessage(input({ kept: ['a.ts'] }));
-    for (const absent of ['partial', 'unfinished', 'background shell', 'not running', 'safety hook', 'Restored', 'Added', 'Not restored', 'Edited by the user']) {
+    for (const absent of ['partial', 'unfinished', 'background shell', 'not running', 'safety hook', 'Restored', 'Added', 'Not restored', 'Edited by the user', 'withdrew']) {
       expect(text).not.toContain(absent);
     }
   });

@@ -5,6 +5,7 @@ export interface ResumeInput {
   mine: string[];
   conflicts: { path: string; reason: string }[];
   interrupted: boolean;
+  withdrawnPlan: boolean;
   killedSubagents: string[];
   backgroundShell: boolean;
   unknownOrigin: boolean;
@@ -33,6 +34,7 @@ function sentences(i: ResumeInput, maxNames: number): string {
   if (i.mine.length) parts.push(`Edited by the user, not by you: ${list(i.mine, maxNames, 'files')}.`);
   if (i.conflicts.length) parts.push(`Not restored: ${list(i.conflicts.map((c) => `${c.path} (${c.reason})`), maxNames, 'files')}.`);
   if (i.interrupted) parts.push('The call that was running was stopped before it finished, so its result may be partial.');
+  if (i.withdrawnPlan) parts.push('The plan you proposed was still waiting for the user; the interrupt withdrew it, so propose it again if it is still needed.');
   if (i.killedSubagents.length) parts.push(`Stopped with it: ${list(i.killedSubagents, maxNames, 'subagents')}; their unfinished work is lost.`);
   if (i.backgroundShell) parts.push('A background shell is still running.');
   if (i.unknownOrigin) parts.push('These files changed while the IDE was not running.');
