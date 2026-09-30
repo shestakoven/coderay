@@ -207,6 +207,24 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     expect(again.runtime.hold.isHeld()).toBe(true);
   });
 
+  it('judges a write the agent makes while the core shuts down, and reopens its event at the next start', async () => {
+    const start = join(tempDir('start-'), 'start');
+    const f = await execFlow('exec-shutdown-write', { runtime: { watchdogSettleMs: 60_000 }, claudeEnv: { FAKE_CLAUDE_START: start } });
+    await f.send();
+    await waitFor(() => f.hookRecords().some((hook) => hook.id === 'toolu_w'), 'the write call allowed');
+    const closing = f.rt.close();
+    await waitFor(() => f.records().some((record) => record.ignoredSignal === 'SIGTERM'), 'the agent told to stop');
+    writeFileSync(start, '');
+    await waitFor(() => f.events().find((e) => e.changes.some((c) => c.path === 'src/other.ts')), 'the write judged');
+    process.kill(f.records().find((record) => record.pid !== undefined)!.pid!, 'SIGKILL');
+    await closing;
+    const again = await execFlow(WAIT_TURN, { from: f });
+    expect(again.events().map((e) => [e.phase, e.unknownOrigin, e.changes.map((c) => [c.path, c.origin, c.outOfPlan])])).toEqual([
+      ['pending', false, [['src/other.ts', 'agent-tool', true]]],
+    ]);
+    expect(again.runtime.hold.isHeld()).toBe(true);
+  });
+
   it('does not turn a human save outside a background shell\'s targets into an agent change', async () => {
     const f = await execFlow('exec-background-shell');
     await f.send();

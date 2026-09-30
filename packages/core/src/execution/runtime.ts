@@ -424,6 +424,8 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     },
     close() {
       return (closed ??= (async () => {
+        // The agent stops first, while its last writes are still watched and judged.
+        await session?.close().catch((error) => console.error('execution: could not stop the agent', error));
         closing = true;
         history.close();
         settle();

@@ -213,8 +213,8 @@ try {
   rt.history.onReset(() => running.broadcast({ type: 'history.snapshot', history: rt.history.snapshot() }));
 
   const shutdown = async (): Promise<void> => {
+    // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
     await rt.close();
-    await agent.close();
     progress.stop();
     classifier?.stop();
     await deployWatch?.close();

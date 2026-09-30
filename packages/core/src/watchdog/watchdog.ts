@@ -475,7 +475,10 @@ export class Watchdog {
   }
 
   async quiesce(): Promise<void> {
+    const collecting = this.timer !== null ? this.open : null;
     this.clearTimer();
+    // Settled now rather than dropped, so an event raised just before a shutdown is stored and reopened at the next start.
+    if (collecting) this.queueSettle(collecting);
     await this.settling;
   }
 
@@ -488,10 +491,14 @@ export class Watchdog {
     this.clearTimer();
     this.timer = setTimeout(() => {
       this.timer = null;
-      const run = (): Promise<void> => this.settle(event).catch((error) => console.error('watchdog: settle failed', error));
-      this.settling = (this.settling ?? Promise.resolve()).then(run);
+      this.queueSettle(event);
     }, this.settleMs);
     this.timer.unref?.();
+  }
+
+  private queueSettle(event: WatchdogEventView): void {
+    const run = (): Promise<void> => this.settle(event).catch((error) => console.error('watchdog: settle failed', error));
+    this.settling = (this.settling ?? Promise.resolve()).then(run);
   }
 
   private async settle(event: WatchdogEventView): Promise<void> {
