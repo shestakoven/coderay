@@ -34,15 +34,17 @@ class StubSession implements WatchdogSession {
   subagents = 0;
   shell = false;
   last: string | null = 'I changed the files.';
+  throwing = new Set<string>();
+  private guard(name: string): void { if (this.throwing.has(name)) throw new Error(`${name} exploded`); }
   hasOpenTurn(): boolean { return this.turnOpen; }
   runningSubagents(): number { return this.subagents; }
   runningShell(): boolean { return this.shell; }
   processAlive(): boolean { return true; }
-  interrupt(): boolean { this.calls.push('interrupt'); return true; }
+  interrupt(): boolean { this.guard('interrupt'); this.calls.push('interrupt'); return true; }
   send(text: string): void { this.calls.push(`send:${text}`); }
   sendAbsorbed(text: string): void { this.calls.push(`absorbed:${text}`); }
   queueNote(text: string): void { this.calls.push(`note:${text}`); }
-  lastMessage(): string | null { return this.last; }
+  lastMessage(): string | null { this.guard('lastMessage'); return this.last; }
   onTurnClosed(): () => boolean { return () => true; }
 }
 
@@ -60,7 +62,7 @@ async function fixture(o: Setup = {}) {
   const baselines = new Baselines(store);
   await scanTree(root, DEFAULT_POLICY, shadow, baselines);
   const ledger = new ActivityLedger();
-  const gate: { value: PlanGate } = { value: { state: 'none' } };
+  const gate: { value: PlanGate; throws?: boolean } = { value: { state: 'none' } };
   const changes = new ChangeService({
     root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites: new IdeWrites(), ledger, store, checkpoints: new Checkpoints(store, () => 's1'),
     sessionId: () => 's1', plans: { gate: () => gate.value },
@@ -79,11 +81,12 @@ async function fixture(o: Setup = {}) {
     realSave(sessionId, event);
   };
   let n = 0;
+  const info = { throws: false };
   const watchdog = new Watchdog({
     store, sessionId: () => 's1', session, hold, shadow, root,
-    plans: { gate: () => gate.value, canExpand: () => canExpand.value, expand: () => { throw new Error('not here'); } } as never,
+    plans: { gate: () => { if (gate.throws) throw new Error('gate exploded'); return gate.value; }, canExpand: () => canExpand.value, expand: () => { throw new Error('not here'); } } as never,
     changes, gate: { withdrawPending: (reason) => { withdrawn.push(reason); } }, policy: () => policy,
-    toolInfo: (id) => (id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),
+    toolInfo: (id) => (info.throws ? (() => { throw new Error('toolInfo exploded'); })() : id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),
     settleMs: o.settleMs ?? 50, newId: () => `ev${++n}`,
   });
   const emitted: WatchdogEventView[] = [];
@@ -94,7 +97,7 @@ async function fixture(o: Setup = {}) {
     await Promise.all(rels.map((rel) => changes.handle({ rel, exists: true, at: now, wall: now })));
     return rels.map((rel) => changes.changes().findLast((c) => c.path === rel)!);
   };
-  return { root, store, shadow, ledger, gate, changes, session, hold, withdrawn, watchdog, emitted, canExpand, saveFails, produce, toolCall: () => ledger.allowed(call({})) };
+  return { root, store, shadow, ledger, gate, changes, session, hold, withdrawn, watchdog, emitted, canExpand, saveFails, info, produce, toolCall: () => ledger.allowed(call({})) };
 }
 
 const approved = (scope: Partial<FrozenScope> = {}): PlanGate => ({ state: 'approved', planId: 'p1', version: 1, scope: { paths: [], globs: [], ...scope }, activeStep: 's1' });
@@ -414,5 +417,162 @@ describe('Watchdog collecting and settling', () => {
     expect(f.watchdog.events()).toHaveLength(1);
     expect(f.watchdog.events()[0]!.changes).toHaveLength(3);
     expect(f.store.watchdogEvents('s1')[0]!.changes).toHaveLength(3);
+  });
+});
+
+describe('Watchdog failing soft and closed', () => {
+  it('still opens the dialog when filling the view throws', async () => {
+    const f = await fixture();
+    f.info.throws = true;
+    f.session.throwing.add('lastMessage');
+    f.toolCall();
+    f.watchdog.consider((await f.produce(['src/x.ts']))[0]!);
+    const event = await pendingEvent(f);
+    expect(event.reason).toContain('toolInfo exploded');
+    expect(event.reason).toContain('lastMessage exploded');
+    expect(f.hold.isHeld()).toBe(true);
+    expect(f.store.watchdogEvents('s1')).toEqual([event]);
+  });
+
+  it('still opens the dialog when the interrupt throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const f = await fixture();
+      f.session.throwing.add('interrupt');
+      f.toolCall();
+      f.watchdog.consider((await f.produce(['src/x.ts']))[0]!);
+      const event = await pendingEvent(f);
+      expect(event).toMatchObject({ interrupted: false, phase: 'pending' });
+      expect(event.reason).toContain('interrupt exploded');
+      expect(f.hold.isHeld()).toBe(true);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('still opens the dialog, with the change in it, when storing the decision throws', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const f = await fixture();
+      f.changes.markOutOfPlan = () => { throw new Error('mark exploded'); };
+      f.toolCall();
+      f.watchdog.consider((await f.produce(['src/x.ts']))[0]!);
+      const event = await pendingEvent(f);
+      expect(event.changes.map((c) => c.path)).toEqual(['src/x.ts']);
+      expect(event.reason).toContain('mark exploded');
+      expect(f.hold.isHeld()).toBe(true);
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('holds and asks when the plan cannot be read', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      const f = await fixture();
+      f.toolCall();
+      const [c] = await f.produce(['src/x.ts']);
+      f.gate.throws = true;
+      f.watchdog.consider(c!);
+      expect(f.hold.isHeld()).toBe(true);
+      expect((await pendingEvent(f)).reason).toContain('gate exploded');
+    } finally {
+      error.mockRestore();
+    }
+  });
+
+  it('runs overlapping settles one after the other and keeps the last snapshot', async () => {
+    const log: string[] = [];
+    const shas: string[] = [];
+    let first = true;
+    const f = await fixture({
+      settleMs: 30,
+      shadow: (real) => new Proxy(real, {
+        get(target, key) {
+          if (key === 'snapshot') {
+            return async (id: string, files: unknown[]) => {
+              const n = files.length;
+              log.push(`start${n}`);
+              if (first) { first = false; await sleepMs(200); }
+              const sha = await target.snapshot(id, files as never);
+              shas.push(sha);
+              log.push(`end${n}`);
+              return sha;
+            };
+          }
+          const v = Reflect.get(target, key, target);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }),
+    });
+    f.toolCall();
+    const [a, b] = await f.produce(['src/a.ts', 'src/b.ts']);
+    f.watchdog.consider(a!);
+    await waitFor(() => log.includes('start1'), 'the first snapshot');
+    f.watchdog.consider(b!);
+    await waitFor(() => log.length === 4, 'both snapshots');
+    await sleepMs(20);
+    expect(log).toEqual(['start1', 'end1', 'start2', 'end2']);
+    const [event] = f.watchdog.events();
+    expect(event!.snapshotSha).toBe(shas[1]);
+    expect(event!.changes).toHaveLength(2);
+  });
+
+  it('does not flip a closed event back when a settle timer or snapshot finishes after it', async () => {
+    let release: () => void = () => undefined;
+    const gateOpen = new Promise<void>((resolve) => { release = resolve; });
+    const f = await fixture({
+      settleMs: 30,
+      shadow: (real) => new Proxy(real, {
+        get(target, key) {
+          if (key === 'snapshot') return async (id: string, files: unknown[]) => { await gateOpen; return target.snapshot(id, files as never); };
+          const v = Reflect.get(target, key, target);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }),
+    });
+    f.toolCall();
+    const [a, b] = await f.produce(['src/a.ts', 'src/b.ts']);
+    f.watchdog.consider(a!);
+    await sleepMs(60);
+    f.watchdog.close('ev1', 'kept');
+    release();
+    await sleepMs(80);
+    expect(f.watchdog.events()[0]).toMatchObject({ phase: 'resolved', resolution: 'kept' });
+    expect(f.watchdog.isPending()).toBe(false);
+    f.watchdog.consider(b!);
+    expect(f.watchdog.events()).toHaveLength(2);
+    expect(f.watchdog.events()[1]!.id).toBe('ev2');
+  });
+
+  it('cancels the settle timer of a closed event', async () => {
+    const f = await fixture({ settleMs: 40 });
+    f.toolCall();
+    f.watchdog.consider((await f.produce(['src/a.ts']))[0]!);
+    f.watchdog.close('ev1', 'dropped');
+    await sleepMs(120);
+    expect(f.watchdog.events()[0]).toMatchObject({ phase: 'resolved', snapshotSha: null });
+    expect(f.store.watchdogEvents('s1')[0]).toMatchObject({ phase: 'resolved' });
+  });
+
+  it('judges a new unreadable file by the write scope, not as a deletion', async () => {
+    if (process.getuid?.() === 0) return;
+    const f = await fixture();
+    f.gate.value = approved({ paths: ['src/n.ts'], deletes: { paths: [], globs: [] } });
+    f.toolCall();
+    writeFileSync(join(f.root, 'src/n.ts'), 'x');
+    writeFileSync(join(f.root, 'src/m.ts'), 'x');
+    chmodSync(join(f.root, 'src/n.ts'), 0o000);
+    chmodSync(join(f.root, 'src/m.ts'), 0o000);
+    const now = Date.now();
+    await Promise.all(['src/n.ts', 'src/m.ts'].map((rel) => f.changes.handle({ rel, exists: true, at: now, wall: now })));
+    const [n, m] = ['src/n.ts', 'src/m.ts'].map((rel) => f.changes.changes().find((c) => c.path === rel)!);
+    expect(n).toMatchObject({ unreadable: true, afterHash: null });
+    f.watchdog.consider(n!);
+    expect(f.watchdog.events()).toEqual([]);
+    f.watchdog.consider(m!);
+    expect(f.watchdog.events()).toHaveLength(1);
+    chmodSync(join(f.root, 'src/n.ts'), 0o644);
+    chmodSync(join(f.root, 'src/m.ts'), 0o644);
   });
 });
