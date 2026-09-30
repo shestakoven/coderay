@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { startCore, type Core } from './core';
+import { sendMessage } from './helpers';
 
 let core: Core | undefined;
 
@@ -7,14 +8,6 @@ test.afterEach(async () => {
   await core?.stop();
   core = undefined;
 });
-
-async function sendMessage(page: import('@playwright/test').Page, text: string): Promise<void> {
-  await expect(page.getByText('live ●')).toBeVisible();
-  // A prompt raised before the first map snapshot has no node to open at.
-  await expect(page.getByText('1 components')).toBeVisible();
-  await page.getByPlaceholder(/Message the agent/).fill(text);
-  await page.keyboard.press('Enter');
-}
 
 test('approve a plan: it waits on the map, and its write happens after Approve', async ({ page }) => {
   core = await startCore('gate-big-plan');
