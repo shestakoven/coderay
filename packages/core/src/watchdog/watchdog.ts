@@ -207,8 +207,12 @@ export class Watchdog {
       this.persist(event);
       this.emit(event);
     } finally {
-      this.o.hold.release();
+      if (!this.isPending()) this.o.hold.release();
     }
+  }
+
+  dropPending(): void {
+    for (const event of [...this.all]) this.close(event.id, 'dropped');
   }
 
   private expandTarget(event: WatchdogEventView, path: string): { rel: string; exists: boolean; dir: boolean; deleted: boolean } {
@@ -416,6 +420,7 @@ export class Watchdog {
   }
 
   private join(event: WatchdogEventView, change: ChangeView): void {
+    if (event.phase !== 'resolved' && !this.o.hold.isHeld()) this.o.hold.hold('the watchdog is waiting for the user');
     if (!event.changes.some((c) => c.id === change.id)) {
       this.step(event, 'store the decision', () => { this.o.changes.markOutOfPlan([change.id], event.id); });
       event.changes = [...event.changes, this.fresh(change)];

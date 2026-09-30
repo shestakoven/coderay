@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView, ControlMode, WatchdogEventView } from '@ide/protocol';
@@ -29,6 +29,7 @@ interface Built {
   store: Store;
   root: string;
   home: string;
+  shadowDir: string;
   generate: ReturnType<typeof vi.fn>;
   records(): FakeRecord[];
   send(): Promise<void>;
@@ -40,30 +41,38 @@ interface Built {
 
 interface BuildOptions {
   scenario: string | string[];
+  from?: Built;
+  sessionStart?: boolean;
   mode?: ControlMode;
   runtime?: Partial<ExecutionRuntimeOptions>;
   start?: boolean;
 }
 
+let builds = 0;
+
 async function build(options: BuildOptions): Promise<Built> {
-  const home = tempDir('rt-home-');
-  const root = tempDir('rt-root-');
-  await writeTree(root, FILES);
-  execFileSync('git', ['init', '-q'], { cwd: root });
-  const scenarioPath = Array.isArray(options.scenario) ? join(home, 'scenario.jsonl') : options.scenario;
+  const n = (builds += 1);
+  const home = options.from?.home ?? tempDir('rt-home-');
+  const root = options.from?.root ?? tempDir('rt-root-');
+  if (!options.from) {
+    await writeTree(root, FILES);
+    execFileSync('git', ['init', '-q'], { cwd: root });
+  }
+  const scenarioPath = Array.isArray(options.scenario) ? join(home, `scenario-${n}.jsonl`) : options.scenario;
   if (Array.isArray(options.scenario)) writeFileSync(scenarioPath, `${options.scenario.join('\n')}\n`);
-  const store = openStore(projectDir(home, root));
+  const shadowDir = options.from?.shadowDir ?? join(home, 'shadow.git');
+  const store = options.from?.store ?? openStore(projectDir(home, root));
   const policy = { ...DEFAULT_POLICY, mode: options.mode ?? 'B' };
   const generate = vi.fn(async () => ({ summary: 'Changed the greeting.' }));
   let server: RunningServer | undefined;
   const rt = createExecutionRuntime({
     root, home, store, policy: () => policy, components: () => COMPONENTS,
     port: () => server?.port ?? 0, userHome: tempDir('rt-user-home-'), tempRoots: [],
-    shadowDir: join(home, 'shadow.git'), watcherSettleMs: 20, watchdogSettleMs: 100, summaryDebounceMs: 20,
+    shadowDir, watcherSettleMs: 20, watchdogSettleMs: 100, summaryDebounceMs: 20,
     provider: { fast: { generate } }, files: () => [],
     ...options.runtime,
   });
-  const recordFile = join(home, 'record.jsonl');
+  const recordFile = join(home, `record-${n}.jsonl`);
   const session = new AgentSession({
     root, home, store, claude: fakeClaude(scenarioPath, recordFile), canaryMs: 5_000,
     mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), gate: rt.sessionGate,
@@ -76,13 +85,13 @@ async function build(options: BuildOptions): Promise<Built> {
     await session.close();
     await rt.close();
     await running.close();
-    store.close();
+    if (!options.from) store.close();
   })());
   onTestFinished(close);
-  await session.start();
+  if (options.sessionStart !== false) await session.start();
   if (options.start !== false) await rt.start();
   return {
-    rt, session, store, root, home, generate,
+    rt, session, store, root, home, shadowDir, generate,
     records: () => readRecords(recordFile),
     send: async () => {
       session.send('go');
@@ -126,13 +135,65 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     expect([b.rt.hold.isHeld(), event.interrupted, interrupts.length]).toEqual([true, true, 1]);
   });
 
-  it('releases the hold when the claude process exits and keeps the event pending', async () => {
+  it('keeps the hold and the event when the claude process exits while an event is pending', async () => {
     const b = await build({ scenario: OUT_OF_PLAN });
     await b.send();
     await pendingEvent(b);
     await b.session.close();
+    expect([b.rt.hold.isHeld(), b.events().map((event) => event.phase)]).toEqual([true, ['pending']]);
+  });
+
+  it('releases the hold when the claude process exits and no event is pending', async () => {
+    const b = await build({ scenario: WAIT_TURN });
+    await b.send();
+    b.rt.hold.hold('test');
+    await b.session.close();
     await waitFor(() => !b.rt.hold.isHeld(), 'the hold released');
-    expect(b.events().map((event) => event.phase)).toEqual(['pending']);
+  });
+
+  it('holds the new claude process at its first call while an event is pending, until the answer', async () => {
+    const b = await build({ scenario: OUT_OF_PLAN });
+    await b.send();
+    const event = await pendingEvent(b);
+    await b.session.close();
+    b.rt.hold.release();
+    b.session.send('again');
+    await waitFor(() => b.rt.hold.waiting() > 0, 'the new process held');
+    await b.rt.watchdog.answer(event.id, { kind: 'all', answer: 'keep' });
+    await waitFor(() => b.rt.hold.waiting() === 0, 'the new process released');
+    expect(b.rt.hold.isHeld()).toBe(false);
+  });
+
+  it('holds after a core restart that restores a pending event', async () => {
+    const b = await build({ scenario: OUT_OF_PLAN });
+    await b.send();
+    await pendingEvent(b);
+    await b.session.close();
+    await b.rt.close();
+    const again = await build({ scenario: WAIT_TURN, from: b });
+    expect([again.rt.hold.isHeld(), again.events().map((event) => event.phase)]).toEqual([true, ['pending']]);
+  });
+
+  it('keeps the hold when one of two pending events is answered', async () => {
+    const b = await build({ scenario: OUT_OF_PLAN });
+    await b.send();
+    const first = await pendingEvent(b);
+    b.rt.watchdog.raiseUnknown([b.changes()[0]!]);
+    await b.rt.watchdog.answer(first.id, { kind: 'all', answer: 'keep' });
+    expect(b.rt.hold.isHeld()).toBe(true);
+    const second = b.events().find((event) => event.phase === 'pending')!;
+    await b.rt.watchdog.answer(second.id, { kind: 'all', answer: 'keep' });
+    expect(b.rt.hold.isHeld()).toBe(false);
+  });
+
+  it('holds again, without a second interrupt, when a later change joins an open event', async () => {
+    const b = await build({ scenario: OUT_OF_PLAN });
+    await b.send();
+    await pendingEvent(b);
+    b.rt.hold.release();
+    b.rt.watchdog.consider({ ...b.changes()[0]!, id: 'late', path: 'src/q.ts' });
+    const interrupts = b.records().filter((r) => r.stdin?.type === 'control_request');
+    expect([b.rt.hold.isHeld(), interrupts.length]).toEqual([true, 1]);
   });
 
   it('ends the ledger window at the tool result', async () => {
@@ -234,13 +295,16 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     expect([change.path, unhandled]).toEqual(['notes.txt', []]);
   });
 
-  it('opens a fail-open event for a call the hook never judged', async () => {
+  it('opens a fail-open event for a call the hook never judged, with the file that lands after the result', async () => {
     const b = await build({
       scenario: [AWAIT, INIT, mcpWrite('toolu_f', [{ path: 'src/y.ts', content: 'y\n' }, { path: 'src/z.ts', content: 'z\n' }], { skipHook: true, perFileMs: 400 }), HOLD_OPEN, AWAIT],
     });
     await b.send();
-    const event = await waitFor(() => b.events().find((e) => e.kind === 'fail-open' && e.changes.length > 0), 'a fail-open event');
-    expect(event.changes.map((c) => c.path)).toContain('src/y.ts');
+    const event = await waitFor(
+      () => b.events().find((e) => e.kind === 'fail-open' && ['src/y.ts', 'src/z.ts'].every((path) => e.changes.some((c) => c.path === path))),
+      'a fail-open event with both files',
+    );
+    expect(event.changes.map((c) => c.origin)).toEqual(['agent-tool', 'agent-tool']);
   });
 
   it('records the hook-missing decision on the call', async () => {
@@ -287,6 +351,128 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     await pendingEvent(b);
     const pid = b.records().find((r) => r.pid !== undefined)?.pid;
     await b.close();
-    expect([pid !== undefined && isAlive(pid), timers() <= before, existsSync(join(b.home, 'shadow.git'))]).toEqual([false, true, true]);
+    expect([pid !== undefined && isAlive(pid), timers() <= before, existsSync(b.shadowDir)]).toEqual([false, true, true]);
+  });
+
+  it('records a user edit made before the first session as human, even when a tool window opens later', async () => {
+    const b = await build({
+      scenario: [AWAIT, INIT, '{"fake":"tool","id":"toolu_s","name":"Bash","input":{"command":"sleep 1"},"result":"","apply":true}', HOLD_OPEN, AWAIT],
+      runtime: { reconcileMs: 50 },
+    });
+    b.write('notes.txt', 'edited\n');
+    await b.send();
+    const change = await waitFor(() => b.changes().find((c) => c.path === 'notes.txt'), 'the change');
+    await waitFor(() => b.records().some((r) => r.hook?.id === 'toolu_s'), 'the call judged');
+    expect([change.origin, b.events(), b.records().filter((r) => r.stdin?.type === 'control_request').length]).toEqual(['human', [], 0]);
+  });
+
+  it('attributes a write the watcher dropped to the agent when the scan runs after its window', async () => {
+    const b = await build({
+      scenario: [AWAIT, INIT, mcpWrite('toolu_w', [{ path: 'src/x.ts', content: 'x\n' }]), '{"fake":"sleep","ms":400}',
+        '{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"$SESSION"}', AWAIT],
+      runtime: { reconcileMs: 3_600_000, ledgerGraceMs: 100, watcherOptions: { testHooks: { dropRawFileEvents: () => true } } },
+    });
+    await b.send();
+    const event = await pendingEvent(b);
+    expect(event.changes).toMatchObject([{ path: 'src/x.ts', origin: 'agent-tool' }]);
+  });
+
+  it('stamps a change found after step done with the step of the call that made it', async () => {
+    const step = (key: string, phase: string): string => JSON.stringify({ fake: 'mcp', id: `toolu_${key}_${phase}`, tool: 'step', input: { key, phase } });
+    const write = (id: string, file: string): string =>
+      JSON.stringify({ fake: 'tool', id, name: 'Write', input: { file_path: `$CWD/src/${file}`, content: 'export const v = 1;\n' }, result: 'ok', apply: true });
+    const plan = JSON.stringify({
+      fake: 'mcp', id: 'toolu_plan', tool: 'propose_plan',
+      input: { goal: 'Two edits', steps: ['one', 'two'].map((key, i) => ({ key, title: key, rationale: 'r', targets: [{ path: i === 0 ? 'src/app.ts' : 'src/other.ts', op: 'modify' }] })) },
+    });
+    const b = await build({
+      scenario: [AWAIT, INIT, plan, step('one', 'start'), write('toolu_w1', 'app.ts'), step('one', 'done'), step('two', 'start'), write('toolu_w2', 'other.ts'), step('two', 'done'),
+        '{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"$SESSION"}', AWAIT],
+      runtime: { reconcileMs: 3_600_000, watcherOptions: { testHooks: { dropRawFileEvents: () => true } } },
+    });
+    await b.send();
+    const change = await waitFor(() => b.changes().find((c) => c.path === 'src/app.ts'), 'the change');
+    const planId = b.rt.gate.plans.plans()[0]!.id;
+    await waitFor(() => b.rt.checkpoints.manifests(planId, 'one')?.sealedAt, 'step one sealed');
+    expect([change.stepKey, Object.keys(b.rt.checkpoints.manifests(planId, 'one')!.after)]).toEqual(['one', ['src/app.ts']]);
+  });
+
+  it('does not leak a watcher when it is closed while it starts', async () => {
+    const priv = tempDir('rt-tmp-');
+    const before = process.env.TMPDIR;
+    process.env.TMPDIR = priv;
+    onTestFinished(() => { if (before === undefined) delete process.env.TMPDIR; else process.env.TMPDIR = before; });
+    const b = await build({ scenario: WAIT_TURN, start: false });
+    const started = b.rt.start();
+    await b.rt.close();
+    await started;
+    expect(readdirSync(priv).filter((name) => name.startsWith('watchdog-probe-'))).toEqual([]);
+  });
+
+  it('does not seal a step checkpoint that is reset', async () => {
+    const plan = JSON.stringify({ fake: 'mcp', id: 'toolu_plan', tool: 'propose_plan', input: { goal: 'One', steps: [{ key: 'one', title: 'one', rationale: 'r', targets: [{ path: 'src/app.ts', op: 'modify' }] }] } });
+    const start = JSON.stringify({ fake: 'mcp', id: 'toolu_start', tool: 'step', input: { key: 'one', phase: 'start' } });
+    const b = await build({ scenario: [AWAIT, INIT, plan, start, HOLD_OPEN, AWAIT] });
+    await b.send();
+    const planId = (await waitFor(() => b.rt.gate.plans.plans().find((p) => p.status === 'approved'), 'the plan approved')).id;
+    await waitFor(() => b.rt.checkpoints.views().length === 1, 'the checkpoint begun');
+    const lookups = vi.spyOn(b.rt.checkpoints, 'manifests');
+    b.rt.gate.plans.resetStep(planId, 'one');
+    expect([lookups.mock.calls.length, b.rt.checkpoints.views().map((view) => view.sealedAt)]).toEqual([0, [null]]);
+  });
+
+  it('survives a throwing summary request', async () => {
+    const b = await build({ scenario: WAIT_TURN });
+    const request = vi.spyOn(b.rt.summarizer, 'request').mockImplementation(() => { throw new Error('boom'); });
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await b.send();
+    b.write('src/app.ts', 'export const greeting = 1;\n');
+    await waitFor(() => request.mock.calls.length > 0, 'the summary requested');
+    expect(request).toHaveBeenCalled();
+  });
+
+  it('refuses start() before the session has started, and exposes one session gate', async () => {
+    const b = await build({ scenario: WAIT_TURN, start: false, sessionStart: false });
+    await expect(b.rt.start()).rejects.toThrow(/AgentSession\.start/);
+    expect(b.rt.gate.sessionGate).toBe(b.rt.sessionGate);
+    expect(() => b.rt.gate.sessionGate.write('s')).toThrow(/not ready/);
+  });
+
+  it('drops the pending events of the old session and releases the hold when a new session begins', async () => {
+    const b = await build({ scenario: OUT_OF_PLAN });
+    await b.send();
+    await pendingEvent(b);
+    await b.session.newSession();
+    expect([b.rt.hold.isHeld(), b.events().map((event) => [event.phase, event.resolution])]).toEqual([false, [['resolved', 'dropped']]]);
+  });
+
+  it('tells the user once, not on every scan, that the project cannot be scanned', async () => {
+    const notice = vi.fn();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const b = await build({ scenario: 'multi-turn', runtime: { reconcileMs: 50, notice } });
+    writeFileSync(join(b.root, '.git', 'index'), 'garbage');
+    for (let turn = 0; turn < 2; turn += 1) {
+      b.session.send('hi');
+      await waitFor(() => b.session.state().turns.filter((t) => t.closedAt !== null).length === turn + 1, 'turn closed');
+    }
+    await waitFor(() => notice.mock.calls.length > 0, 'the notice');
+    expect(notice).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses to start the agent when the shadow repository cannot be opened', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const home = tempDir('rt-blocker-');
+    writeFileSync(join(home, 'file'), 'not a directory');
+    const b = await build({ scenario: WAIT_TURN, runtime: { shadowDir: join(home, 'file', 'shadow.git') } });
+    expect(b.rt.unavailable()).not.toBeNull();
+    expect(() => b.rt.sessionGate.write('s')).toThrow(/watchdog/i);
+  });
+
+  it('ends the window of a subagent call that has no live task when its result arrives', async () => {
+    const call = '{"fake":"tool","id":"toolu_a","name":"Agent","input":{"description":"d","prompt":"p","run_in_background":true},"result":"launched"}';
+    const b = await build({ scenario: [AWAIT, INIT, call, HOLD_OPEN, AWAIT] });
+    await b.send();
+    await waitFor(() => b.rt.ledger.windowOf('toolu_a'), 'the call allowed');
+    await waitFor(() => b.rt.ledger.windowOf('toolu_a')?.to, 'the window closed');
   });
 });

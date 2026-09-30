@@ -14,6 +14,10 @@ const SEEDED_KEY = 'baselines.seeded';
 
 export class ScanError extends Error {}
 
+export interface ScanCache { stats: Map<string, string>; ignored: string[] | null }
+export const newScanCache = (): ScanCache => ({ stats: new Map(), ignored: null });
+const STAT_LANES = 32;
+
 export interface Drift { path: string; before: BaselineRecord | null; after: StoredBlob | null }
 export interface ScanResult { seeded: boolean; drift: Drift[]; unreadable: string[] }
 
@@ -104,13 +108,16 @@ async function gitInternals(root: string): Promise<Map<string, string>> {
 
 interface Candidates { rels: string[]; abs: Map<string, string> }
 
-async function gitCandidates(root: string, policy: Policy): Promise<Candidates | null> {
+async function gitCandidates(root: string, policy: Policy, cache?: ScanCache, refresh = false): Promise<Candidates | null> {
   if (!existsSync(join(root, '.git'))) return null;
   const guarded = guardedMatcher(policy);
   const isGuarded = (rel: string): boolean => guarded.ignores(rel);
   try {
     const tracked = await lsFiles(root, ['-c', '-o', '--exclude-standard']);
-    const ignored = (await lsFiles(root, ['-o', '-i', '--exclude-standard'])).filter((rel) => !excluded(rel, isGuarded) && isGuarded(rel));
+    const ignored = cache?.ignored && !refresh
+      ? cache.ignored
+      : (await lsFiles(root, ['-o', '-i', '--exclude-standard'])).filter((rel) => !excluded(rel, isGuarded) && isGuarded(rel));
+    if (cache) cache.ignored = ignored;
     const internals = await gitInternals(root);
     const abs = new Map([...internals].filter(([rel]) => isGuarded(rel)));
     const rels = [...new Set([...tracked, ...ignored, ...abs.keys()])].filter((rel) => !excluded(rel, isGuarded)).sort();
@@ -149,13 +156,38 @@ export async function hashCandidates(
 
 const record = (path: string, blob: StoredBlob): BaselineRecord => ({ path, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
 
-export async function scanTree(root: string, policy: Policy, shadow: ShadowRepo, baselines: Baselines): Promise<ScanResult> {
-  const found = (await gitCandidates(root, policy)) ?? { rels: await walkCandidates(root), abs: new Map<string, string>() };
-  const { blobs, unreadable } = await hashCandidates(root, shadow, found.rels, found.abs);
-  if (baselines.meta(SEEDED_KEY) === null) {
+async function signatures(root: string, rels: string[], abs: ReadonlyMap<string, string>): Promise<Map<string, string>> {
+  const sigs = new Map<string, string>();
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(STAT_LANES, rels.length) }, async () => {
+    while (next < rels.length) {
+      const rel = rels[next++]!;
+      const stat = await lstat(abs.get(rel) ?? join(root, rel)).catch(() => null);
+      if (stat) sigs.set(rel, `${stat.size}:${stat.mtimeMs}:${stat.ino}`);
+    }
+  }));
+  return sigs;
+}
+
+export async function scanTree(
+  root: string,
+  policy: Policy,
+  shadow: ShadowRepo,
+  baselines: Baselines,
+  cache?: ScanCache,
+  options: { refresh?: boolean } = {},
+): Promise<ScanResult> {
+  const found = (await gitCandidates(root, policy, cache, options.refresh)) ?? { rels: await walkCandidates(root), abs: new Map<string, string>() };
+  const seeding = baselines.meta(SEEDED_KEY) === null;
+  const sigs = cache ? await signatures(root, found.rels, found.abs) : new Map<string, string>();
+  const toHash = cache && !seeding ? found.rels.filter((rel) => sigs.get(rel) !== cache.stats.get(rel)) : found.rels;
+  const hashing = new Set(toHash);
+  const { blobs, unreadable } = await hashCandidates(root, shadow, toHash, found.abs);
+  if (seeding) {
     for (const path of baselines.paths()) if (!blobs.has(path)) baselines.remove(path);
     baselines.setMany([...blobs].map(([path, blob]) => record(path, blob)));
     baselines.setMeta(SEEDED_KEY, '1');
+    if (cache) cache.stats = sigs;
     return { seeded: true, drift: [], unreadable };
   }
   const skipped = new Set(unreadable);
@@ -165,9 +197,14 @@ export async function scanTree(root: string, policy: Policy, shadow: ShadowRepo,
     if (!before || before.hash !== blob.hash) drift.push({ path, before, after: blob });
   }
   for (const path of baselines.paths()) {
-    if (blobs.has(path) || skipped.has(path)) continue;
+    if (blobs.has(path) || skipped.has(path) || (cache && !hashing.has(path) && sigs.has(path))) continue;
     if (await lstat(found.abs.get(path) ?? join(root, path)).then(() => true, () => false)) continue;
     drift.push({ path, before: baselines.get(path) ?? null, after: null });
+  }
+  if (cache) {
+    for (const d of drift) sigs.delete(d.path);
+    for (const rel of hashing) if (!blobs.has(rel) && !skipped.has(rel)) sigs.delete(rel);
+    cache.stats = sigs;
   }
   return { seeded: false, drift, unreadable };
 }

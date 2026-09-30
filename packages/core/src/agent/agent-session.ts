@@ -89,6 +89,8 @@ export class AgentSession {
   private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
   private readonly turnClosedListeners = new Set<() => void>();
   private readonly interruptListeners = new Set<() => void>();
+  private readonly newSessionListeners = new Set<() => void>();
+  private started = false;
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -116,7 +118,30 @@ export class AgentSession {
     return () => this.listeners.delete(listener);
   }
 
+  hasStarted(): boolean {
+    return this.started;
+  }
+
+  onNewSession(listener: () => void): () => boolean {
+    this.newSessionListeners.add(listener);
+    return () => this.newSessionListeners.delete(listener);
+  }
+
+  toolStamp(toolUseId: string): { planId: string; planVersion: number; stepKey: string | null } | null {
+    const decision = this.decisions.get(toolUseId);
+    if (!decision || decision.planId === null || decision.planVersion === null) return null;
+    return { planId: decision.planId, planVersion: decision.planVersion, stepKey: decision.stepKey };
+  }
+
   async start(): Promise<void> {
+    try {
+      await this.loadLatest();
+    } finally {
+      this.started = true;
+    }
+  }
+
+  private async loadLatest(): Promise<void> {
     const latest = this.options.store.latestSession();
     if (!latest || latest.status === 'ended') return;
     if (latest.status === 'running') this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
@@ -374,6 +399,7 @@ export class AgentSession {
     this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
     this.notes = [];
+    notify(this.newSessionListeners);
     this.reset(null);
   }
 

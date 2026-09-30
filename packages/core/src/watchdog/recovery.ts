@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ChangeView, Policy, ToolStatus } from '@ide/protocol';
 import { classifyPaths } from '../gate/paths';
-import { scanTree, type Baselines, type Drift } from '../history/baselines';
+import { scanTree, type Baselines, type Drift, type ScanCache } from '../history/baselines';
 import type { ChangeService } from '../history/changes';
 import type { ShadowRepo } from '../history/shadow';
 import type { BaselineRecord } from '../store/store';
@@ -21,6 +21,7 @@ export interface RecoverBaselinesOptions {
   watchdog: Watchdog;
   crashed: boolean;
   notice?: (text: string) => void;
+  cache?: ScanCache;
 }
 
 export const UNCLEAN_STOP_KEY = 'unclean-stop-pending';
@@ -32,7 +33,7 @@ export function largest(values: Iterable<number>): number {
 }
 
 async function scanAndRecord(o: RecoverBaselinesOptions): Promise<void> {
-  const { seeded, drift } = await scanTree(o.root, o.policy, o.shadow, o.baselines);
+  const { seeded, drift } = await scanTree(o.root, o.policy, o.shadow, o.baselines, o.cache);
   if (seeded || drift.length === 0) return;
   const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy: o.policy });
   const enforced: Drift[] = [];

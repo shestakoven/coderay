@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:f
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
-import { Baselines, EXCLUDED_DIRS, ScanError, hashCandidates, scanTree } from '../../src/history/baselines';
+import { Baselines, EXCLUDED_DIRS, ScanError, hashCandidates, newScanCache, scanTree } from '../../src/history/baselines';
 import { ShadowRepo } from '../../src/history/shadow';
 import { openStore } from '../../src/store/store';
 import { tempDir, writeTree } from '../helpers';
@@ -57,6 +57,42 @@ describe('Baselines', () => {
     const reloaded = new Baselines(store);
     expect(reloaded.paths().sort()).toEqual(['b', 'c']);
     expect(reloaded.get('b')?.hash).toBe('h-b');
+  });
+});
+
+describe('scanTree with a cache', () => {
+  const hashed = (put: { mock: { calls: unknown[][] } }): string[] => put.mock.calls.flatMap((call) => call[0] as string[]).map((path) => path.split('/').slice(-1)[0]!).sort();
+
+  it('hashes nothing on a second scan of an unchanged tree', async () => {
+    const { root, shadow, baselines } = await setup(FILES);
+    const cache = newScanCache();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const put = vi.spyOn(shadow, 'putMany');
+    const again = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    expect([again.drift, hashed(put)]).toEqual([[], []]);
+  });
+
+  it('finds a changed, a new and a deleted file and looks only at those', async () => {
+    const { root, shadow, baselines } = await setup(FILES);
+    const cache = newScanCache();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const put = vi.spyOn(shadow, 'putMany');
+    writeFileSync(join(root, 'a.ts'), 'changed content');
+    writeFileSync(join(root, 'fresh.ts'), 'new');
+    rmSync(join(root, 'backend/.env'));
+    const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    expect([result.drift.map((d) => d.path).sort(), hashed(put)]).toEqual([['a.ts', 'backend/.env', 'fresh.ts'], ['.env', 'a.ts', 'fresh.ts']]);
+  });
+
+  it('lists the ignored guarded files again only when asked to refresh', async () => {
+    const { root, shadow, baselines } = await setup(FILES);
+    const cache = newScanCache();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    mkdirSync(join(root, 'other'));
+    writeFileSync(join(root, 'other/.env'), 'K=9');
+    const cached = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const refreshed = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, { refresh: true });
+    expect([cached.drift.map((d) => d.path), refreshed.drift.map((d) => d.path)]).toEqual([[], ['other/.env']]);
   });
 });
 

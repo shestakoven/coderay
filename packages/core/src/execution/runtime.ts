@@ -1,3 +1,4 @@
+import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import ignore from 'ignore';
 import type { ChangeView } from '@ide/protocol';
@@ -8,7 +9,7 @@ import { Hold } from '../gate/hold';
 import { classifyPaths, guardedMatcher } from '../gate/paths';
 import { createGateRuntime, type GateRuntime, type GateRuntimeOptions } from '../gate/runtime';
 import { toolClass } from '../gate/tools';
-import { Baselines, scanTree } from '../history/baselines';
+import { Baselines, newScanCache, ScanError, scanTree } from '../history/baselines';
 import { ChangeService } from '../history/changes';
 import { Checkpoints } from '../history/checkpoints';
 import { DiffService } from '../history/diff';
@@ -25,6 +26,8 @@ import { WatchdogWatcher, type FsEvent, type WatchdogWatcherOptions } from '../w
 
 const RECONCILE_MS = 1_500;
 const SUMMARY_DEBOUNCE_MS = 2_000;
+const SLOW_RECONCILE_MS = 10_000;
+const SCAN_COST_FACTOR = 3;
 
 export interface ExecutionRuntimeOptions extends GateRuntimeOptions {
   shadowDir: string;
@@ -33,6 +36,8 @@ export interface ExecutionRuntimeOptions extends GateRuntimeOptions {
   provider: Pick<ModelProvider, 'fast'>;
   files: () => IndexedFile[];
   reconcileMs?: number;
+  slowReconcileMs?: number;
+  ledgerGraceMs?: number;
   summaryDebounceMs?: number;
   watcherOptions?: Partial<Omit<WatchdogWatcherOptions, 'root' | 'settleMs'>>;
   notice?: (text: string) => void;
@@ -82,7 +87,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
   const gate = createGateRuntime({ ...o, hold });
   const baselines = new Baselines(o.store);
   const ideWrites = new IdeWrites();
-  const ledger = new ActivityLedger();
+  const ledger = new ActivityLedger({ graceMs: o.ledgerGraceMs });
   const checkpoints = new Checkpoints(o.store, sessionId);
   const changes = new ChangeService({
     root: o.root,
@@ -90,6 +95,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       return o.policy();
     },
     shadow, baselines, ideWrites, ledger, plans: gate.plans, store: o.store, checkpoints, sessionId,
+    toolStamp: (toolUseId) => session?.toolStamp(toolUseId) ?? null,
   });
   const agent: WatchdogSession = {
     hasOpenTurn: () => session?.hasOpenTurn() ?? false,
@@ -169,41 +175,93 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
   let scanning: Promise<void> | null = null;
   let scanTimer: NodeJS.Timeout | undefined;
   let summaryTimer: NodeJS.Timeout | undefined;
+  let lastScanWall = Date.now();
+  let lastScanMs = 0;
+  let scanFailing = false;
+  const scanCache = newScanCache();
   const touched = new Set<string>();
+
+  const syncHold = (): void => {
+    if (watchdog.isPending() && !hold.isHeld()) hold.hold('the watchdog is waiting for the user');
+  };
 
   const record = (event: FsEvent): Promise<void> =>
     changes.handle(event).catch((error) => console.error('execution: could not record a change', error));
 
-  const scan = async (): Promise<void> => {
+  const scan = async (refresh: boolean): Promise<void> => {
+    const startedWall = Date.now();
+    const started = performance.now();
     const policy = o.policy();
-    const { seeded, drift } = await scanTree(o.root, policy, shadow, baselines);
-    if (seeded || drift.length === 0) return;
-    const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy });
-    const at = performance.now();
-    const wall = Date.now();
+    const { seeded, drift } = await scanTree(o.root, policy, shadow, baselines, scanCache, { refresh });
     let failed = false;
-    await Promise.all(drift.map((d) => changes.handle({ rel: d.path, exists: d.after !== null, at, wall }).catch((error) => {
-      failed = true;
-      console.error('execution: could not record a change', error);
-    })));
-    if (failed) return;
-    const rows = drift.flatMap((d, i) => (infos[i]!.cls !== 'enforced' && d.after ? [{ path: d.path, hash: d.after.hash, stored: d.after.stored, size: d.after.size, mode: d.after.mode }] : []));
-    const removed = drift.filter((d, i) => infos[i]!.cls !== 'enforced' && d.after === null).map((d) => d.path);
-    if (rows.length > 0 || removed.length > 0) baselines.setMany(rows, removed);
+    if (!seeded && drift.length > 0) {
+      const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy });
+      const mtimes = await Promise.all(drift.map((d) => (d.after ? lstat(join(o.root, d.path)).then((stat) => stat.mtimeMs, () => null) : null)));
+      const nowWall = Date.now();
+      const nowMono = performance.now();
+      await Promise.all(drift.map((d, i) => {
+        const wall = Math.min(Math.max(mtimes[i] ?? nowWall, lastScanWall + 1), nowWall);
+        return changes.handle({ rel: d.path, exists: d.after !== null, at: nowMono - (nowWall - wall), wall }).catch((error) => {
+          failed = true;
+          console.error('execution: could not record a change', error);
+        });
+      }));
+      if (!failed) {
+        const rows = drift.flatMap((d, i) => (infos[i]!.cls !== 'enforced' && d.after ? [{ path: d.path, hash: d.after.hash, stored: d.after.stored, size: d.after.size, mode: d.after.mode }] : []));
+        const removed = drift.filter((d, i) => infos[i]!.cls !== 'enforced' && d.after === null).map((d) => d.path);
+        if (rows.length > 0 || removed.length > 0) baselines.setMany(rows, removed);
+      }
+    }
+    if (!failed) lastScanWall = startedWall;
+    lastScanMs = performance.now() - started;
   };
 
-  const reconcile = (): Promise<void> => {
+  const reconcile = (full = false): Promise<void> => {
     if (!ready || closing || sessionId() === null) return Promise.resolve();
-    scanning ??= scan()
-      .catch((error) => console.error('execution: the periodic scan failed', error))
+    scanning ??= scan(full)
+      .then(() => { scanFailing = false; })
+      .catch((error) => {
+        if (scanFailing) return;
+        scanFailing = true;
+        console.error('execution: the periodic scan failed', error);
+        if (error instanceof ScanError) notice(`The IDE could not check the project files for changes (${error.message}).`);
+      })
       .finally(() => { scanning = null; });
     return scanning;
   };
 
+  const reconcileFresh = async (): Promise<void> => {
+    await scanning;
+    await reconcile();
+  };
+
+  const tick = async (): Promise<void> => {
+    scanTimer = undefined;
+    let delay = o.reconcileMs ?? RECONCILE_MS;
+    const current = session;
+    if (current && !current.isIdle()) {
+      await reconcile();
+      delay = Math.max(current.hasOpenTurn() ? delay : o.slowReconcileMs ?? SLOW_RECONCILE_MS, SCAN_COST_FACTOR * lastScanMs);
+    }
+    schedule(delay);
+  };
+  const schedule = (delayMs: number): void => {
+    if (closing) return;
+    scanTimer = setTimeout(() => void tick(), delayMs);
+    scanTimer.unref();
+  };
+
   const flushSummaries = (): void => {
     summaryTimer = undefined;
-    for (const id of touched) summarizer.request('component', id);
+    const ids = [...touched];
     touched.clear();
+    for (const id of ids) {
+      try {
+        summarizer.request('component', id);
+      } catch (error) {
+        console.error('execution: could not ask for a component summary', error);
+      }
+    }
   };
   const touch = (batch: ChangeView[]): void => {
     const counted = new Set(batch.filter((c) => c.enforcement === 'enforced' && !isProtected(c.path)).map((c) => c.path));
@@ -231,12 +289,16 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     if (closing) return;
     try {
       if (event.phase === 'start') return checkpoints.begin(event.planId, event.key);
+      if (event.phase === 'reset') return;
       const cycle = checkpoints.manifests(event.planId, event.key)?.cycle;
-      void changes.idle().then(() => {
+      void (async () => {
+        await changes.idle();
+        await reconcileFresh();
+        await changes.idle();
         if (checkpoints.manifests(event.planId, event.key)?.cycle !== cycle) return;
         checkpoints.seal(event.planId, event.key);
-        if (event.phase === 'done') summarizer.request('step', `${event.planId}/${event.key}`);
-      }).catch((error) => console.error('execution: could not seal a step checkpoint', error));
+        summarizer.request('step', `${event.planId}/${event.key}`);
+      })().catch((error) => console.error('execution: could not seal a step checkpoint', error));
     } catch (error) {
       console.error('execution: could not handle a step event', error);
     }
@@ -247,37 +309,47 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     write(id) {
       if (failure !== null) throw new Error(`the watchdog is unavailable (${failure}), so the agent was not started`);
       if (!ready) throw new Error('the watchdog is not ready yet, so the agent was not started');
+      syncHold();
       return gate.sessionGate.write(id);
     },
   };
+  const exposedGate: GateRuntime = { ...gate, sessionGate };
 
   const run = async (): Promise<void> => {
     const current = attached();
     try {
+      if (closing) return;
+      lastScanWall = Date.now();
       opened = await ShadowRepo.open(o.shadowDir);
-      await recoverBaselines({ root: o.root, shadow, baselines, policy: o.policy(), changes, watchdog, crashed: current.startedFromCrash(), notice });
+      if (closing) return;
+      await recoverBaselines({ root: o.root, shadow, baselines, policy: o.policy(), changes, watchdog, crashed: current.startedFromCrash(), notice, cache: scanCache });
+      if (closing) return;
       watchdog.restore();
+      syncHold();
       publish(changes.changes());
       watcher.onEvent((event) => {
+        // With no session there is nowhere to record into; the scan at the first user message finds the change.
         if (sessionId() !== null) void record(event);
       });
       await watcher.start();
     } catch (error) {
+      await watcher.stop();
+      if (closing) return;
       failure = describe(error);
       console.error('execution: the watchdog could not start', error);
       notice(`The IDE could not start watching the project files (${failure}), so the agent will not start.`);
+      return;
+    }
+    if (closing) {
       await watcher.stop();
       return;
     }
     ready = true;
-    scanTimer = setInterval(() => {
-      if (session && !session.isIdle()) void reconcile();
-    }, o.reconcileMs ?? RECONCILE_MS);
-    scanTimer.unref();
+    schedule(o.reconcileMs ?? RECONCILE_MS);
   };
 
   return {
-    gate,
+    gate: exposedGate,
     sessionGate,
     changes,
     watchdog,
@@ -299,6 +371,12 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       session = next;
       gate.attach(next);
       next.onToolResult((info: ToolEndInfo) => {
+        if (info.status === 'ok' && gate.gate.hasCall(info.toolUseId) !== 'decided' && ledger.windowOf(info.toolUseId) === undefined) {
+          ledger.unjudged({
+            toolUseId: info.toolUseId, parentToolUseId: info.parentToolUseId, tool: info.tool, toolClass: toolClass(info.tool),
+            targets: [], allTracked: false, cwdRel: null, background: false, allowedOnce: false,
+          }, info.toolUseAt, info.endedAt);
+        }
         ledger.ended(info.toolUseId);
         if (toolClass(info.tool) === 'subagent' && !next.hasLiveTask(info.toolUseId)) ledger.taskEnded(info.toolUseId);
         detector.toolEnded(info);
@@ -307,18 +385,24 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       next.onInterrupt(() => ledger.interrupted());
       next.onProcessExit(() => {
         ledger.clear();
-        hold.release();
+        if (!watchdog.isPending()) hold.release();
       });
-      next.onTurnClosed(() => void reconcile());
+      next.onNewSession(() => {
+        watchdog.dropPending();
+        if (!watchdog.isPending()) hold.release();
+      });
+      next.onUserMessage(() => void reconcile());
+      next.onTurnClosed(() => void reconcile(true));
     },
-    start() {
-      attached();
+    async start() {
+      if (!attached().hasStarted()) throw new Error('await AgentSession.start() before the execution runtime start()');
       return (starting ??= run());
     },
     close() {
       return (closed ??= (async () => {
         closing = true;
-        clearInterval(scanTimer);
+        await starting;
+        clearTimeout(scanTimer);
         clearTimeout(summaryTimer);
         await watcher.stop();
         await summarizer.close();

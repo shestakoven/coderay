@@ -69,6 +69,10 @@ export class ActivityLedger {
     else this.entries.set(call.toolUseId, { call, from: now, to: null, interruptedAt: null });
   }
 
+  unjudged(call: ToolCall, from: number, to: number): void {
+    if (!this.entries.has(call.toolUseId)) this.entries.set(call.toolUseId, { call, from, to, interruptedAt: null });
+  }
+
   ended(id: string): void {
     const entry = this.entries.get(id);
     if (entry && entry.to === null && !entry.call.background) entry.to = this.now();

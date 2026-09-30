@@ -34,9 +34,10 @@ export interface ChangeServiceOptions {
   sessionId: () => string | null;
   graceMs?: number;
   keptChanges?: number;
+  toolStamp?: (toolUseId: string) => Stamp;
 }
 
-type Stamp = { planId: string; planVersion: number; stepKey: string | null } | null;
+export type Stamp = { planId: string; planVersion: number; stepKey: string | null } | null;
 
 interface Queued {
   event: FsEvent;
@@ -106,7 +107,7 @@ export class ChangeService {
 
   async reattribute(toolUseId: string, from: number, to: number): Promise<ChangeView[]> {
     this.sync();
-    const stamp = this.stampFor();
+    const stamp = this.o.toolStamp?.(toolUseId) ?? this.stampFor();
     const updated: ChangeView[] = [];
     for (const change of this.all) {
       const at = this.stamps.get(change.id);
@@ -235,7 +236,7 @@ export class ChangeService {
       const flagged = isGitState(rel) && byAgent;
       made.push(this.build({
         path: rel, beforeHash, afterHash, at: event.wall, origin, enforcement: enforced ? 'enforced' : 'recorded', toolUseIds,
-        stamp: byAgent ? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable, beforeMode: base?.mode ?? null,
+        stamp: byAgent ? this.toolStampOf(toolUseIds) ?? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable, beforeMode: base?.mode ?? null,
       }));
       newStamps.set(made.at(-1)!.id, event.at);
       if (isUnreadable) continue;
@@ -281,6 +282,14 @@ export class ChangeService {
       outOfPlan: false, toolUseIds: o.toolUseIds, planId: o.stamp?.planId ?? null, planVersion: o.stamp?.planVersion ?? null,
       stepKey: o.stamp?.stepKey ?? null, eventId: null, resolution: o.resolution, added: null, removed: null, stored: o.stored, unreadable: o.unreadable, beforeMode: o.beforeMode,
     };
+  }
+
+  private toolStampOf(toolUseIds: string[]): Stamp {
+    for (const id of toolUseIds) {
+      const stamp = this.o.toolStamp?.(id);
+      if (stamp) return stamp;
+    }
+    return null;
   }
 
   private stampFor(): Stamp {
