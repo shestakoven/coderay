@@ -17,7 +17,8 @@ import type { C4Model, MapSnapshot } from '@ide/protocol';
 import { c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
 import { focusOf, type Selection } from './focus';
 import { c4NodePlans, componentCard, locateComponent, type NodePlan } from '../plan/c4-marks';
-import { usePlanOverlay } from '../plan/overlay';
+import { markCounts } from '../history/dialog-state';
+import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { PromptPopover } from '../plan/PromptPopover';
 import { promptTarget } from '../plan/prompt-text';
 import { StepBadges } from '../plan/StepBadges';
@@ -49,12 +50,14 @@ const NodePlansContext = createContext<Map<string, NodePlan>>(new Map());
 
 function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
   const plan = useContext(NodePlansContext).get(id);
+  const pending = useContext(PendingCountsContext).get(id);
   const cls = ['c4-card', data.kind, data.external && 'external', data.dim && 'dim', data.root && 'root', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', plan && 'in-plan', selected && 'selected'].filter(Boolean).join(' ');
   const planLine = plan && !data.expanded ? `${plan.line}${plan.creates ? ` · +${plan.creates} new` : ''}` : null;
   return (
     <div className={cls} style={{ ['--acc' as string]: data.accent }}>
       <Handle type="target" position={Position.Left} />
       {plan && <StepBadges steps={plan.steps} />}
+      {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}
       <div className="c4-title">
         <Icon name={data.icon} />
         <span>{data.title}</span>
@@ -136,6 +139,15 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
   const nodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
   const promptTargetId = overlay.prompt ? promptTarget(overlay.prompt)?.componentId ?? null : null;
   const promptNode = promptTargetId ? locateComponent(promptTargetId, model, { expanded: root ? null : expanded, root, nodeIds }).node : null;
+  const pendingCounts = useMemo(() => {
+    const owner = new Map(snapshot.files.map((file) => [file.path, file.componentId]));
+    const place = (componentId: string | null | undefined): string | null =>
+      componentId ? locateComponent(componentId, model, { expanded: root ? null : expanded, root, nodeIds }).node : null;
+    return markCounts([
+      ...[...overlay.eventFiles].map((path) => place(owner.get(path))),
+      ...overlay.prompts.map((p) => place(promptTarget(p)?.componentId)),
+    ]);
+  }, [snapshot.files, model, root, expanded, nodeIds, overlay.eventFiles, overlay.prompts]);
   const shownNodes = useMemo(
     () =>
       nodes.map((n) => {
@@ -143,10 +155,10 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         const className = focus
           ? focus.nodes.has(n.id) ? 'c4-focus' : focus.context.has(n.id) ? '' : 'c4-dim'
           : overlay.dimOthers && !inPlan ? 'c4-dim' : '';
-        const withPrompt = n.id === promptNode ? `${className} oop-target`.trim() : className;
+        const withPrompt = pendingCounts.has(n.id) ? `${className} oop-target`.trim() : className;
         return n.className === withPrompt ? n : { ...n, className: withPrompt };
       }),
-    [nodes, focus, nodePlans, overlay.dimOthers, promptNode],
+    [nodes, focus, nodePlans, overlay.dimOthers, pendingCounts],
   );
   const shownEdges = useMemo(
     () =>
@@ -188,6 +200,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
 
   return (
     <NodePlansContext.Provider value={nodePlans}>
+    <PendingCountsContext.Provider value={pendingCounts}>
     <div className="map c4">
       <ReactFlow
         nodes={shownNodes}
@@ -277,6 +290,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       />
       <C4Details snapshot={snapshot} model={model} selection={selection} />
     </div>
+    </PendingCountsContext.Provider>
     </NodePlansContext.Provider>
   );
 }

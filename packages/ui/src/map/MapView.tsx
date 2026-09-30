@@ -12,7 +12,8 @@ import {
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, type Dispatch } from 'react';
-import { usePlanOverlay } from '../plan/overlay';
+import { markCounts } from '../history/dialog-state';
+import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { PromptPopover } from '../plan/PromptPopover';
 import { mapAnchor } from '../plan/prompt-text';
 import { fitKey, layoutBounds, layoutGraph, type Bounds, type MapFlowNode } from './layout';
@@ -36,16 +37,26 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     () => (overlay.prompt ? mapAnchor(overlay.prompt, new Set(nodes.map((node) => node.id))) : null),
     [overlay.prompt, nodes],
   );
+  const pendingCounts = useMemo(() => {
+    const nodeIds = new Set(nodes.map((node) => node.id));
+    const owner = new Map(state.snapshot?.files.map((file) => [file.path, file.componentId]) ?? []);
+    const place = (path: string): string | null => {
+      if (nodeIds.has(path)) return path;
+      const component = owner.get(path);
+      return component && nodeIds.has(component) ? component : null;
+    };
+    return markCounts([...[...overlay.eventFiles].map(place), ...overlay.prompts.map((p) => mapAnchor(p, nodeIds))]);
+  }, [nodes, state.snapshot, overlay.eventFiles, overlay.prompts]);
   const flowNodes = useMemo(
     () =>
       nodes.map((node) => {
         const selected = node.id === state.selected;
         const componentId = node.parentId ?? node.id;
         const dim = overlay.dimOthers && !overlay.marks.components.has(componentId) ? 'plan-dim' : '';
-        const className = [dim, node.id === promptNode && 'oop-target'].filter(Boolean).join(' ');
+        const className = [dim, pendingCounts.has(node.id) && 'oop-target'].filter(Boolean).join(' ');
         return !!node.selected === selected && (node.className ?? '') === className ? node : { ...node, selected, className };
       }),
-    [nodes, state.selected, overlay.dimOthers, overlay.marks, promptNode],
+    [nodes, state.selected, overlay.dimOthers, overlay.marks, pendingCounts],
   );
   const bounds = useMemo(() => layoutBounds(nodes), [nodes]);
   const key = useMemo(() => fitKey(nodes), [nodes]);
@@ -76,6 +87,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
   }, [signature, setNodes, setEdges]);
 
   return (
+    <PendingCountsContext.Provider value={pendingCounts}>
     <div className="map">
       <ReactFlow
         nodes={flowNodes}
@@ -105,6 +117,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         <PromptPopover nodeId={promptNode} />
       </ReactFlow>
     </div>
+    </PendingCountsContext.Provider>
   );
 }
 

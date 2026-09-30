@@ -7,6 +7,8 @@ export interface PlanOverlay {
   dimOthers: boolean;
   focus: { componentIds: string[]; nonce: number } | null;
   prompt: GatePromptView | null;
+  prompts: GatePromptView[];
+  eventFiles: Set<string>;
   answerPrompt(answer: GateAnswer): void;
   onAnchor(anchored: boolean): void;
 }
@@ -16,8 +18,12 @@ export const PlanOverlayContext = createContext<PlanOverlay>({
   dimOthers: false,
   focus: null,
   prompt: null,
+  prompts: [],
+  eventFiles: new Set(),
   answerPrompt: () => undefined,
   onAnchor: () => undefined,
 });
 
 export const usePlanOverlay = (): PlanOverlay => useContext(PlanOverlayContext);
+
+export const PendingCountsContext = createContext<Map<string, number>>(new Map());

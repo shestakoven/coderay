@@ -1,5 +1,6 @@
 import { Handle, Position, type NodeProps } from '@xyflow/react';
-import { usePlanOverlay } from '../plan/overlay';
+import { useContext } from 'react';
+import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { StepBadges } from '../plan/StepBadges';
 import type { MapFlowNode } from './layout';
 
@@ -7,10 +8,12 @@ const classes = (...names: (string | false | undefined)[]) => names.filter(Boole
 
 export function ComponentNode({ id, data, selected }: NodeProps<MapFlowNode>) {
   const mark = usePlanOverlay().marks.components.get(id);
+  const pending = useContext(PendingCountsContext).get(id);
   return (
     <div className={classes('node', 'component', data.expanded && 'expanded', data.stale && 'stale', mark && 'in-plan', selected && 'selected')}>
       <Handle type="target" position={Position.Left} />
       {mark && <StepBadges steps={mark.steps} />}
+      {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}
       <div className="title">{data.label}</div>
       {data.summary && (
         <div className="summary" title={data.summary}>
@@ -34,10 +37,12 @@ export function ComponentNode({ id, data, selected }: NodeProps<MapFlowNode>) {
 
 export function FileNode({ id, data, selected }: NodeProps<MapFlowNode>) {
   const steps = usePlanOverlay().marks.files.get(id.startsWith('new:') ? id.slice('new:'.length) : id) ?? [];
+  const pending = useContext(PendingCountsContext).get(id);
   return (
     <div className={classes('node', 'file', data.parseError && 'error', data.ghost && 'ghost', steps.length > 0 && 'in-plan', selected && 'selected')}>
       <Handle type="target" position={Position.Left} />
       <StepBadges steps={steps} compact />
+      {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}
       <div className="title">
         {data.parseError ? '⚠ ' : ''}
         {data.ghost ? '+ ' : ''}

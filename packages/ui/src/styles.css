@@ -234,3 +234,16 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .policy-level label { display: flex; flex-direction: column; gap: 3px; font-size: 12px; }
 .policy-level textarea, .policy-level input, .policy-level select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
 .policy-level .inherit { flex-direction: row; gap: 4px; color: var(--muted); font-size: 11px; }
+
+.watchdog { border: 1px solid var(--warn); border-radius: 6px; margin: 6px 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: 55vh; overflow: auto; flex-shrink: 0; }
+.watchdog h3 { margin: 0; font-size: 13px; color: var(--warn); }
+.watchdog p { margin: 0; }
+.watchdog .note { color: var(--warn); font-size: 11px; }
+.wd-calls { margin: 0; padding-left: 16px; }
+.wd-dir-head, .wd-file-row { display: flex; align-items: baseline; gap: 6px; }
+.wd-chips { margin-left: auto; display: inline-flex; gap: 4px; }
+.wd-file { margin-left: 12px; }
+.watchdog .chip.on { background: var(--accent); color: var(--bg); }
+.wd-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.pending-badge { position: absolute; top: 4px; right: 6px; min-width: 18px; height: 18px; border-radius: 9px; background: var(--error); color: #fff; font-size: 11px; font-weight: 700; line-height: 18px; text-align: center; z-index: 2; }
+.react-flow__node .node { position: relative; }

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
@@ -9,7 +9,7 @@ const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', err
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
 
-export function ChatPanel({ chat, send, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets }: {
+export function ChatPanel({ chat, send, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
   chat: ChatState;
   send: (message: ClientMessage) => boolean;
   onDismissError: () => void;
@@ -18,6 +18,7 @@ export function ChatPanel({ chat, send, onDismissError, planRow, prompts, prompt
   promptAnchored: boolean;
   onAnswerPrompt: (id: string, answer: GateAnswer) => void;
   onFocusTargets: (paths: string[]) => void;
+  dialog: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
   const end = useRef<HTMLDivElement>(null);
@@ -55,6 +56,7 @@ export function ChatPanel({ chat, send, onDismissError, planRow, prompts, prompt
         <button onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'}>Restart</button>
         <button onClick={() => send({ type: 'session.new' })} disabled={!chat.session}>New session</button>
       </header>
+      {dialog}
       {planRow && (
         <button className="plan-row" onClick={planRow.onOpen}>≡ {planRow.text}</button>
       )}

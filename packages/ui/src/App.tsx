@@ -3,7 +3,9 @@ import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
+import { dialogEvent, eventFilePaths } from './history/dialog-state';
 import { historyReducer, initialHistoryState } from './history/history-state';
+import { WatchdogDialog } from './history/WatchdogDialog';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
@@ -22,7 +24,7 @@ export function App() {
   const [state, dispatch] = useReducer(mapReducer, initialMapState);
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
   const [plans, dispatchPlans] = useReducer(planReducer, initialPlanState);
-  const [, dispatchHist] = useReducer(historyReducer, initialHistoryState);
+  const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -126,7 +128,14 @@ export function App() {
     if (prompt) send({ type: 'gate.answer', promptId: prompt.id, answer });
   };
   const focusComponents = (componentIds: string[]) => setFocus({ componentIds, nonce: Date.now() });
-  const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, answerPrompt, onAnchor: setAnchored };
+  const eventFiles = useMemo(() => eventFilePaths(hist.history.events), [hist.history.events]);
+  const watchdog = dialogEvent(hist.history.events);
+  const requestDiff = (path: string, before: string | null, after: string | null): string => {
+    const requestId = crypto.randomUUID();
+    send({ type: 'history.diff', requestId, path, before, after });
+    return requestId;
+  };
+  const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
   return (
     <div className="app">
@@ -205,6 +214,7 @@ export function App() {
           send={send}
           onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
           prompts={pendingPrompts(plans.prompts)}
+          dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
           promptAnchored={anchored}
           onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
           onFocusTargets={(paths) => {
