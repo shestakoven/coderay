@@ -49,7 +49,7 @@ class StubSession implements WatchdogSession {
   onTurnClosed(): () => boolean { return () => true; }
 }
 
-interface Setup { turnOpen?: boolean; subagents?: number; settleMs?: number; mode?: ControlMode; shadow?: (real: ShadowRepo) => ShadowRepo; storeFails?: boolean; keptEvents?: number }
+interface Setup { turnOpen?: boolean; subagents?: number; settleMs?: number; maxCollectingMs?: number; now?: () => number; mode?: ControlMode; shadow?: (real: ShadowRepo) => ShadowRepo; storeFails?: boolean; keptEvents?: number }
 
 async function fixture(o: Setup = {}) {
   const root = tempDir('wd-root-');
@@ -97,7 +97,7 @@ async function fixture(o: Setup = {}) {
     changes, reverts: { revertChanges: () => { throw new Error('not here'); } },
     gate: { withdrawPending: (reason) => { withdrawn.push(reason); } }, policy: () => policy,
     toolInfo: (id) => (info.throws ? (() => { throw new Error('toolInfo exploded'); })() : id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),
-    settleMs: o.settleMs ?? 50, keptEvents: o.keptEvents, newId: () => `ev${++n}`,
+    settleMs: o.settleMs ?? 50, maxCollectingMs: o.maxCollectingMs, now: o.now, keptEvents: o.keptEvents, newId: () => `ev${++n}`,
   });
   onTestFinished(async () => { await watchdog.quiesce(); await changes.idle(); });
   const emitted: WatchdogEventView[] = [];
@@ -311,6 +311,18 @@ describe('Watchdog collecting and settling', () => {
     await sleepMs(100);
     expect(f.watchdog.events()[0]!.phase).toBe('collecting');
     await pendingEvent(f);
+  });
+
+  it('opens the dialog once the longest collecting time has passed, although changes keep arriving', async () => {
+    let t = 0;
+    const f = await fixture({ settleMs: 60_000, maxCollectingMs: 1_000, now: () => t });
+    f.toolCall();
+    const [a, b] = await f.produce(['src/a.ts', 'src/b.ts']);
+    f.watchdog.consider(a!);
+    t = 1_000;
+    f.watchdog.consider(b!);
+    const event = await pendingEvent(f);
+    expect(event.changes.map((c) => c.path)).toEqual(['src/a.ts', 'src/b.ts']);
   });
 
   it('fills the pending event: persisted, emitted, tool calls, reason, expand, default action', async () => {

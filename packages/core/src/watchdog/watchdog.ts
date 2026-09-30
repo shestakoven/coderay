@@ -12,6 +12,7 @@ import type { Store } from '../store/store';
 import { resumeMessage, type ResumeInput } from './resume';
 
 const SETTLE_MS = 1_000;
+const MAX_COLLECTING_MS = 10_000;
 const DELIVER_WAIT_MS = 10_000;
 const KEPT_EVENTS = 500;
 const KEPT_FAIL_OPEN_CALLS = 1_000;
@@ -46,6 +47,7 @@ export interface WatchdogOptions {
   policy: () => Policy;
   toolInfo: (toolUseId: string) => { tool: string; summary: string; stepKey: string | null } | undefined;
   settleMs?: number;
+  maxCollectingMs?: number;
   keptEvents?: number;
   deliverWaitMs?: number;
   now?: () => number;
@@ -75,11 +77,13 @@ export class Watchdog {
   private readonly killed = new Map<string, string[]>();
   private readonly stoppedTurnOpen = new Set<string>();
   private readonly settleMs: number;
+  private readonly maxCollectingMs: number;
   private readonly now: () => number;
   private readonly newId: () => string;
 
   constructor(private readonly o: WatchdogOptions) {
     this.settleMs = o.settleMs ?? SETTLE_MS;
+    this.maxCollectingMs = o.maxCollectingMs ?? MAX_COLLECTING_MS;
     this.now = o.now ?? Date.now;
     this.newId = o.newId ?? randomUUID;
   }
@@ -489,10 +493,11 @@ export class Watchdog {
 
   private arm(event: WatchdogEventView): void {
     this.clearTimer();
+    const left = event.ts + this.maxCollectingMs - this.now();
     this.timer = setTimeout(() => {
       this.timer = null;
       this.queueSettle(event);
-    }, this.settleMs);
+    }, Math.max(0, Math.min(this.settleMs, left)));
     this.timer.unref?.();
   }
 
