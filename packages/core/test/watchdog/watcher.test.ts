@@ -6,7 +6,6 @@ import { tempDir, waitFor } from '../helpers';
 
 async function watched(settleMs = 20): Promise<{ root: string; events: FsEvent[]; received: number[]; watcher: WatchdogWatcher }> {
   const root = tempDir('watch-');
-  for (const dir of ['refs/heads', 'hooks', 'info']) mkdirSync(join(root, '.git', dir), { recursive: true });
   mkdirSync(join(root, '.git', 'objects', 'ab'), { recursive: true });
   const events: FsEvent[] = [];
   const received: number[] = [];
@@ -90,12 +89,59 @@ describe('WatchdogWatcher', () => {
     expect(rels(events).sort()).toEqual(['a/b/f', 'z.ts']);
   });
 
+  it('delivers a file written in the same tick as its new directory, 30 times', async () => {
+    const { root, events } = await watched();
+    for (let i = 0; i < 30; i++) {
+      mkdirSync(join(root, `d${i}`), { recursive: true });
+      writeFileSync(join(root, `d${i}`, 'f.ts'), 'x');
+    }
+    await waitFor(() => new Set(rels(events)).size >= 30, 'all 30 files');
+    await sentinel(root, events, 'z.ts');
+    expect(rels(events).filter((r) => r !== 'z.ts').sort()).toEqual(Array.from({ length: 30 }, (_, i) => `d${i}/f.ts`).sort());
+  });
+
+  it('delivers a nested a/b/c created and written at once', async () => {
+    const { root, events } = await watched();
+    mkdirSync(join(root, 'a', 'b', 'c'), { recursive: true });
+    writeFileSync(join(root, 'a', 'b', 'c', 'f.ts'), 'x');
+    writeFileSync(join(root, 'a', 'g.ts'), 'x');
+    await waitFor(() => rels(events).includes('a/b/c/f.ts') && rels(events).includes('a/g.ts'), 'nested events');
+    await sentinel(root, events, 'z.ts');
+    expect(rels(events).sort()).toEqual(['a/b/c/f.ts', 'a/g.ts', 'z.ts']);
+  });
+
+  for (const batch of [1, 2, 3]) {
+    it(`delivers a write made the moment start() resolves, 10 times (batch ${batch} of 3)`, async () => {
+      for (let i = 0; i < 10; i++) {
+        const root = tempDir('watch-');
+        const events: FsEvent[] = [];
+        const watcher = new WatchdogWatcher({ root, settleMs: 20 });
+        watcher.onEvent((e) => events.push(e));
+        await watcher.start();
+        writeFileSync(join(root, 'a.ts'), 'x');
+        await waitFor(() => events.find((e) => e.rel === 'a.ts'), `event on iteration ${i}`, 1000);
+        await watcher.stop();
+      }
+    });
+  }
+
+  it('does not report files in ignored new directories', async () => {
+    const { root, events } = await watched();
+    mkdirSync(join(root, 'p', 'node_modules', 'q'), { recursive: true });
+    writeFileSync(join(root, 'p', 'node_modules', 'q', 'i.js'), 'x');
+    mkdirSync(join(root, '.git', 'objects', 'cd'), { recursive: true });
+    writeFileSync(join(root, '.git', 'objects', 'cd', 'y'), 'x');
+    await sentinel(root, events, 'z.ts');
+    expect(rels(events)).toEqual(['z.ts']);
+  });
+
   it('watches .git/HEAD and .git/refs but not .git/objects or .git/index', async () => {
     const { root, events } = await watched();
     writeFileSync(join(root, '.git', 'objects', 'ab', 'x'), '1');
     writeFileSync(join(root, '.git', 'index'), '1');
     writeFileSync(join(root, '.git', 'HEAD.lock'), '1');
     writeFileSync(join(root, '.git', 'HEAD'), 'ref');
+    for (const dir of ['refs/heads', 'hooks', 'info']) mkdirSync(join(root, '.git', dir), { recursive: true });
     writeFileSync(join(root, '.git', 'refs', 'heads', 'main'), 'sha');
     writeFileSync(join(root, '.git', 'hooks', 'pre-commit'), '#!');
     writeFileSync(join(root, '.git', 'config'), '[core]');
