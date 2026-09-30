@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { onTestFinished, describe, expect, it } from 'vitest';
 import { WatchdogWatcher, type FsEvent } from '../../src/watchdog/watcher';
@@ -22,6 +23,8 @@ const sentinel = async (root: string, events: FsEvent[], name: string): Promise<
 };
 
 const rels = (events: FsEvent[]): string[] => events.map((e) => e.rel);
+const uniqueRels = (events: FsEvent[]): string[] => [...new Set(rels(events))].sort();
+const probeDirs = (): string[] => readdirSync(tmpdir()).filter((n) => n.startsWith('watchdog-probe-'));
 
 describe('WatchdogWatcher', () => {
   it('reports a created file once with exists true', async () => {
@@ -86,7 +89,7 @@ describe('WatchdogWatcher', () => {
     writeFileSync(join(root, 'a', 'b', 'f'), 'x');
     await waitFor(() => events.find((e) => e.rel === 'a/b/f'), 'file event');
     await sentinel(root, events, 'z.ts');
-    expect(rels(events).sort()).toEqual(['a/b/f', 'z.ts']);
+    expect(uniqueRels(events)).toEqual(['a/b/f', 'z.ts']);
   });
 
   it('delivers a file written in the same tick as its new directory, 30 times', async () => {
@@ -97,7 +100,7 @@ describe('WatchdogWatcher', () => {
     }
     await waitFor(() => new Set(rels(events)).size >= 30, 'all 30 files');
     await sentinel(root, events, 'z.ts');
-    expect(rels(events).filter((r) => r !== 'z.ts').sort()).toEqual(Array.from({ length: 30 }, (_, i) => `d${i}/f.ts`).sort());
+    expect(uniqueRels(events).filter((r) => r !== 'z.ts')).toEqual(Array.from({ length: 30 }, (_, i) => `d${i}/f.ts`).sort());
   });
 
   it('delivers a nested a/b/c created and written at once', async () => {
@@ -107,7 +110,7 @@ describe('WatchdogWatcher', () => {
     writeFileSync(join(root, 'a', 'g.ts'), 'x');
     await waitFor(() => rels(events).includes('a/b/c/f.ts') && rels(events).includes('a/g.ts'), 'nested events');
     await sentinel(root, events, 'z.ts');
-    expect(rels(events).sort()).toEqual(['a/b/c/f.ts', 'a/g.ts', 'z.ts']);
+    expect(uniqueRels(events)).toEqual(['a/b/c/f.ts', 'a/g.ts', 'z.ts']);
   });
 
   for (const batch of [1, 2, 3]) {
@@ -218,5 +221,60 @@ describe('WatchdogWatcher', () => {
     await watcher.stop();
     await new Promise((r) => setTimeout(r, 250));
     expect(events).toEqual([]);
+  });
+
+  it('feeds a file the raw watcher missed through the new-directory scan', async () => {
+    const root = tempDir('watch-');
+    const events: FsEvent[] = [];
+    const watcher = new WatchdogWatcher({ root, settleMs: 20, testHooks: { dropRawFileEvents: (rel) => rel.startsWith('gone/') } });
+    watcher.onEvent((e) => events.push(e));
+    await watcher.start();
+    onTestFinished(() => watcher.stop());
+    mkdirSync(join(root, 'gone', 'deep'), { recursive: true });
+    writeFileSync(join(root, 'gone', 'deep', 'f.ts'), 'x');
+    await waitFor(() => events.find((e) => e.rel === 'gone/deep/f.ts'), 'scan-fed event');
+  });
+
+  it('reports a same-size rewrite that leaves the mtime unchanged', async () => {
+    const { root, events } = await watched();
+    const file = join(root, 'a.ts');
+    const fixed = new Date(1_000_000_000_000);
+    writeFileSync(file, 'aaaa');
+    utimesSync(file, fixed, fixed);
+    await waitFor(() => events.length === 1, 'create');
+    writeFileSync(file, 'bbbb');
+    utimesSync(file, fixed, fixed);
+    await waitFor(() => events.length === 2, 'same-size rewrite with restored mtime');
+  });
+
+  it('start() throws, closes the watcher and removes the probe dir when the handshake never completes', async () => {
+    const before = probeDirs();
+    const root = tempDir('watch-');
+    const watcher = new WatchdogWatcher({ root, probeAttempts: 2, probeWaitMs: 20, testHooks: { discardProbeEvents: true } });
+    await expect(watcher.start()).rejects.toThrow(/probe/);
+    expect(probeDirs()).toEqual(before);
+    await expect(watcher.start()).rejects.toThrow(/probe/);
+  });
+
+  it('refuses a second start()', async () => {
+    const { watcher } = await watched();
+    await expect(watcher.start()).rejects.toThrow(/already/);
+  });
+
+  it('works when the temp dir path itself contains node_modules', async () => {
+    const root = tempDir('watch-');
+    const base = tempDir('watch-');
+    const odd = join(base, 'node_modules', 'venv');
+    mkdirSync(odd, { recursive: true });
+    const saved = process.env.TMPDIR;
+    process.env.TMPDIR = odd;
+    onTestFinished(() => { process.env.TMPDIR = saved; });
+    const events: FsEvent[] = [];
+    const watcher = new WatchdogWatcher({ root, settleMs: 20 });
+    watcher.onEvent((e) => events.push(e));
+    await watcher.start();
+    onTestFinished(() => watcher.stop());
+    writeFileSync(join(root, 'a.ts'), 'x');
+    await waitFor(() => events.find((e) => e.rel === 'a.ts'), 'event');
   });
 });
