@@ -44,7 +44,9 @@ export function rollbackReducer(s: RollbackState | null, a: RollbackAction): Rol
 export const canConfirmRollback = (s: RollbackState): boolean =>
   s.stage === 'confirming' && s.preview !== null && s.preview.allowed && (s.preview.autoFiles.length > 0 || s.preview.confirmFiles.length > 0);
 
+export const agentIdle = (chat: ChatState): boolean => canSend(chat) && runningTasks(chat).length === 0;
+
 export const canOfferRollback = (chat: ChatState, plan: PlanView | null, step: PlanStepView): boolean =>
-  plan !== null && plan.steps.some((s) => s.key === step.key) && canSend(chat) && runningTasks(chat).length === 0;
+  plan !== null && plan.steps.some((s) => s.key === step.key) && agentIdle(chat);
 
 export const changeLine = (c: NodeChanges): string => `+${c.added} \u2212${c.removed} \u00b7 ${c.files.length} file${c.files.length === 1 ? '' : 's'}`;

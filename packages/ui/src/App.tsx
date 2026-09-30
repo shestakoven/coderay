@@ -4,7 +4,7 @@ import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, S
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
 import { dialogEvent, eventFilePaths } from './history/dialog-state';
-import { changeIndex, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
+import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
 import { WatchdogDialog } from './history/WatchdogDialog';
 import { DiffPanel } from './history/DiffPanel';
 import { Timeline } from './history/Timeline';
@@ -139,7 +139,7 @@ export function App() {
     return send({ type: 'history.diff', requestId, path, before, after }) ? requestId : null;
   };
   const changes = useMemo(() => changeIndex(hist.history, snapshot), [hist.history, snapshot]);
-  const latestPlan = useMemo(() => (shown ? (plans.plans.filter((plan) => plan.id === shown.id).at(-1) ?? null) : null), [plans.plans, shown]);
+  const latestPlan = useMemo(() => (shown ? latestPlanVersion(plans.plans, shown.id) : null), [plans.plans, shown]);
   const selectTimelineItem = (item: TimelineItem): void => {
     const paths = new Set(item.files);
     const owners = new Set(snapshot?.files.filter((file) => paths.has(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));

@@ -254,6 +254,7 @@ button.primary { background: #3a1f33; border-color: var(--plan); color: #ffd1ea;
 .react-flow__node.modified .c4-card { border-color: var(--warn); }
 .react-flow__node.in-progress .c4-card { border-color: var(--plan); background: var(--plan-soft); }
 .node.highlight { box-shadow: 0 0 0 2px var(--accent); }
+.node.highlight.out-of-plan { box-shadow: 0 0 0 2px var(--error), 0 0 0 4px var(--accent); }
 .change-line { color: var(--muted); font-size: 11px; }
 .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
 .tabs button.on { background: var(--accent); color: var(--bg); }

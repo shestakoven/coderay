@@ -2,7 +2,7 @@ import { useEffect, useMemo, useReducer, useState } from 'react';
 import type { ClientMessage, HistoryView, PlanView, RollbackPreview } from '@ide/protocol';
 import type { ChatState } from '../chat/chat-state';
 import { timelineItems, type TimelineItem } from './history-state';
-import { canConfirmRollback, canOfferRollback, rollbackReducer } from './timeline-state';
+import { agentIdle, canConfirmRollback, canOfferRollback, rollbackReducer } from './timeline-state';
 
 export interface HistoryResults { [requestId: string]: { error: string | null; preview?: RollbackPreview } | undefined }
 
@@ -34,6 +34,7 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
     const result = results[rollback.requestId];
     if (!result) return;
     if (rollback.stage === 'previewing' && result.preview && !result.error) dispatch({ type: 'preview', preview: result.preview });
+    else if (rollback.stage === 'previewing' && !result.error) dispatch({ type: 'result', error: 'The core sent no preview for this step.' });
     else if (rollback.stage === 'previewing' || rollback.stage === 'running') dispatch({ type: 'result', error: result.error });
   }, [rollback, results]);
 
@@ -43,7 +44,11 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
   };
   const undo = (revertId: string): void => {
     const requestId = crypto.randomUUID();
-    if (send({ type: 'revert.undo', requestId, revertId })) setUndoing({ ...undoing, [revertId]: requestId });
+    if (!undoPending(revertId) && send({ type: 'revert.undo', requestId, revertId })) setUndoing({ ...undoing, [revertId]: requestId });
+  };
+  const undoPending = (revertId: string): boolean => {
+    const requestId = undoing[revertId];
+    return requestId !== undefined && results[requestId] === undefined;
   };
   const undoText = (revertId: string): string | null => {
     const requestId = undoing[revertId];
@@ -68,7 +73,7 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
                 {step && item.ref.planId === latestPlan?.id && canOfferRollback(chat, latestPlan, step) && (
                   <button title="Roll this step back" onClick={() => openRollback(item.ref.planId!, item.ref.stepKey!)}>↺</button>
                 )}
-                {revert && revert.undoneAt === null && <button onClick={() => undo(revert.id)}>undo</button>}
+                {revert && revert.undoneAt === null && <button disabled={undoPending(revert.id) || !agentIdle(chat)} onClick={() => undo(revert.id)}>undo</button>}
                 {error && <span className="warn"> {error}</span>}
               </li>
             );

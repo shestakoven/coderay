@@ -3,7 +3,7 @@ import type { PlanStepView, PlanView, RollbackPreview, TaskView, TurnView } from
 import { chatReducer, initialChatState, type ChatState } from '../src/chat/chat-state';
 import { canConfirmRollback, canOfferRollback, rollbackReducer, type RollbackState } from '../src/history/timeline-state';
 import { timelineSummary } from '../src/history/Timeline';
-import { timelineItems } from '../src/history/history-state';
+import { latestPlanVersion, timelineItems } from '../src/history/history-state';
 
 const preview = (o: Partial<RollbackPreview> = {}): RollbackPreview => ({
   planId: 'p1', stepKey: 'a', allowed: true, reason: null, autoFiles: ['auto.ts'], confirmFiles: ['ask.ts', 'ask2.ts'], notRolledBack: [], conflicts: [], ...o,
@@ -77,6 +77,20 @@ describe('canOfferRollback', () => {
     expect(canOfferRollback(chatWith([turn(5)], [task(null)]), plan, step)).toBe(false);
     expect(canOfferRollback(chatWith([], []), null, step)).toBe(false);
     expect(canOfferRollback(chatWith([], []), plan, { ...step, key: 'gone' })).toBe(false);
+  });
+});
+
+describe('latest plan version', () => {
+  it('picks the highest version whatever the order, and gates the rollback on it', () => {
+    const v3 = { ...plan, version: 3, steps: [{ ...step, key: 'only-v3' }] };
+    const v1 = { ...plan, version: 1 };
+    const other = { ...plan, id: 'p2', version: 9 };
+    const latest = latestPlanVersion([v3, other, v1, plan], 'p1');
+    expect(latest?.version).toBe(3);
+    expect(latestPlanVersion([v3, v1], 'missing')).toBeNull();
+    const idle = chatWith([turn(5)], []);
+    expect(canOfferRollback(idle, latest, step)).toBe(false);
+    expect(canOfferRollback(idle, latest, v3.steps[0]!)).toBe(true);
   });
 });
 

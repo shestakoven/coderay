@@ -151,6 +151,9 @@ const latestVersions = (plans: PlanView[]): Map<string, PlanView> => {
   return byPlan;
 };
 
+export const latestPlanVersion = (plans: PlanView[], planId: string): PlanView | null =>
+  latestVersions(plans.filter((plan) => plan.id === planId)).get(planId) ?? null;
+
 export function changesByStep(h: HistoryView, plans: PlanView[], nodeId: string, snapshot: MapSnapshot | null): StepGroup[] {
   const changes = nodeChanges(h, snapshot, nodeId).changes;
   const latest = latestVersions(plans);

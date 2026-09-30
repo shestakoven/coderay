@@ -18,6 +18,7 @@ interface Props {
 export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, diffs, requestDiff }: Props) {
   const groups = changesByStep(history, plans, nodeId, snapshot);
   const [requested, setRequested] = useState<Record<string, string | null>>({});
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const label = snapshot?.components.find((c) => c.id === nodeId)?.name ?? nodeId;
   const toggleFilter = (on: boolean): void => {
@@ -27,8 +28,10 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
   };
   const expand = (change: ChangeView): void => {
     setOpen({ ...open, [change.id]: !open[change.id] });
-    if (change.id in requested) return;
-    setRequested({ ...requested, [change.id]: requestDiff(change.path, change.beforeHash, change.afterHash) });
+    if (requested[change.id]) return;
+    const id = requestDiff(change.path, change.beforeHash, change.afterHash);
+    setRequested({ ...requested, [change.id]: id });
+    setFailed({ ...failed, [change.id]: id === null });
   };
   if (groups.length === 0) return <p className="muted">No changes here yet.</p>;
   return (
@@ -53,7 +56,7 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
                     {open[change.id] ? '▾' : '▸'} <code>{change.path}</code>
                   </button>{' '}
                   <span className="muted">{change.origin} · {change.resolution ?? 'unresolved'}</span>
-                  {open[change.id] && <Hunks result={result} failed={requestId === null} />}
+                  {open[change.id] && <Hunks result={result} failed={failed[change.id] === true} />}
                 </li>
               );
             })}
