@@ -3,6 +3,7 @@ import { useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
+import { historyReducer, initialHistoryState } from './history/history-state';
 import { DetailsPanel } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
@@ -21,6 +22,7 @@ export function App() {
   const [state, dispatch] = useReducer(mapReducer, initialMapState);
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
   const [plans, dispatchPlans] = useReducer(planReducer, initialPlanState);
+  const [, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -70,6 +72,15 @@ export function App() {
           break;
         case 'gate.snapshot':
           dispatchPlans({ type: 'prompts', prompts: message.prompts });
+          break;
+        case 'history.snapshot':
+          dispatchHist({ type: 'snapshot', history: message.history });
+          break;
+        case 'history.patch':
+          dispatchHist({ type: 'patch', patch: message.patch });
+          break;
+        case 'history.result':
+          dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview });
           break;
         case 'error':
           dispatchChat({ type: 'error', message: message.message });
