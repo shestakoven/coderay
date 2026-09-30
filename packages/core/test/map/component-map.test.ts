@@ -1,3 +1,4 @@
+import { posix } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { matchManual, ownedGlobs, projectComponents } from '../../src/map/component-map';
 import type { AiComponent, ManualComponent } from '../../src/map/map-file';
@@ -47,6 +48,16 @@ describe('ownedGlobs', () => {
         ['ai:db', []],
       ]),
     );
+  });
+});
+
+describe('ownedGlobs escaping', () => {
+  it('escapes a directory once so a literal app/[id] glob matches only that directory', () => {
+    const files = ['app/[id]/page.ts', 'app/[id]/x.ts', 'lib/a(b)/y.ts'];
+    const globs = ownedGlobs([{ id: 'ai:web', files }], [...files, 'app/i/page.ts', 'lib/z.ts']).get('ai:web')!;
+    expect(globs).toEqual(['app/[[]id[]]/**', 'lib/a[(]b[)]/**']);
+    expect(globs.some((glob) => posix.matchesGlob('app/[id]/page.ts', glob))).toBe(true);
+    expect(globs.some((glob) => posix.matchesGlob('app/i/page.ts', glob))).toBe(false);
   });
 });
 

@@ -84,11 +84,19 @@ function statOrNull(path: string): Stats | null {
   }
 }
 
+function homes(home: string): string[] {
+  try {
+    return [...new Set([home, realpathSync.native(home)])];
+  } catch {
+    return [home];
+  }
+}
+
 function allowedPatterns(entries: string[], home: string): string[] {
-  return entries.flatMap((entry) => {
-    const expanded = expandHome(entry, home);
+  return [...new Set(entries.flatMap((entry) => homes(home).flatMap((base) => {
+    const expanded = expandHome(entry, base);
     return expanded.endsWith('/') ? [`${expanded}**`, expanded.slice(0, -1)] : [expanded];
-  });
+  })))];
 }
 
 export async function classifyPaths(paths: string[], ctx: ClassifyContext): Promise<PathInfo[]> {

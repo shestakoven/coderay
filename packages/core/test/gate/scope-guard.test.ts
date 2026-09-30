@@ -90,6 +90,14 @@ describe('decide', () => {
     expect(['A', 'B', 'C'].map((mode) => run('BrandNewTool', [], { state: 'none' }, mode as ControlMode).outcome)).toEqual(['deny', 'ask', 'flag']);
   });
 
+  it('says no component owns the directory for a new file in a directory the map does not own', () => {
+    const fresh = target('enforced', 'src/notes.md', { exists: false, unowned: true });
+    for (const mode of ['A', 'B'] as const) {
+      expect(run('Write', [fresh], approved(), mode).reason).toContain('no component owns this directory; name the file in a step, or expand the plan');
+    }
+    expect(run('Write', [target('enforced', 'src/notes.md', { exists: false })]).reason).not.toContain('no component owns');
+  });
+
   it('lists at most five targets in a reason', () => {
     const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => target('enforced', `x/${name}.ts`));
     expect(run('Bash', many, { state: 'none' }).reason).toContain('x/a.ts, x/b.ts, x/c.ts, x/d.ts, x/e.ts and 2 more');

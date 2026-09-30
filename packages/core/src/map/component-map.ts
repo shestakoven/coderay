@@ -1,5 +1,6 @@
 import { posix } from 'node:path';
 import type { MapComponent } from '@ide/protocol';
+import { escapeGlob } from '../gate/scope';
 import { folderComponents } from './folder-components';
 import type { AiComponent, ManualComponent } from './map-file';
 
@@ -48,7 +49,7 @@ export function ownedGlobs(components: Pick<AiComponent, 'id' | 'files'>[], allP
   const globs = new Map(components.map((component) => [component.id, [] as string[]]));
   for (const [dir, id] of owners) {
     if (id === null || (dir !== '.' && owners.get(posix.dirname(dir)) === id)) continue;
-    globs.get(id)?.push(dir === '.' ? '**' : `${dir}/**`);
+    globs.get(id)?.push(dir === '.' ? '**' : `${escapeGlob(dir)}/**`);
   }
   for (const list of globs.values()) list.sort();
   return globs;

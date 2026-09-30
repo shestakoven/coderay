@@ -138,6 +138,15 @@ describe('HookGate', () => {
     expect([gate.prompts(), store.gateEvents('s1').map((event) => event.resolution)]).toEqual([[], ['denied']]);
   });
 
+  it('says no component owns the directory when a new file lands where the map places no owner', async () => {
+    const { root, call, approve } = await setup({ mode: 'A' });
+    await approve();
+    const unowned = await call('Write', { file_path: join(root, 'docs/notes.md') });
+    const owned = await call('Write', { file_path: join(root, 'src/lib/new.ts') }, undefined, 'toolu_2');
+    expect(unowned?.permissionDecisionReason).toContain('no component owns this directory; name the file in a step, or expand the plan');
+    expect([owned?.permissionDecision, owned?.permissionDecisionReason]).toEqual(['deny', expect.not.stringContaining('no component owns')]);
+  });
+
   it('allows and flags an out-of-scope write in mode C', async () => {
     const { root, call, approve, store, decisions } = await setup({ mode: 'C' });
     await approve();

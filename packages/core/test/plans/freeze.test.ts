@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PlanStep, PlanTarget, Policy } from '@ide/protocol';
-import { freezeScope, reviewPlan } from '../../src/plans/freeze';
+import { freezeScope, ownerIndex, reviewPlan } from '../../src/plans/freeze';
 import { parsePlanInput, type ComponentRef } from '../../src/plans/plan-input';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { tempDir, writeTree } from '../helpers';
@@ -132,5 +132,29 @@ describe('reviewPlan', () => {
       expect(result.owners).toEqual({ 'SRC/APP.TS': null, 'src/lib/util.ts': 'lib' });
       expect(result.review.notes).toEqual(expect.arrayContaining(['the map cannot place the new file SRC/APP.TS in a component']));
     }
+  });
+});
+
+describe('overlapping component globs', () => {
+  const overlapping: ComponentRef[] = [
+    { id: 'a', name: 'A', files: [], globs: ['src/**'] },
+    { id: 'b', name: 'B', files: [], globs: ['src/x/**'] },
+  ];
+
+  it('gives a new file matched by two components no owner, and a file matched by one its owner', () => {
+    const owner = ownerIndex(overlapping);
+    expect([owner('src/x/new.ts', false), owner('src/y/new.ts', false)]).toEqual([null, 'a']);
+  });
+
+  it('lets a listed file keep its owner even when two globs match it', () => {
+    expect(ownerIndex([{ ...overlapping[0]!, files: ['src/x/old.ts'] }, overlapping[1]!])('src/x/old.ts', true)).toBe('a');
+  });
+
+  it('waits with a note naming both components', async () => {
+    const root = await project();
+    const result = await reviewPlan(steps([{ path: 'src/x/new.ts', op: 'create' }]), { root, policy: DEFAULT_POLICY, components: overlapping, tempRoots: [] });
+    expect(result.review.auto).toBe(false);
+    expect(result.review.notes).toContain('src/x/new.ts matches the globs of A and B');
+    expect(result.owners['src/x/new.ts']).toBeNull();
   });
 });
