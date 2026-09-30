@@ -63,6 +63,7 @@ export class ChangeService {
   private readonly queue: Queued[] = [];
   private readonly lastRecorded = new Map<string, string | null>();
   private readonly unreadableSeen = new Set<string>();
+  private readonly deletedModes = new Map<string, number>();
   private readonly stamps = new Map<string, number>();
   private readonly graceMs: number;
   private draining: Promise<void> | null = null;
@@ -76,6 +77,10 @@ export class ChangeService {
   onChange(listener: (changes: ChangeView[]) => void): () => boolean {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  deletedMode(rel: string): number | undefined {
+    return this.deletedModes.get(rel);
   }
 
   handle(event: FsEvent): Promise<void> {
@@ -122,6 +127,7 @@ export class ChangeService {
       made.push(change);
       if (d.after) rows.push({ path: d.path, hash: d.after.hash, stored: d.after.stored, size: d.after.size, mode: d.after.mode });
       else removed.push(d.path);
+      if (!d.after && d.before) this.deletedModes.set(d.path, d.before.mode);
     }
     await this.countLines(made, new Map(drift.map((d) => [d.path, { before: d.before?.stored ?? true }])));
     this.persistStrict(made, { rows, removed });
@@ -235,7 +241,10 @@ export class ChangeService {
       }
       checks.set(rel, { before: base?.stored ?? true });
       if (blob) rows.push({ path: rel, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
-      else removed.push(rel);
+      else {
+        removed.push(rel);
+        if (base) this.deletedModes.set(rel, base.mode);
+      }
     }
     if (made.length === 0) return;
     try {
