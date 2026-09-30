@@ -13,6 +13,7 @@ import { Baselines, newScanCache, ScanError, scanTree } from '../history/baselin
 import { ChangeService } from '../history/changes';
 import { Checkpoints } from '../history/checkpoints';
 import { DiffService } from '../history/diff';
+import { HistoryService } from '../history/history-service';
 import { IdeWrites } from '../history/ide-writes';
 import { RevertService } from '../history/revert';
 import { ShadowRepo } from '../history/shadow';
@@ -55,6 +56,7 @@ export interface ExecutionRuntime {
   hold: Hold;
   checkpoints: Checkpoints;
   diff: DiffService;
+  history: HistoryService;
   baselines: Baselines;
   start(): Promise<void>;
   attach(session: AgentSession): void;
@@ -165,6 +167,13 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     components: () => o.components(), isProtected, debounceMs: o.summaryDebounceMs,
   });
   const diff = new DiffService({ shadow, changes: () => changes.changes(), baselines, checkpoints });
+  let settle!: () => void;
+  const settled = new Promise<void>((resolve) => { settle = resolve; });
+  const history = new HistoryService({
+    store: o.store, sessionId, changes, watchdog, reverts, checkpoints, summarizer, diff, gate: gate.gate, plans: gate.plans,
+    ready: () => settled, unavailable: () => failure,
+  });
+  upserted.add((list) => history.upsertChanges(list));
   const watcher = new WatchdogWatcher({ ...o.watcherOptions, root: o.root, settleMs: o.watcherSettleMs });
 
   let closing = false;
@@ -308,6 +317,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         await changes.idle();
         if (closing || checkpoints.manifests(event.planId, event.key)?.cycle !== cycle) return;
         checkpoints.seal(event.planId, event.key);
+        history.poke();
         summarizer.request('step', `${event.planId}/${event.key}`);
       })().catch((error) => console.error('execution: could not seal a step checkpoint', error));
     } catch (error) {
@@ -326,7 +336,8 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
   };
   const exposedGate: GateRuntime = { ...gate, sessionGate };
 
-  const run = async (): Promise<void> => {
+  const run = (): Promise<void> => runStart().finally(settle);
+  const runStart = async (): Promise<void> => {
     const current = attached();
     try {
       if (closing) return;
@@ -371,6 +382,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     hold,
     checkpoints,
     diff,
+    history,
     baselines,
     unavailable: () => failure,
     onChangesUpserted(listener) {
@@ -399,6 +411,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         if (!watchdog.isPending()) hold.release();
       });
       next.onNewSession(() => {
+        history.poke();
         watchdog.dropPending();
         if (!watchdog.isPending()) hold.release();
       });
@@ -412,6 +425,8 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     close() {
       return (closed ??= (async () => {
         closing = true;
+        history.close();
+        settle();
         await starting;
         clearTimeout(scanTimer);
         clearTimeout(summaryTimer);

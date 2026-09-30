@@ -349,6 +349,10 @@ export class AgentSession {
     for (const note of notes) this.apply(this.tracker.notice(note));
   }
 
+  notice(text: string): void {
+    this.apply(this.tracker.notice(text));
+  }
+
   queueNote(text: string): void {
     if (text.trim() === '') throw new SessionError('empty');
     this.notes.push(text);
