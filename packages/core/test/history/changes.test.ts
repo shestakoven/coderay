@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { ChangeView } from '@ide/protocol';
 import type { PlanGate } from '../../src/gate/scope-guard';
 import { Baselines, scanTree } from '../../src/history/baselines';
@@ -41,6 +41,7 @@ interface Fixture {
   store: ReturnType<typeof openStore>;
   clock: { now: number };
   gate: { value: PlanGate };
+  session: { id: string | null };
   ev(rel: string, exists?: boolean): FsEvent;
 }
 
@@ -62,11 +63,12 @@ async function fixture(o: { root?: string; shadow?: (real: ShadowRepo) => Shadow
   const ledger = new ActivityLedger({ now: () => clock.now });
   const ideWrites = new IdeWrites();
   const gate: { value: PlanGate } = { value: { state: 'none' } };
+  const session: { id: string | null } = { id: 's1' };
   const checkpoints = new Checkpoints(store, () => 's1');
   const service = new ChangeService({
-    root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites, ledger, store, checkpoints, sessionId: () => 's1', plans: { gate: () => gate.value },
+    root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites, ledger, store, checkpoints, sessionId: () => session.id, plans: { gate: () => gate.value },
   });
-  return { root, service, ledger, ideWrites, baselines, checkpoints, shadow, store, clock, gate, ev: (rel, exists = true) => ({ rel, exists, at: clock.now, wall: Date.now() }) };
+  return { root, service, ledger, ideWrites, baselines, checkpoints, shadow, store, clock, gate, session, ev: (rel, exists = true) => ({ rel, exists, at: clock.now, wall: Date.now() }) };
 }
 
 const approved = (activeStep: string | null): PlanGate => ({ state: 'approved', planId: 'p1', version: 2, scope: { files: [], globs: [] } as never, activeStep });
@@ -409,5 +411,110 @@ describe('ChangeService with the real watcher', () => {
       const change = await waitFor(() => f.service.changes().find((c) => c.path === 'watched.ts'), 'watched change', 5000);
       expect(change).toMatchObject({ origin: 'human', beforeHash: null, enforcement: 'enforced' });
     } finally { await watcher.stop(); }
+  });
+});
+
+describe('ChangeService failure handling', () => {
+  const failOnce = (f: Fixture) => vi.spyOn(f.store, 'saveChanges').mockImplementationOnce(() => { throw new Error('disk full'); });
+
+  it('loses nothing when the store fails mid-batch: state is untouched and the next event records it', async () => {
+    const f = await fixture();
+    const before = f.baselines.get('a.ts')!.hash;
+    const heard: number[] = [];
+    f.service.onChange((c) => heard.push(c.length));
+    failOnce(f);
+    f.gate.value = approved('s1');
+    f.checkpoints.begin('p1', 's1');
+    f.ledger.allowed(call({ targets: ['a.ts'] }));
+    write(f.root, 'a.ts', 'changed');
+    write(f.root, 'dist/x.js', 'v1');
+    await expect(Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))])).rejects.toThrow('disk full');
+    expect(f.service.changes()).toEqual([]);
+    expect(heard).toEqual([]);
+    expect(f.baselines.get('a.ts')!.hash).toBe(before);
+    expect(f.checkpoints.manifests('p1', 's1')!.after).toEqual({});
+    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))]);
+    expect(f.service.changes().map((c) => [c.path, c.beforeHash === null ? null : c.beforeHash === before])).toEqual([['a.ts', true], ['dist/x.js', null]]);
+    expect(heard).toEqual([2]);
+    expect(f.store.changes('s1')).toHaveLength(2);
+  });
+
+  it('fails a drift record loudly and keeps the drift until it is saved', async () => {
+    const f = await fixture();
+    write(f.root, 'a.ts', 'drifted');
+    const { drift } = await scanTree(f.root, DEFAULT_POLICY, f.shadow, f.baselines);
+    failOnce(f);
+    await expect(f.service.recordDrift(drift, 'unknown')).rejects.toThrow('disk full');
+    expect(f.service.changes()).toEqual([]);
+    expect((await scanTree(f.root, DEFAULT_POLICY, f.shadow, f.baselines)).drift).toHaveLength(1);
+    await f.service.recordDrift(drift, 'unknown');
+    expect((await scanTree(f.root, DEFAULT_POLICY, f.shadow, f.baselines)).drift).toEqual([]);
+  });
+
+  it('fails a re-attribution loudly and leaves the change human', async () => {
+    const f = await fixture();
+    write(f.root, 'a.ts', 'x');
+    await f.service.handle(f.ev('a.ts'));
+    failOnce(f);
+    await expect(f.service.reattribute('c1', 0, 5000)).rejects.toThrow('disk full');
+    expect(f.service.changes()[0]!.origin).toBe('human');
+    expect(f.store.changes('s1')[0]!.origin).toBe('human');
+    expect(await f.service.reattribute('c1', 0, 5000)).toHaveLength(1);
+  });
+
+  it('rejects a batch and advances nothing while there is no session', async () => {
+    const f = await fixture();
+    const before = f.baselines.get('a.ts')!.hash;
+    f.session.id = null;
+    write(f.root, 'a.ts', 'x');
+    write(f.root, 'dist/x.js', 'v1');
+    await expect(Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))])).rejects.toThrow('no session');
+    expect(f.baselines.get('a.ts')!.hash).toBe(before);
+    f.session.id = 's1';
+    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))]);
+    expect(f.service.changes().map((c) => c.path)).toEqual(['a.ts', 'dist/x.js']);
+  });
+
+  it('stamps each event with the step that was active when it arrived', async () => {
+    const f = await fixture();
+    f.ledger.allowed(call({ tool: 'Bash', toolClass: 'shell' }));
+    write(f.root, 'a.ts', 'one');
+    write(f.root, 'b.ts', 'two');
+    f.gate.value = approved('s1');
+    const first = f.service.handle(f.ev('a.ts'));
+    f.gate.value = approved('s2');
+    const second = f.service.handle(f.ev('b.ts'));
+    f.gate.value = approved(null);
+    await Promise.all([first, second]);
+    expect(f.service.changes().map((c) => [c.path, c.stepKey])).toEqual([['a.ts', 's1'], ['b.ts', 's2']]);
+  });
+
+  it('counts lines up to 100 enforced changes per batch and leaves them null above', async () => {
+    const small = await fixture();
+    for (let i = 0; i < 100; i += 1) write(small.root, `n/f${i}.ts`, 'x');
+    await Promise.all(Array.from({ length: 100 }, (_, i) => small.service.handle(small.ev(`n/f${i}.ts`))));
+    expect(small.service.changes().every((c) => c.added === 1 && c.removed === 0)).toBe(true);
+    const big = await fixture();
+    for (let i = 0; i < 101; i += 1) write(big.root, `n/f${i}.ts`, 'x');
+    await Promise.all(Array.from({ length: 101 }, (_, i) => big.service.handle(big.ev(`n/f${i}.ts`))));
+    expect(big.service.changes()).toHaveLength(101);
+    expect(big.service.changes().every((c) => c.added === null && c.removed === null && c.stored)).toBe(true);
+  });
+
+  it('treats no path as tracked when git ls-files fails', async () => {
+    const f = await fixture();
+    const bin = tempDir('chg-bin-');
+    const real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh
+case "$*" in *ls-files*) exit 2;; esac
+exec '${real}' "$@"
+`);
+    chmodSync(join(bin, 'git'), 0o755);
+    f.ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', allTracked: true }));
+    write(f.root, 'a.ts', 'tracked but unknown');
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    try { await f.service.handle(f.ev('a.ts')); } finally { process.env.PATH = path; }
+    expect(f.service.changes()[0]!.origin).toBe('agent-tool');
   });
 });

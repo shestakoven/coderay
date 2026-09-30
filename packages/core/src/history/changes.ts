@@ -17,6 +17,7 @@ const BATCH_MAX = 500;
 const DIFF_CONCURRENCY = 8;
 const HASH_CONCURRENCY = 8;
 const GRACE_MS = 2_000;
+const LINE_COUNT_MAX = 100;
 const GIT_BUFFER = 64 * 1024 * 1024;
 
 export interface ChangeServiceOptions {
@@ -33,8 +34,11 @@ export interface ChangeServiceOptions {
   graceMs?: number;
 }
 
+type Stamp = { planId: string; planVersion: number; stepKey: string | null } | null;
+
 interface Queued {
   event: FsEvent;
+  stamp: Stamp;
   resolve: () => void;
   reject: (error: unknown) => void;
 }
@@ -76,7 +80,7 @@ export class ChangeService {
 
   handle(event: FsEvent): Promise<void> {
     return new Promise((resolve, reject) => {
-      this.queue.push({ event, resolve, reject });
+      this.queue.push({ event, stamp: this.stampFor(), resolve, reject });
       this.draining ??= this.drain();
     });
   }
@@ -97,9 +101,10 @@ export class ChangeService {
     for (const change of this.all) {
       const at = this.stamps.get(change.id);
       if (change.origin !== 'human' || at === undefined || at < from || at > to + this.graceMs) continue;
-      updated.push(this.replace({ ...change, origin: 'agent-tool', toolUseIds: [toolUseId], ...stamp }));
+      updated.push({ ...change, origin: 'agent-tool', toolUseIds: [toolUseId], planId: stamp?.planId ?? null, planVersion: stamp?.planVersion ?? null, stepKey: stamp?.stepKey ?? null });
     }
-    this.persist(updated);
+    this.persistStrict(updated);
+    for (const change of updated) this.replace(change);
     this.o.checkpoints.recordMany(updated);
     return updated;
   }
@@ -119,8 +124,8 @@ export class ChangeService {
       else removed.push(d.path);
     }
     await this.countLines(made, new Map(drift.map((d) => [d.path, { before: d.before?.stored ?? true }])));
+    this.persistStrict(made);
     this.remember(made);
-    this.persist(made);
     this.o.baselines.setMany(rows, removed);
     return made;
   }
@@ -129,7 +134,7 @@ export class ChangeService {
     this.sync();
     const wanted = new Set(ids);
     const updated = this.all.filter((c) => wanted.has(c.id)).map((c) => this.replace({ ...c, resolution, eventId }));
-    this.persist(updated);
+    this.persistLoose(updated);
   }
 
   relabelHuman(ids: string[]): void {
@@ -137,7 +142,7 @@ export class ChangeService {
     const wanted = new Set(ids);
     const updated = this.all.filter((c) => wanted.has(c.id)).map((c) =>
       this.replace({ ...c, origin: 'human', outOfPlan: false, resolution: 'relabeled-human', toolUseIds: [], planId: null, planVersion: null, stepKey: null }));
-    this.persist(updated);
+    this.persistLoose(updated);
   }
 
   private async drain(): Promise<void> {
@@ -146,7 +151,7 @@ export class ChangeService {
       while (this.queue.length > 0) {
         const batch = this.queue.splice(0, BATCH_MAX);
         try {
-          await this.processBatch(batch.map((q) => q.event));
+          await this.processBatch(batch);
           for (const q of batch) q.resolve();
         } catch (error) {
           for (const q of batch) q.reject(error);
@@ -157,10 +162,10 @@ export class ChangeService {
     }
   }
 
-  private async processBatch(events: FsEvent[]): Promise<void> {
+  private async processBatch(queued: Queued[]): Promise<void> {
     this.sync();
-    const latest = new Map<string, FsEvent>();
-    for (const event of events) latest.set(event.rel, event);
+    const latest = new Map<string, Queued>();
+    for (const q of queued) latest.set(q.event.rel, q);
     const rels = [...latest.keys()];
     const { root, policy, shadow, baselines } = this.o;
     const infos = await classifyPaths(rels.map((rel) => join(root, rel)), { root, policy });
@@ -174,14 +179,16 @@ export class ChangeService {
     ]);
     const blobs = new Map([...enforcedBlobs.blobs, ...recordedBlobs.blobs]);
     const unreadable = new Set([...enforcedBlobs.unreadable, ...recordedBlobs.unreadable]);
-    const stamp = this.stampFor();
 
     const made: ChangeView[] = [];
     const checks = new Map<string, { before: boolean }>();
     const rows: BaselineRecord[] = [];
     const removed: string[] = [];
+    const recorded = new Map<string, string | null>();
+    const becameUnreadable: string[] = [];
+    const newStamps = new Map<string, number>();
     for (const rel of rels) {
-      const event = latest.get(rel)!;
+      const { event, stamp } = latest.get(rel)!;
       const enforced = enforcedRels.includes(rel);
       const blob = blobs.get(rel) ?? null;
       const base = enforced ? baselines.get(rel) : undefined;
@@ -190,10 +197,9 @@ export class ChangeService {
       let afterHash: string | null;
       if (isUnreadable) {
         if (this.unreadableSeen.has(rel)) continue;
-        this.unreadableSeen.add(rel);
+        becameUnreadable.push(rel);
         afterHash = beforeHash;
       } else {
-        this.unreadableSeen.delete(rel);
         afterHash = blob?.hash ?? null;
         if (afterHash === beforeHash) continue;
       }
@@ -210,10 +216,10 @@ export class ChangeService {
         path: rel, beforeHash, afterHash, at: event.wall, origin, enforcement: enforced ? 'enforced' : 'recorded', toolUseIds,
         stamp: byAgent ? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable,
       }));
-      this.stamps.set(made.at(-1)!.id, event.at);
+      newStamps.set(made.at(-1)!.id, event.at);
       if (isUnreadable) continue;
       if (!enforced) {
-        this.lastRecorded.set(rel, afterHash);
+        recorded.set(rel, afterHash);
         continue;
       }
       checks.set(rel, { before: base?.stored ?? true });
@@ -222,8 +228,12 @@ export class ChangeService {
     }
     if (made.length === 0) return;
     await this.countLines(made, checks);
+    this.persistStrict(made);
     this.remember(made);
-    this.persist(made, true);
+    for (const [id, at] of newStamps) this.stamps.set(id, at);
+    for (const [rel, hash] of recorded) this.lastRecorded.set(rel, hash);
+    for (const rel of becameUnreadable) this.unreadableSeen.add(rel);
+    for (const rel of rels) if (!unreadable.has(rel)) this.unreadableSeen.delete(rel);
     baselines.setMany(rows, removed);
     this.o.checkpoints.recordMany(made);
     for (const listener of this.listeners) {
@@ -237,7 +247,7 @@ export class ChangeService {
 
   private build(o: {
     path: string; beforeHash: string | null; afterHash: string | null; at: number; origin: ChangeOrigin; enforcement: 'enforced' | 'recorded';
-    toolUseIds: string[]; stamp: { planId: string; planVersion: number; stepKey: string | null } | null; resolution: ChangeResolution | null;
+    toolUseIds: string[]; stamp: Stamp; resolution: ChangeResolution | null;
     stored: boolean; unreadable: boolean;
   }): ChangeView {
     return {
@@ -247,12 +257,13 @@ export class ChangeService {
     };
   }
 
-  private stampFor(): { planId: string; planVersion: number; stepKey: string | null } | null {
+  private stampFor(): Stamp {
     const gate = this.o.plans.gate();
     return gate.state === 'approved' ? { planId: gate.planId, planVersion: gate.version, stepKey: gate.activeStep } : null;
   }
 
   private async countLines(changes: ChangeView[], checks: Map<string, { before: boolean }>): Promise<void> {
+    if (changes.filter((c) => c.enforcement === 'enforced').length > LINE_COUNT_MAX) return;
     const todo = changes.filter((c) => c.enforcement === 'enforced' && !c.unreadable && (c.afterHash === null || c.stored) && checks.get(c.path)?.before !== false);
     await mapLimit(todo, DIFF_CONCURRENCY, async (change) => {
       const diff = await this.o.shadow.diff(change.beforeHash, change.afterHash);
@@ -284,7 +295,7 @@ export class ChangeService {
       const out = await git(this.o.root, ['--literal-pathspecs', 'ls-files', '-c', '-z', '--', ...rels]);
       return new Set(out.split('\0').filter(Boolean));
     } catch {
-      return new Set(rels);
+      return new Set();
     }
   }
 
@@ -321,13 +332,17 @@ export class ChangeService {
     return next;
   }
 
-  private persist(changes: ChangeView[], strict = false): void {
+  private persistStrict(changes: ChangeView[]): void {
     const sessionId = this.o.sessionId();
-    if (sessionId === null || changes.length === 0) return;
+    if (sessionId === null) throw new Error('changes: no session to record into');
+    if (changes.length > 0) this.o.store.saveChanges(sessionId, changes);
+  }
+
+  private persistLoose(changes: ChangeView[]): void {
     try {
-      this.o.store.saveChanges(sessionId, changes);
+      const sessionId = this.o.sessionId();
+      if (sessionId !== null && changes.length > 0) this.o.store.saveChanges(sessionId, changes);
     } catch (error) {
-      if (strict) throw error;
       console.error('changes: could not save changes', error);
     }
   }
