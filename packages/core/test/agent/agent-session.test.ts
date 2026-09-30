@@ -483,7 +483,7 @@ describe('AgentSession', () => {
     h.session.onMessage((message) => {
       if (armed && message.type === 'session.patch') throw new Error('boom');
     });
-    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onToolResult((info) => ended.push(info.toolUseId));
     h.session.onIdle(() => {
       idles += 1;
     });
@@ -705,7 +705,7 @@ describe('AgentSession with the gate', () => {
     const h = await harness('crash-mid-turn');
     const ended: string[] = [];
     let exits = 0;
-    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onToolResult((info) => ended.push(info.toolUseId));
     h.session.onProcessExit(() => {
       exits += 1;
     });
@@ -714,13 +714,13 @@ describe('AgentSession with the gate', () => {
     expect(ended).toEqual(['toolu_fx_crash']);
   });
 
-  it('still ends the session and tells the other listeners when a tool-end, idle or exit listener throws', async () => {
+  it('still ends the session and tells the other listeners when a tool-result, idle or exit listener throws', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => errors.mockRestore());
     const h = await harness('crash-mid-turn');
     let exits = 0;
-    h.session.onToolEnd(() => {
-      throw new Error('tool-end listener');
+    h.session.onToolResult(() => {
+      throw new Error('tool-result listener');
     });
     h.session.onIdle(() => {
       throw new Error('idle listener');

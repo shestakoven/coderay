@@ -237,6 +237,24 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     expect(f.events().length).toBe(1);
   });
 
+  it('keeps hook-pending as the decision of a call that ran while its hook still waited for the user', async () => {
+    const gates = tempDir('release-');
+    const [start, release] = [join(gates, 'start'), join(gates, 'release')];
+    const f = await execFlow('exec-fail-open', { claudeEnv: { FAKE_CLAUDE_START: start, FAKE_CLAUDE_RELEASE: release } });
+    await f.send();
+    await waitFor(() => f.session.state().items.find((i) => i.kind === 'tool' && i.id === 'toolu_f'), 'the tool call seen by the core');
+    const gate = f.runtime.gate.gate;
+    const hook = gate.evaluate({ tool_name: 'Write', tool_input: { file_path: join(f.root, 'src/other.ts'), content: 'x\n' }, tool_use_id: 'toolu_f', cwd: f.root }, new AbortController().signal);
+    await waitFor(() => gate.pending().find((prompt) => prompt.toolUseId === 'toolu_f'), 'the hook call waiting for the user');
+    writeFileSync(start, '');
+    writeFileSync(release, '');
+    expect((await hook)?.permissionDecision).toBe('deny');
+    await waitFor(() => f.events().find((e) => e.kind === 'fail-open' && e.phase === 'pending'), 'the fail-open event');
+    const stored = f.store.history(f.session.sessionId()!).decisions.filter((d) => d.toolUseId === 'toolu_f');
+    const item = f.session.state().items.find((i) => i.id === 'toolu_f');
+    expect([stored.map((d) => d.decision), item?.kind === 'tool' ? item.decision : null]).toEqual([['hook-pending'], 'hook-pending']);
+  });
+
   it('rolls a step back without touching harness and recorded-only files, and previews the agent-tool files', async () => {
     const f = await execFlow('exec-step-rollback', { files: { '.gitignore': 'dist/\n' } });
     await f.send();

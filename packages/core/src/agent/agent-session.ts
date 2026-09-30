@@ -83,7 +83,6 @@ export class AgentSession {
   private readonly decisions = new Map<string, ToolDecisionRecord>();
   private readonly idleListeners = new Set<() => void>();
   private readonly exitListeners = new Set<() => void>();
-  private readonly toolEndListeners = new Set<(toolUseId: string) => void>();
   private readonly userMessageListeners = new Set<() => void>();
   private readonly toolResultListeners = new Set<(info: ToolEndInfo) => void>();
   private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
@@ -236,11 +235,6 @@ export class AgentSession {
   onProcessExit(listener: () => void): () => void {
     this.exitListeners.add(listener);
     return () => this.exitListeners.delete(listener);
-  }
-
-  onToolEnd(listener: (toolUseId: string) => void): () => void {
-    this.toolEndListeners.add(listener);
-    return () => this.toolEndListeners.delete(listener);
   }
 
   onToolResult(listener: (info: ToolEndInfo) => void): () => void {
@@ -648,7 +642,6 @@ export class AgentSession {
     }
     this.emit({ type: 'session.patch', patch });
     for (const toolUseId of ended) {
-      notify(this.toolEndListeners, toolUseId);
       const info = this.tracker.endInfo(toolUseId);
       if (info) notify(this.toolResultListeners, info);
     }

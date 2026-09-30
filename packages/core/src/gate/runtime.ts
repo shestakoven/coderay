@@ -94,7 +94,8 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
       session = agent;
       gate.onDecision((record) => agent.recordDecision(record));
       agent.onUserMessage(() => plans.userMessage());
-      agent.onToolEnd((toolUseId) => gate.dropForTool(toolUseId));
+      // An ok result means the call ran without the hook's answer: a fail-open, which is not a denial.
+      agent.onToolResult((info) => gate.dropForTool(info.toolUseId, { record: info.status !== 'ok' }));
       agent.onProcessExit(() => plans.withdrawPending("The agent's process ended while the plan waited for an answer."));
       agent.onProcessExit(() => gate.dropAll());
     },
