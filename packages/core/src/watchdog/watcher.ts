@@ -14,6 +14,7 @@ export interface FsEvent {
 const EXCLUDED = new Set(['node_modules', '.venv', 'venv', '__pycache__']);
 const PROBE_ATTEMPTS = 20;
 const PROBE_WAIT_MS = 50;
+const READY_MS = 10_000;
 const GIT_KEEP = /^\.git\/(HEAD$|refs(\/|$)|hooks(\/|$)|config$|info(\/|$))/;
 
 interface Pending {
@@ -27,7 +28,9 @@ export interface WatchdogWatcherOptions {
   settleMs?: number;
   probeAttempts?: number;
   probeWaitMs?: number;
+  readyMs?: number;
   testHooks?: {
+    swallowReady?: boolean;
     discardProbeEvents?: boolean;
     dropRawFileEvents?: (rel: string) => boolean;
   };
@@ -36,6 +39,8 @@ export interface WatchdogWatcherOptions {
 export class WatchdogWatcher {
   private watcher: FSWatcher | null = null;
   private probeDir: string | null = null;
+  private generation = 0;
+  private abortStart: ((error: Error) => void) | null = null;
   private readonly listeners = new Set<(e: FsEvent) => void>();
   private readonly timers = new Map<string, Pending>();
   private readonly settleMs: number;
@@ -110,12 +115,29 @@ export class WatchdogWatcher {
     watcher.on('addDir', (abs) => {
       if (!inProbe(abs)) scan(abs);
     });
-    await new Promise<void>((resolve) => watcher.once('ready', () => resolve()));
+    const generation = this.generation;
+    const stopped = (): Error => new Error('watchdog watcher stopped during start');
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('watchdog watcher never reported ready')), this.o.readyMs ?? READY_MS);
+      this.abortStart = (error) => {
+        clearTimeout(timer);
+        reject(error);
+      };
+      if (!this.o.testHooks?.swallowReady) {
+        watcher.once('ready', () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      }
+    });
+    this.abortStart = null;
+    if (generation !== this.generation) throw stopped();
     const attempts = this.o.probeAttempts ?? PROBE_ATTEMPTS;
     const waitMs = this.o.probeWaitMs ?? PROBE_WAIT_MS;
     for (let i = 0; i < attempts && !probeSeen; i++) {
       writeFileSync(join(probeDir, `p${i}`), '');
-      for (let waited = 0; waited < waitMs && !probeSeen; waited += 5) await new Promise((r) => setTimeout(r, 5));
+      for (let waited = 0; waited < waitMs && !probeSeen && generation === this.generation; waited += 5) await new Promise((r) => setTimeout(r, 5));
+      if (generation !== this.generation) throw stopped();
     }
     if (!probeSeen) throw new Error('watchdog watcher probe never reported: the file watcher is not delivering events');
   }
@@ -131,6 +153,9 @@ export class WatchdogWatcher {
   }
 
   async stop(): Promise<void> {
+    this.generation++;
+    this.abortStart?.(new Error('watchdog watcher stopped during start'));
+    this.abortStart = null;
     for (const t of this.timers.values()) clearTimeout(t.timer);
     this.timers.clear();
     const watcher = this.watcher;

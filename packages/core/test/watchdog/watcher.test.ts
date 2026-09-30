@@ -241,10 +241,13 @@ describe('WatchdogWatcher', () => {
     const fixed = new Date(1_000_000_000_000);
     writeFileSync(file, 'aaaa');
     utimesSync(file, fixed, fixed);
-    await waitFor(() => events.length === 1, 'create');
+    const first = await waitFor(() => events.find((e) => e.rel === 'a.ts'), 'create');
+    await sentinel(root, events, 'z.ts');
+    events.length = 0;
     writeFileSync(file, 'bbbb');
     utimesSync(file, fixed, fixed);
-    await waitFor(() => events.length === 2, 'same-size rewrite with restored mtime');
+    const second = await waitFor(() => events.find((e) => e.rel === 'a.ts'), 'same-size rewrite with restored mtime');
+    expect(second.at).toBeGreaterThan(first.at);
   });
 
   it('start() throws, closes the watcher and removes the probe dir when the handshake never completes', async () => {
@@ -268,7 +271,10 @@ describe('WatchdogWatcher', () => {
     mkdirSync(odd, { recursive: true });
     const saved = process.env.TMPDIR;
     process.env.TMPDIR = odd;
-    onTestFinished(() => { process.env.TMPDIR = saved; });
+    onTestFinished(() => {
+      if (saved === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = saved;
+    });
     const events: FsEvent[] = [];
     const watcher = new WatchdogWatcher({ root, settleMs: 20 });
     watcher.onEvent((e) => events.push(e));
@@ -276,5 +282,24 @@ describe('WatchdogWatcher', () => {
     onTestFinished(() => watcher.stop());
     writeFileSync(join(root, 'a.ts'), 'x');
     await waitFor(() => events.find((e) => e.rel === 'a.ts'), 'event');
+  });
+
+  it('stop() during start() makes start() reject and leaves no probe dir', async () => {
+    const before = probeDirs();
+    const root = tempDir('watch-');
+    const watcher = new WatchdogWatcher({ root });
+    const started = watcher.start();
+    const outcome = expect(started).rejects.toThrow(/stopped/);
+    await watcher.stop();
+    await outcome;
+    expect(probeDirs()).toEqual(before);
+  });
+
+  it('start() times out when the watcher never reports ready', async () => {
+    const before = probeDirs();
+    const root = tempDir('watch-');
+    const watcher = new WatchdogWatcher({ root, readyMs: 100, testHooks: { swallowReady: true } });
+    await expect(watcher.start()).rejects.toThrow(/ready/);
+    expect(probeDirs()).toEqual(before);
   });
 });
