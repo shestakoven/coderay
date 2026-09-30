@@ -34,6 +34,7 @@ class StubSession implements WatchdogSession {
   order: string[] = [];
   turnOpen: boolean;
   alive = true;
+  interruptible = true;
   names: string[];
   throwing = new Set<string>();
   private listeners = new Set<() => void>();
@@ -44,7 +45,7 @@ class StubSession implements WatchdogSession {
   runningSubagentNames(): string[] { return [...this.names]; }
   runningShell(): boolean { return false; }
   processAlive(): boolean { return this.alive; }
-  interrupt(): boolean { this.order.push('interrupt'); return true; }
+  interrupt(): boolean { if (!this.interruptible) return false; this.order.push('interrupt'); return true; }
   send(text: string): void { this.guard('send'); this.order.push(`send:${text}`); }
   sendAbsorbed(text: string): void { this.guard('sendAbsorbed'); this.order.push(`absorbed:${text}`); }
   queueNote(text: string): void { this.guard('queueNote'); this.order.push(`note:${text}`); }
@@ -465,6 +466,15 @@ describe('Watchdog.stopAgent', () => {
     const note = f.session.of('send:')[0]!;
     expect(note).toContain('Stopped with it: subagent 1;');
     expect(note).not.toContain('subagent 0');
+  });
+
+  it('says so, and stays pending and uninterrupted, when there is no turn to interrupt', async () => {
+    const f = await fixture({ turnOpen: false, subagents: 1 });
+    const e = await f.raise(await f.produce(['a.ts']));
+    f.session.interruptible = false;
+    expect(() => f.watchdog.stopAgent(e.id)).toThrow(/nothing to interrupt/);
+    expect(event(f, e.id)).toMatchObject({ interrupted: false, phase: 'pending' });
+    expect(f.session.of('interrupt')).toHaveLength(0);
   });
 
   it('refuses an unknown or resolved event', async () => {

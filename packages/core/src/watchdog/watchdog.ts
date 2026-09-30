@@ -115,7 +115,7 @@ export class Watchdog {
     if (!event || event.phase === 'resolved') throw new WatchdogError('That question is no longer open.');
     if (event.interrupted) return;
     this.step(event, 'interrupt the agent', () => { event.interrupted = this.interrupt(event); });
-    if (!event.interrupted) return;
+    if (!event.interrupted) throw new WatchdogError('No turn is running, so there is nothing to interrupt: the background subagent keeps running and cannot be stopped from here.');
     this.persist(event);
     this.emit(event);
   }
