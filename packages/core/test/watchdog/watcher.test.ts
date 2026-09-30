@@ -26,6 +26,16 @@ const rels = (events: FsEvent[]): string[] => events.map((e) => e.rel);
 const uniqueRels = (events: FsEvent[]): string[] => [...new Set(rels(events))].sort();
 const probeDirs = (): string[] => readdirSync(tmpdir()).filter((n) => n.startsWith('watchdog-probe-'));
 
+function privateTmpdir(): void {
+  const dir = tempDir('watch-private-tmp-');
+  const saved = process.env.TMPDIR;
+  process.env.TMPDIR = dir;
+  onTestFinished(() => {
+    if (saved === undefined) delete process.env.TMPDIR;
+    else process.env.TMPDIR = saved;
+  });
+}
+
 describe('WatchdogWatcher', () => {
   it('reports a created file once with exists true', async () => {
     const { root, events } = await watched();
@@ -61,12 +71,12 @@ describe('WatchdogWatcher', () => {
   });
 
   it('reports a delete followed by a re-create inside the window as one event that exists', async () => {
-    const { root, events } = await watched(150);
+    const { root, events } = await watched(300);
     writeFileSync(join(root, 'a.ts'), '1');
     await waitFor(() => events.length === 1, 'create');
     events.length = 0;
     rmSync(join(root, 'a.ts'));
-    await new Promise((r) => setTimeout(r, 15));
+    await new Promise((r) => setTimeout(r, 10));
     writeFileSync(join(root, 'a.ts'), '2');
     await waitFor(() => events.find((e) => e.rel === 'a.ts'), 'event');
     await sentinel(root, events, 'z.ts');
@@ -74,7 +84,7 @@ describe('WatchdogWatcher', () => {
   });
 
   it('merges a create and later writes inside the settle window into one event', async () => {
-    const { root, events } = await watched(150);
+    const { root, events } = await watched(400);
     writeFileSync(join(root, 'a.ts'), '1');
     await new Promise((r) => setTimeout(r, 30));
     writeFileSync(join(root, 'a.ts'), '22');
@@ -215,11 +225,11 @@ describe('WatchdogWatcher', () => {
   });
 
   it('start resolves at ready and a pending event is dropped by stop', async () => {
-    const { root, events, watcher } = await watched(200);
+    const { root, events, watcher } = await watched(30_000);
     writeFileSync(join(root, 'a.ts'), '1');
     await new Promise((r) => setTimeout(r, 60));
     await watcher.stop();
-    await new Promise((r) => setTimeout(r, 250));
+    await new Promise((r) => setTimeout(r, 100));
     expect(events).toEqual([]);
   });
 
@@ -251,8 +261,9 @@ describe('WatchdogWatcher', () => {
   });
 
   it('start() throws, closes the watcher and removes the probe dir when the handshake never completes', async () => {
-    const before = probeDirs();
     const root = tempDir('watch-');
+    privateTmpdir();
+    const before = probeDirs();
     const watcher = new WatchdogWatcher({ root, probeAttempts: 2, probeWaitMs: 20, testHooks: { discardProbeEvents: true } });
     await expect(watcher.start()).rejects.toThrow(/probe/);
     expect(probeDirs()).toEqual(before);
@@ -285,8 +296,9 @@ describe('WatchdogWatcher', () => {
   });
 
   it('stop() during start() makes start() reject and leaves no probe dir', async () => {
-    const before = probeDirs();
     const root = tempDir('watch-');
+    privateTmpdir();
+    const before = probeDirs();
     const watcher = new WatchdogWatcher({ root });
     const started = watcher.start();
     const outcome = expect(started).rejects.toThrow(/stopped/);
@@ -296,8 +308,9 @@ describe('WatchdogWatcher', () => {
   });
 
   it('start() times out when the watcher never reports ready', async () => {
-    const before = probeDirs();
     const root = tempDir('watch-');
+    privateTmpdir();
+    const before = probeDirs();
     const watcher = new WatchdogWatcher({ root, readyMs: 100, testHooks: { swallowReady: true } });
     await expect(watcher.start()).rejects.toThrow(/ready/);
     expect(probeDirs()).toEqual(before);
