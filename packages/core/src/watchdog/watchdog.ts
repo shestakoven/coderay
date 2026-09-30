@@ -73,6 +73,7 @@ export class Watchdog {
   private readonly answering = new Set<string>();
   private readonly subagentNames = new Map<string, string[]>();
   private readonly killed = new Map<string, string[]>();
+  private readonly stoppedTurnOpen = new Set<string>();
   private readonly settleMs: number;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -128,8 +129,14 @@ export class Watchdog {
       console.error('watchdog: could not read the running subagents', error);
     }
     const interrupted = this.o.session.interrupt();
-    if (interrupted) this.killed.set(event.id, names);
-    return interrupted;
+    if (!interrupted) return false;
+    this.killed.set(event.id, names);
+    this.stoppedTurnOpen.add(event.id);
+    const off = this.o.session.onTurnClosed(() => {
+      off();
+      this.stoppedTurnOpen.delete(event.id);
+    });
+    return true;
   }
 
   async answer(eventId: string, answer: WatchdogAnswer): Promise<void> {
@@ -201,6 +208,7 @@ export class Watchdog {
       event.reason = [event.reason, `Not restored: ${input.conflicts.map((c) => `${c.path} (${c.reason})`).join('; ')}`].filter(Boolean).join('\n');
     }
     this.close(event.id, resolution);
+    if (!this.isPending()) this.o.hold.release();
     try {
       await this.deliver(event, resumeMessage(input), input.reverted.length + input.added.length + input.mine.length + input.conflicts.length > 0);
     } catch (error) {
@@ -208,8 +216,6 @@ export class Watchdog {
       event.reason = [event.reason, `Could not tell the agent: ${describe(error)}`].filter(Boolean).join('\n');
       this.persist(event);
       this.emit(event);
-    } finally {
-      if (!this.isPending()) this.o.hold.release();
     }
   }
 
@@ -227,11 +233,9 @@ export class Watchdog {
     const { session } = this.o;
     if (!event.interrupted && !changed) return;
     if (!session.processAlive()) return session.queueNote(text);
-    if (event.interrupted) {
-      if (!(await this.turnClosed()) || !session.processAlive()) return session.queueNote(text);
-      return this.orQueue(() => session.send(text), text);
-    }
+    if (this.stoppedTurnOpen.has(event.id) && (!(await this.turnClosed()) || !session.processAlive())) return session.queueNote(text);
     if (session.hasOpenTurn()) return this.orQueue(() => session.sendAbsorbed(text), text);
+    if (event.interrupted) return this.orQueue(() => session.send(text), text);
     session.queueNote(text);
   }
 
@@ -413,6 +417,7 @@ export class Watchdog {
       this.notes.delete(event.id);
       this.subagentNames.delete(event.id);
       this.killed.delete(event.id);
+      this.stoppedTurnOpen.delete(event.id);
       excess -= 1;
     }
   }

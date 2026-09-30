@@ -335,17 +335,25 @@ describe('Watchdog.answer refusals', () => {
 });
 
 describe('Watchdog.answer delivery', () => {
-  it('releases the hold only after the note is sent', async () => {
+  it('releases the hold before it waits for the interrupted turn to close, then sends the note', async () => {
     const f = await fixture({ turnOpen: true });
     const e = await f.raise(await f.produce(['a.ts']));
     const done = answer(f, e.id, all('revert'));
-    await sleepMs(40);
-    expect(f.session.of('release')).toEqual([]);
+    await waitFor(() => f.session.of('release').length > 0, 'the hold released');
+    expect([f.hold.isHeld(), f.session.of('send:')]).toEqual([false, []]);
     f.session.closeTurn();
     await done;
-    const order = f.session.order;
-    expect(order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'send', 'release']);
-    expect(f.hold.isHeld()).toBe(false);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'release', 'send']);
+  });
+
+  it('absorbs the note into a turn opened after the interrupted one closed, without waiting for it', async () => {
+    const f = await fixture({ turnOpen: true, deliverWaitMs: 200 });
+    const e = await f.raise(await f.produce(['a.ts']));
+    f.session.closeTurn();
+    f.session.turnOpen = true;
+    await answer(f, e.id, all('keep'));
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'release', 'absorbed']);
+    expect(f.session.of('absorbed:')[0]).toContain('Kept as you wrote them: a.ts.');
   });
 
   it('queues the note when the process is gone, without waiting for a turn', async () => {
@@ -353,14 +361,14 @@ describe('Watchdog.answer delivery', () => {
     const e = await f.raise(await f.produce(['a.ts']));
     f.session.alive = false;
     await answer(f, e.id, all('revert'));
-    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'note', 'release']);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'release', 'note']);
   });
 
   it('queues the note when the interrupted turn never closes', async () => {
     const f = await fixture({ turnOpen: true, deliverWaitMs: 60 });
     const e = await f.raise(await f.produce(['a.ts']));
     await answer(f, e.id, all('keep'));
-    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'note', 'release']);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'release', 'note']);
   });
 
   it('sends the note at once when the interrupted turn had already closed', async () => {
@@ -376,7 +384,7 @@ describe('Watchdog.answer delivery', () => {
     const e = await f.raise(await f.produce(['a.ts']));
     expect(e.paused).toBe(true);
     await answer(f, e.id, all('revert'));
-    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['absorbed', 'release']);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['release', 'absorbed']);
   });
 
   it('sends nothing when it only paused and everything was kept', async () => {
@@ -391,7 +399,7 @@ describe('Watchdog.answer delivery', () => {
     const f = await fixture({ turnOpen: false });
     const e = await f.raise(await f.produce(['a.ts']));
     await answer(f, e.id, all('revert'));
-    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['note', 'release']);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['release', 'note']);
   });
 
   it('sends nothing when nothing was running and everything was kept', async () => {
@@ -421,7 +429,7 @@ describe('Watchdog.answer delivery', () => {
     const done = answer(f, e.id, all('revert'));
     f.session.closeTurn();
     await done;
-    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'note', 'release']);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['interrupt', 'release', 'note']);
     expect(event(f, e.id).reason).toContain('send exploded');
     expect(f.hold.isHeld()).toBe(false);
   });
@@ -431,7 +439,7 @@ describe('Watchdog.answer delivery', () => {
     const e = await f.raise(await f.produce(['a.ts']));
     f.session.throwing.add('sendAbsorbed');
     await answer(f, e.id, all('revert'));
-    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['note', 'release']);
+    expect(f.session.order.map((entry) => entry.split(':')[0])).toEqual(['release', 'note']);
     expect(event(f, e.id).reason).toContain('sendAbsorbed exploded');
     expect(f.hold.isHeld()).toBe(false);
   });
