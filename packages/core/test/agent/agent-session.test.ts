@@ -541,6 +541,15 @@ describe('AgentSession with the gate', () => {
     expect(texts(items)[0]).toContain(runDir(home));
   });
 
+  it('still shows an AskUserQuestion prompt and answers it when the IDE hook is active (spike c39)', async () => {
+    const h = await gatedHarness('ask-user-question');
+    h.session.send('ask me');
+    const prompt = await pendingPrompt(h);
+    h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S' } });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect([prompt, controlResponse(h)?.response]).toMatchObject([{ body: { tool: 'AskUserQuestion' } },{ subtype: 'success', request_id: 'req_fx_ask' }]);
+  });
+
   it('removes the gate files of the session when claude exits', async () => {
     const h = await gatedHarness('multi-turn');
     h.session.send('hi');
@@ -602,8 +611,43 @@ describe('AgentSession with the gate', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect([h.session.context('toolu_fx_tests'), h.session.context('toolu_later')]).toEqual([
       { parentToolUseId: null, lastMessage: 'Running the tests first.' },
-      { parentToolUseId: null, lastMessage: 'Tests pass.' },
+      { parentToolUseId: null, lastMessage: null },
     ]);
+  });
+
+  it("returns the open turn's latest assistant text as lastMessage, and null once the turn is closed", async () => {
+    const h = await harness('text-then-wait');
+    h.session.send('look');
+    await waitFor(() => h.session.lastMessage() === 'Looking at it.', 'message of the open turn');
+    h.session.stop();
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.session.lastMessage()).toBeNull();
+  });
+
+  it('reports null as the reason of a call in a turn where the agent wrote nothing, although an earlier turn has a message', async () => {
+    const h = await harness('silent-tool-turn');
+    h.session.send('one');
+    await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
+    h.session.send('two');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'tool row');
+    expect([h.session.context('toolu_fx_silent'), h.session.lastMessage()]).toEqual([{ parentToolUseId: null, lastMessage: null }, null]);
+  });
+
+  it('tells user-message listeners when send() delivers a message, and not when it is refused', async () => {
+    const h = await harness('multi-turn');
+    let messages = 0;
+    const stop = h.session.onUserMessage(() => {
+      messages += 1;
+    });
+    expect(() => h.session.send(' ')).toThrow(SessionError);
+    expect(messages).toBe(0);
+    h.session.send('hi');
+    expect(() => h.session.send('again')).toThrow(SessionError);
+    expect(messages).toBe(1);
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    stop();
+    h.session.send('more');
+    expect(messages).toBe(1);
   });
 
   it('is idle when no turn is open, and tells listeners once when it becomes idle again', async () => {

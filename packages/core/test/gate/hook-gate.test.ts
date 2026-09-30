@@ -87,6 +87,12 @@ describe('HookGate', () => {
     expect((await call('Write', { file_path: join(home, '.claude/plans/plan.md') }))?.permissionDecision).toBe('allow');
   });
 
+  it('answers allow for AskUserQuestion and ExitPlanMode, which claude still puts to the IDE as its own prompts', async () => {
+    const { call, gate } = await setup();
+    const answers = await Promise.all(['AskUserQuestion', 'ExitPlanMode'].map((tool, index) => call(tool, {}, undefined, `toolu_${index}`)));
+    expect([answers.map((answer) => answer?.permissionDecision), gate.pending()]).toEqual([['allow', 'allow'], []]);
+  });
+
   it('blocks a guarded file even when it is gitignored', async () => {
     const { root, call } = await setup();
     expect((await call('Write', { file_path: join(root, '.env') }))?.permissionDecision).toBe('deny');
@@ -141,6 +147,75 @@ describe('HookGate', () => {
     gate.answer((await pending()).id, 'expand-plan');
     expect((await answer)?.permissionDecision).toBe('allow');
     expect(plans.gate()).toMatchObject({ version: 2, scope: { paths: ['src/app.ts', 'src/other.ts'] } });
+  });
+
+  describe('when the expansion leaves a file out of scope', () => {
+    const twoFiles = { command: 'touch src/other.ts src/lib/util.ts' };
+
+    async function limitedExpansion(mode: ControlMode) {
+      const base = await setup({ mode });
+      await base.approve();
+      let current = mode;
+      const gate = new HookGate({
+        root: base.root, store: base.store, sessionId: () => 's1', policy: () => ({ ...DEFAULT_POLICY, mode: current }),
+        plans: { gate: () => base.plans.gate(), canExpand: () => base.plans.canExpand(), expand: (targets) => base.plans.expand(targets.slice(0, 1)) },
+        components: () => components, context: () => ({ parentToolUseId: null, lastMessage: 'Touching both.' }), home: base.home, tempRoots: [],
+      });
+      const decisions: ToolDecisionRecord[] = [];
+      gate.onDecision((decision) => decisions.push(decision));
+      const call = () => gate.evaluate({ tool_name: 'Bash', tool_input: twoFiles, tool_use_id: 'toolu_1', cwd: base.root }, new AbortController().signal);
+      const shown = () => waitFor(() => gate.pending().at(0), 'prompt shown');
+      return { ...base, gate, decisions, call, shown, switchMode: (next: ControlMode) => { current = next; } };
+    }
+
+    it('asks again about the remaining file instead of denying as "waiting for the user"', async () => {
+      const { gate, call, shown, plans, decisions } = await limitedExpansion('B');
+      const answer = call();
+      const first = await shown();
+      expect(first.targets.map((target) => target.path)).toEqual(['src/other.ts', 'src/lib/util.ts']);
+      gate.answer(first.id, 'expand-plan');
+      const second = await waitFor(() => gate.pending().find((prompt) => prompt.id !== first.id), 'second prompt');
+      expect([second.targets.filter((target) => !target.inScope).map((target) => target.path), second.canExpand, plans.gate()]).toMatchObject([['src/lib/util.ts'], true, { version: 2 }]);
+      expect(decisions).toEqual([]);
+      gate.answer(second.id, 'allow-once');
+      expect([(await answer)?.permissionDecision, decisions.map((decision) => decision.decision)]).toEqual(['allow', ['ask-approved']]);
+    });
+
+    it('denies with the remaining file named when the mode turned to A while the prompt waited', async () => {
+      const { gate, call, shown, switchMode, decisions } = await limitedExpansion('B');
+      const answer = call();
+      switchMode('A');
+      gate.answer((await shown()).id, 'expand-plan');
+      const result = await answer;
+      expect([result?.permissionDecision, result?.permissionDecisionReason]).toEqual(['deny', expect.stringMatching(/^IDE: src\/lib\/util\.ts is outside the approved plan/)]);
+      expect([decisions.map((decision) => decision.decision), gate.pending()]).toEqual([['deny'], []]);
+    });
+
+    it('allows and flags the remaining file when the mode turned to C while the prompt waited', async () => {
+      const { gate, call, shown, switchMode, decisions, store } = await limitedExpansion('B');
+      const answer = call();
+      switchMode('C');
+      gate.answer((await shown()).id, 'expand-plan');
+      const result = await answer;
+      expect([result?.permissionDecision, result?.permissionDecisionReason, decisions.map((decision) => decision.decision)]).toEqual([
+        'allow', expect.stringContaining('src/lib/util.ts outside the approved plan'), ['flag'],
+      ]);
+      expect(store.gateEvents('s1').map((event) => event.resolution)).toEqual(['plan-expanded', 'flagged']);
+    });
+  });
+
+  it('lists only pending prompts from pending(), while prompts() keeps the answered ones', async () => {
+    const { root, call, approve, pending, gate } = await setup();
+    await approve();
+    const first = call('Write', { file_path: join(root, 'src/other.ts'), content: 'x' });
+    gate.answer((await pending()).id, 'deny');
+    await first;
+    const second = call('Edit', { file_path: join(root, 'src/lib/util.ts'), old_string: 'c', new_string: 'd' }, undefined, 'toolu_2');
+    const open = await waitFor(() => gate.pending().at(0), 'second prompt');
+    expect([gate.pending().map((prompt) => prompt.id), gate.prompts().map((prompt) => prompt.status).sort()]).toEqual([[open.id], ['answered', 'pending']]);
+    gate.answer(open.id, 'deny');
+    await second;
+    expect(gate.pending()).toEqual([]);
   });
 
   it('denies an out-of-scope write in mode A without asking, and records the denial', async () => {

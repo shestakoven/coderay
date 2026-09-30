@@ -8,6 +8,8 @@ import { freezeScope, ownerIndex, type ReviewResult } from './freeze';
 import { parsePlanInput, type ComponentRef } from './plan-input';
 
 export const PLAN_DEADLINE_MS = 3_540_000;
+const REJECT_PAUSE_NOTE = 'You rejected the previous plan; this plan waits for you.';
+const COMPLETED_FIRST = 'The plan was completed before this revision was answered.';
 const NO_ANSWER = "The user did not answer within 59 minutes. Stop and wait for the user's next message.";
 
 export type ProposeResult = { status: 'approved' | 'changes_requested' | 'rejected'; feedback?: string };
@@ -49,6 +51,7 @@ export class PlanService {
   private readonly listeners = new Set<(plans: PlanView[]) => void>();
   private readonly waiters = new Map<string, Waiter>();
   private loadedFor: string | null | undefined = undefined;
+  private rejectPause = false;
   private records: PlanRecord[] = [];
   private stepStates = new Map<string, Map<string, StepStatus>>();
 
@@ -90,14 +93,15 @@ export class PlanService {
       const feedback = `Superseded by version ${version}.`;
       this.settle(older, 'superseded', feedback, { status: 'rejected', feedback });
     }
+    const review = this.rejectPause && reviewed.review.auto ? { auto: false, notes: [REJECT_PAUSE_NOTE, ...reviewed.review.notes] } : reviewed.review;
     const record: PlanRecord = {
       id, version, goal: input.goal, status: 'proposed', approvedBy: null, steps: input.steps,
-      scope: freezeScope(input.steps, this.options.root, components), owners: reviewed.owners, review: reviewed.review,
+      scope: freezeScope(input.steps, this.options.root, components), owners: reviewed.owners, review,
       feedback: null, proposedAt: this.now(), decidedAt: null,
     };
     this.records.push(record);
     if (!this.stepStates.has(id)) this.stepStates.set(id, new Map());
-    if (reviewed.review.auto) {
+    if (review.auto) {
       this.approve(record, 'auto');
       return { ok: true, value: { status: 'approved' } };
     }
@@ -111,6 +115,7 @@ export class PlanService {
     const record = this.records.find((candidate) => candidate.id === planId && candidate.version === version);
     if (!record) throw new PlanError('That plan is not part of this session.');
     if (answer.kind === 'reject') {
+      this.rejectPause = true;
       this.reject(record, answer.feedback.trim());
       return;
     }
@@ -123,6 +128,10 @@ export class PlanService {
     }
     record.scope = freezeScope(record.steps, this.options.root, this.options.components());
     this.approve(record, 'user-card');
+  }
+
+  userMessage(): void {
+    this.rejectPause = false;
   }
 
   step(raw: unknown): StepOutcome {
@@ -158,6 +167,7 @@ export class PlanService {
       enforced.status = 'done';
       enforced.decidedAt = this.now();
       this.save(enforced);
+      this.withdrawWaitingRevisions(enforced);
     }
     this.emit();
     return { ok: true };
@@ -237,6 +247,7 @@ export class PlanService {
     if (sessionId === this.loadedFor) return;
     this.withdrawPending('The agent session ended.');
     this.loadedFor = sessionId;
+    this.rejectPause = false;
     const saved = sessionId === null ? { plans: [], stepStates: {} } : this.options.store.plans(sessionId);
     this.records = saved.plans;
     this.stepStates = new Map(Object.entries(saved.stepStates).map(([planId, states]) => [planId, new Map(Object.entries(states))]));
@@ -246,6 +257,18 @@ export class PlanService {
       record.feedback = 'The IDE core restarted while the plan waited for an answer.';
       record.decidedAt = this.now();
       this.save(record);
+    }
+  }
+
+  private withdrawWaitingRevisions(done: PlanRecord): void {
+    for (const record of this.versions(done.id)) {
+      if (record.status === 'proposed') this.settle(record, 'withdrawn', COMPLETED_FIRST, { status: 'rejected', feedback: COMPLETED_FIRST });
+      else if (record.status === 'changes-requested') {
+        record.status = 'withdrawn';
+        record.feedback = COMPLETED_FIRST;
+        record.decidedAt = this.now();
+        this.save(record);
+      }
     }
   }
 

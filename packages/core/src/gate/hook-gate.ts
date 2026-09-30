@@ -85,7 +85,7 @@ export class HookGate {
   private readonly newId: () => string;
   private readonly promptListeners = new Set<(prompts: GatePromptView[]) => void>();
   private readonly decisionListeners = new Set<(decision: ToolDecisionRecord) => void>();
-  private readonly pending = new Map<string, Pending>();
+  private readonly waiting = new Map<string, Pending>();
   private closed: GatePromptView[] = [];
 
   constructor(options: HookGateOptions) {
@@ -105,7 +105,11 @@ export class HookGate {
   }
 
   prompts(): GatePromptView[] {
-    return [...[...this.pending.values()].map((pending) => pending.view), ...this.closed];
+    return [...[...this.waiting.values()].map((pending) => pending.view), ...this.closed];
+  }
+
+  pending(): GatePromptView[] {
+    return this.prompts().filter((prompt) => prompt.status === 'pending');
   }
 
   async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
@@ -113,6 +117,10 @@ export class HookGate {
     if (!input) return deny('IDE: the hook input could not be read.');
     const mode = this.options.policy().mode;
     const judged = await this.judge(input);
+    return this.resolve(input, judged, mode, signal);
+  }
+
+  private async resolve(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
     const { decision } = judged;
     if (decision.outcome === 'allow' || decision.outcome === 'unchecked') {
       this.record(input, judged, decision.outcome);
@@ -132,7 +140,7 @@ export class HookGate {
   }
 
   answer(promptId: string, answer: GateAnswer): void {
-    const pending = this.pending.get(promptId);
+    const pending = this.waiting.get(promptId);
     if (!pending) throw new GateError('That call is no longer waiting for an answer.');
     if (answer === 'expand-plan') {
       if (!pending.view.canExpand || !this.options.plans.canExpand()) throw new GateError('The plan cannot be expanded for this call.');
@@ -142,13 +150,13 @@ export class HookGate {
   }
 
   dropForTool(toolUseId: string): void {
-    for (const pending of [...this.pending.values()]) {
+    for (const pending of [...this.waiting.values()]) {
       if (pending.view.toolUseId === toolUseId) pending.settle('tool-ended');
     }
   }
 
   dropAll(): void {
-    for (const pending of [...this.pending.values()]) pending.settle('tool-ended');
+    for (const pending of [...this.waiting.values()]) pending.settle('tool-ended');
   }
 
   private async ask(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
@@ -162,13 +170,13 @@ export class HookGate {
       const timer = setTimeout(() => settle('timeout'), this.options.holdMs ?? GATE_HOLD_MS);
       timer.unref();
       const settle = (value: Outcome) => {
-        if (!this.pending.has(view.id)) return;
+        if (!this.waiting.has(view.id)) return;
         clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
-        this.pending.delete(view.id);
+        this.waiting.delete(view.id);
         resolve(value);
       };
-      this.pending.set(view.id, { view, event, judged, settle });
+      this.waiting.set(view.id, { view, event, judged, settle });
       this.saveEvent(event);
       this.emit();
       if (signal.aborted) settle('closed');
@@ -201,8 +209,7 @@ export class HookGate {
       this.record(input, again, 'ask-approved', again.decision.reason);
       return allow(again.decision.reason);
     }
-    this.record(input, again, 'deny', again.decision.reason);
-    return deny(again.decision.reason);
+    return this.resolve(input, again, this.options.policy().mode, signal);
   }
 
   private async judge(input: HookInput): Promise<Judged> {

@@ -90,6 +90,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     attach(agent) {
       session = agent;
       gate.onDecision((record) => agent.recordDecision(record));
+      agent.onUserMessage(() => plans.userMessage());
       agent.onToolEnd((toolUseId) => gate.dropForTool(toolUseId));
       agent.onProcessExit(() => plans.withdrawPending("The agent's process ended while the plan waited for an answer."));
       agent.onProcessExit(() => gate.dropAll());

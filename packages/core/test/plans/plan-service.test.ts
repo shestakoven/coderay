@@ -145,6 +145,7 @@ describe('PlanService', () => {
     service.answer(plan.id, 1, { kind: 'reject', feedback: '' });
     expect(await call).toEqual({ ok: true, value: { status: 'rejected' } });
     expect(service.gate()).toEqual({ state: 'rejected', planId: 'plan-1' });
+    service.userMessage();
     await service.propose(small);
     expect(latest(service)).toMatchObject({ id: 'plan-2', version: 1 });
   });
@@ -154,6 +155,88 @@ describe('PlanService', () => {
     await service.propose(small);
     service.answer('plan-1', 1, { kind: 'reject', feedback: 'not now' });
     expect([latest(service)?.status, latest(service)?.feedback, service.gate()]).toEqual(['rejected', 'not now', { state: 'rejected', planId: 'plan-1' }]);
+  });
+
+  describe('after a Reject', () => {
+    const paused = 'You rejected the previous plan; this plan waits for you.';
+    const smallOn = (path: string) => ({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ path, op: 'modify' }] }] });
+    const rejectLatest = (service: PlanService) => {
+      const plan = latest(service)!;
+      service.answer(plan.id, plan.version, { kind: 'reject', feedback: '' });
+    };
+
+    it('makes the next small plan wait until the user sends a message', async () => {
+      const { service } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      const second = service.propose(smallOn('src/other.ts'));
+      const plan = await waiting(service);
+      expect([plan.review.auto, plan.review.notes[0]]).toEqual([false, paused]);
+      service.answer(plan.id, plan.version, { kind: 'approve' });
+      await second;
+      service.userMessage();
+      const third = await service.propose(smallOn('src/app.ts'));
+      expect([third, latest(service)?.approvedBy]).toEqual([{ ok: true, value: { status: 'approved' } }, 'auto']);
+    });
+
+    it('keeps every small plan waiting until the user sends a message, not just the first', async () => {
+      const { service } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      const second = service.propose(smallOn('src/other.ts'));
+      const plan = await waiting(service);
+      service.answer(plan.id, plan.version, { kind: 'changes', feedback: 'again' });
+      await second;
+      void service.propose(smallOn('src/other.ts'));
+      await waitFor(() => latest(service)?.version === 2, 'version 2');
+      expect([latest(service)?.status, latest(service)?.review.notes[0]]).toEqual(['proposed', paused]);
+    });
+
+    it('clears the pause when the agent session changes', async () => {
+      const { service, setSession } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      setSession('s2');
+      expect(await service.propose(smallOn('src/app.ts'))).toEqual({ ok: true, value: { status: 'approved' } });
+    });
+
+    it('does not repeat the note on a bigger plan, which waits anyway', async () => {
+      const { service } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      void service.propose(big);
+      const plan = await waiting(service);
+      expect(plan.review.notes).not.toContain(paused);
+    });
+  });
+
+  describe('when the last step is done', () => {
+    const more = { ...small, steps: [...small.steps, { key: 'more', title: 'More', rationale: '', targets: [{ componentId: 'lib', op: 'modify' }] }] };
+    const done = 'The plan was completed before this revision was answered.';
+
+    it('withdraws a waiting revision and answers its call as rejected', async () => {
+      const { service } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      const call = service.propose(more);
+      await waiting(service);
+      service.step({ key: 'edit', phase: 'done' });
+      expect(await call).toEqual({ ok: true, value: { status: 'rejected', feedback: done } });
+      expect(service.plans().map((plan) => [plan.version, plan.status, plan.feedback])).toEqual([[1, 'done', null], [2, 'withdrawn', done]]);
+      expect(() => service.answer('plan-1', 2, { kind: 'approve' })).toThrow(PlanError);
+    });
+
+    it('withdraws a revision the user asked changes for', async () => {
+      const { service } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      const call = service.propose(more);
+      await waiting(service);
+      service.answer('plan-1', 2, { kind: 'changes', feedback: 'fewer steps' });
+      await call;
+      service.step({ key: 'edit', phase: 'done' });
+      expect(service.plans().map((plan) => [plan.version, plan.status, plan.feedback])).toEqual([[1, 'done', null], [2, 'withdrawn', done]]);
+    });
   });
 
   it('keeps the approved version enforced while a new version waits, and supersedes it on approval', async () => {

@@ -79,6 +79,7 @@ export class AgentSession {
   private readonly idleListeners = new Set<() => void>();
   private readonly exitListeners = new Set<() => void>();
   private readonly toolEndListeners = new Set<(toolUseId: string) => void>();
+  private readonly userMessageListeners = new Set<() => void>();
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -150,6 +151,11 @@ export class AgentSession {
     return () => this.toolEndListeners.delete(listener);
   }
 
+  onUserMessage(listener: () => void): () => void {
+    this.userMessageListeners.add(listener);
+    return () => this.userMessageListeners.delete(listener);
+  }
+
   recordDecision(record: ToolDecisionRecord): void {
     const session = this.session;
     if (!session) return;
@@ -162,13 +168,21 @@ export class AgentSession {
     this.emit({ type: 'session.patch', patch: { items: [updated] } });
   }
 
+  lastMessage(): string | null {
+    const open = new Set([...this.turns.values()].filter((turn) => turn.closedAt === null).map((turn) => turn.id));
+    return this.assistantText([...this.items.values()].filter((item) => item.turnId !== null && open.has(item.turnId)));
+  }
+
   context(toolUseId: string): { parentToolUseId: string | null; lastMessage: string | null } {
-    const items = [...this.items.values()].sort((a, b) => a.seq - b.seq);
     const tool = this.items.get(toolUseId);
-    const parentToolUseId = tool?.kind === 'tool' ? tool.parentToolUseId : null;
-    const before = tool ? items.filter((item) => item.seq < tool.seq && item.parentToolUseId === parentToolUseId) : items;
-    const message = before.findLast((item) => item.kind === 'message' && item.role === 'assistant');
-    return { parentToolUseId, lastMessage: message?.kind === 'message' ? message.text : null };
+    if (tool?.kind !== 'tool') return { parentToolUseId: null, lastMessage: this.lastMessage() };
+    const before = [...this.items.values()].filter((item) => item.seq < tool.seq && item.turnId === tool.turnId && item.parentToolUseId === tool.parentToolUseId);
+    return { parentToolUseId: tool.parentToolUseId, lastMessage: this.assistantText(before) };
+  }
+
+  private assistantText(items: ChatItem[]): string | null {
+    const message = items.sort((a, b) => a.seq - b.seq).findLast((item) => item.kind === 'message' && item.role === 'assistant');
+    return message?.kind === 'message' ? message.text : null;
   }
 
   send(text: string): void {
@@ -179,6 +193,7 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
     if (!this.process) throw new SessionError('no-gate');
+    notify(this.userMessageListeners);
     if (this.hookReady) this.process.write(userMessage(text));
     else this.pendingSends.push(text);
     this.apply(this.tracker.userMessage(text));
