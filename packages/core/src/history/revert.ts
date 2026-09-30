@@ -304,8 +304,9 @@ export class RevertService {
     if (!versions.some((plan) => plan.steps.some((step) => step.key === stepKey))) throw new RevertError('unknown step');
     if (!deps.isIdle()) return blank('the agent is still working');
     if (deps.watchdogPending()) return blank('a watchdog question is open');
-    if (plans.at(-1)?.id !== planId || !versions.at(-1)!.steps.some((step) => step.key === stepKey)) return blank('this step belongs to an older version of the plan');
-    if (!versions.some((plan) => plan.status === 'approved' || plan.status === 'done')) return blank('the plan is not active');
+    const enforced = versions.findLast((plan) => plan.status === 'approved' || plan.status === 'done');
+    if (plans.at(-1)?.id !== planId || (enforced && !enforced.steps.some((step) => step.key === stepKey))) return blank('this step belongs to an older version of the plan');
+    if (!enforced) return blank('the plan is not active');
     if ((deps.plans.stepStates()[planId]?.[stepKey] ?? 'pending') === 'pending') return blank('this step has not run');
     const result = blank(null);
     const cp = deps.checkpoints.manifests(planId, stepKey);
@@ -315,10 +316,10 @@ export class RevertService {
       const afterHash = cp.after[rel] ?? null;
       const own = all.filter((c) => c.path === rel && c.planId === planId && c.stepKey === stepKey && c.at >= cp.startedAt);
       const first = own[0];
-      if (!first) continue;
+      if (!first) { result.preview.notRolledBack.push({ path: rel, why: 'no change of this step is recorded for it' }); continue; }
       if (isGitState(rel)) { result.preview.notRolledBack.push({ path: rel, why: 'git state is never rolled back' }); continue; }
       if (own.some((c) => c.enforcement === 'recorded')) { result.preview.notRolledBack.push({ path: rel, why: 'the IDE only records this file, it cannot restore it' }); continue; }
-      if (beforeHash === afterHash) continue;
+      if (beforeHash === afterHash) { result.preview.notRolledBack.push({ path: rel, why: 'the step left it as it was' }); continue; }
       const firstAt = all.indexOf(first);
       const ownSet = new Set(own);
       if (all.some((c, i) => c.path === rel && i > firstAt && !ownSet.has(c))) { result.preview.conflicts.push({ path: rel, reason: CHANGED_AGAIN }); continue; }
@@ -359,6 +360,8 @@ export class RevertService {
     }
     for (const c of preview.conflicts) files.push(conflict(c.path, c.reason));
     for (const n of preview.notRolledBack) files.push({ path: n.path, outcome: 'not-rolled-back', reason: n.why });
+    const reset = deps.isIdle() && !deps.watchdogPending();
+    if (!reset) files.push({ path: `(step ${stepKey})`, outcome: 'not-rolled-back', reason: 'the step was not reset because the agent became busy' });
     const record: RevertRecordView = {
       id: randomUUID(), kind: 'step', eventId: null, planId, stepKey, changeIds: succeeded, files, ts: (this.o.now ?? Date.now)(), undoneAt: null,
     };
@@ -366,10 +369,10 @@ export class RevertService {
     this.o.store.saveRevert(sessionId, record);
     if (succeeded.length > 0) this.o.changes.setResolution(succeeded, 'reverted', null);
     this.emit(record);
-    deps.plans.resetStep(planId, stepKey);
+    if (reset) deps.plans.resetStep(planId, stepKey);
     const done = files.filter((f) => f.outcome === 'restored' || f.outcome === 'deleted' || f.outcome === 'recreated').map((f) => f.path);
-    const notRestored = files.filter((f) => !done.includes(f.path)).map((f) => ({ path: f.path, reason: f.reason ?? 'not restored' }));
-    deps.queueNote(rollbackMessage({ stepKey, restored: done, notRestored }));
+    const notRestored = files.filter((f) => !done.includes(f.path) && f.path !== `(step ${stepKey})`).map((f) => ({ path: f.path, reason: f.reason ?? 'not restored' }));
+    deps.queueNote(rollbackMessage({ stepKey, restored: done, notRestored, stepReset: reset }));
     return record;
   }
 }

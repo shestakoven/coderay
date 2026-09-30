@@ -354,6 +354,77 @@ describe('step rollback', () => {
     expect((await f.reverts.previewStepRollback('plan-1', 's1')).allowed).toBe(true);
   });
 
+  it('keeps the files restored but does not reset the step when the agent became busy mid-rollback', async () => {
+    const f = await fixture();
+    await f.approve();
+    await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }]);
+    const o = (f.reverts as unknown as { o: { beforeCommit?: (rel: string) => Promise<void> } }).o;
+    o.beforeCommit = async () => { f.env.idle = false; };
+    const record = await f.reverts.rollbackStep('plan-1', 's1', []);
+    expect(read(f.root, 'a.ts')).toBe('a-original');
+    expect(f.plans.stepStates()['plan-1']).toEqual({ s1: 'done' });
+    expect(record.files).toContainEqual({ path: '(step s1)', outcome: 'not-rolled-back', reason: 'the step was not reset because the agent became busy' });
+    expect(f.reverts.reverts()).toEqual([record]);
+    expect(f.notes).toHaveLength(1);
+    expect(f.notes[0]).toContain('Restored: a.ts.');
+    expect(f.notes[0]).toContain('not reset because the agent became busy');
+    expect(f.notes[0]).not.toContain('pending again');
+  });
+
+  it('does not reset the step when a watchdog question opened mid-rollback', async () => {
+    const f = await fixture();
+    await f.approve();
+    await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }]);
+    const o = (f.reverts as unknown as { o: { beforeCommit?: (rel: string) => Promise<void> } }).o;
+    o.beforeCommit = async () => { f.env.pending = true; };
+    await f.reverts.rollbackStep('plan-1', 's1', []);
+    expect(f.plans.stepStates()['plan-1']).toEqual({ s1: 'done' });
+  });
+
+  it('leaves the manifests unchanged and labels the restore as ide with no step stamp', async () => {
+    const f = await fixture();
+    await f.approve();
+    await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }, { rel: 'fresh.ts', text: 'x' }]);
+    const before = JSON.stringify(f.checkpoints.manifests('plan-1', 's1'));
+    await f.reverts.rollbackStep('plan-1', 's1', []);
+    await f.feed('a.ts');
+    await f.feed('fresh.ts');
+    expect(JSON.stringify(f.checkpoints.manifests('plan-1', 's1'))).toBe(before);
+    const tail = f.changes.changes().slice(-2);
+    expect(tail.map((c) => c.path).sort()).toEqual(['a.ts', 'fresh.ts']);
+    for (const c of tail) expect(c).toMatchObject({ origin: 'ide', planId: null, stepKey: null });
+  });
+
+  it('lets the enforced version decide when a waiting revision drops a key', async () => {
+    const f = await fixture();
+    await f.approve();
+    await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }]);
+    void f.plans.propose({ goal: 'Rollback', steps: PLAN.steps.slice(0, 2) });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(f.plans.plans().at(-1)).toMatchObject({ version: 2, status: 'proposed' });
+    expect((await f.reverts.previewStepRollback('plan-1', 's1')).allowed).toBe(true);
+    expect(await f.reverts.previewStepRollback('plan-1', 's3')).toMatchObject({ allowed: false, reason: 'this step has not run' });
+  });
+
+  it('reports a manifest path with no change of its own and a file changed back to its start', async () => {
+    const f = await fixture();
+    await f.approve();
+    await f.stepWork('s1', [{ rel: 'a.ts', text: 'temp' }, { rel: 'a.ts', text: 'a-original' }, { rel: 'b.ts', text: 'b-new' }], false);
+    const own = f.changes.changes().find((c) => c.path === 'b.ts')!;
+    f.checkpoints.record({ ...own, path: 'ghost.ts', beforeHash: 'x'.repeat(40), afterHash: 'y'.repeat(40) });
+    const preview = await f.reverts.previewStepRollback('plan-1', 's1');
+    expect(preview.notRolledBack).toEqual(expect.arrayContaining([
+      { path: 'a.ts', why: 'the step left it as it was' },
+      { path: 'ghost.ts', why: 'no change of this step is recorded for it' },
+    ]));
+    const record = await f.reverts.rollbackStep('plan-1', 's1', []);
+    expect(record.files).toEqual(expect.arrayContaining([
+      { path: 'a.ts', outcome: 'not-rolled-back', reason: 'the step left it as it was' },
+      { path: 'ghost.ts', outcome: 'not-rolled-back', reason: 'no change of this step is recorded for it' },
+    ]));
+    expect(read(f.root, 'b.ts')).toBe('b-original');
+  });
+
   it('puts the step back to pending and reopens a done plan', async () => {
     const f = await fixture();
     await f.approve({ goal: 'One', steps: [PLAN.steps[0]] });
@@ -372,7 +443,7 @@ describe('step rollback', () => {
     await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }, { rel: 'b.ts', text: 'b-new', by: 'tool' }]);
     await f.reverts.rollbackStep('plan-1', 's1', []);
     expect(f.notes).toHaveLength(1);
-    expect(f.notes[0]).toBe('[IDE] Step "s1" was rolled back by the user. Restored: a.ts. Not restored: b.ts (not confirmed). The step is pending again; check the current state of the files before you continue.');
+    expect(f.notes[0]).toBe('[IDE] Step "s1" was rolled back by the user. Restored: a.ts. Not restored: b.ts (not confirmed). The step is pending again; start it with the step tool before changing files for it.');
   });
 
   it('emits the step record to listeners', async () => {
@@ -433,7 +504,7 @@ describe('step rollback', () => {
 describe('rollbackMessage', () => {
   it('is factual and lists both sides', () => {
     expect(rollbackMessage({ stepKey: 'edit', restored: ['a.ts', 'b.ts'], notRestored: [{ path: 'c.ts', reason: 'not confirmed' }] })).toBe(
-      '[IDE] Step "edit" was rolled back by the user. Restored: a.ts, b.ts. Not restored: c.ts (not confirmed). The step is pending again; check the current state of the files before you continue.',
+      '[IDE] Step "edit" was rolled back by the user. Restored: a.ts, b.ts. Not restored: c.ts (not confirmed). The step is pending again; start it with the step tool before changing files for it.',
     );
   });
 

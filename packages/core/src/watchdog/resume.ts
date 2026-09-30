@@ -53,13 +53,16 @@ export interface RollbackInput {
   stepKey: string;
   restored: string[];
   notRestored: { path: string; reason: string }[];
+  stepReset?: boolean;
 }
 
 function rollbackSentences(i: RollbackInput, maxNames: number): string {
   const parts = [`[IDE] Step "${short(i.stepKey)}" was rolled back by the user.`];
   if (i.restored.length) parts.push(`Restored: ${list(i.restored, maxNames, 'files')}.`);
   if (i.notRestored.length) parts.push(`Not restored: ${list(i.notRestored.map((f) => `${f.path} (${f.reason})`), maxNames, 'files')}.`);
-  parts.push('The step is pending again; check the current state of the files before you continue.');
+  parts.push(i.stepReset === false
+    ? 'The step was not reset because the agent became busy; it is still marked as it was.'
+    : 'The step is pending again; start it with the step tool before changing files for it.');
   return parts.join(' ');
 }
 
