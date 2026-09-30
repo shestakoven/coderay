@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { covers, escapeGlob } from '../../src/gate/scope';
 
 const file = (rel: string) => ({ rel, dir: false, mkdir: false });
+const removal = (rel: string, dir = false) => ({ rel, dir, mkdir: false, deleting: true });
 
 describe('escapeGlob', () => {
   it.each(['a!(b)', 'a+(b)', 'a@(b)', 'a(b)', 'a{b}', 'a?b', 'a*b', '!lead.ts'])('a plan path %s covers itself and not its glob reading', (path) => {
@@ -48,5 +49,27 @@ describe('covers a dir/** glob', () => {
 
   it('covers a dot directory when making it', () => {
     expect(covers(scope, { rel: 'src/lib/.d', dir: false, mkdir: true })).toBe(true);
+  });
+});
+
+describe('covers a deleting target', () => {
+  const scope = { paths: ['src/a.ts', 'src/b.ts', 'gone'], globs: ['src/lib/**'], deletes: { paths: ['src/b.ts'], globs: ['gone/**'] } };
+
+  it('needs the deletes, not the writes', () => {
+    expect(covers(scope, file('src/a.ts'))).toBe(true);
+    expect(covers(scope, removal('src/a.ts'))).toBe(false);
+    expect(covers(scope, removal('src/b.ts'))).toBe(true);
+    expect(covers(scope, removal('src/lib/x.ts'))).toBe(false);
+  });
+
+  it('a deleted directory is covered by a directory glob in the deletes', () => {
+    expect(covers(scope, removal('gone', true))).toBe(true);
+    expect(covers(scope, removal('src/lib', true))).toBe(false);
+  });
+
+  it('an older scope without deletes still allows a delete inside its writes', () => {
+    const old = { paths: ['src/a.ts'], globs: [] };
+    expect(covers(old, removal('src/a.ts'))).toBe(true);
+    expect(covers(old, removal('src/z.ts'))).toBe(false);
   });
 });

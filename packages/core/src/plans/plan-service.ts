@@ -20,6 +20,7 @@ export interface ExpandTarget {
   rel: string;
   exists: boolean;
   dir: boolean;
+  deleted?: boolean;
 }
 
 export interface PlanServiceOptions {
@@ -188,10 +189,10 @@ export class PlanService {
     const stepKey = this.expandStep(gate.planId)!;
     const steps = enforced.steps.map((step) => {
       if (step.key !== stepKey) return step;
-      const listed = new Set(step.targets.flatMap((target) => (target.path === undefined ? [] : [target.path])));
+      const listed = new Set(step.targets.flatMap((target) => (target.path === undefined ? [] : [`${target.path}\0${target.op === 'delete'}`])));
       const added = targets
-        .filter((target) => !listed.has(target.rel))
-        .map((target) => ({ path: target.rel, op: target.exists ? ('modify' as const) : ('create' as const) }));
+        .filter((target) => !listed.has(`${target.rel}\0${target.deleted === true}`))
+        .map((target) => ({ path: target.rel, op: target.deleted ? ('delete' as const) : target.exists ? ('modify' as const) : ('create' as const) }));
       return { ...step, targets: [...step.targets, ...added] };
     });
     const owner = ownerIndex(this.options.components());
@@ -202,6 +203,12 @@ export class PlanService {
       approvedBy: 'user-expand',
       steps,
       scope: {
+        ...(enforced.scope.deletes === undefined ? {} : {
+          deletes: {
+            paths: [...new Set([...enforced.scope.deletes.paths, ...targets.filter((target) => target.deleted && !target.dir).map((target) => target.rel)])].sort(),
+            globs: [...new Set([...enforced.scope.deletes.globs, ...targets.filter((target) => target.deleted && target.dir).map((target) => `${escapeGlob(target.rel)}/**`)])].sort(),
+          },
+        }),
         paths: [...new Set([...enforced.scope.paths, ...targets.filter((target) => !target.dir).map((target) => target.rel)])].sort(),
         globs: [...new Set([...enforced.scope.globs, ...targets.filter((target) => target.dir).map((target) => `${escapeGlob(target.rel)}/**`)])].sort(),
       },

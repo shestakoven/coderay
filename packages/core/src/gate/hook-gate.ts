@@ -64,6 +64,7 @@ interface Landing {
   raw: string;
   abs: string;
   mkdir: boolean;
+  deleting: boolean;
 }
 
 type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended';
@@ -135,7 +136,7 @@ export class HookGate {
     if (!pending) throw new GateError('That call is no longer waiting for an answer.');
     if (answer === 'expand-plan') {
       if (!pending.view.canExpand || !this.options.plans.canExpand()) throw new GateError('The plan cannot be expanded for this call.');
-      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.rel as string, exists: target.exists, dir: target.dir })));
+      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.rel as string, exists: target.exists, dir: target.dir, deleted: target.deleting })));
     }
     pending.settle(answer);
   }
@@ -216,7 +217,7 @@ export class HookGate {
     if (cls === 'file-writer') {
       const path = input.toolInput[FILE_PATH_FIELD[input.toolName] as string];
       if (typeof path !== 'string' || path === '') return [special('unresolved', String(path ?? ''), 'no file path in the call')];
-      return this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false }], policy, home);
+      return this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false, deleting: false }], policy, home);
     }
     if (cls !== 'shell') return [];
     const command = input.toolInput.command;
@@ -238,7 +239,7 @@ export class HookGate {
     const owner = ownerIndex(components);
     return infos.map((info, index) => ({
       raw: landings[index]!.raw, kind: info.cls, rel: info.rel, abs: info.abs, dir: info.isDir,
-      mkdir: landings[index]!.mkdir, exists: info.exists, guarded: info.guarded, why: info.why,
+      mkdir: landings[index]!.mkdir, deleting: landings[index]!.deleting, exists: info.exists, guarded: info.guarded, why: info.why,
       unowned: info.cls === 'enforced' && info.rel !== null && !info.isDir && !info.exists && owner(info.rel, false) === null
         && globOwners(components, info.rel).length === 0,
     }));
@@ -252,6 +253,7 @@ export class HookGate {
       path: targetName(target),
       kind: target.kind as GateTargetKind,
       inScope: !outOfScope.has(target),
+      deleting: target.deleting,
       componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.rel, target.exists) : null,
     }));
     const expandable = judged.decision.outOfScope.length > 0
@@ -327,7 +329,7 @@ function parseHookInput(raw: unknown, root: string): HookInput | null {
 }
 
 function special(kind: 'unresolved' | 'all-tracked', raw: string, why: string): ClassifiedTarget {
-  return { raw, kind, rel: null, abs: null, dir: false, mkdir: false, exists: false, guarded: false, why };
+  return { raw, kind, rel: null, abs: null, dir: false, mkdir: false, deleting: false, exists: false, guarded: false, why };
 }
 
 function landingsOf(target: ShellTarget): Landing[] {
@@ -338,8 +340,8 @@ function landingsOf(target: ShellTarget): Landing[] {
   } catch {
     isDirectory = false;
   }
-  if (target.names.length > 0 && isDirectory) return target.names.map((name) => ({ raw: `${target.word}/${name}`, abs: join(abs, name), mkdir: false }));
-  return [{ raw: target.word, abs, mkdir: target.mkdir }];
+  if (target.names.length > 0 && isDirectory) return target.names.map((name) => ({ raw: `${target.word}/${name}`, abs: join(abs, name), mkdir: false, deleting: false }));
+  return [{ raw: target.word, abs, mkdir: target.mkdir, deleting: target.deleting }];
 }
 
 function preview(input: HookInput): GatePreview {

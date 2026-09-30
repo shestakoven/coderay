@@ -37,7 +37,25 @@ describe('freezeScope', () => {
     expect(freezeScope(steps(
       [{ componentId: 'lib', op: 'modify' }],
       [{ path: 'src/app.ts', op: 'modify' }, { path: 'app/[id]', op: 'modify' }, { path: 'src/app.ts', op: 'modify' }],
-    ), root, components)).toEqual({ paths: ['src/app.ts', 'src/lib/util.ts'], globs: ['app/[[]id[]]/**', 'src/lib/**'] });
+    ), root, components)).toMatchObject({ paths: ['src/app.ts', 'src/lib/util.ts'], globs: ['app/[[]id[]]/**', 'src/lib/**'] });
+  });
+});
+
+describe('freezeScope deletes', () => {
+  it('collects delete targets: a path, a directory as dir/**, a component as its files and globs', async () => {
+    const root = await project();
+    expect(freezeScope(steps(
+      [{ path: 'src/app.ts', op: 'delete' }, { path: 'src/other.ts', op: 'modify' }],
+      [{ path: 'src/ui', op: 'delete' }, { componentId: 'lib', op: 'delete' }],
+    ), root, components)).toMatchObject({
+      paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'],
+      deletes: { paths: ['src/app.ts', 'src/lib/util.ts'], globs: ['src/lib/**', 'src/ui/**'] },
+    });
+  });
+
+  it('gives empty deletes to a plan without delete targets', async () => {
+    const root = await project();
+    expect(freezeScope(steps([{ path: 'src/app.ts', op: 'modify' }]), root, components).deletes).toEqual({ paths: [], globs: [] });
   });
 });
 

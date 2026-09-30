@@ -27,6 +27,49 @@ describe('shellWrites', () => {
     expect(targets(command)).toEqual(expected);
   });
 
+  it.each([
+    ['rm src/a.ts', [{ path: '/p/src/a.ts', deleting: true }]],
+    ['rmdir old', [{ path: '/p/old', deleting: true }]],
+    ['unlink a.ts', [{ path: '/p/a.ts', deleting: true }]],
+    ['mv src/a.ts src/b.ts', [{ path: '/p/src/a.ts', deleting: true }, { path: '/p/src/b.ts', deleting: false }]],
+    ['cp a.ts b.ts', [{ path: '/p/b.ts', deleting: false }]],
+    ['git rm a.ts b.ts', [{ path: '/p/a.ts', deleting: true }, { path: '/p/b.ts', deleting: true }]],
+    ['git rm -r --cached a.ts', []],
+    ['git rm --cached a.ts', []],
+    ['git -c x=y rm a.ts', [{ path: '/p/a.ts', deleting: true }]],
+    ['git mv a b', [{ path: '/p/a', deleting: true }, { path: '/p/b', deleting: false }]],
+    ['cp -tout a.ts', [{ path: '/p/out', deleting: false }]],
+    ['echo $(echo ")") > out.ts', [{ path: '/p/out.ts', deleting: false }]],
+    ["echo hi > $'a.ts'", [{ path: '/p/a.ts', deleting: false }]],
+    ['echo hi > a.ts', [{ path: '/p/a.ts', deleting: false }]],
+  ])('deleting flags of %s', (command, expected) => {
+    const got = writes(command).targets.filter((target) => target.path).map((target) => ({ path: target.path, deleting: target.deleting }));
+    expect(got).toEqual(expected);
+  });
+
+  it.each([
+    ['cp -t out a.ts', 'out'],
+    ['cp -tout a.ts', 'out'],
+    ['mv -tout a.ts', 'out'],
+    ['mv --target-directory=out a.ts', 'out'],
+  ])('%s lands a.ts in the target directory', (command, dir) => {
+    expect(writes(command).targets.filter((target) => !target.deleting).map((target) => [target.path, target.names])).toEqual([[`/p/${dir}`, ['a.ts']]]);
+  });
+
+  it.each(['source s.sh', '. s.sh', "bash -c -- 'touch x'", 'echo x > ~other/f.ts', "echo x > $'a\\n.ts'", 'echo x > $\'a\\x41.ts\''])('%s has an unresolved target', (command) => {
+    expect(writes(command).targets.some((target) => target.unresolved !== null)).toBe(true);
+  });
+
+  it('a mktemp variable followed by .. is not temp', () => {
+    const got = writes('T=$(mktemp -d); echo x > $T/../../proj/f.ts');
+    expect(got.targets.every((target) => !target.temp)).toBe(true);
+    expect(got.targets.length).toBe(1);
+  });
+
+  it('a mktemp variable with a plain path below it stays temp', () => {
+    expect(writes('T=$(mktemp -d); echo x > $T/a/b.txt').targets.map((target) => target.temp)).toEqual([true]);
+  });
+
   it('marks mkdir targets so a planned directory tree can be created', () => {
     expect(writes('mkdir -p a/b').targets).toMatchObject([{ path: '/p/a/b', mkdir: true }]);
   });

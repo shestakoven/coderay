@@ -85,7 +85,7 @@ describe('PlanService', () => {
     expect(await call).toEqual({ ok: true, value: { status: 'approved' } });
     expect(service.gate()).toEqual({
       state: 'approved', planId: 'plan-1', version: 1, activeStep: null,
-      scope: { paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'], globs: ['src/lib/**'] },
+      scope: { paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'], globs: ['src/lib/**'], deletes: { paths: [], globs: [] } },
     });
   });
 
@@ -269,6 +269,16 @@ describe('PlanService', () => {
       steps: [{ key: 'edit', targets: [{ path: 'src/app.ts', op: 'modify' }, { path: 'src/other.ts', op: 'modify' }, { path: 'src/lib/new.ts', op: 'create' }] }],
     });
     expect(service.gate()).toMatchObject({ version: 2, scope: { paths: ['src/app.ts', 'src/lib/new.ts', 'src/other.ts'], globs: [] } });
+  });
+
+  it('expands a deleted path with op delete and grows the deletes of the scope', async () => {
+    const { service } = await setup();
+    await service.propose(small);
+    service.step({ key: 'edit', phase: 'start' });
+    const expanded = service.expand([{ rel: 'src/app.ts', exists: true, dir: false, deleted: true }, { rel: 'src/other.ts', exists: true, dir: false, deleted: true }]);
+    expect(expanded.steps[0]!.targets).toEqual([{ path: 'src/app.ts', op: 'modify' }, { path: 'src/app.ts', op: 'delete' }, { path: 'src/other.ts', op: 'delete' }]);
+    expect(expanded.scope.deletes).toEqual({ paths: ['src/app.ts', 'src/other.ts'], globs: [] });
+    expect(covers(expanded.scope, { rel: 'src/app.ts', dir: false, mkdir: false, deleting: true })).toBe(true);
   });
 
   it('expands into a directory, escaping glob metacharacters, and covers a new mkdir target', async () => {

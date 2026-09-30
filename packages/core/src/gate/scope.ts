@@ -7,6 +7,7 @@ export interface ScopeTarget {
   rel: string;
   dir: boolean;
   mkdir: boolean;
+  deleting?: boolean;
 }
 
 // Node's glob has no backslash escape; a one-character class matches that character literally.
@@ -65,6 +66,10 @@ export function globMatches(rel: string, glob: string): boolean {
 }
 
 export function covers(scope: FrozenScope, target: ScopeTarget): boolean {
+  return coversIn(target.deleting && scope.deletes ? scope.deletes : scope, target);
+}
+
+function coversIn(scope: { paths: string[]; globs: string[] }, target: ScopeTarget): boolean {
   if (target.mkdir) {
     return scope.globs.some((glob) => globMatches(target.rel, glob))
       || scope.paths.includes(target.rel)

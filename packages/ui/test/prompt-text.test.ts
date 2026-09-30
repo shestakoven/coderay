@@ -6,7 +6,7 @@ const prompt = (targets: GateTarget[], tool = 'Edit'): GatePromptView => ({
   id: 'g1', toolUseId: 't1', parentToolUseId: null, tool, summary: 'src/x.ts', preview: { kind: 'input', text: '{}', truncated: false },
   reason: null, targets, canExpand: true, planId: 'p', mode: 'B', status: 'pending', answer: null, ts: 1,
 });
-const target = (path: string, overrides: Partial<GateTarget> = {}): GateTarget => ({ path, kind: 'enforced', inScope: false, componentId: 'app', ...overrides });
+const target = (path: string, overrides: Partial<GateTarget> = {}): GateTarget => ({ path, kind: 'enforced', inScope: false, deleting: false, componentId: 'app', ...overrides });
 
 describe('prompt text', () => {
   it('names the first target outside the plan', () => {

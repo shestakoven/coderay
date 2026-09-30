@@ -11,6 +11,7 @@ export interface ClassifiedTarget {
   abs: string | null;
   dir: boolean;
   mkdir: boolean;
+  deleting: boolean;
   exists: boolean;
   guarded: boolean;
   why: string;
@@ -105,7 +106,7 @@ export function decide(input: GuardInput): GuardDecision {
 }
 
 function inScope(scope: FrozenScope, target: ClassifiedTarget): boolean {
-  if (target.kind === 'enforced' && target.rel !== null) return covers(scope, { rel: target.rel, dir: target.dir, mkdir: target.mkdir });
+  if (target.kind === 'enforced' && target.rel !== null) return covers(scope, { rel: target.rel, dir: target.dir, mkdir: target.mkdir, deleting: target.deleting });
   if (target.kind === 'all-tracked') return scope.globs.includes('**');
   return false;
 }

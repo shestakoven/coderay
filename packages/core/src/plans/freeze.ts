@@ -32,19 +32,33 @@ export function freezeScope(steps: PlanStep[], root: string, components: Compone
   const byId = new Map(components.map((component) => [component.id, component]));
   const paths = new Set<string>();
   const globs = new Set<string>();
+  const deletePaths = new Set<string>();
+  const deleteGlobs = new Set<string>();
   for (const step of steps) {
     for (const target of step.targets) {
+      const removing = target.op === 'delete';
       if (target.componentId !== undefined) {
         const component = byId.get(target.componentId);
-        for (const file of component?.files ?? []) paths.add(file);
-        for (const glob of component?.globs ?? []) globs.add(glob);
+        for (const file of component?.files ?? []) {
+          paths.add(file);
+          if (removing) deletePaths.add(file);
+        }
+        for (const glob of component?.globs ?? []) {
+          globs.add(glob);
+          if (removing) deleteGlobs.add(glob);
+        }
       } else if (target.path !== undefined) {
-        if (isDirectory(root, target.path)) globs.add(`${escapeGlob(target.path)}/**`);
-        else paths.add(target.path);
+        if (isDirectory(root, target.path)) {
+          globs.add(`${escapeGlob(target.path)}/**`);
+          if (removing) deleteGlobs.add(`${escapeGlob(target.path)}/**`);
+        } else {
+          paths.add(target.path);
+          if (removing) deletePaths.add(target.path);
+        }
       }
     }
   }
-  return { paths: [...paths].sort(), globs: [...globs].sort() };
+  return { paths: [...paths].sort(), globs: [...globs].sort(), deletes: { paths: [...deletePaths].sort(), globs: [...deleteGlobs].sort() } };
 }
 
 // The components whose most specific matching glob is the most specific of all; more than one is a tie.

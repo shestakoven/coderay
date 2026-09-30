@@ -29,6 +29,7 @@ export type ApprovedBy = 'user-card' | 'user-expand' | 'auto';
 export interface FrozenScope {
   paths: string[];
   globs: string[];
+  deletes?: { paths: string[]; globs: string[] };
 }
 
 export interface PlanReview {
@@ -63,6 +64,7 @@ export interface GateTarget {
   path: string;
   kind: GateTargetKind;
   inScope: boolean;
+  deleting: boolean;
   componentId: string | null;
 }
 

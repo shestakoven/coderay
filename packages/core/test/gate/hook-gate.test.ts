@@ -99,6 +99,18 @@ describe('HookGate', () => {
     expect(decisions.at(-1)).toMatchObject({ decision: 'allow', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'] });
   });
 
+  it('asks before rm of a modify target and expands the plan with a delete', async () => {
+    const { root, call, approve, pending, gate, plans } = await setup();
+    await approve();
+    const answer = call('Bash', { command: 'rm src/app.ts' });
+    const prompt = await pending();
+    expect(prompt.targets).toMatchObject([{ path: 'src/app.ts', inScope: false, deleting: true }]);
+    gate.answer(prompt.id, 'expand-plan');
+    expect((await answer)?.permissionDecision).toBe('allow');
+    expect(plans.gate()).toMatchObject({ scope: { deletes: { paths: ['src/app.ts'] } } });
+    expect((await call('Write', { file_path: join(root, 'src/app.ts'), content: 'x' }))?.permissionDecision).toBe('allow');
+  });
+
   it("asks the user about an out-of-scope write in mode B, with the agent's reason, and lets it through once", async () => {
     const { root, call, approve, pending, gate, decisions, store } = await setup();
     await approve();
@@ -247,7 +259,7 @@ describe('HookGate', () => {
     const { call, approve, pending } = await setup();
     await approve();
     void call('Bash', { command: 'mv src/app.ts src/lib' });
-    expect((await pending()).targets.map((target) => [target.path, target.inScope])).toEqual([['src/app.ts', true], ['src/lib/app.ts', false]]);
+    expect((await pending()).targets.map((target) => [target.path, target.inScope])).toEqual([['src/app.ts', false], ['src/lib/app.ts', false]]);
   });
 
   it('keeps waiting for an answer, and answers normally, even when a change listener throws', async () => {
