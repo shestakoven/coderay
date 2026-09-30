@@ -124,9 +124,9 @@ export class ChangeService {
       else removed.push(d.path);
     }
     await this.countLines(made, new Map(drift.map((d) => [d.path, { before: d.before?.stored ?? true }])));
-    this.persistStrict(made);
+    this.persistStrict(made, { rows, removed });
     this.remember(made);
-    this.o.baselines.setMany(rows, removed);
+    this.o.baselines.remember(rows, removed);
     return made;
   }
 
@@ -184,6 +184,7 @@ export class ChangeService {
     const checks = new Map<string, { before: boolean }>();
     const rows: BaselineRecord[] = [];
     const removed: string[] = [];
+    const claims: { rel: string; hash: string | null }[] = [];
     const recorded = new Map<string, string | null>();
     const becameUnreadable: string[] = [];
     const newStamps = new Map<string, number>();
@@ -205,7 +206,9 @@ export class ChangeService {
       }
       let origin: ChangeOrigin = 'ide';
       let toolUseIds: string[] = [];
-      if (isUnreadable || !this.o.ideWrites.claim(rel, afterHash)) {
+      const claimed = !isUnreadable && this.o.ideWrites.claim(rel, afterHash);
+      if (claimed) claims.push({ rel, hash: afterHash });
+      if (!claimed) {
         const attribution = this.o.ledger.attribute(rel, event.at, { tracked: tracked.has(rel), enforced });
         origin = attribution.origin;
         toolUseIds = attribution.toolUseIds;
@@ -227,14 +230,19 @@ export class ChangeService {
       else removed.push(rel);
     }
     if (made.length === 0) return;
-    await this.countLines(made, checks);
-    this.persistStrict(made);
+    try {
+      await this.countLines(made, checks);
+      this.persistStrict(made, { rows, removed });
+    } catch (error) {
+      for (const claim of claims) this.o.ideWrites.expect(claim.rel, claim.hash);
+      throw error;
+    }
     this.remember(made);
     for (const [id, at] of newStamps) this.stamps.set(id, at);
     for (const [rel, hash] of recorded) this.lastRecorded.set(rel, hash);
     for (const rel of becameUnreadable) this.unreadableSeen.add(rel);
     for (const rel of rels) if (!unreadable.has(rel)) this.unreadableSeen.delete(rel);
-    baselines.setMany(rows, removed);
+    baselines.remember(rows, removed);
     this.o.checkpoints.recordMany(made);
     for (const listener of this.listeners) {
       try {
@@ -332,10 +340,10 @@ export class ChangeService {
     return next;
   }
 
-  private persistStrict(changes: ChangeView[]): void {
+  private persistStrict(changes: ChangeView[], baselines?: { rows: BaselineRecord[]; removed: string[] }): void {
     const sessionId = this.o.sessionId();
     if (sessionId === null) throw new Error('changes: no session to record into');
-    if (changes.length > 0) this.o.store.saveChanges(sessionId, changes);
+    if (changes.length > 0) this.o.store.saveChanges(sessionId, changes, baselines);
   }
 
   private persistLoose(changes: ChangeView[]): void {

@@ -130,7 +130,7 @@ export interface Store {
   saveGateEvent(sessionId: string, event: GateEventRecord): void;
   gateEvents(sessionId: string): GateEventRecord[];
   saveChange(sessionId: string, change: ChangeView): void;
-  saveChanges(sessionId: string, changes: ChangeView[]): void;
+  saveChanges(sessionId: string, changes: ChangeView[], baselines?: { rows: BaselineRecord[]; removed: string[] }): void;
   changes(sessionId: string, limit?: number): ChangeView[];
   saveBaselines(rows: BaselineRecord[], removed?: string[]): void;
   baselines(): BaselineRecord[];
@@ -652,10 +652,17 @@ export function openStore(dir: string): Store {
     saveChange(sessionId, change) {
       writeChange(sessionId, change);
     },
-    saveChanges(sessionId, changes) {
+    saveChanges(sessionId, changes, baselines) {
       db.exec('BEGIN');
       try {
         for (const change of changes) writeChange(sessionId, change);
+        if (baselines) {
+          const updatedAt = Date.now();
+          for (const path of baselines.removed) deleteBaseline.run(path);
+          for (const row of baselines.rows) {
+            upsertBaseline.run({ path: row.path, hash: row.hash, stored: row.stored ? 1 : 0, size: row.size, mode: row.mode, updatedAt });
+          }
+        }
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');

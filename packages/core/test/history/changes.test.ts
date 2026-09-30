@@ -517,4 +517,31 @@ exec '${real}' "$@"
     try { await f.service.handle(f.ev('a.ts')); } finally { process.env.PATH = path; }
     expect(f.service.changes()[0]!.origin).toBe('agent-tool');
   });
+
+  it('writes changes and baselines in one transaction: a failing baseline write leaves no change and the retry records exactly one', async () => {
+    const f = await fixture();
+    const before = f.baselines.get('a.ts')!.hash;
+    const real = f.store.saveChanges.bind(f.store);
+    vi.spyOn(f.store, 'saveChanges').mockImplementationOnce((id, changes, baselines) =>
+      real(id, changes, baselines && { ...baselines, rows: baselines.rows.map((r) => ({ ...r, hash: null as never })) }));
+    write(f.root, 'a.ts', 'changed');
+    await expect(f.service.handle(f.ev('a.ts'))).rejects.toThrow();
+    expect(f.store.changes('s1')).toEqual([]);
+    expect(f.store.baselines().find((b) => b.path === 'a.ts')!.hash).toBe(before);
+    expect(f.baselines.get('a.ts')!.hash).toBe(before);
+    await f.service.handle(f.ev('a.ts'));
+    expect(f.store.changes('s1')).toHaveLength(1);
+    expect(f.service.changes()).toHaveLength(1);
+    expect(f.store.baselines().find((b) => b.path === 'a.ts')!.hash).toBe(f.service.changes()[0]!.afterHash);
+  });
+
+  it('still labels an IDE write as ide on the retry of a batch that failed', async () => {
+    const f = await fixture();
+    write(f.root, 'a.ts', 'by ide');
+    f.ideWrites.expect('a.ts', sh(f.root, 'hash-object', 'a.ts').trim());
+    failOnce(f);
+    await expect(f.service.handle(f.ev('a.ts'))).rejects.toThrow('disk full');
+    await f.service.handle(f.ev('a.ts'));
+    expect(f.service.changes().map((c) => c.origin)).toEqual(['ide']);
+  });
 });
