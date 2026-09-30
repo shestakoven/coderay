@@ -130,10 +130,9 @@ export function App() {
   const focusComponents = (componentIds: string[]) => setFocus({ componentIds, nonce: Date.now() });
   const eventFiles = useMemo(() => eventFilePaths(hist.history.events), [hist.history.events]);
   const watchdog = dialogEvent(hist.history.events);
-  const requestDiff = (path: string, before: string | null, after: string | null): string => {
+  const requestDiff = (path: string, before: string | null, after: string | null): string | null => {
     const requestId = crypto.randomUUID();
-    send({ type: 'history.diff', requestId, path, before, after });
-    return requestId;
+    return send({ type: 'history.diff', requestId, path, before, after }) ? requestId : null;
   };
   const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;

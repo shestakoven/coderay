@@ -1,7 +1,7 @@
 import type { FileAnswer, WatchdogAnswer, WatchdogEventView } from '@ide/protocol';
 
 export interface DialogChoice { files: Record<string, FileAnswer | undefined> }
-export interface DirGroup { dir: string; paths: string[]; answer: FileAnswer | 'mixed' | null }
+export interface DirGroup { dir: string; paths: string[]; shownPaths?: string[]; answer: FileAnswer | 'mixed' | null }
 
 export const PAGE_FILES = 100;
 
@@ -14,7 +14,7 @@ const eventPaths = (event: WatchdogEventView): string[] => [...new Set(event.cha
 export function initialChoice(event: WatchdogEventView): DialogChoice {
   const files: DialogChoice['files'] = {};
   if (event.mode === 'A') {
-    for (const path of eventPaths(event)) if (fileOptions(path).includes('revert')) files[path] = 'revert';
+    for (const path of eventPaths(event)) files[path] = fileOptions(path).includes('revert') ? 'revert' : 'keep';
   }
   return { files };
 }
@@ -57,7 +57,7 @@ export function visibleFiles(groups: DirGroup[], expanded: boolean): { shown: Di
   let room = PAGE_FILES;
   for (const group of groups) {
     if (room <= 0) break;
-    shown.push(group.paths.length <= room ? group : { ...group, paths: group.paths.slice(0, room) });
+    shown.push(group.paths.length <= room ? group : { ...group, shownPaths: group.paths.slice(0, room) });
     room -= group.paths.length;
   }
   return { shown, hidden: total - PAGE_FILES };

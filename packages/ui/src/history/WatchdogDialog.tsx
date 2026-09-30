@@ -11,7 +11,7 @@ interface Props {
   event: WatchdogEventView;
   diffs: Record<string, DiffResult | undefined>;
   send: (message: ClientMessage) => boolean;
-  requestDiff: (path: string, before: string | null, after: string | null) => string;
+  requestDiff: (path: string, before: string | null, after: string | null) => string | null;
 }
 
 const ANSWER_LABEL: Record<FileAnswer, string> = { keep: 'Keep', revert: 'Revert', mine: 'My edit' };
@@ -19,6 +19,7 @@ const ANSWER_LABEL: Record<FileAnswer, string> = { keep: 'Keep', revert: 'Revert
 export function WatchdogDialog({ event, diffs, send, requestDiff }: Props) {
   const [picked, setPicked] = useState<DialogChoice>({ files: {} });
   const [expanded, setExpanded] = useState(false);
+  const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [requested, setRequested] = useState<Record<string, string>>({});
   const choice = useMemo<DialogChoice>(() => ({ files: { ...initialChoice(event).files, ...picked.files } }), [event, picked]);
   const groups = groupByDir(event, choice);
@@ -29,7 +30,10 @@ export function WatchdogDialog({ event, diffs, send, requestDiff }: Props) {
   const showDiff = (path: string): void => {
     if (requested[path]) return;
     const range = fileDiffRange(event, path);
-    if (range) setRequested({ ...requested, [path]: requestDiff(path, range.before, range.after) });
+    if (!range) return;
+    const id = requestDiff(path, range.before, range.after);
+    if (id === null) setFailed({ ...failed, [path]: true });
+    else setRequested({ ...requested, [path]: id });
   };
   return (
     <section className="watchdog" data-testid="watchdog-dialog">
@@ -55,6 +59,7 @@ export function WatchdogDialog({ event, diffs, send, requestDiff }: Props) {
           onDiff={showDiff}
           diffs={diffs}
           requested={requested}
+          failed={failed}
         />
       ))}
       {hidden > 0 && <button onClick={() => setExpanded(true)}>Show all ({hidden} more)</button>}
@@ -69,7 +74,7 @@ export function WatchdogDialog({ event, diffs, send, requestDiff }: Props) {
   );
 }
 
-function DirRow({ group, choice, onDir, onFile, onDiff, diffs, requested }: {
+function DirRow({ group, choice, onDir, onFile, onDiff, diffs, requested, failed }: {
   group: DirGroup;
   choice: DialogChoice;
   onDir: (a: FileAnswer) => void;
@@ -77,6 +82,7 @@ function DirRow({ group, choice, onDir, onFile, onDiff, diffs, requested }: {
   onDiff: (path: string) => void;
   diffs: Record<string, DiffResult | undefined>;
   requested: Record<string, string>;
+  failed: Record<string, boolean>;
 }) {
   return (
     <div className="wd-dir">
@@ -88,18 +94,19 @@ function DirRow({ group, choice, onDir, onFile, onDiff, diffs, requested }: {
           ))}
         </span>
       </div>
-      {group.paths.map((path) => {
+      {(group.shownPaths ?? group.paths).map((path) => {
         const result = requested[path] ? diffs[requested[path]] : undefined;
         return (
           <div key={path} className="wd-file">
             <div className="wd-file-row">
-              <button className="link" onClick={() => onDiff(path)}>{path.slice(path.lastIndexOf('/') + 1)}</button>
+              <button className="link" aria-expanded={Boolean(requested[path])} aria-label={`Show the diff of ${path}`} title={path} onClick={() => onDiff(path)}>{path.slice(path.lastIndexOf('/') + 1)}</button>
               <span className="wd-chips">
                 {fileOptions(path).map((a) => (
                   <button key={a} className={`chip ${choice.files[path] === a ? 'on' : ''}`} aria-pressed={choice.files[path] === a} onClick={() => onFile(path, a)}>{ANSWER_LABEL[a]}</button>
                 ))}
               </span>
             </div>
+            {failed[path] && <div className="note">Not connected to the IDE core: the diff was not requested.</div>}
             {requested[path] && <DiffView result={result} />}
           </div>
         );

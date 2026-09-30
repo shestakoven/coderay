@@ -21,11 +21,11 @@ const two = (mode: 'A' | 'B') => event({ mode, changes: [change({ path: 'src/a.t
 describe('initialChoice', () => {
   it('preselects revert for every revertable file in mode A and nothing in mode B', () => {
     const a = initialChoice(event({ mode: 'A', changes: [change({ path: 'src/a.ts' }), change({ path: '.git/HEAD' })] }));
-    expect(a.files).toEqual({ 'src/a.ts': 'revert' });
+    expect(a.files).toEqual({ 'src/a.ts': 'revert', '.git/HEAD': 'keep' });
     expect(initialChoice(event({ mode: 'B', changes: [change({ path: 'src/a.ts' })] })).files).toEqual({});
   });
-  it('never preselects revert for .git/refs in mode A', () => {
-    expect(initialChoice(event({ mode: 'A', changes: [change({ path: '.git/refs/heads/x' })] })).files).toEqual({});
+  it('defaults keep-only files to keep in mode A, never revert', () => {
+    expect(initialChoice(event({ mode: 'A', changes: [change({ path: '.git/refs/heads/x' })] })).files).toEqual({ '.git/refs/heads/x': 'keep' });
   });
 });
 
@@ -55,10 +55,9 @@ describe('buildAnswer', () => {
     expect(buildAnswer(e, { files: { 'src/a.ts': 'revert', 'lib/b.ts': 'revert' } })).toEqual({ kind: 'all', answer: 'revert' });
     expect(buildAnswer(e, { files: { 'src/a.ts': 'revert', 'lib/b.ts': 'keep' } })).toEqual({ kind: 'files', files: { 'src/a.ts': 'revert', 'lib/b.ts': 'keep' } });
   });
-  it('keeps per-file answers when a mode A default meets a keep-only file', () => {
+  it('answers per file when a mode A default meets a keep-only file, without asking', () => {
     const e = event({ mode: 'A', changes: [change({ path: 'src/a.ts' }), change({ path: '.git/HEAD' })] });
-    const c = chooseFile(initialChoice(e), '.git/HEAD', 'keep');
-    expect(buildAnswer(e, c)).toEqual({ kind: 'files', files: { 'src/a.ts': 'revert', '.git/HEAD': 'keep' } });
+    expect(buildAnswer(e, initialChoice(e))).toEqual({ kind: 'files', files: { 'src/a.ts': 'revert', '.git/HEAD': 'keep' } });
   });
 });
 
@@ -85,14 +84,15 @@ describe('directories', () => {
 
 describe('visibleFiles', () => {
   const many = (n: number) => event({ changes: Array.from({ length: n }, (_, i) => change({ path: `gen/f${String(i).padStart(3, '0')}.ts` })) });
-  const count = (g: { paths: string[] }[]) => g.reduce((n, x) => n + x.paths.length, 0);
+  const count = (g: { paths: string[]; shownPaths?: string[] }[]) => g.reduce((n, x) => n + (x.shownPaths ?? x.paths).length, 0);
   it('shows 100 of 300 files and hides the rest until expanded', () => {
     const groups = groupByDir(many(300));
     const { shown, hidden } = visibleFiles(groups, false);
     expect(PAGE_FILES).toBe(100);
     expect(count(shown)).toBe(100);
     expect(hidden).toBe(200);
-    expect(shown[0]!.paths[99]).toBe('gen/f099.ts');
+    expect(shown[0]!.shownPaths![99]).toBe('gen/f099.ts');
+    expect(shown[0]!.paths).toHaveLength(300);
     const all = visibleFiles(groups, true);
     expect(count(all.shown)).toBe(300);
     expect(all.hidden).toBe(0);
@@ -101,10 +101,17 @@ describe('visibleFiles', () => {
     expect(visibleFiles(groupByDir(many(100)), false).hidden).toBe(0);
     expect(visibleFiles(groupByDir(many(101)), false).hidden).toBe(1);
   });
+  it('lets a directory answer reach the hidden files of a sliced group', () => {
+    const e = many(300);
+    const sliced = visibleFiles(groupByDir(e), false).shown[0]!;
+    const c = chooseDir({ files: {} }, sliced, 'revert');
+    expect(Object.keys(c.files)).toHaveLength(300);
+    expect(buildAnswer(e, c)).toEqual({ kind: 'all', answer: 'revert' });
+  });
   it('cuts across directories', () => {
     const e = event({ changes: [...Array.from({ length: 60 }, (_, i) => change({ path: `a/f${i}` })), ...Array.from({ length: 60 }, (_, i) => change({ path: `b/f${i}` }))] });
     const { shown, hidden } = visibleFiles(groupByDir(e), false);
-    expect(shown.map((g) => g.paths.length)).toEqual([60, 40]);
+    expect(shown.map((g) => (g.shownPaths ?? g.paths).length)).toEqual([60, 40]);
     expect(hidden).toBe(20);
   });
 });
