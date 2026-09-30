@@ -169,6 +169,7 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
 
   it('blocks every call when the core cannot be reached', async () => {
     const f = await flow('gate-no-plan');
+    // Closing the core at the canary ping leaves the core unreachable for the first hook call while the session still starts.
     const ping = f.runtime.canary.ping.bind(f.runtime.canary);
     f.runtime.canary.ping = (sessionId) => {
       void f.server.close();

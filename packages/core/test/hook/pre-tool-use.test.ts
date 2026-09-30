@@ -3,6 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { HOOK_SCRIPT } from '../../src/hook/gate-files';
 import { tempDir } from '../helpers';
@@ -106,12 +107,23 @@ describe('pre-tool-use hook script', () => {
     expect(run.stderr).not.toContain(SECRET);
   });
 
-  it('exits 2 within a second even when its stderr is a pipe nobody reads and the reason is huge', async () => {
-    const child = spawn(process.execPath, [HOOK_SCRIPT, join(tempDir('ide-hook-'), 'x'.repeat(100_000))], { stdio: ['pipe', 'ignore', 'pipe'] });
+  it('exits 2 within a second when its stderr pipe is already full and nobody reads it', async () => {
+    const wrapper = join(tempDir('ide-hook-'), 'fill-stderr.mjs');
+    writeFileSync(wrapper, `process.stderr.write('x'.repeat(4 * 1024 * 1024));\nawait import(${JSON.stringify(pathToFileURL(HOOK_SCRIPT).href)});\n`);
+    const child = spawn(process.execPath, [wrapper, join(tempDir('ide-hook-'), 'missing.json')], { stdio: ['pipe', 'ignore', 'pipe'] });
     child.stdin.end(INPUT);
     const started = Date.now();
     const code = await new Promise<number | null>((resolve) => child.on('exit', (exitCode) => resolve(exitCode)));
     expect(code).toBe(2);
     expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it('exits 2, not 0, when a deny cannot be written to its stdout', async () => {
+    const url = await core((_req, _body, res) => res.writeHead(200).end(answer('deny', 'IDE: no plan.')));
+    const child = spawn(process.execPath, [HOOK_SCRIPT, config(url)], { stdio: ['pipe', 'pipe', 'ignore'] });
+    child.stdout.destroy();
+    child.stdin.end(INPUT);
+    const code = await new Promise<number | null>((resolve) => child.on('exit', (exitCode) => resolve(exitCode)));
+    expect(code).toBe(2);
   });
 });

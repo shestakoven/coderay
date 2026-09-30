@@ -15,10 +15,11 @@ function writeOut(fd, text) {
     try {
       written += writeSync(fd, bytes, written);
     } catch (error) {
-      if (error?.code !== 'EAGAIN') return;
+      if (error?.code !== 'EAGAIN') return false;
       retries += 1;
     }
   }
+  return written === bytes.length;
 }
 
 function block(why) {
@@ -30,9 +31,9 @@ function block(why) {
 
 function answer(decision) {
   if (finished) return;
-  finished = true;
   const output = { hookSpecificOutput: { hookEventName: 'PreToolUse', ...decision } };
-  writeOut(1, JSON.stringify(output));
+  if (!writeOut(1, JSON.stringify(output))) return block('could not deliver the decision');
+  finished = true;
   process.exit(0);
 }
 
