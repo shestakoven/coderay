@@ -61,6 +61,12 @@ const GOAL_CHARS = 200;
 const TITLE_CHARS = 120;
 const RATIONALE_CHARS = 300;
 const LONG_TOKEN = 24;
+const MAX_PATH_CHARS = 200;
+const UNUSUAL_PATH = 'an unusual path';
+const OPS = new Set(['modify', 'create', 'delete']);
+
+const usualPath = (path: string): boolean =>
+  path.length > 0 && path.length <= MAX_PATH_CHARS && !/[\s\u0000-\u001f\u007f]/.test(path) && !path.startsWith('/') && !path.split('/').includes('..');
 
 function pathProtected(core: string, isProtected: (rel: string) => boolean): boolean {
   const segments = core.replace(/^(\.\/)+/, '').replace(/^\/+/, '').split('/').filter(Boolean);
@@ -71,13 +77,23 @@ function pathProtected(core: string, isProtected: (rel: string) => boolean): boo
   }
 }
 
+const PREFIXES = /^(sk-|ghp_|AKIA|xox)/;
+const PATH_CHARS = /^[A-Za-z0-9+/_=-]+$/;
+
 function looksSecret(core: string): boolean {
-  if (/^(sk-|ghp_|AKIA|xox)/.test(core)) return true;
+  if (core.split('/').some((part) => PREFIXES.test(part))) return true;
+  if (core.length >= LONG_TOKEN && PATH_CHARS.test(core) && (/[+=]/.test(core) || (/\d/.test(core) && /[A-Z]/.test(core) && /[a-z]/.test(core)))) return true;
   return core.split('/').some((part) => part.length >= LONG_TOKEN && /^[A-Za-z0-9+_=-]+$/.test(part) && (/^[0-9a-fA-F]+$/.test(part) || (/\d/.test(part) && /[A-Za-z]/.test(part))));
 }
 
 export function sanitizeText(text: string, isProtected: (rel: string) => boolean, max = Number.POSITIVE_INFINITY): string | null {
   const plain = text.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/`[^`]*`/g, ' ').replace(/`/g, ' ').replace(/\s+/g, ' ').trim();
+  if (
+    /[a-z+]+:\/\/[^/\s:@]+:[^@\s]+@/i.test(plain) ||
+    /eyJ[\w-]{10,}\.[\w-]{5,}\./.test(plain) ||
+    /["']?(password|secret|token|api[_-]?key|passwd|private[_-]?key)["']?\s*[:=]/i.test(plain)
+  )
+    return null;
   if (/-----BEGIN/.test(plain) || /\bBearer\s/.test(plain) || /[\w-]*(token|secret|password|key)[\w-]*\s*[=:]\s*\S/i.test(plain)) return null;
   const parts = plain.split(/(\s+)/).map((part) => {
     const match = /^([("'[]*)(.*?)([)"'\],;:.!?]*)$/.exec(part);
@@ -211,8 +227,8 @@ export class Summarizer {
   private build(scope: Scope, ref: string): Built | 'blocked' | undefined {
     const facts = scope === 'step' ? this.stepFacts(ref) : this.componentFacts(ref);
     if (!facts || facts === 'blocked') return facts;
-    const json = JSON.stringify(canonical({ ...facts, ref, scope }));
-    const key = createHash('sha256').update(json).digest('hex');
+    const json = JSON.stringify(canonical({ ...facts, scope }));
+    const key = createHash('sha256').update(JSON.stringify(canonical({ facts, ref, scope }))).digest('hex');
     const lead =
       scope === 'step'
         ? 'Describe in one sentence, in English, what this plan step did. Use only these facts; the file list is complete and no file contents are available.'
@@ -246,17 +262,30 @@ export class Summarizer {
     const step = plan?.steps.find((s) => s.key === ref.slice(at + 1));
     if (!plan || !step) return undefined;
     const protectedPaths = new Set<string>();
-    const targets: { path?: string; componentId?: string; op: string }[] = [];
+    const targets: { path?: string; component?: string; op: string }[] = [];
+    const names = new Map(this.o.components().map((c) => [c.id, sanitizeText(c.name, this.o.isProtected, TITLE_CHARS)]));
     for (const t of step.targets) {
-      if (t.path !== undefined && this.o.isProtected(t.path)) protectedPaths.add(t.path);
-      else targets.push({ ...(t.path !== undefined ? { path: t.path } : {}), ...(t.componentId !== undefined ? { componentId: t.componentId } : {}), op: t.op });
+      const op = OPS.has(t.op) ? t.op : 'unknown';
+      if (t.path === undefined) {
+        targets.push({ component: (t.componentId !== undefined ? names.get(t.componentId) : null) ?? 'a component', op });
+      } else if (!usualPath(t.path)) {
+        protectedPaths.add(t.path);
+        targets.push({ path: UNUSUAL_PATH, op });
+      } else if (this.o.isProtected(t.path)) {
+        protectedPaths.add(t.path);
+      } else {
+        const clean = sanitizeText(t.path, this.o.isProtected);
+        if (clean === null) return 'blocked';
+        if (clean !== t.path) protectedPaths.add(t.path);
+        else targets.push({ path: clean, op });
+      }
     }
     const changed = this.o.changes().filter((c) => c.planId === plan.id && c.stepKey === step.key);
     const { files, protectedFiles } = this.filesFacts(changed, protectedPaths);
     const text = [sanitizeText(plan.goal, this.o.isProtected, GOAL_CHARS), sanitizeText(step.title, this.o.isProtected, TITLE_CHARS), sanitizeText(step.rationale, this.o.isProtected, RATIONALE_CHARS)];
     if (text.includes(null)) return 'blocked';
     const [goal, title, rationale] = text;
-    return { goal, title, rationale, targets, files, protectedFiles };
+    return { goal, title, rationale, order: Number.isFinite(step.order) ? step.order : 0, targets, files, protectedFiles };
   }
 
   private componentFacts(ref: string): Facts | 'blocked' | undefined {
