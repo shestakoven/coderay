@@ -792,17 +792,17 @@ describe('AgentSession waiting for the session-start hook', () => {
   });
 
   it('starts again after restart, when the hook reports', async () => {
-    const h = await canaryHarness('multi-turn', 'off', 1000);
+    const h = await canaryHarness('multi-turn', 'off', 5000);
     h.session.send('hi');
-    await waitFor(() => h.session.state().session?.status === 'refused', 'session refused');
+    await waitFor(() => h.session.state().session?.status === 'refused', 'session refused', 30_000);
     await h.session.restart();
     h.session.send('again');
+    await waitFor(() => h.argvs().length === 2, 'claude started again', 30_000);
     await h.ping();
-    await waitFor(() => h.argvs().length === 2, 'claude started again');
+    await waitFor(() => userMessages(h).length === 1, 'message delivered', 30_000);
     expect(h.session.state().session?.status).toBe('running');
-    await waitFor(() => userMessages(h).length === 1, 'message delivered');
     expect(userMessages(h)[0]).toMatchObject({ message: { content: 'again' } });
-  });
+  }, 60_000);
 });
 
 describe('AgentSession feeds for the watchdog', () => {

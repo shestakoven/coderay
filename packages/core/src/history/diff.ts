@@ -13,6 +13,7 @@ export interface DiffServiceOptions {
   changes: () => ChangeView[];
   baselines: Baselines;
   checkpoints: Pick<Checkpoints, 'manifests'>;
+  cacheSize?: number;
 }
 
 const validPath = (path: string): boolean =>
@@ -39,7 +40,7 @@ export class DiffService {
     const pending = this.o.shadow.diff(before, after);
     this.cache.set(key, pending);
     pending.catch(() => { if (this.cache.get(key) === pending) this.cache.delete(key); });
-    if (this.cache.size > CACHE_SIZE) this.cache.delete(this.cache.keys().next().value as string);
+    if (this.cache.size > (this.o.cacheSize ?? CACHE_SIZE)) this.cache.delete(this.cache.keys().next().value as string);
     return pending;
   }
 

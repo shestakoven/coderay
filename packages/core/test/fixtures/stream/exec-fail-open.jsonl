@@ -3,7 +3,7 @@
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fixing the greeting."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
 {"fake":"mcp","id":"toolu_plan","tool":"propose_plan","input":{"goal":"Fix the greeting","steps":[{"key":"edit","title":"Fix the greeting","rationale":"Needed","targets":[{"path":"src/app.ts","op":"modify"}]}]}}
 {"fake":"mcp","id":"toolu_start","tool":"step","input":{"key":"edit","phase":"start"}}
-{"fake":"mcp-write","id":"toolu_f","server":"files","tool":"write","files":[{"path":"src/other.ts","content":"export const other = 'changed';\n"},{"path":"src/third.ts","content":"export const third = 'new';\n"}],"skipHook":true,"perFileMs":100}
+{"fake":"mcp-write","id":"toolu_f","server":"files","tool":"write","files":[{"path":"src/other.ts","content":"export const other = 'changed';\n"},{"path":"src/third.ts","content":"export const third = 'new';\n"}],"skipHook":true,"perFileMs":100,"awaitStart":true,"awaitRelease":true}
 {"fake":"sleep","ms":60000}
 {"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"$SESSION"}
 {"fake":"await-user"}

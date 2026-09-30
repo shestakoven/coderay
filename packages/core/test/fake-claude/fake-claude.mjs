@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -279,6 +279,9 @@ async function runMcpWrite(step) {
   }
   if (interrupt !== null) return;
   if (!verdict.allowed) return finishTool(step.id, `PreToolUse:${name} hook error: ${verdict.reason}`, true, parent);
+  // "awaitStart": the writes wait until the test creates the file named by FAKE_CLAUDE_START, so the core has seen the tool_use before any file changes.
+  while (step.awaitStart && !existsSync(process.env.FAKE_CLAUDE_START) && interrupt === null) await new Promise((resolve) => setTimeout(resolve, 20));
+  if (interrupt !== null) return;
   const honorCancel = step.honorCancel !== false;
   const written = [];
   let done = false;
@@ -301,6 +304,9 @@ async function runMcpWrite(step) {
   const writing = writeAll();
   if (honorCancel) await writing;
   else await waitUntil(() => done || interrupt !== null);
+  if (interrupt !== null) return;
+  // "awaitRelease": the tool result waits until the test creates the file named by FAKE_CLAUDE_RELEASE, so the test decides when the writes have been seen.
+  while (step.awaitRelease && !existsSync(process.env.FAKE_CLAUDE_RELEASE) && interrupt === null) await new Promise((resolve) => setTimeout(resolve, 20));
   if (interrupt !== null) return;
   finishTool(step.id, 'ok', false, parent);
 }

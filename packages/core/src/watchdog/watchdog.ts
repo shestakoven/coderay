@@ -146,7 +146,7 @@ export class Watchdog {
   }
 
   private decide(event: WatchdogEventView, answer: WatchdogAnswer): Map<string, FileAnswer | 'expand-plan'> {
-    const paths = [...new Set(event.changes.map((c) => c.path))];
+    const paths = [...new Set(event.changes.map((c) => c.path))].sort();
     const decisions = new Map<string, FileAnswer | 'expand-plan'>();
     if (answer.kind === 'all') {
       if (!ANSWERS.has(answer.answer)) throw new WatchdogError('That answer is not one of keep, revert, mine or expand-plan.');
@@ -168,7 +168,7 @@ export class Watchdog {
   private async apply(event: WatchdogEventView, answer: WatchdogAnswer): Promise<void> {
     const decisions = this.decide(event, answer);
     const pathsOf = (what: FileAnswer | 'expand-plan'): string[] => [...decisions].filter(([, v]) => v === what).map(([path]) => path);
-    const idsOf = (paths: string[]): string[] => event.changes.filter((c) => paths.includes(c.path)).map((c) => c.id);
+    const idsOf = (paths: string[]): string[] => paths.flatMap((path) => event.changes.filter((c) => c.path === path).map((c) => c.id));
     const input: ResumeInput = {
       kept: pathsOf('keep'), reverted: [], added: pathsOf('expand-plan'), mine: pathsOf('mine'), conflicts: [],
       interrupted: event.interrupted, killedSubagents: event.interrupted ? this.killed.get(event.id) ?? [] : [],

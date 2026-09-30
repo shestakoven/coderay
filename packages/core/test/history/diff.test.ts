@@ -19,7 +19,7 @@ const change = (path: string, beforeHash: string | null, afterHash: string | nul
   planId: 'p', planVersion: 1, stepKey: 'edit', eventId: null, resolution: null, added: null, removed: null, stored: true, unreadable: false, beforeMode: null, ...o,
 });
 
-async function fixture() {
+async function fixture(cacheSize?: number) {
   const shadow = await ShadowRepo.open(tempDir('diff-shadow-'));
   const work = tempDir('diff-work-');
   const store = openStore(tempDir('diff-store-'));
@@ -33,7 +33,7 @@ async function fixture() {
     writeFileSync(abs, content);
     return (await shadow.put(abs))!.hash;
   };
-  const diffs = new DiffService({ shadow, changes: () => changes, baselines, checkpoints });
+  const diffs = new DiffService({ shadow, changes: () => changes, baselines, checkpoints, cacheSize });
   return { shadow, baselines, checkpoints, changes, blob, diffs };
 }
 
@@ -115,17 +115,21 @@ describe('DiffService.diff', () => {
     expect(f.diffs.stats().gitCalls).toBe(1);
   });
 
-  it('evicts the least recently used entry beyond 200', async () => {
-    const f = await fixture();
+  it('evicts the least recently used entry beyond its size', async () => {
+    const f = await fixture(3);
     const hashes: string[] = [];
-    for (let i = 0; i < 202; i += 1) hashes.push(await f.blob('a.ts', `v${i}\n`));
+    for (let i = 0; i < 5; i += 1) hashes.push(await f.blob('a.ts', `v${i}\n`));
     f.changes.push(...hashes.map((h) => change('a.ts', null, h)));
     for (const h of hashes) await f.diffs.diff('a.ts', null, h);
-    expect(f.diffs.stats().gitCalls).toBe(202);
-    await f.diffs.diff('a.ts', null, hashes[201]!);
-    expect(f.diffs.stats().gitCalls).toBe(202);
-    await f.diffs.diff('a.ts', null, hashes[0]!);
-    expect(f.diffs.stats().gitCalls).toBe(203);
+    expect(f.diffs.stats().gitCalls).toBe(5);
+    await f.diffs.diff('a.ts', null, hashes[4]!);
+    expect(f.diffs.stats().gitCalls).toBe(5);
+    await f.diffs.diff('a.ts', null, hashes[1]!);
+    expect(f.diffs.stats().gitCalls).toBe(6);
+    await f.diffs.diff('a.ts', null, hashes[3]!);
+    expect(f.diffs.stats().gitCalls).toBe(6);
+    await f.diffs.diff('a.ts', null, hashes[2]!);
+    expect(f.diffs.stats().gitCalls).toBe(7);
   });
 
   it('passes the 2000-line cut through', async () => {

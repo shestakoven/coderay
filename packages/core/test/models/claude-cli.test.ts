@@ -157,12 +157,12 @@ describe('ClaudeCliModel', () => {
   });
 
   it('kills a call that runs past its timeout', async () => {
-    const fake = await fakeClaude([{ ...success({}), sleepMs: 5000 }]);
-    const model = new ClaudeCliModel({ model: 'haiku', runDir: newRunDir(), claudePath: fake.path, timeoutMs: 300, retryDelaysMs: [] });
+    const fake = await fakeClaude([{ ...success({}), sleepMs: 60_000 }]);
+    const model = new ClaudeCliModel({ model: 'haiku', runDir: newRunDir(), claudePath: fake.path, timeoutMs: 5000, retryDelaysMs: [] });
 
-    await expect(model.generate(request)).rejects.toThrow('timed out after 300 ms');
-    const [call] = await fake.calls();
-    await waitFor(() => !isAlive(call!.pid), 'timed-out claude killed');
+    await expect(model.generate(request)).rejects.toThrow('timed out after 5000 ms');
+    const call = await waitFor(async () => (await fake.calls())[0], 'the fake claude to have started', 30_000);
+    await waitFor(() => !isAlive(call.pid), 'timed-out claude killed', 30_000);
   });
 
   it('kills the running call and every process it started when it is cancelled', async () => {

@@ -3,13 +3,14 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { ChangeView, WatchdogAnswer, WatchdogEventView } from '@ide/protocol';
 import { SessionError } from '../../src/agent/agent-session';
-import { waitFor } from '../helpers';
+import { tempDir, waitFor } from '../helpers';
 import { build, WAIT_TURN, type Built, type BuildOptions } from './harness';
 
 const HELLO = "export const greeting = 'hello';\n";
 const OTHER_ORIGINAL = "export const other = 'helo';\n";
 const OTHER_CHANGED = "export const other = 'changed';\n";
 const THIRD = "export const third = 'new';\n";
+const BOTH = ['src/other.ts', 'src/third.ts'];
 
 type ExecFlow = Built & {
   runtime: Built['rt'];
@@ -18,7 +19,7 @@ type ExecFlow = Built & {
   hookRecords(): { id: string; tool: string; allowed: boolean }[];
   interrupts(): number;
   userMessages(): string[];
-  pending(): Promise<WatchdogEventView>;
+  pending(paths?: string[]): Promise<WatchdogEventView>;
   answer(event: WatchdogEventView, answer: WatchdogAnswer): Promise<void>;
   change(rel: string): ChangeView;
 };
@@ -34,7 +35,7 @@ async function execFlow(scenario: string | string[], options: Omit<BuildOptions,
     hookRecords: () => b.records().flatMap((record) => (record.hook ? [record.hook] : [])),
     interrupts: () => b.records().filter((record) => record.stdin?.type === 'control_request').length,
     userMessages: () => b.records().flatMap((record) => (record.stdin?.type === 'user' ? [String((record.stdin.message as { content: unknown }).content)] : [])),
-    pending: () => waitFor(() => b.events().find((event) => event.phase === 'pending'), 'a pending watchdog event'),
+    pending: (paths = []) => waitFor(() => b.events().find((event) => event.phase === 'pending' && paths.every((p) => event.changes.some((c) => c.path === p))), `a pending watchdog event with ${paths.join(', ') || 'any file'}`),
     answer: (event, answer) => b.rt.watchdog.answer(event.id, answer),
     change: (rel) => b.changes().findLast((c) => c.path === rel)!,
   };
@@ -47,9 +48,10 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
   it('interrupts, pauses, snapshots and reverts nothing before the answer for an out-of-plan write of an MCP tool', async () => {
     const f = await execFlow('exec-mcp-write-out-of-plan');
     await f.send();
-    const event = await f.pending();
+    const event = await f.pending(BOTH);
     expect(event.changes.map((c) => c.path).sort()).toEqual(['src/other.ts', 'src/third.ts']);
     expect([event.kind, event.interrupted, event.snapshotSha]).toEqual(['watchdog', true, expect.stringMatching(/^[0-9a-f]{40}$/)]);
+    await waitFor(() => f.interrupts() >= 1, 'the interrupt to reach the agent');
     expect([f.interrupts(), f.runtime.hold.isHeld(), f.runtime.reverts.reverts()]).toEqual([1, true, []]);
     expect([f.file('src/app.ts'), f.file('src/other.ts'), f.file('src/third.ts')]).toEqual([HELLO, OTHER_CHANGED, THIRD]);
     await f.answer(event, { kind: 'all', answer: 'keep' });
@@ -69,13 +71,14 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     f.session.send('again');
     const event = await f.pending();
     expect(event.changes.map((c) => [c.path, c.enforcement])).toEqual([['.env', 'enforced']]);
+    await waitFor(() => f.interrupts() >= 1, 'the interrupt to reach the agent');
     expect([event.interrupted, f.interrupts(), f.runtime.hold.isHeld()]).toEqual([true, 1, true]);
   });
 
   it('answers keep with the resume message and no revert', async () => {
     const f = await execFlow('exec-mcp-write-out-of-plan');
     await f.send();
-    const event = await f.pending();
+    const event = await f.pending(BOTH);
     await f.answer(event, { kind: 'all', answer: 'keep' });
     const text = await resumeMessage(f);
     expect(text).toContain('Kept as you wrote them: src/other.ts, src/third.ts.');
@@ -86,12 +89,12 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
   it('answers revert by restoring the files to before, and the revert can be undone', async () => {
     const f = await execFlow('exec-mcp-write-out-of-plan');
     await f.send();
-    const event = await f.pending();
+    const event = await f.pending(BOTH);
     const before = new Map(event.changes.map((c) => [c.path, c.beforeHash]));
     await f.answer(event, { kind: 'all', answer: 'revert' });
     expect([f.file('src/other.ts'), f.exists('src/third.ts')]).toEqual([OTHER_ORIGINAL, false]);
     const record = f.runtime.reverts.reverts().at(-1)!;
-    expect(record.files.map((file) => [file.path, file.outcome])).toEqual([['src/other.ts', 'restored'], ['src/third.ts', 'deleted']]);
+    expect(record.files.map((file) => [file.path, file.outcome]).sort()).toEqual([['src/other.ts', 'restored'], ['src/third.ts', 'deleted']]);
     expect(before.get('src/other.ts')).toEqual(expect.any(String));
     expect(before.get('src/third.ts')).toBeNull();
     expect(await resumeMessage(f)).toContain('Restored to their earlier content: src/other.ts, src/third.ts.');
@@ -102,7 +105,7 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
   it('gives a mixed event for per-file answers', async () => {
     const f = await execFlow('exec-mcp-write-out-of-plan');
     await f.send();
-    const event = await f.pending();
+    const event = await f.pending(BOTH);
     await f.answer(event, { kind: 'files', files: { 'src/other.ts': 'keep', 'src/third.ts': 'revert' } });
     expect([f.file('src/other.ts'), f.exists('src/third.ts')]).toEqual([OTHER_CHANGED, false]);
     expect(f.events().map((e) => [e.phase, e.resolution])).toEqual([['resolved', 'mixed']]);
@@ -112,15 +115,15 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
   it('flags in mode C without an interrupt or a hold', async () => {
     const f = await execFlow('exec-mcp-write-out-of-plan', { mode: 'C' });
     await f.send();
-    const event = await waitFor(() => f.events().find((e) => e.changes.length === 2), 'a flagged event with both files');
-    expect([event.phase, event.resolution, event.interrupted]).toEqual(['resolved', 'flagged', false]);
+    const flagged = await waitFor(() => (BOTH.every((p) => f.events().some((e) => e.changes.some((c) => c.path === p))) ? f.events() : undefined), 'both files flagged');
+    expect(flagged.map((e) => [e.phase, e.resolution, e.interrupted])).toEqual(flagged.map(() => ['resolved', 'flagged', false]));
     expect([f.interrupts(), f.runtime.hold.isHeld(), f.change('src/other.ts').resolution, f.exists('src/third.ts')]).toEqual([0, false, 'flagged', true]);
   });
 
   it('relabels the change human when the user says this was their edit', async () => {
     const f = await execFlow('exec-mcp-write-out-of-plan');
     await f.send();
-    const event = await f.pending();
+    const event = await f.pending(BOTH);
     await f.answer(event, { kind: 'all', answer: 'mine' });
     expect(f.change('src/other.ts')).toMatchObject({ origin: 'human', resolution: 'relabeled-human' });
     expect(f.file('src/other.ts')).toBe(OTHER_CHANGED);
@@ -217,8 +220,14 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
   });
 
   it('re-attributes the changes in the window of a call the hook never judged', async () => {
-    const f = await execFlow('exec-fail-open');
+    const gates = tempDir('release-');
+    const [start, release] = [join(gates, 'start'), join(gates, 'release')];
+    const f = await execFlow('exec-fail-open', { claudeEnv: { FAKE_CLAUDE_START: start, FAKE_CLAUDE_RELEASE: release } });
     await f.send();
+    await waitFor(() => f.session.state().items.find((i) => i.kind === 'tool' && i.id === 'toolu_f'), 'the tool call seen by the core');
+    writeFileSync(start, '');
+    await waitFor(() => ['src/other.ts', 'src/third.ts'].every((p) => f.changes().some((c) => c.path === p)), 'the watcher to report both written files');
+    writeFileSync(release, '');
     const event = await waitFor(() => f.events().find((e) => e.kind === 'fail-open' && e.phase === 'pending' && e.changes.length === 2 && e.changes.every((c) => c.origin === 'agent-tool')), 'a pending fail-open event with both files re-attributed');
     expect(f.hookRecords().map((hook) => hook.id)).not.toContain('toolu_f');
     expect(event.changes.map((c) => [c.path, c.origin, c.toolUseIds]).sort()).toEqual([
@@ -283,6 +292,7 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
       f.session.send('go on');
       await waitFor(() => f.runtime.hold.waiting() > 0, 'the subagent call held');
       f.runtime.watchdog.stopAgent(event.id);
+      await waitFor(() => f.interrupts() >= 1, 'the interrupt to reach the agent');
       expect([f.events()[0]!.interrupted, f.interrupts()]).toEqual([true, 1]);
       await f.answer(event, { kind: 'all', answer: 'keep' });
       const text = await resumeMessage(f, 3);

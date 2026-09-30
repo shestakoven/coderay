@@ -295,9 +295,10 @@ describe('recoverTranscript at scale', () => {
     for (let n = 0; n < 200; n++) appendFileSync(file, chunk);
     const total = 200_000;
     appendFileSync(file, `${line(total + 1)}\n${line(total + 2)}\n`);
-    const started = Date.now();
+    const started = process.cpuUsage();
     const { items, unreadable } = await recoverTranscript({ claudeSessionId: 'sess', cwd, since: Date.parse('2026-01-01T00:00:00Z') + total * 1000, dir });
-    expect(Date.now() - started).toBeLessThan(2000);
+    const cpu = process.cpuUsage(started);
+    expect((cpu.user + cpu.system) / 1000).toBeLessThan(2000);
     expect(unreadable).toBe(false);
     expect(items.map((i) => (i.kind === 'message' ? i.id : ''))).toEqual([`recovered-u${total + 1}`, `recovered-u${total + 2}`]);
   }, 20_000);

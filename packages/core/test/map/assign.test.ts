@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { globMatches } from '../../src/gate/scope';
 import { assignFiles, nearestComponent, type AssignInput } from '../../src/map/assign';
 import type { AiComponent } from '../../src/map/map-file';
 import { unit } from '../helpers';
@@ -154,7 +155,10 @@ describe('assignFiles', () => {
       result = run();
       timings.push(performance.now() - start);
     }
-    expect(Math.min(...timings)).toBeLessThan(200);
+    const general = performance.now();
+    for (const path of paths) for (const component of components) for (const glob of component.globs) globMatches(path, glob);
+    const generalMs = performance.now() - general;
+    expect(Math.min(...timings)).toBeLessThan(generalMs / 2);
     expect(result.owner.get('d17/f17.ts')).toBe('ai:d17');
     expect(result.unassigned).toEqual([]);
   });

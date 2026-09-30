@@ -198,10 +198,14 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
   });
 
   it('opens a fail-open event for a call the hook never judged, with the file that lands after the result', async () => {
+    const start = join(tempDir('start-'), 'go');
     const b = await build({
-      scenario: [AWAIT, INIT, mcpWrite('toolu_f', [{ path: 'src/y.ts', content: 'y\n' }, { path: 'src/z.ts', content: 'z\n' }], { skipHook: true, perFileMs: 400 }), HOLD_OPEN, AWAIT],
+      scenario: [AWAIT, INIT, mcpWrite('toolu_f', [{ path: 'src/y.ts', content: 'y\n' }, { path: 'src/z.ts', content: 'z\n' }], { skipHook: true, perFileMs: 400, awaitStart: true }), HOLD_OPEN, AWAIT],
+      claudeEnv: { FAKE_CLAUDE_START: start },
     });
     await b.send();
+    await waitFor(() => b.session.state().items.find((i) => i.kind === 'tool' && i.id === 'toolu_f'), 'the tool call seen by the core');
+    writeFileSync(start, '');
     const event = await waitFor(
       () => b.events().find((e) => e.kind === 'fail-open' && ['src/y.ts', 'src/z.ts'].every((path) => e.changes.some((c) => c.path === path))),
       'a fail-open event with both files',
