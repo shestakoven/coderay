@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Hold } from '../../src/gate/hold';
@@ -7,11 +7,12 @@ import { Baselines, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
 import { Checkpoints } from '../../src/history/checkpoints';
 import { IdeWrites } from '../../src/history/ide-writes';
+import { RevertService } from '../../src/history/revert';
 import { ShadowRepo } from '../../src/history/shadow';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { openStore, type Store } from '../../src/store/store';
 import { ActivityLedger } from '../../src/watchdog/activity';
-import { recoverBaselines } from '../../src/watchdog/recovery';
+import { largest, recoverBaselines, recoverTranscript, UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { Watchdog, type WatchdogSession } from '../../src/watchdog/watchdog';
 import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
 
@@ -43,17 +44,19 @@ async function world(root: string, storeDir: string, shadowDir: string) {
   if (!store.latestSession()) store.saveSession(sessionRecord('s1', root));
   const shadow = await ShadowRepo.open(shadowDir);
   const baselines = new Baselines(store);
+  const ideWrites = new IdeWrites();
   const changes = new ChangeService({
-    root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites: new IdeWrites(), ledger: new ActivityLedger(), store,
+    root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites, ledger: new ActivityLedger(), store,
     checkpoints: new Checkpoints(store, () => 's1'), sessionId: () => 's1', plans: { gate: () => ({ state: 'none' }) },
   });
+  const reverts = new RevertService({ root, shadow, baselines, ideWrites, changes, store, sessionId: () => 's1' });
   const session = new StubSession();
   const hold = new Hold();
   let n = 0;
   const watchdog = new Watchdog({
     store, sessionId: () => 's1', session, hold, shadow, root,
     plans: { gate: () => ({ state: 'none' }), canExpand: () => false, expand: () => { throw new Error('not here'); } } as never,
-    changes, reverts: { revertChanges: () => { throw new Error('not here'); } },
+    changes, reverts,
     gate: { withdrawPending: () => undefined }, policy: () => DEFAULT_POLICY,
     toolInfo: () => undefined, settleMs: 30, newId: () => `ev-${store.watchdogEvents('s1').length}-${++n}`,
   });
@@ -96,21 +99,52 @@ describe('Watchdog.restore', () => {
     await waitFor(() => first.watchdog.events()[0]?.phase === 'pending', 'pending event');
     const base = first.store.watchdogEvents('s1')[0]!;
     first.store.saveWatchdogEvent('s1', { ...base, id: 'collecting-1', phase: 'collecting', interrupted: true, paused: true, unknownOrigin: false });
+    const firstChangeId = made[0]!.id;
     first.store.close();
     const second = await world(r.root, r.storeDir, r.shadowDir);
     second.watchdog.restore();
-    return { ...r, second };
+    return { ...r, second, firstChangeId };
   }
 
   it('brings a pending or collecting event back as pending, without a hold', async () => {
     const f = await stored();
     const events = f.second.watchdog.events();
-    expect(events.map((e) => [e.id === 'collecting-1', e.phase, e.paused])).toEqual(expect.arrayContaining([[true, 'pending', false]]));
-    expect(events.filter((e) => e.phase === 'pending')).toHaveLength(2);
-    expect(events.find((e) => e.id === 'collecting-1')).toMatchObject({ interrupted: true });
+    expect(events.map((e) => [e.unknownOrigin, e.phase, e.paused, e.interrupted])).toEqual([[true, 'pending', false, false], [false, 'pending', false, true]]);
     expect(f.second.hold.isHeld()).toBe(false);
     expect(f.second.watchdog.isPending()).toBe(true);
-    expect(f.second.store.watchdogEvents('s1').every((e) => e.phase === 'pending')).toBe(true);
+    expect(f.second.store.watchdogEvents('s1').map((e) => [e.phase, e.paused])).toEqual([['pending', false], ['pending', false]]);
+  });
+
+  it('keeps the changes of a restored event through the store', async () => {
+    const f = await stored();
+    const [unknown] = f.second.watchdog.events();
+    expect(unknown!.changes).toMatchObject([{ id: f.firstChangeId, path: 'a.ts', origin: 'unknown', enforcement: 'enforced', eventId: unknown!.id, afterHash: expect.any(String), beforeHash: expect.any(String) }]);
+  });
+
+  it('reverts a restored unknown event from the baseline blob', async () => {
+    const f = await stored();
+    const [unknown] = f.second.watchdog.events();
+    await f.second.watchdog.answer(unknown!.id, { kind: 'all', answer: 'revert' });
+    expect(readFileSync(join(f.root, 'a.ts'), 'utf8')).toBe('a');
+    expect(f.second.watchdog.events()[0]).toMatchObject({ phase: 'resolved', resolution: 'reverted' });
+  });
+
+  it('keeps the file on keep', async () => {
+    const f = await stored();
+    const [unknown] = f.second.watchdog.events();
+    await f.second.watchdog.answer(unknown!.id, { kind: 'all', answer: 'keep' });
+    expect(readFileSync(join(f.root, 'a.ts'), 'utf8')).toBe('changed');
+    expect(f.second.watchdog.events()[0]).toMatchObject({ phase: 'resolved', resolution: 'kept' });
+    expect(f.second.changes.changes()[0]).toMatchObject({ resolution: 'kept' });
+  });
+
+  it('reports a conflict and overwrites nothing when the file changed again while the core was down', async () => {
+    const f = await stored();
+    editOnDisk(f.root, { 'a.ts': 'edited while the core was down' });
+    const [unknown] = f.second.watchdog.events();
+    await f.second.watchdog.answer(unknown!.id, { kind: 'all', answer: 'revert' });
+    expect(readFileSync(join(f.root, 'a.ts'), 'utf8')).toBe('edited while the core was down');
+    expect(f.second.watchdog.events()[0]!.reason).toMatch(/Not restored: a\.ts/);
   });
 
   it('answers a restored event by queueing the note, because the process is gone', async () => {
@@ -198,5 +232,78 @@ describe('recoverBaselines', () => {
     expect(f.notices).toHaveLength(1);
     expect(f.notices[0]).toMatch(/could not check/i);
     expect(f.watchdog.events()).toEqual([]);
+  });
+});
+
+describe('the unclean-stop marker and orphaned unknown changes', () => {
+  it('clears the marker only when the scan completed', async () => {
+    const f = await driftFixture({ crashed: true });
+    f.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    await f.run();
+    expect(f.store.meta(UNCLEAN_STOP_KEY)).toBe('');
+  });
+
+  it('leaves the marker set when the scan fails', async () => {
+    const f = await driftFixture({ crashed: true, seed: false });
+    f.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    rmSync(join(f.root, '.git'), { recursive: true });
+    mkdirSync(join(f.root, '.git'));
+    await f.run();
+    expect(f.store.meta(UNCLEAN_STOP_KEY)).toBe('1');
+  });
+
+  it('raises the event for unknown changes recorded before a crash between recording and raising, once', async () => {
+    const f = await driftFixture({ crashed: false });
+    editOnDisk(f.root, { 'a.ts': 'changed' });
+    const drift = (await scanTree(f.root, DEFAULT_POLICY, f.shadow, f.baselines)).drift;
+    await f.changes.recordDrift(drift, 'unknown');
+    expect(f.watchdog.events()).toEqual([]);
+    await f.run();
+    expect(f.watchdog.events()).toHaveLength(1);
+    expect(f.watchdog.events()[0]).toMatchObject({ unknownOrigin: true, phase: 'pending' });
+    expect(f.watchdog.events()[0]!.changes.map((c) => c.path)).toEqual(['a.ts']);
+    await f.run();
+    expect(f.watchdog.events()).toHaveLength(1);
+  });
+
+  it('raises a single event for old orphans and new drift together', async () => {
+    const f = await driftFixture({ crashed: true });
+    editOnDisk(f.root, { 'a.ts': 'changed' });
+    await f.changes.recordDrift((await scanTree(f.root, DEFAULT_POLICY, f.shadow, f.baselines)).drift, 'unknown');
+    editOnDisk(f.root, { 'b.ts': 'changed too' });
+    await f.run();
+    expect(f.watchdog.events()).toHaveLength(1);
+    expect(f.watchdog.events()[0]!.changes.map((c) => c.path).sort()).toEqual(['a.ts', 'b.ts']);
+  });
+});
+
+describe('recoverTranscript at scale', () => {
+  const line = (i: number): string => JSON.stringify({
+    type: 'assistant', uuid: `u${i}`, timestamp: new Date(Date.parse('2026-01-01T00:00:00Z') + i * 1000).toISOString(),
+    message: { role: 'assistant', content: [{ type: 'text', text: `message ${i} ${'x'.repeat(200)}` }] },
+  });
+
+  it('reads a 50 MB transcript line by line, fast, and returns the rows after since', async () => {
+    const dir = tempDir('rc-tr-');
+    const cwd = tempDir('rc-cwd-');
+    const folder = join(dir, cwd.replace(/[^A-Za-z0-9]/g, '-'));
+    mkdirSync(folder, { recursive: true });
+    const file = join(folder, 'sess.jsonl');
+    const chunk = Array.from({ length: 1000 }, (_, i) => line(i)).join('\n') + '\n';
+    writeFileSync(file, '');
+    for (let n = 0; n < 200; n++) appendFileSync(file, chunk);
+    const total = 200_000;
+    appendFileSync(file, `${line(total + 1)}\n${line(total + 2)}\n`);
+    const started = Date.now();
+    const { items, unreadable } = await recoverTranscript({ claudeSessionId: 'sess', cwd, since: Date.parse('2026-01-01T00:00:00Z') + total * 1000, dir });
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(unreadable).toBe(false);
+    expect(items.map((i) => (i.kind === 'message' ? i.id : ''))).toEqual([`recovered-u${total + 1}`, `recovered-u${total + 2}`]);
+  }, 20_000);
+
+  it('takes the largest of hundreds of thousands of values', () => {
+    const values = Array.from({ length: 300_000 }, (_, i) => i);
+    expect(largest(values)).toBe(299_999);
+    expect(largest([])).toBe(0);
   });
 });

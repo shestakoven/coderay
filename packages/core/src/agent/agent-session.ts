@@ -5,7 +5,7 @@ import type {
   ChatItem, McpServerState, PromptAnswer, PromptBody, SessionPatch, SessionServerMessage, SessionState, SessionView, TaskView, TurnView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
-import { defaultTranscriptsDir, recoverTranscript } from '../watchdog/recovery';
+import { defaultTranscriptsDir, largest, recoverTranscript, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
@@ -74,7 +74,6 @@ interface PendingPrompt {
 const RUN_DIR_MODE = 0o700;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
-const DUPLICATE_WINDOW_MS = 2_000;
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
@@ -119,13 +118,14 @@ export class AgentSession {
   async start(): Promise<void> {
     const latest = this.options.store.latestSession();
     if (!latest || latest.status === 'ended') return;
-    this.crashed = latest.status === 'running';
-    if (this.crashed) {
+    if (latest.status === 'running') this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    this.crashed = this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
+    if (latest.status === 'running') {
       await stopStale(latest, this.options.killGraceMs ?? KILL_GRACE_MS);
       rmSync(this.configPath(latest.id), { force: true });
       this.options.gate?.remove(latest.id);
     }
-    const gap = this.crashed ? await this.recoverChat(latest) : null;
+    const gap = latest.status === 'running' ? await this.recoverChat(latest) : null;
     this.load(latest);
     this.apply(this.tracker.processExited());
     for (const id of gap?.ids ?? []) {
@@ -144,34 +144,38 @@ export class AgentSession {
     const { store } = this.options;
     try {
       const history = store.history(session.id);
-      const stamps = [
+      const since = largest([
         ...history.messages.map((m) => m.ts),
         ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
-      ];
-      const since = Math.max(0, ...stamps);
+      ]);
       const recovered = await recoverTranscript({
         claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.options.transcriptsDir ?? defaultTranscriptsDir(),
       });
       if (recovered.unreadable) return { ids: [], unreadable: true };
-      const seen = new Set([...history.messages.map((m) => m.id), ...history.toolEvents.map((t) => t.toolUseId)]);
-      const texts = new Set(history.messages.filter((m) => m.ts >= since - DUPLICATE_WINDOW_MS).map((m) => `${m.role}\n${m.text}`));
-      let seq = Math.max(0, ...history.messages.map((m) => m.seq), ...history.toolEvents.map((t) => t.seq), ...history.prompts.map((p) => p.seq));
+      const messageIds = new Set(history.messages.map((m) => m.id));
+      const storedTools = new Map(history.toolEvents.map((t) => [t.toolUseId, t]));
+      let seq = largest([...history.messages.map((m) => m.seq), ...history.toolEvents.map((t) => t.seq), ...history.prompts.map((p) => p.seq)]);
       const ids: string[] = [];
       for (const item of recovered.items) {
         if (item.kind === 'message') {
-          if (seen.has(item.id) || texts.has(`assistant\n${item.text}`)) continue;
+          if (messageIds.has(item.id)) continue;
           seq += 1;
           store.saveMessage(session.id, { id: item.id, seq, turnId: null, parentToolUseId: null, role: 'assistant', text: item.text, ts: item.ts });
           ids.push(item.id);
-        } else {
-          if (seen.has(item.toolUseId)) continue;
-          seq += 1;
-          store.saveToolEvent(session.id, {
-            toolUseId: item.toolUseId, seq, turnId: null, parentToolUseId: null, tool: item.tool, input: item.input,
-            status: item.status, toolUseAt: item.toolUseAt, endedAt: item.endedAt,
-          });
-          ids.push(item.toolUseId);
+          continue;
         }
+        const stored = storedTools.get(item.toolUseId);
+        if (stored) {
+          const open = stored.status === 'running' || stored.status === 'unfinished';
+          if (open && (item.status === 'ok' || item.status === 'error')) store.saveToolEvent(session.id, { ...stored, status: item.status, endedAt: item.endedAt });
+          continue;
+        }
+        seq += 1;
+        store.saveToolEvent(session.id, {
+          toolUseId: item.toolUseId, seq, turnId: null, parentToolUseId: null, tool: item.tool, input: item.input,
+          status: item.status, toolUseAt: item.toolUseAt, endedAt: item.endedAt,
+        });
+        ids.push(item.toolUseId);
       }
       return { ids, unreadable: false };
     } catch (error) {

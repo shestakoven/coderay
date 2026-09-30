@@ -10,6 +10,7 @@ import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
 import { aliveRoute, Canary } from '../../src/gate/canary';
+import { UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
@@ -999,7 +1000,7 @@ describe('AgentSession notes from the watchdog', () => {
 describe('AgentSession after a core crash', () => {
   const T = (iso: string): number => Date.parse(iso);
 
-  function crashedSession(o: { status?: 'running' | 'stopped'; transcript?: string | null; unparsable?: boolean } = {}) {
+  function crashedSession(o: { status?: 'running' | 'stopped'; transcript?: string | null; unparsable?: boolean; body?: (id: string, root: string) => string; storedTool?: 'running' | 'unfinished' } = {}) {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
     const transcriptsDir = tempDir('ide-transcripts-');
@@ -1015,10 +1016,16 @@ describe('AgentSession after a core crash', () => {
       toolUseId: 'toolu_gap_a', seq: 2, turnId: 'turn-1', parentToolUseId: null, tool: 'Write', input: { file_path: join(root, 'config.json') },
       status: 'ok', toolUseAt: T('2026-09-30T12:00:03.000Z'), endedAt: T('2026-09-30T12:00:04.000Z'),
     });
+    if (o.storedTool) {
+      store.saveToolEvent('session-1', {
+        toolUseId: 'toolu_open', seq: 3, turnId: 'turn-1', parentToolUseId: null, tool: 'Bash', input: { command: 'npm test' },
+        status: o.storedTool, toolUseAt: T('2026-09-30T12:00:05.000Z'), endedAt: o.storedTool === 'running' ? null : T('2026-09-30T12:00:05.500Z'),
+      });
+    }
     if (o.transcript !== null) {
       const dir = join(transcriptsDir, realpathSync(root).replace(/[^A-Za-z0-9]/g, '-'));
       mkdirSync(dir, { recursive: true });
-      const body = o.unparsable
+      const body = o.body ? o.body(claudeSessionId, root) : o.unparsable
         ? 'torn\nalso torn\n'
         : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', claudeSessionId).replaceAll('$CWD', root);
       writeFileSync(join(dir, `${claudeSessionId}.jsonl`), body);
@@ -1084,4 +1091,71 @@ describe('AgentSession after a core crash', () => {
     expect(h.session.state().items.filter((item) => item.kind === 'notice')).toHaveLength(1);
     expect(texts(h.session.state().items)).toHaveLength(3);
   });
+
+  describe('unclean-stop marker and transcript merging', () => {
+  const assistant = (uuid: string, at: string, block: object): string =>
+    JSON.stringify({ type: 'assistant', uuid, timestamp: at, message: { role: 'assistant', content: [block] } });
+  const result = (uuid: string, at: string, id: string, isError = false): string =>
+    JSON.stringify({ type: 'user', uuid, timestamp: at, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', is_error: isError }] } });
+
+  it('keeps reporting a crash until the recovery cleared the marker', async () => {
+    const c = crashedSession({ transcript: null });
+    const first = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(first.session.startedFromCrash()).toBe(true);
+    await first.session.close();
+    const second = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(second.session.state().session?.status).toBe('crashed');
+    expect(second.session.startedFromCrash()).toBe(true);
+    await second.session.close();
+    const store = openStore(projectDir(c.home, c.root));
+    store.setMeta(UNCLEAN_STOP_KEY, '');
+    store.close();
+    const third = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(third.session.startedFromCrash()).toBe(false);
+  });
+
+  it('never sets the marker after a clean stop', async () => {
+    const c = crashedSession({ status: 'stopped', transcript: null });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(h.session.startedFromCrash()).toBe(false);
+    expect(h.store.meta(UNCLEAN_STOP_KEY)).toBeNull();
+  });
+
+  it('does not drop a legitimately repeated short text', async () => {
+    const c = crashedSession({
+      body: () => [
+        assistant('x1', '2026-09-30T12:00:02.000Z', { type: 'text', text: 'I will write the config.' }),
+        assistant('x2', '2026-09-30T12:00:06.000Z', { type: 'text', text: 'I will write the config.' }),
+      ].join('\n'),
+    });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(texts(h.session.state().items)).toEqual(['I will write the config.', 'Write:ok', 'I will write the config.']);
+  });
+
+  it('leaves a stored finished call as it is when the transcript shows it again a moment later', async () => {
+    const c = crashedSession({
+      body: () => [
+        assistant('z1', '2026-09-30T12:00:06.000Z', { type: 'tool_use', id: 'toolu_gap_a', name: 'Write', input: {} }),
+        result('z2', '2026-09-30T12:00:07.000Z', 'toolu_gap_a', true),
+      ].join('\n'),
+    });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    const tools = h.session.state().items.filter((item) => item.kind === 'tool');
+    expect(tools.map((t) => [t.id, t.status, t.seq, t.recovered])).toEqual([['toolu_gap_a', 'ok', 2, undefined]]);
+  });
+
+  it.each(['running', 'unfinished'] as const)('updates a stored %s call whose result arrived in the gap, without a second row', async (storedTool) => {
+    const c = crashedSession({
+      storedTool,
+      body: () => [
+        assistant('y1', '2026-09-30T12:00:05.000Z', { type: 'tool_use', id: 'toolu_open', name: 'Bash', input: { command: 'npm test' } }),
+        result('y2', '2026-09-30T12:00:08.000Z', 'toolu_open', true),
+      ].join('\n'),
+    });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    const tools = h.session.state().items.filter((item) => item.kind === 'tool');
+    expect(tools.map((t) => [t.id, t.status, t.seq])).toEqual([['toolu_gap_a', 'ok', 2], ['toolu_open', 'error', 3]]);
+    expect(tools[1]).toMatchObject({ endedAt: Date.parse('2026-09-30T12:00:08.000Z') });
+  });
+});
 });
