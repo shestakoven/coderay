@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ChangeView, ControlMode, EventResolution, FileAnswer, Policy, WatchdogAnswer, WatchdogEventView, WatchdogToolCall } from '@ide/protocol';
+import type { ChangeView, ControlMode, EventResolution, FileAnswer, Policy, WatchdogAnswer, WatchdogEventView, WatchdogKind, WatchdogToolCall } from '@ide/protocol';
 import type { Hold } from '../gate/hold';
 import type { HookGate } from '../gate/hook-gate';
 import type { PlanGate } from '../gate/scope-guard';
@@ -269,6 +269,53 @@ export class Watchdog {
     }
   }
 
+  raiseFailOpen(toolUseId: string, changes: ChangeView[]): void {
+    try {
+      const notes: string[] = [];
+      const out = changes.filter((change) => {
+        if (change.enforcement !== 'enforced' || isGitState(change.path)) return false;
+        try {
+          return this.isOutOfPlan(change);
+        } catch (error) {
+          notes.push(`Could not check the plan: ${describe(error)}`);
+          console.error('watchdog: could not check the plan', error);
+          return true;
+        }
+      });
+      if (out.length === 0 || this.mode() === 'C') return this.flagFailOpen(toolUseId, changes, out.length > 0, notes);
+      const event = this.open ?? this.begin('fail-open');
+      event.kind = 'fail-open';
+      this.note(event, `The hook did not judge call ${toolUseId}.`);
+      for (const note of notes) this.note(event, note);
+      for (const change of out) this.join(event, change);
+    } catch (error) {
+      console.error('watchdog: could not raise a fail-open event', error);
+    }
+  }
+
+  private flagFailOpen(toolUseId: string, changes: ChangeView[], outOfPlan: boolean, notes: string[]): void {
+    const at = this.now();
+    const event: WatchdogEventView = {
+      id: this.newId(), kind: 'fail-open', mode: this.mode(), phase: 'resolved', resolution: 'flagged', changes: [], toolCalls: [],
+      interrupted: false, paused: false, runningSubagents: 0, backgroundShell: false, unknownOrigin: false,
+      snapshotSha: null, canExpand: false, defaultAction: null, reason: null, ts: at, resolvedAt: at,
+    };
+    this.all.push(event);
+    this.note(event, `The hook did not judge call ${toolUseId}.`);
+    for (const note of notes) this.note(event, note);
+    const ids = changes.map((change) => change.id);
+    if (ids.length > 0) {
+      if (outOfPlan) this.step(event, 'store the decision', () => this.o.changes.markOutOfPlan(ids, event.id));
+      this.step(event, 'store the resolution', () => this.o.changes.setResolution(ids, 'flagged', event.id));
+    }
+    event.changes = changes.map((change) => this.fresh(change));
+    this.fill(event);
+    event.canExpand = false;
+    event.defaultAction = null;
+    this.persist(event);
+    this.emit(event);
+  }
+
   private mode(): ControlMode {
     try {
       return this.o.policy().mode;
@@ -284,11 +331,11 @@ export class Watchdog {
     return !covers(gate.scope, { rel: change.path, dir: false, mkdir: false, deleting: change.afterHash === null && !change.unreadable });
   }
 
-  private begin(): WatchdogEventView {
+  private begin(kind: WatchdogKind = 'watchdog'): WatchdogEventView {
     const { hold, session } = this.o;
     hold.hold('the watchdog is waiting for the user');
     const event: WatchdogEventView = {
-      id: this.newId(), kind: 'watchdog', mode: this.mode(), phase: 'collecting', resolution: 'pending', changes: [], toolCalls: [],
+      id: this.newId(), kind, mode: this.mode(), phase: 'collecting', resolution: 'pending', changes: [], toolCalls: [],
       interrupted: false, paused: false, runningSubagents: 0, backgroundShell: false, unknownOrigin: false,
       snapshotSha: null, canExpand: false, defaultAction: null, reason: null, ts: this.now(), resolvedAt: null,
     };

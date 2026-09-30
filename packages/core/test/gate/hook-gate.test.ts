@@ -825,3 +825,44 @@ describe('HookGate onAllowed', () => {
     expect(seen).toEqual(['one']);
   });
 });
+
+describe('HookGate.hasCall', () => {
+  const pause = () => new Promise((resolve) => setTimeout(resolve, 40));
+
+  it('reports decided after a decision, pending while a prompt waits, none otherwise', async () => {
+    const { root, call, approve, pending, gate } = await setup();
+    await approve();
+    expect(gate.hasCall('unknown')).toBe('none');
+    await call('Read', {}, undefined, 'read1');
+    expect(gate.hasCall('read1')).toBe('decided');
+    const answer = call('Edit', { file_path: join(root, 'src/other.ts'), old_string: 'b', new_string: 'c' }, undefined, 'edit1');
+    const prompt = await pending();
+    expect(gate.hasCall('edit1')).toBe('pending');
+    gate.answer(prompt.id, 'allow-once');
+    await answer;
+    expect(gate.hasCall('edit1')).toBe('decided');
+  });
+
+  it('reports none for a call whose hook closed without a decision', async () => {
+    const { root, call, approve, pending, gate } = await setup();
+    await approve();
+    const controller = new AbortController();
+    const answer = call('Edit', { file_path: join(root, 'src/other.ts'), old_string: 'b', new_string: 'c' }, controller.signal, 'edit1');
+    await pending();
+    controller.abort();
+    await answer;
+    expect(gate.hasCall('edit1')).toBe('none');
+  });
+
+  it('reports a held call as pending and as decided after the release', async () => {
+    const hold = new Hold();
+    const { root, call, gate } = await setup({ hold });
+    hold.hold('event');
+    const answer = call('Write', { file_path: join(root, 'src/app.ts') }, undefined, 'held1');
+    await pause();
+    expect(gate.hasCall('held1')).toBe('pending');
+    hold.release();
+    await answer;
+    expect(gate.hasCall('held1')).toBe('decided');
+  });
+});

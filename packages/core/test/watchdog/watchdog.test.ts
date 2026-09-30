@@ -578,3 +578,52 @@ describe('Watchdog failing soft and closed', () => {
     chmodSync(join(f.root, 'src/m.ts'), 0o644);
   });
 });
+
+describe('Watchdog.raiseFailOpen', () => {
+  it('opens a fail-open event with a hold for an out-of-plan enforced change', async () => {
+    const f = await fixture();
+    f.toolCall();
+    const changes = await f.produce(['src/x.ts']);
+    f.watchdog.raiseFailOpen('t1', changes);
+    expect(f.hold.isHeld()).toBe(true);
+    expect(f.session.calls).toEqual(['interrupt']);
+    expect(f.withdrawn).toHaveLength(1);
+    expect(f.watchdog.events()[0]).toMatchObject({ kind: 'fail-open', phase: 'collecting', interrupted: true });
+    const pending = await pendingEvent(f);
+    expect(pending).toMatchObject({ kind: 'fail-open', changes: [{ path: 'src/x.ts', outOfPlan: true }] });
+    expect(pending.reason).toContain('t1');
+  });
+
+  it('only flags a fail-open whose changes are all inside the plan, with no hold', async () => {
+    const f = await fixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    f.watchdog.raiseFailOpen('t1', await f.produce(['src/in.ts']));
+    expect(f.hold.isHeld()).toBe(false);
+    expect(f.session.calls).toEqual([]);
+    expect(f.watchdog.events()).toMatchObject([{ kind: 'fail-open', phase: 'resolved', resolution: 'flagged', changes: [{ path: 'src/in.ts' }] }]);
+    expect(f.watchdog.isPending()).toBe(false);
+  });
+
+  it('flags a fail-open that changed nothing', async () => {
+    const f = await fixture();
+    f.watchdog.raiseFailOpen('t1', []);
+    expect(f.watchdog.events()).toMatchObject([{ kind: 'fail-open', phase: 'resolved', resolution: 'flagged', changes: [] }]);
+    expect(f.hold.isHeld()).toBe(false);
+  });
+
+  it('joins an event that is already open and only flags in mode C', async () => {
+    const f = await fixture();
+    f.toolCall();
+    const [a, b] = await f.produce(['src/x.ts', 'src/y.ts']);
+    f.watchdog.consider(a!);
+    f.watchdog.raiseFailOpen('t1', [b!]);
+    expect(f.watchdog.events()).toHaveLength(1);
+    expect((await pendingEvent(f)).changes.map((c) => c.path).sort()).toEqual(['src/x.ts', 'src/y.ts']);
+    const c = await fixture({ mode: 'C' });
+    c.toolCall();
+    c.watchdog.raiseFailOpen('t1', await c.produce(['src/x.ts']));
+    expect(c.hold.isHeld()).toBe(false);
+    expect(c.watchdog.events()).toMatchObject([{ kind: 'fail-open', phase: 'resolved', resolution: 'flagged' }]);
+  });
+});

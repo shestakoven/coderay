@@ -19,6 +19,7 @@ import { FILE_PATH_FIELD, toolClass, type ToolClass } from './tools';
 export const GATE_HOLD_MS = 3_530_000;
 const PREVIEW_CHARS = 20_000;
 const KEPT_CLOSED = 50;
+const KEPT_DECIDED = 10_000;
 const NO_RESPONSE = "IDE: the user did not respond in time. Stop and wait for the user's next message.";
 const CALL_ENDED = 'IDE: the call ended before the user answered.';
 
@@ -94,6 +95,8 @@ export class HookGate {
   private readonly waiting = new Map<string, Pending>();
   private closed: GatePromptView[] = [];
   private judging: Promise<void> = Promise.resolve();
+  private readonly decided = new Set<string>();
+  private readonly inflight = new Map<string, number>();
 
   constructor(options: HookGateOptions) {
     this.options = options;
@@ -127,7 +130,19 @@ export class HookGate {
   async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
     const input = parseHookInput(raw, this.options.root);
     if (!input) return deny('IDE: the hook input could not be read.');
-    return this.admit(input, signal, this.now() + (this.options.holdMs ?? GATE_HOLD_MS));
+    this.inflight.set(input.toolUseId, (this.inflight.get(input.toolUseId) ?? 0) + 1);
+    try {
+      return await this.admit(input, signal, this.now() + (this.options.holdMs ?? GATE_HOLD_MS));
+    } finally {
+      const left = (this.inflight.get(input.toolUseId) ?? 1) - 1;
+      if (left > 0) this.inflight.set(input.toolUseId, left);
+      else this.inflight.delete(input.toolUseId);
+    }
+  }
+
+  hasCall(toolUseId: string): 'decided' | 'pending' | 'none' {
+    if (this.decided.has(toolUseId)) return 'decided';
+    return this.inflight.has(toolUseId) ? 'pending' : 'none';
   }
 
   private async admit(input: HookInput, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
@@ -337,6 +352,8 @@ export class HookGate {
       stepKey: judged.decision.stepKey, targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
       reason, decidedAt: this.now(),
     };
+    this.decided.add(input.toolUseId);
+    if (this.decided.size > KEPT_DECIDED) this.decided.delete(this.decided.values().next().value as string);
     for (const listener of this.decisionListeners) {
       try {
         listener(record);
