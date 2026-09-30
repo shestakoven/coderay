@@ -1,4 +1,4 @@
-import type { ClientMessage, FileHashes, McpEntry, McpLevel, PlanAnswer, Policy, PromptAnswer } from '@ide/protocol';
+import type { ClientMessage, FileAnswer, FileHashes, McpEntry, McpLevel, PlanAnswer, Policy, PromptAnswer, WatchdogAnswer } from '@ide/protocol';
 import { isRecord } from '../json';
 
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
@@ -11,7 +11,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId } = value;
+  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before, after, revertId, stepKey, confirm } = value;
   switch (type) {
     case 'chat.send':
       return typeof text === 'string' ? { type, text } : null;
@@ -30,6 +30,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     }
     case 'gate.answer':
       return typeof promptId === 'string' && (answer === 'allow-once' || answer === 'expand-plan' || answer === 'deny') ? { type, promptId, answer } : null;
+    case 'watchdog.answer': {
+      const parsed = parseWatchdogAnswer(answer);
+      return typeof eventId === 'string' && parsed ? { type, eventId, answer: parsed } : null;
+    }
+    case 'watchdog.stop-agent':
+      return typeof eventId === 'string' ? { type, eventId } : null;
   }
   if (typeof requestId !== 'string') return null;
   switch (type) {
@@ -50,6 +56,14 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isRecord(hashes) && typeof hashes.ide === 'string' && typeof hashes.project === 'string'
         ? { type, requestId, hashes: { ide: hashes.ide, project: hashes.project } }
         : null;
+    case 'history.diff':
+      return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
+    case 'revert.undo':
+      return typeof revertId === 'string' ? { type, requestId, revertId } : null;
+    case 'step.rollback-preview':
+      return typeof planId === 'string' && typeof stepKey === 'string' ? { type, requestId, planId, stepKey } : null;
+    case 'step.rollback':
+      return typeof planId === 'string' && typeof stepKey === 'string' && isConfirmList(confirm) ? { type, requestId, planId, stepKey, confirm } : null;
     default:
       return null;
   }
@@ -72,5 +86,23 @@ function parsePlanAnswer(value: unknown): PlanAnswer | null {
   if (!isRecord(value)) return null;
   if (value.kind === 'approve') return { kind: 'approve' };
   if ((value.kind === 'changes' || value.kind === 'reject') && typeof value.feedback === 'string') return { kind: value.kind, feedback: value.feedback };
+  return null;
+}
+
+const MAX_CONFIRM_FILES = 5000;
+
+const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isConfirmList = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length <= MAX_CONFIRM_FILES && value.every((item) => typeof item === 'string');
+
+const isFileAnswer = (value: unknown): value is FileAnswer => value === 'keep' || value === 'revert' || value === 'mine';
+
+function parseWatchdogAnswer(value: unknown): WatchdogAnswer | null {
+  if (!isRecord(value)) return null;
+  if (value.kind === 'all') return isFileAnswer(value.answer) || value.answer === 'expand-plan' ? { kind: 'all', answer: value.answer } : null;
+  if (value.kind === 'files' && isRecord(value.files) && Object.values(value.files).every(isFileAnswer)) {
+    return { kind: 'files', files: value.files as Record<string, FileAnswer> };
+  }
   return null;
 }

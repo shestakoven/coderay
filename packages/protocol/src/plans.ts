@@ -54,7 +54,7 @@ export interface PlanView {
 
 export type PlanAnswer = { kind: 'approve' } | { kind: 'changes'; feedback: string } | { kind: 'reject'; feedback: string };
 
-export type ToolDecision = 'allow' | 'unchecked' | 'ask-approved' | 'ask-denied' | 'deny' | 'flag';
+export type ToolDecision = 'allow' | 'unchecked' | 'ask-approved' | 'ask-denied' | 'deny' | 'flag' | 'hook-missing' | 'hook-pending';
 
 export type GateAnswer = 'allow-once' | 'expand-plan' | 'deny';
 

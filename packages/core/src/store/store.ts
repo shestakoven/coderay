@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import type {
-  ApprovedBy, ControlMode, FrozenScope, GatePromptView, PlanReview, PlanStatus, PlanStep, PromptAnswer, PromptBody, PromptStatus,
-  SessionStatus, StepStatus, TaskKind, TaskView, ToolDecision, ToolStatus, TurnKind, TurnView,
+  ApprovedBy, ChangeView, ControlMode, FrozenScope, GatePromptView, PlanReview, PlanStatus, PlanStep, PromptAnswer, PromptBody, PromptStatus,
+  RevertRecordView, SessionStatus, StepStatus, TaskKind, TaskView, ToolDecision, ToolStatus, TurnKind, TurnView, WatchdogEventView,
 } from '@ide/protocol';
 import { DatabaseSync } from './sqlite';
 
@@ -78,12 +78,12 @@ export interface ToolDecisionRecord {
   decidedAt: number;
 }
 
-export type GateResolution = 'pending' | 'allowed-once' | 'denied' | 'dropped' | 'plan-expanded' | 'flagged';
+export type GateResolution = 'pending' | 'allowed-once' | 'denied' | 'dropped' | 'plan-expanded' | 'flagged' | 'kept' | 'reverted' | 'relabeled-human' | 'mixed';
 
 export interface GateEventRecord {
   id: string;
   toolUseId: string;
-  kind: 'pre-execution';
+  kind: 'pre-execution' | 'watchdog' | 'fail-open';
   mode: ControlMode;
   targets: string[];
   prompt: GatePromptView | null;
@@ -91,6 +91,20 @@ export interface GateEventRecord {
   ts: number;
   resolvedAt: number | null;
 }
+
+export interface BaselineRecord { path: string; hash: string; stored: boolean; size: number; mode: number }
+
+export interface CheckpointRecord {
+  planId: string;
+  stepKey: string;
+  cycle: number;
+  before: Record<string, string | null>;
+  after: Record<string, string | null>;
+  startedAt: number;
+  sealedAt: number | null;
+}
+
+export interface SummaryRecord { key: string; scope: 'step' | 'component'; ref: string; text: string; createdAt: number }
 
 export interface SessionHistory {
   turns: TurnView[];
@@ -115,6 +129,18 @@ export interface Store {
   saveToolDecision(sessionId: string, decision: ToolDecisionRecord): void;
   saveGateEvent(sessionId: string, event: GateEventRecord): void;
   gateEvents(sessionId: string): GateEventRecord[];
+  saveChange(sessionId: string, change: ChangeView): void;
+  changes(sessionId: string, limit?: number): ChangeView[];
+  saveBaselines(rows: BaselineRecord[], removed?: string[]): void;
+  baselines(): BaselineRecord[];
+  saveCheckpoint(sessionId: string, checkpoint: CheckpointRecord): void;
+  checkpoints(sessionId: string): CheckpointRecord[];
+  saveRevert(sessionId: string, revert: RevertRecordView): void;
+  reverts(sessionId: string): RevertRecordView[];
+  saveSummary(summary: SummaryRecord): void;
+  summaries(): SummaryRecord[];
+  saveWatchdogEvent(sessionId: string, event: WatchdogEventView): void;
+  watchdogEvents(sessionId: string): WatchdogEventView[];
   history(sessionId: string): SessionHistory;
   close(): void;
 }
@@ -123,7 +149,7 @@ const BUSY_TIMEOUT_MS = 5000;
 const PROJECT_DIR_MODE = 0o700;
 const DB_FILE_MODE = 0o600;
 
-const SCHEMA_V1 = `
+export const SCHEMA_V1 = `
 CREATE TABLE IF NOT EXISTS sessions (
   id TEXT PRIMARY KEY,
   claude_session_id TEXT NOT NULL,
@@ -193,7 +219,7 @@ CREATE TABLE IF NOT EXISTS prompts (
 );
 `;
 
-const SCHEMA_V2 = `
+export const SCHEMA_V2 = `
 CREATE TABLE plans (
   session_id TEXT NOT NULL REFERENCES sessions(id),
   id TEXT NOT NULL,
@@ -242,8 +268,28 @@ CREATE TABLE gate_events (
 );
 `;
 
+const SCHEMA_V3 = `
+CREATE TABLE changes (session_id TEXT NOT NULL, id TEXT PRIMARY KEY, path TEXT NOT NULL, before_hash TEXT, after_hash TEXT,
+  at INTEGER NOT NULL, origin TEXT NOT NULL, enforcement TEXT NOT NULL, out_of_plan INTEGER NOT NULL, tool_use_ids TEXT NOT NULL,
+  plan_id TEXT, plan_version INTEGER, step_key TEXT, event_id TEXT, resolution TEXT, added INTEGER, removed INTEGER,
+  stored INTEGER NOT NULL, unreadable INTEGER NOT NULL);
+CREATE INDEX changes_session ON changes (session_id, at);
+CREATE TABLE baselines (path TEXT PRIMARY KEY, hash TEXT NOT NULL, stored INTEGER NOT NULL, size INTEGER NOT NULL, mode INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE checkpoints (session_id TEXT NOT NULL, plan_id TEXT NOT NULL, step_key TEXT NOT NULL, cycle INTEGER NOT NULL,
+  before TEXT NOT NULL, after TEXT NOT NULL, started_at INTEGER NOT NULL, sealed_at INTEGER, PRIMARY KEY (plan_id, step_key, cycle));
+CREATE TABLE reverts (session_id TEXT NOT NULL, id TEXT PRIMARY KEY, kind TEXT NOT NULL, event_id TEXT, plan_id TEXT, step_key TEXT,
+  change_ids TEXT NOT NULL, files TEXT NOT NULL, ts INTEGER NOT NULL, undone_at INTEGER);
+CREATE TABLE summaries (key TEXT PRIMARY KEY, scope TEXT NOT NULL, ref TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL);
+ALTER TABLE gate_events ADD COLUMN change_ids TEXT;
+ALTER TABLE gate_events ADD COLUMN tool_use_ids TEXT;
+ALTER TABLE gate_events ADD COLUMN snapshot_sha TEXT;
+ALTER TABLE gate_events ADD COLUMN phase TEXT;
+ALTER TABLE gate_events ADD COLUMN payload TEXT;
+ALTER TABLE step_states ADD COLUMN cycle INTEGER NOT NULL DEFAULT 0;
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3];
 
 function migrate(db: InstanceType<typeof DatabaseSync>): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -363,13 +409,64 @@ const toDecision = (row: Row): ToolDecisionRecord => ({
 const toGateEvent = (row: Row): GateEventRecord => ({
   id: String(row.id),
   toolUseId: String(row.tool_use_id),
-  kind: 'pre-execution',
+  kind: String(row.kind) as GateEventRecord['kind'],
   mode: String(row.mode) as ControlMode,
   targets: JSON.parse(String(row.targets)) as string[],
   prompt: row.prompt === null || row.prompt === undefined ? null : (JSON.parse(String(row.prompt)) as GatePromptView),
   resolution: String(row.resolution) as GateResolution,
   ts: Number(row.ts),
   resolvedAt: optNumber(row.resolved_at),
+});
+
+const toChange = (row: Row): ChangeView => ({
+  id: String(row.id),
+  path: String(row.path),
+  beforeHash: optText(row.before_hash),
+  afterHash: optText(row.after_hash),
+  at: Number(row.at),
+  origin: String(row.origin) as ChangeView['origin'],
+  enforcement: String(row.enforcement) as ChangeView['enforcement'],
+  outOfPlan: row.out_of_plan === 1,
+  toolUseIds: JSON.parse(String(row.tool_use_ids)) as string[],
+  planId: optText(row.plan_id),
+  planVersion: optNumber(row.plan_version),
+  stepKey: optText(row.step_key),
+  eventId: optText(row.event_id),
+  resolution: optText(row.resolution) as ChangeView['resolution'],
+  added: optNumber(row.added),
+  removed: optNumber(row.removed),
+  stored: row.stored === 1,
+  unreadable: row.unreadable === 1,
+});
+
+const toBaseline = (row: Row): BaselineRecord => ({
+  path: String(row.path), hash: String(row.hash), stored: row.stored === 1, size: Number(row.size), mode: Number(row.mode),
+});
+
+const toCheckpoint = (row: Row): CheckpointRecord => ({
+  planId: String(row.plan_id),
+  stepKey: String(row.step_key),
+  cycle: Number(row.cycle),
+  before: JSON.parse(String(row.before)) as Record<string, string | null>,
+  after: JSON.parse(String(row.after)) as Record<string, string | null>,
+  startedAt: Number(row.started_at),
+  sealedAt: optNumber(row.sealed_at),
+});
+
+const toRevert = (row: Row): RevertRecordView => ({
+  id: String(row.id),
+  kind: String(row.kind) as RevertRecordView['kind'],
+  eventId: optText(row.event_id),
+  planId: optText(row.plan_id),
+  stepKey: optText(row.step_key),
+  changeIds: JSON.parse(String(row.change_ids)) as string[],
+  files: JSON.parse(String(row.files)) as RevertRecordView['files'],
+  ts: Number(row.ts),
+  undoneAt: optNumber(row.undone_at),
+});
+
+const toSummary = (row: Row): SummaryRecord => ({
+  key: String(row.key), scope: String(row.scope) as SummaryRecord['scope'], ref: String(row.ref), text: String(row.text), createdAt: Number(row.created_at),
 });
 
 export function openStore(dir: string): Store {
@@ -432,6 +529,36 @@ export function openStore(dir: string): Store {
     INSERT INTO gate_events (id, session_id, kind, tool_use_id, mode, targets, prompt, resolution, ts, resolved_at)
     VALUES (:id, :sessionId, :kind, :toolUseId, :mode, :targets, :prompt, :resolution, :ts, :resolvedAt)
     ON CONFLICT (id) DO UPDATE SET prompt = excluded.prompt, resolution = excluded.resolution, resolved_at = excluded.resolved_at`);
+
+  const upsertChange = db.prepare(`
+    INSERT INTO changes (session_id, id, path, before_hash, after_hash, at, origin, enforcement, out_of_plan, tool_use_ids, plan_id, plan_version,
+      step_key, event_id, resolution, added, removed, stored, unreadable)
+    VALUES (:sessionId, :id, :path, :beforeHash, :afterHash, :at, :origin, :enforcement, :outOfPlan, :toolUseIds, :planId, :planVersion,
+      :stepKey, :eventId, :resolution, :added, :removed, :stored, :unreadable)
+    ON CONFLICT (id) DO UPDATE SET before_hash = excluded.before_hash, after_hash = excluded.after_hash, origin = excluded.origin,
+      enforcement = excluded.enforcement, out_of_plan = excluded.out_of_plan, tool_use_ids = excluded.tool_use_ids, plan_id = excluded.plan_id,
+      plan_version = excluded.plan_version, step_key = excluded.step_key, event_id = excluded.event_id, resolution = excluded.resolution,
+      added = excluded.added, removed = excluded.removed, stored = excluded.stored, unreadable = excluded.unreadable`);
+  const upsertBaseline = db.prepare(`
+    INSERT INTO baselines (path, hash, stored, size, mode, updated_at) VALUES (:path, :hash, :stored, :size, :mode, :updatedAt)
+    ON CONFLICT (path) DO UPDATE SET hash = excluded.hash, stored = excluded.stored, size = excluded.size, mode = excluded.mode, updated_at = excluded.updated_at`);
+  const deleteBaseline = db.prepare('DELETE FROM baselines WHERE path = ?');
+  const upsertCheckpoint = db.prepare(`
+    INSERT INTO checkpoints (session_id, plan_id, step_key, cycle, before, after, started_at, sealed_at)
+    VALUES (:sessionId, :planId, :stepKey, :cycle, :before, :after, :startedAt, :sealedAt)
+    ON CONFLICT (plan_id, step_key, cycle) DO UPDATE SET before = excluded.before, after = excluded.after, sealed_at = excluded.sealed_at`);
+  const upsertRevert = db.prepare(`
+    INSERT INTO reverts (session_id, id, kind, event_id, plan_id, step_key, change_ids, files, ts, undone_at)
+    VALUES (:sessionId, :id, :kind, :eventId, :planId, :stepKey, :changeIds, :files, :ts, :undoneAt)
+    ON CONFLICT (id) DO UPDATE SET files = excluded.files, undone_at = excluded.undone_at`);
+  const upsertSummary = db.prepare(`
+    INSERT INTO summaries (key, scope, ref, text, created_at) VALUES (:key, :scope, :ref, :text, :createdAt)
+    ON CONFLICT (key) DO UPDATE SET text = excluded.text, created_at = excluded.created_at`);
+  const upsertWatchdogEvent = db.prepare(`
+    INSERT INTO gate_events (id, session_id, kind, tool_use_id, mode, targets, resolution, ts, resolved_at, phase, snapshot_sha, payload)
+    VALUES (:id, :sessionId, :kind, '', :mode, '[]', :resolution, :ts, :resolvedAt, :phase, :snapshotSha, :payload)
+    ON CONFLICT (id) DO UPDATE SET resolution = excluded.resolution, resolved_at = excluded.resolved_at, phase = excluded.phase,
+      snapshot_sha = excluded.snapshot_sha, payload = excluded.payload`);
 
   return {
     latestSession() {
@@ -508,7 +635,72 @@ export function openStore(dir: string): Store {
       });
     },
     gateEvents(sessionId) {
-      return db.prepare('SELECT * FROM gate_events WHERE session_id = ? ORDER BY ts, rowid').all(sessionId).map(toGateEvent);
+      return db.prepare("SELECT * FROM gate_events WHERE session_id = ? AND kind = 'pre-execution' ORDER BY ts, rowid").all(sessionId).map(toGateEvent);
+    },
+    saveChange(sessionId, change) {
+      upsertChange.run({
+        sessionId, id: change.id, path: change.path, beforeHash: change.beforeHash, afterHash: change.afterHash, at: change.at,
+        origin: change.origin, enforcement: change.enforcement, outOfPlan: change.outOfPlan ? 1 : 0, toolUseIds: JSON.stringify(change.toolUseIds),
+        planId: change.planId, planVersion: change.planVersion, stepKey: change.stepKey, eventId: change.eventId, resolution: change.resolution,
+        added: change.added, removed: change.removed, stored: change.stored ? 1 : 0, unreadable: change.unreadable ? 1 : 0,
+      });
+    },
+    changes(sessionId, limit) {
+      const rows = limit === undefined
+        ? db.prepare('SELECT * FROM changes WHERE session_id = ? ORDER BY at, rowid').all(sessionId)
+        : db.prepare('SELECT * FROM (SELECT *, rowid AS rid FROM changes WHERE session_id = ? ORDER BY at DESC, rowid DESC LIMIT ?) ORDER BY at, rid').all(sessionId, limit);
+      return rows.map(toChange);
+    },
+    saveBaselines(rows, removed = []) {
+      const updatedAt = Date.now();
+      db.exec('BEGIN');
+      try {
+        for (const row of removed) deleteBaseline.run(row);
+        for (const row of rows) {
+          upsertBaseline.run({ path: row.path, hash: row.hash, stored: row.stored ? 1 : 0, size: row.size, mode: row.mode, updatedAt });
+        }
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+    baselines() {
+      return db.prepare('SELECT * FROM baselines ORDER BY path').all().map(toBaseline);
+    },
+    saveCheckpoint(sessionId, checkpoint) {
+      upsertCheckpoint.run({
+        sessionId, planId: checkpoint.planId, stepKey: checkpoint.stepKey, cycle: checkpoint.cycle, before: JSON.stringify(checkpoint.before),
+        after: JSON.stringify(checkpoint.after), startedAt: checkpoint.startedAt, sealedAt: checkpoint.sealedAt,
+      });
+    },
+    checkpoints(sessionId) {
+      return db.prepare('SELECT * FROM checkpoints WHERE session_id = ? ORDER BY started_at, cycle, rowid').all(sessionId).map(toCheckpoint);
+    },
+    saveRevert(sessionId, revert) {
+      upsertRevert.run({
+        sessionId, id: revert.id, kind: revert.kind, eventId: revert.eventId, planId: revert.planId, stepKey: revert.stepKey,
+        changeIds: JSON.stringify(revert.changeIds), files: JSON.stringify(revert.files), ts: revert.ts, undoneAt: revert.undoneAt,
+      });
+    },
+    reverts(sessionId) {
+      return db.prepare('SELECT * FROM reverts WHERE session_id = ? ORDER BY ts, rowid').all(sessionId).map(toRevert);
+    },
+    saveSummary(summary) {
+      upsertSummary.run({ key: summary.key, scope: summary.scope, ref: summary.ref, text: summary.text, createdAt: summary.createdAt });
+    },
+    summaries() {
+      return db.prepare('SELECT * FROM summaries ORDER BY created_at, rowid').all().map(toSummary);
+    },
+    saveWatchdogEvent(sessionId, event) {
+      upsertWatchdogEvent.run({
+        id: event.id, sessionId, kind: event.kind, mode: event.mode, resolution: event.resolution, ts: event.ts, resolvedAt: event.resolvedAt,
+        phase: event.phase, snapshotSha: event.snapshotSha, payload: JSON.stringify(event),
+      });
+    },
+    watchdogEvents(sessionId) {
+      return db.prepare("SELECT payload FROM gate_events WHERE session_id = ? AND kind IN ('watchdog', 'fail-open') ORDER BY ts, rowid").all(sessionId)
+        .map((row) => JSON.parse(String(row.payload)) as WatchdogEventView);
     },
     history(sessionId) {
       return {

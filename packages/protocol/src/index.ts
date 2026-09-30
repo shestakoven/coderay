@@ -1,3 +1,4 @@
+import type { HistoryClientMessage, HistoryServerMessage } from './history';
 import type { PlanClientMessage, PlanServerMessage } from './plans';
 import type { ChatClientMessage, SessionServerMessage } from './session';
 import type { SettingsClientMessage, SettingsServerMessage } from './settings';
@@ -5,6 +6,7 @@ import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 export * from './session';
 export * from './settings';
 export * from './plans';
+export * from './history';
 
 export type Lang = 'typescript' | 'python';
 
@@ -160,6 +162,7 @@ export type ServerMessage =
   | { type: 'map.progress'; progress: MapProgress }
   | SessionServerMessage
   | SettingsServerMessage
-  | PlanServerMessage;
+  | PlanServerMessage
+  | HistoryServerMessage;
 
-export type ClientMessage = ChatClientMessage | SettingsClientMessage | PlanClientMessage;
+export type ClientMessage = ChatClientMessage | SettingsClientMessage | PlanClientMessage | HistoryClientMessage;

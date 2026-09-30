@@ -146,6 +146,13 @@ try {
       case 'settings.get':
         reply(settingsSnapshot());
         return;
+      case 'watchdog.answer':
+      case 'watchdog.stop-agent':
+      case 'history.diff':
+      case 'revert.undo':
+      case 'step.rollback-preview':
+      case 'step.rollback':
+        return;
       default: {
         let error: string | null = null;
         try {
