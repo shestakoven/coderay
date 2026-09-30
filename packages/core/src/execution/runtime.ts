@@ -216,9 +216,14 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     lastScanMs = performance.now() - started;
   };
 
+  let followUp = false;
   const reconcile = (full = false): Promise<void> => {
     if (!ready || closing || sessionId() === null) return Promise.resolve();
-    scanning ??= scan(full)
+    if (scanning) {
+      if (full) followUp = true;
+      return scanning;
+    }
+    scanning = scan(full)
       .then(() => { scanFailing = false; })
       .catch((error) => {
         if (scanFailing) return;
@@ -226,13 +231,19 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         console.error('execution: the periodic scan failed', error);
         if (error instanceof ScanError) notice(`The IDE could not check the project files for changes (${error.message}).`);
       })
-      .finally(() => { scanning = null; });
+      .finally(() => {
+        scanning = null;
+        if (followUp) {
+          followUp = false;
+          void reconcile(true);
+        }
+      });
     return scanning;
   };
 
   const reconcileFresh = async (): Promise<void> => {
     await scanning;
-    await reconcile();
+    await reconcile(true);
   };
 
   const tick = async (): Promise<void> => {
@@ -295,7 +306,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         await changes.idle();
         await reconcileFresh();
         await changes.idle();
-        if (checkpoints.manifests(event.planId, event.key)?.cycle !== cycle) return;
+        if (closing || checkpoints.manifests(event.planId, event.key)?.cycle !== cycle) return;
         checkpoints.seal(event.planId, event.key);
         summarizer.request('step', `${event.planId}/${event.key}`);
       })().catch((error) => console.error('execution: could not seal a step checkpoint', error));

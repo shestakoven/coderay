@@ -60,38 +60,80 @@ describe('Baselines', () => {
   });
 });
 
+const NO_RACY = { racyMs: 0 };
+
 describe('scanTree with a cache', () => {
   const hashed = (put: { mock: { calls: unknown[][] } }): string[] => put.mock.calls.flatMap((call) => call[0] as string[]).map((path) => path.split('/').slice(-1)[0]!).sort();
 
   it('hashes nothing on a second scan of an unchanged tree', async () => {
     const { root, shadow, baselines } = await setup(FILES);
     const cache = newScanCache();
-    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
     const put = vi.spyOn(shadow, 'putMany');
-    const again = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const again = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
     expect([again.drift, hashed(put)]).toEqual([[], []]);
   });
 
   it('finds a changed, a new and a deleted file and looks only at those', async () => {
     const { root, shadow, baselines } = await setup(FILES);
     const cache = newScanCache();
-    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
     const put = vi.spyOn(shadow, 'putMany');
     writeFileSync(join(root, 'a.ts'), 'changed content');
     writeFileSync(join(root, 'fresh.ts'), 'new');
     rmSync(join(root, 'backend/.env'));
-    const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
     expect([result.drift.map((d) => d.path).sort(), hashed(put)]).toEqual([['a.ts', 'backend/.env', 'fresh.ts'], ['.env', 'a.ts', 'fresh.ts']]);
+  });
+
+  it('finds a content change that keeps the size, the modification time and the inode', async () => {
+    const { root, shadow, baselines } = await setup(FILES);
+    const cache = newScanCache();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    const ref = join(tempDir('scan-ref-'), 'ref');
+    execFileSync('touch', ['-r', join(root, 'a.ts'), ref]);
+    writeFileSync(join(root, 'a.ts'), 'b');
+    execFileSync('touch', ['-r', ref, join(root, 'a.ts')]);
+    const result = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    expect(result.drift.map((d) => d.path)).toEqual(['a.ts']);
+  });
+
+  it('finds a content change after a file was unreadable and readable again', async () => {
+    const { root, shadow, baselines } = await setup(FILES);
+    const cache = newScanCache();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    const ref = join(tempDir('scan-ref-'), 'ref');
+    execFileSync('touch', ['-r', join(root, 'a.ts'), ref]);
+    chmodSync(join(root, 'a.ts'), 0o000);
+    const closed = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    chmodSync(join(root, 'a.ts'), 0o644);
+    writeFileSync(join(root, 'a.ts'), 'b');
+    execFileSync('touch', ['-r', ref, join(root, 'a.ts')]);
+    const open = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    expect([closed.unreadable, open.drift.map((d) => d.path)]).toEqual([['a.ts'], ['a.ts']]);
+  });
+
+  it('hashes files touched within the racy window again on the next scan, and trusts their signatures once they are older', async () => {
+    const { root, shadow, baselines } = await setup(FILES);
+    const cache = newScanCache();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const put = vi.spyOn(shadow, 'putMany');
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    const racy = hashed(put);
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    put.mockClear();
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    expect([racy.includes('a.ts'), hashed(put)]).toEqual([true, []]);
   });
 
   it('lists the ignored guarded files again only when asked to refresh', async () => {
     const { root, shadow, baselines } = await setup(FILES);
     const cache = newScanCache();
-    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
+    await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
     mkdirSync(join(root, 'other'));
     writeFileSync(join(root, 'other/.env'), 'K=9');
-    const cached = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache);
-    const refreshed = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, { refresh: true });
+    const cached = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
+    const refreshed = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, { refresh: true, racyMs: 0 });
     expect([cached.drift.map((d) => d.path), refreshed.drift.map((d) => d.path)]).toEqual([[], ['other/.env']]);
   });
 });

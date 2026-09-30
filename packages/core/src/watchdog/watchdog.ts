@@ -14,6 +14,7 @@ import { resumeMessage, type ResumeInput } from './resume';
 const SETTLE_MS = 1_000;
 const DELIVER_WAIT_MS = 10_000;
 const KEPT_EVENTS = 500;
+const KEPT_FAIL_OPEN_CALLS = 1_000;
 
 export class WatchdogError extends Error {}
 
@@ -66,6 +67,7 @@ export class Watchdog {
   private open: WatchdogEventView | null = null;
   private readonly notes = new Map<string, string[]>();
   private flagged: { event: WatchdogEventView; at: number } | null = null;
+  private readonly failOpenCalls = new Set<string>();
   private timer: ReturnType<typeof setTimeout> | null = null;
   private settling: Promise<void> | null = null;
   private readonly answering = new Set<string>();
@@ -267,8 +269,9 @@ export class Watchdog {
       }
       if (!outOfPlan) return;
       if (this.mode() === 'C') return this.flag(change, true, note);
-      const event = this.open ?? this.begin();
+      const event = this.joinable() ?? this.begin();
       if (note) this.note(event, note);
+      if (change.toolUseIds.some((id) => this.failOpenCalls.has(id))) this.markFailOpen(event, change.toolUseIds.find((id) => this.failOpenCalls.has(id))!);
       this.join(event, change);
     } catch (error) {
       console.error('watchdog: could not handle a change', error);
@@ -277,6 +280,8 @@ export class Watchdog {
 
   raiseFailOpen(toolUseId: string, changes: ChangeView[], failure?: string): void {
     try {
+      this.failOpenCalls.add(toolUseId);
+      if (this.failOpenCalls.size > KEPT_FAIL_OPEN_CALLS) this.failOpenCalls.delete(this.failOpenCalls.values().next().value as string);
       const notes: string[] = failure ? [failure] : [];
       const out = changes.filter((change) => {
         if (change.enforcement !== 'enforced' || isGitState(change.path)) return false;
@@ -289,9 +294,8 @@ export class Watchdog {
         }
       });
       if (out.length === 0 || this.mode() === 'C') return this.flagFailOpen(toolUseId, changes, out.length > 0, notes);
-      const event = this.open ?? this.begin('fail-open');
-      event.kind = 'fail-open';
-      this.note(event, `The hook did not judge call ${toolUseId}.`);
+      const event = this.joinable() ?? this.begin('fail-open');
+      this.markFailOpen(event, toolUseId);
       for (const note of notes) this.note(event, note);
       for (const change of out) this.join(event, change);
     } catch (error) {
@@ -336,6 +340,16 @@ export class Watchdog {
       this.persist(event);
       this.emit(event);
     }
+  }
+
+  private joinable(): WatchdogEventView | null {
+    return this.open ?? this.all.findLast((event) => event.phase === 'pending' && !event.unknownOrigin) ?? null;
+  }
+
+  private markFailOpen(event: WatchdogEventView, toolUseId: string): void {
+    event.kind = 'fail-open';
+    const text = `The hook did not judge call ${toolUseId}.`;
+    if (!(this.notes.get(event.id) ?? []).includes(text)) this.note(event, text);
   }
 
   private flagFailOpen(toolUseId: string, changes: ChangeView[], outOfPlan: boolean, notes: string[]): void {

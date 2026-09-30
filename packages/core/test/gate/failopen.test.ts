@@ -152,7 +152,7 @@ describe('FailOpenDetector', () => {
     expect(f.decisions.map((d) => [d.toolUseId, d.decision === 'hook-missing' || d.decision === 'hook-pending'])).toEqual([['r1', false]]);
   });
 
-  it('records the decision but raises no second event for a call that ended while a watchdog event was pending', async () => {
+  it('records the decision and only flags, with no second pending event, a call that ended while a watchdog event was pending and changed nothing', async () => {
     const f = await fixture();
     const change = await f.feed('src/x.ts');
     f.watchdog.raiseFailOpen('other', [change]);
@@ -161,7 +161,7 @@ describe('FailOpenDetector', () => {
     f.detector.toolEnded(end(old));
     await sleepMs(80);
     expect(f.decisions).toMatchObject([{ toolUseId: 'mcp1', decision: 'hook-missing' }]);
-    expect(f.watchdog.events()).toHaveLength(1);
+    expect(f.watchdog.events().map((event) => event.phase === 'resolved')).toEqual([false, true]);
   });
 
   it('exempts the tools it is told about, and the built-in set is empty', async () => {

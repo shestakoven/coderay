@@ -38,7 +38,6 @@ export class FailOpenDetector {
         decidedAt: (this.o.now ?? Date.now)(),
       }));
       if (seen === 'pending') this.step('drop the prompt', () => this.o.gate.dropForTool(e.toolUseId, { record: false }));
-      if (this.o.watchdog.isPending()) return;
       void this.raise(e).catch((error) => console.error('failopen: could not raise an event', error));
     } catch (error) {
       console.error('failopen: could not handle a tool result', error);

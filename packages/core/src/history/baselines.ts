@@ -156,17 +156,22 @@ export async function hashCandidates(
 
 const record = (path: string, blob: StoredBlob): BaselineRecord => ({ path, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
 
-async function signatures(root: string, rels: string[], abs: ReadonlyMap<string, string>): Promise<Map<string, string>> {
+const RACY_MS = 2_000;
+
+async function signatures(root: string, rels: string[], abs: ReadonlyMap<string, string>, now: number, racyMs: number): Promise<{ sigs: Map<string, string>; settled: Set<string> }> {
   const sigs = new Map<string, string>();
+  const settled = new Set<string>();
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(STAT_LANES, rels.length) }, async () => {
     while (next < rels.length) {
       const rel = rels[next++]!;
-      const stat = await lstat(abs.get(rel) ?? join(root, rel)).catch(() => null);
-      if (stat) sigs.set(rel, `${stat.size}:${stat.mtimeMs}:${stat.ino}`);
+      const stat = await lstat(abs.get(rel) ?? join(root, rel), { bigint: true }).catch(() => null);
+      if (!stat) continue;
+      sigs.set(rel, `${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}:${stat.ino}`);
+      if (now - Number(stat.mtimeMs) >= racyMs && now - Number(stat.ctimeMs) >= racyMs) settled.add(rel);
     }
   }));
-  return sigs;
+  return { sigs, settled };
 }
 
 export async function scanTree(
@@ -175,11 +180,12 @@ export async function scanTree(
   shadow: ShadowRepo,
   baselines: Baselines,
   cache?: ScanCache,
-  options: { refresh?: boolean } = {},
+  options: { refresh?: boolean; racyMs?: number } = {},
 ): Promise<ScanResult> {
   const found = (await gitCandidates(root, policy, cache, options.refresh)) ?? { rels: await walkCandidates(root), abs: new Map<string, string>() };
   const seeding = baselines.meta(SEEDED_KEY) === null;
-  const sigs = cache ? await signatures(root, found.rels, found.abs) : new Map<string, string>();
+  const { sigs, settled } = cache ? await signatures(root, found.rels, found.abs, Date.now(), options.racyMs ?? RACY_MS) : { sigs: new Map<string, string>(), settled: new Set<string>() };
+  const trusted = (): Map<string, string> => new Map([...sigs].filter(([rel]) => settled.has(rel)));
   const toHash = cache && !seeding ? found.rels.filter((rel) => sigs.get(rel) !== cache.stats.get(rel)) : found.rels;
   const hashing = new Set(toHash);
   const { blobs, unreadable } = await hashCandidates(root, shadow, toHash, found.abs);
@@ -187,7 +193,8 @@ export async function scanTree(
     for (const path of baselines.paths()) if (!blobs.has(path)) baselines.remove(path);
     baselines.setMany([...blobs].map(([path, blob]) => record(path, blob)));
     baselines.setMeta(SEEDED_KEY, '1');
-    if (cache) cache.stats = sigs;
+    for (const rel of unreadable) sigs.delete(rel);
+    if (cache) cache.stats = trusted();
     return { seeded: true, drift: [], unreadable };
   }
   const skipped = new Set(unreadable);
@@ -203,8 +210,8 @@ export async function scanTree(
   }
   if (cache) {
     for (const d of drift) sigs.delete(d.path);
-    for (const rel of hashing) if (!blobs.has(rel) && !skipped.has(rel)) sigs.delete(rel);
-    cache.stats = sigs;
+    for (const rel of hashing) if (!blobs.has(rel)) sigs.delete(rel);
+    cache.stats = trusted();
   }
   return { seeded: false, drift, unreadable };
 }
