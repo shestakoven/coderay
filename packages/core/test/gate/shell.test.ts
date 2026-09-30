@@ -66,6 +66,43 @@ describe('shellWrites', () => {
     expect(got.targets.length).toBe(1);
   });
 
+  it.each([
+    '$T/../../proj/$X',
+    '$T/../*',
+    '$T/../../t/x',
+    '$T/$X/../../f',
+  ])('a mktemp variable in %s leaves the temporary directory', (path) => {
+    const got = writes(`T=$(mktemp -d); echo x > ${path}`).targets;
+    expect(got.map((target) => [target.temp, target.unresolved !== null])).toEqual([[false, true]]);
+  });
+
+  it.each(['$T/sub/../f', '$T/a/b.txt', '$T/$X/f'])('a mktemp variable in %s stays temp', (path) => {
+    expect(writes(`T=$(mktemp -d); echo x > ${path}`).targets.map((target) => target.temp)).toEqual([true]);
+  });
+
+  it.each([
+    'git -C sub rm a.ts',
+    'git --git-dir=x rm a.ts',
+    'git --work-tree=w mv a b',
+    'git rm --pathspec-from-file=list',
+    'git mv --pathspec-from-file list',
+  ])('%s is unresolved, not resolved against the wrong directory', (command) => {
+    expect(writes(command).targets.map((target) => [target.path, target.unresolved !== null])).toEqual([[null, true]]);
+  });
+
+  it('git rm -- --cached removes a file named --cached', () => {
+    expect(writes('git rm -- --cached').targets.map((target) => [target.path, target.deleting])).toEqual([['/p/--cached', true]]);
+  });
+
+  it.each([
+    ['cp -rt out a.ts'],
+    ['mv -ft out a.ts'],
+  ])('%s lands a.ts in out and never counts out as a source', (command) => {
+    expect(writes(command).targets.map((target) => [target.path, target.deleting, target.names])).toEqual(
+      command.startsWith('mv') ? [['/p/a.ts', true, []], ['/p/out', false, ['a.ts']]] : [['/p/out', false, ['a.ts']]],
+    );
+  });
+
   it('a mktemp variable with a plain path below it stays temp', () => {
     expect(writes('T=$(mktemp -d); echo x > $T/a/b.txt').targets.map((target) => target.temp)).toEqual([true]);
   });

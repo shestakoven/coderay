@@ -256,10 +256,14 @@ describe('HookGate', () => {
   });
 
   it('judges each file that mv moves into a directory', async () => {
-    const { call, approve, pending } = await setup();
-    await approve();
+    const { call, plans, pending } = await setup();
+    const proposed = plans.propose({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ path: 'src/app.ts', op: 'delete' }] }] });
+    const plan = await waitFor(() => plans.plans().find((candidate) => candidate.status === 'proposed'), 'plan proposed');
+    plans.answer(plan.id, plan.version, { kind: 'approve' });
+    await proposed;
+    plans.step({ key: 'edit', phase: 'start' });
     void call('Bash', { command: 'mv src/app.ts src/lib' });
-    expect((await pending()).targets.map((target) => [target.path, target.inScope])).toEqual([['src/app.ts', false], ['src/lib/app.ts', false]]);
+    expect((await pending()).targets.map((target) => [target.path, target.inScope])).toEqual([['src/app.ts', true], ['src/lib/app.ts', false]]);
   });
 
   it('keeps waiting for an answer, and answers normally, even when a change listener throws', async () => {

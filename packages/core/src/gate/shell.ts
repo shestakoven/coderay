@@ -76,6 +76,7 @@ const DEVICE = /^\/dev\/(null|stdout|stderr|tty|zero|fd\/\d+)$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const MAX_DEPTH = 8;
+const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
@@ -434,6 +435,9 @@ function moveOrCopy(name: string, args: Word[], state: State): void {
       i += 1;
     } else if (text?.startsWith('--target-directory=')) {
       into = literalWord(text.slice('--target-directory='.length));
+    } else if (text !== null && /^-[fvinuRrpaTbdlHLPsxZ]+t$/.test(text)) {
+      into = args[i + 1] ?? null;
+      i += 1;
     } else if (text !== null && /^-t.+/.test(text)) {
       into = literalWord(text.slice(2));
     } else if (text === '-T' || text === '--no-target-directory') {
@@ -498,12 +502,24 @@ function git(args: Word[], state: State): void {
   const sub = literalText(word);
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
   else if (WORK_TREE_REWRITES.has(sub)) state.allTracked = true;
-  else if (sub === 'mv') moveOrCopy('mv', args.slice(i + 1), state);
-  else if (sub === 'rm') {
-    const rest = args.slice(i + 1);
-    if (rest.some((arg) => literalText(arg) === '--cached')) return;
-    for (const target of operands(rest, [])) addTarget(target, state, { deleting: true });
+  else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), args.slice(i + 1), state);
+}
+
+function gitPaths(sub: 'mv' | 'rm', global: Word[], rest: Word[], state: State): void {
+  const redirected = global.some((arg) => /^(-C|--git-dir|--work-tree)/.test(literalText(arg) ?? ''));
+  const fromFile = rest.some((arg) => literalText(arg)?.startsWith('--pathspec-from-file') ?? false);
+  if (redirected || fromFile) {
+    state.targets.push(unresolved(`git ${sub}`, redirected ? `git ${sub} runs in another directory` : `git ${sub} reads its paths from a file`));
+    return;
   }
+  if (sub === 'mv') {
+    moveOrCopy('mv', rest, state);
+    return;
+  }
+  const end = rest.findIndex((arg) => literalText(arg) === '--');
+  const options = end === -1 ? rest : rest.slice(0, end);
+  if (options.some((arg) => literalText(arg) === '--cached')) return;
+  for (const target of operands(rest, [])) addTarget(target, state, { deleting: true });
 }
 
 function find(args: Word[], state: State): void {
@@ -588,10 +604,21 @@ function wordValue(word: Word, state: State): WordValue {
 }
 
 function tempValue(rest: Part[]): WordValue {
-  if (rest.some((part) => part.kind !== 'lit')) return { temp: true };
-  const tail = rest.map((part) => (part as { text: string }).text).join('');
-  const inside = posix.normalize(`/t${tail}`);
-  return inside === '/t' || inside.startsWith('/t/') ? { temp: true } : { problem: 'a path that leaves its temporary directory' };
+  const leaves = { problem: 'a path that leaves its temporary directory' };
+  let tail = '';
+  let dotted = false;
+  for (const part of rest) {
+    if (part.kind === 'lit') {
+      tail += part.text;
+      dotted ||= part.text.split('/').includes('..');
+    } else if (dotted) {
+      return leaves;
+    } else {
+      tail += '\0';
+    }
+  }
+  const inside = posix.normalize(`${TEMP_ROOT}${tail}`);
+  return inside === TEMP_ROOT || inside.startsWith(`${TEMP_ROOT}/`) ? { temp: true } : leaves;
 }
 
 function addTarget(word: Word, state: State, extra: TargetExtra = {}): void {
