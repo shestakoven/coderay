@@ -347,4 +347,17 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     const next = await waitFor(() => plans().plans().find((p) => p.goal === 'Fix the other file' && p.status !== 'proposed'), 'the next plan decided');
     expect([next.status, next.approvedBy, next.review.auto]).toEqual(['approved', 'auto', true]);
   });
+
+  it('keeps the pause after a Reject when the IDE sends the watchdog resume message', async () => {
+    const f = await execFlow('exec-reject-then-watchdog');
+    await f.send();
+    const plans = () => f.runtime.gate.plans;
+    const big = await waitFor(() => plans().plans().find((p) => p.goal === 'Fix everything' && p.status === 'proposed'), 'the big plan waiting');
+    plans().answer(big.id, big.version, { kind: 'reject', feedback: '' });
+    const event = await f.pending(['src/other.ts']);
+    await f.answer(event, { kind: 'all', answer: 'keep' });
+    expect(await resumeMessage(f)).toContain('[IDE] The user answered the out-of-plan question.');
+    const small = await waitFor(() => plans().plans().find((p) => p.goal === 'Fix the greeting'), 'the small plan proposed');
+    expect([small.status, small.review.auto, small.review.notes]).toEqual(['proposed', false, expect.arrayContaining(['You rejected the previous plan; this plan waits for you.'])]);
+  });
 });

@@ -106,7 +106,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     runningShell: () => session?.runningShell() ?? false,
     processAlive: () => session?.processAlive() ?? false,
     interrupt: () => session?.interrupt() ?? false,
-    send: (text) => attached().send(text),
+    send: (text) => attached().send(text, { fromUser: false }),
     sendAbsorbed: (text) => attached().sendAbsorbed(text),
     queueNote: (text) => attached().queueNote(text),
     lastMessage: () => session?.lastMessage() ?? null,

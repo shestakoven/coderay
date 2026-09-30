@@ -327,7 +327,7 @@ export class AgentSession {
     return message?.kind === 'message' ? message.text : null;
   }
 
-  send(text: string): void {
+  send(text: string, options: { fromUser?: boolean } = {}): void {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
@@ -335,7 +335,7 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
     if (!this.process) throw new SessionError('no-gate');
-    notify(this.userMessageListeners);
+    if (options.fromUser !== false) notify(this.userMessageListeners);
     const notes = this.notes.splice(0);
     const payload = [...notes, text].join('\n\n');
     try {
