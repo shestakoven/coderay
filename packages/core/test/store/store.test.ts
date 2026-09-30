@@ -263,6 +263,42 @@ describe('history tables (schema 3)', () => {
     });
   });
 
+  it('round-trips the opposite value of every boolean and nullable change field', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    const created = { ...change('created', 1), beforeHash: null, afterHash: 'a'.repeat(40), outOfPlan: false, resolution: null, stored: false };
+    const both = { ...change('both', 2), beforeHash: null, afterHash: null, outOfPlan: false, resolution: 'flagged' as const, unreadable: false };
+    store.saveChange('s1', created);
+    store.saveChange('s1', both);
+    expect(store.changes('s1')).toEqual([created, both]);
+  });
+
+  it('orders changes by arrival, not by the watcher time, and a limit keeps the last saved', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveChange('s1', change('first', 50));
+    store.saveChange('s1', change('second', 10));
+    store.saveChange('s1', change('third', 30));
+    store.saveChange('s1', { ...change('first', 50), resolution: 'reverted' });
+    expect(store.changes('s1').map((c) => c.id)).toEqual(['first', 'second', 'third']);
+    expect(store.changes('s1', 2).map((c) => c.id)).toEqual(['second', 'third']);
+  });
+
+  it('rolls the version 3 step back when it fails, leaving version 2 and no v3 table', () => {
+    const dir = tempDir('ide-store-');
+    const old = new DatabaseSync(join(dir, 'history.sqlite'));
+    for (const sql of [SCHEMA_V1, SCHEMA_V2]) old.exec(sql);
+    old.exec('CREATE TABLE changes (x INTEGER); PRAGMA user_version = 2');
+    old.close();
+    expect(() => openStore(dir)).toThrow();
+    const check = new DatabaseSync(join(dir, 'history.sqlite'));
+    const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+    const tables = check.prepare("SELECT name FROM sqlite_master WHERE name IN ('baselines','checkpoints','reverts','summaries')").all();
+    const cycle = check.prepare("SELECT name FROM pragma_table_info('step_states') WHERE name = 'cycle'").all();
+    check.close();
+    expect([version, tables, cycle]).toEqual([2, [], []]);
+  });
+
   it('returns the newest changes of the requested session only', () => {
     const store = freshStore();
     store.saveSession(session('s1', 1));

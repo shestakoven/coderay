@@ -273,7 +273,7 @@ CREATE TABLE changes (session_id TEXT NOT NULL, id TEXT PRIMARY KEY, path TEXT N
   at INTEGER NOT NULL, origin TEXT NOT NULL, enforcement TEXT NOT NULL, out_of_plan INTEGER NOT NULL, tool_use_ids TEXT NOT NULL,
   plan_id TEXT, plan_version INTEGER, step_key TEXT, event_id TEXT, resolution TEXT, added INTEGER, removed INTEGER,
   stored INTEGER NOT NULL, unreadable INTEGER NOT NULL);
-CREATE INDEX changes_session ON changes (session_id, at);
+CREATE INDEX changes_session ON changes (session_id);
 CREATE TABLE baselines (path TEXT PRIMARY KEY, hash TEXT NOT NULL, stored INTEGER NOT NULL, size INTEGER NOT NULL, mode INTEGER NOT NULL, updated_at INTEGER NOT NULL);
 CREATE TABLE checkpoints (session_id TEXT NOT NULL, plan_id TEXT NOT NULL, step_key TEXT NOT NULL, cycle INTEGER NOT NULL,
   before TEXT NOT NULL, after TEXT NOT NULL, started_at INTEGER NOT NULL, sealed_at INTEGER, PRIMARY KEY (plan_id, step_key, cycle));
@@ -647,8 +647,8 @@ export function openStore(dir: string): Store {
     },
     changes(sessionId, limit) {
       const rows = limit === undefined
-        ? db.prepare('SELECT * FROM changes WHERE session_id = ? ORDER BY at, rowid').all(sessionId)
-        : db.prepare('SELECT * FROM (SELECT *, rowid AS rid FROM changes WHERE session_id = ? ORDER BY at DESC, rowid DESC LIMIT ?) ORDER BY at, rid').all(sessionId, limit);
+        ? db.prepare('SELECT * FROM changes WHERE session_id = ? ORDER BY rowid').all(sessionId)
+        : db.prepare('SELECT * FROM (SELECT *, rowid AS rid FROM changes WHERE session_id = ? ORDER BY rowid DESC LIMIT ?) ORDER BY rid').all(sessionId, limit);
       return rows.map(toChange);
     },
     saveBaselines(rows, removed = []) {
