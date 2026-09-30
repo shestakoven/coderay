@@ -64,6 +64,7 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     expect(recorded.filter((c) => c.path === 'dist/out.js' || c.path === '.omc/note.txt').map((c) => [c.path, c.origin, c.enforcement, c.outOfPlan]))
       .toEqual(expect.arrayContaining([['dist/out.js', 'agent-tool', 'recorded', false], ['.omc/note.txt', 'agent-tool', 'recorded', false]]));
     await f.runtime.changes.idle();
+    await f.runtime.watchdog.quiesce();
     expect([f.events(), f.interrupts(), f.runtime.hold.isHeld()]).toEqual([[], 0, false]);
     f.session.send('again');
     const event = await f.pending();
@@ -218,7 +219,7 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
   it('re-attributes the changes in the window of a call the hook never judged', async () => {
     const f = await execFlow('exec-fail-open');
     await f.send();
-    const event = await waitFor(() => f.events().find((e) => e.kind === 'fail-open' && e.phase === 'pending' && e.changes.length === 2), 'a pending fail-open event with both files');
+    const event = await waitFor(() => f.events().find((e) => e.kind === 'fail-open' && e.phase === 'pending' && e.changes.length === 2 && e.changes.every((c) => c.origin === 'agent-tool')), 'a pending fail-open event with both files re-attributed');
     expect(f.hookRecords().map((hook) => hook.id)).not.toContain('toolu_f');
     expect(event.changes.map((c) => [c.path, c.origin, c.toolUseIds]).sort()).toEqual([
       ['src/other.ts', 'agent-tool', ['toolu_f']],
@@ -296,6 +297,16 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     await waitFor(() => f.session.state().session?.status === 'refused', 'the session refused');
     expect(() => f.session.send('again')).toThrow(new SessionError('hook-off'));
     expect(f.userMessages()).toEqual([]);
+  });
+
+  it('does not raise a write the watcher reports after the plan is done, that the hook allowed with step done in the same message', async () => {
+    const f = await execFlow('exec-write-then-done', { runtime: { watcherSettleMs: 300 }, files: { 'gen.sh': 'echo generated > src/other.ts\n' } });
+    await f.send();
+    await waitFor(() => f.runtime.gate.plans.plans().find((p) => p.status === 'done'), 'the plan done');
+    const change = await waitFor(() => f.changes().find((c) => c.path === 'src/other.ts'), 'the change reported late');
+    await f.runtime.changes.idle();
+    await f.runtime.watchdog.quiesce();
+    expect([change.origin, change.planId, change.outOfPlan, f.events(), f.interrupts(), f.runtime.hold.isHeld()]).toEqual(['agent-tool', f.runtime.gate.plans.plans()[0]!.id, false, [], 0, false]);
   });
 
   it('raises a 300-file burst from a background shell as one event, and revert restores all 300', async () => {

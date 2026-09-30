@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { ApprovedBy, PlanAnswer, PlanStatus, PlanStep, PlanView, StepStatus } from '@ide/protocol';
+import type { ApprovedBy, FrozenScope, PlanAnswer, PlanStatus, PlanStep, PlanView, StepStatus } from '@ide/protocol';
 import { escapeGlob } from '../gate/scope';
 import type { PlanGate } from '../gate/scope-guard';
 import { isRecord } from '../json';
@@ -219,6 +219,12 @@ export class PlanService {
     if (versions.some((record) => record.status === 'done')) return { state: 'done', planId };
     if (versions.some((record) => record.status === 'rejected')) return { state: 'rejected', planId };
     return { state: 'none' };
+  }
+
+  scopeOf(planId: string, version: number): FrozenScope | null {
+    this.load();
+    const record = this.records.find((candidate) => candidate.id === planId && candidate.version === version);
+    return record && (record.status === 'approved' || record.status === 'done') ? record.scope : null;
   }
 
   canExpand(): boolean {

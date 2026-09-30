@@ -39,7 +39,7 @@ export interface WatchdogOptions {
   hold: Hold;
   shadow: ShadowRepo;
   root: string;
-  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand'>;
+  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand' | 'scopeOf'>;
   changes: ChangeService;
   reverts: Pick<RevertService, 'revertChanges'>;
   gate: Pick<HookGate, 'withdrawPending'>;
@@ -386,9 +386,14 @@ export class Watchdog {
   }
 
   private isOutOfPlan(change: ChangeView): boolean {
+    const target = { rel: change.path, dir: false, mkdir: false, deleting: change.afterHash === null && !change.unreadable };
+    if (change.planId !== null && change.planVersion !== null) {
+      const stamped = this.o.plans.scopeOf(change.planId, change.planVersion);
+      return stamped === null || !covers(stamped, target);
+    }
     const gate: PlanGate = this.o.plans.gate();
     if (gate.state !== 'approved') return true;
-    return !covers(gate.scope, { rel: change.path, dir: false, mkdir: false, deleting: change.afterHash === null && !change.unreadable });
+    return !covers(gate.scope, target);
   }
 
   private prune(): void {

@@ -63,7 +63,15 @@ async function fixture(o: Setup = {}) {
   const baselines = new Baselines(store);
   await scanTree(root, DEFAULT_POLICY, shadow, baselines);
   const ledger = new ActivityLedger();
-  const gate: { value: PlanGate; throws?: boolean } = { value: { state: 'none' } };
+  const scopes = new Map<string, FrozenScope>();
+  let current: PlanGate = { state: 'none' };
+  const gate: { value: PlanGate; throws?: boolean } = {
+    get value() { return current; },
+    set value(next) {
+      current = next;
+      if (next.state === 'approved') scopes.set(`${next.planId}/${next.version}`, next.scope);
+    },
+  };
   const changes = new ChangeService({
     root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites: new IdeWrites(), ledger, store, checkpoints: new Checkpoints(store, () => 's1'),
     sessionId: () => 's1', plans: { gate: () => gate.value },
@@ -85,7 +93,7 @@ async function fixture(o: Setup = {}) {
   const info = { throws: false };
   const watchdog = new Watchdog({
     store, sessionId: () => 's1', session, hold, shadow, root,
-    plans: { gate: () => { if (gate.throws) throw new Error('gate exploded'); return gate.value; }, canExpand: () => canExpand.value, expand: () => { throw new Error('not here'); } } as never,
+    plans: { gate: () => { if (gate.throws) throw new Error('gate exploded'); return gate.value; }, scopeOf: (id: string, version: number) => { if (gate.throws) throw new Error('gate exploded'); return scopes.get(`${id}/${version}`) ?? null; }, canExpand: () => canExpand.value, expand: () => { throw new Error('not here'); } } as never,
     changes, reverts: { revertChanges: () => { throw new Error('not here'); } },
     gate: { withdrawPending: (reason) => { withdrawn.push(reason); } }, policy: () => policy,
     toolInfo: (id) => (info.throws ? (() => { throw new Error('toolInfo exploded'); })() : id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),
@@ -164,6 +172,31 @@ describe('Watchdog raising', () => {
     expect(f.watchdog.events()).toEqual([]);
     expect(f.hold.isHeld()).toBe(false);
     expect(f.session.calls).toEqual([]);
+  });
+
+  it('judges a change by the plan version it was stamped with, not by the gate at the time the watcher reports it', async () => {
+    const f = await fixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    const change = (await f.produce(['src/in.ts']))[0]!;
+    expect([change.planId, change.planVersion]).toEqual(['p1', 1]);
+    f.gate.value = { state: 'done', planId: 'p1' };
+    f.watchdog.consider(change);
+    await sleepMs(120);
+    expect([f.watchdog.events(), f.hold.isHeld(), f.session.calls]).toEqual([[], false, []]);
+  });
+
+  it('raises a stamped change whose plan version is unknown, and one outside its own version', async () => {
+    const f = await fixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    const outside = (await f.produce(['b.ts']))[0]!;
+    const unknown = { ...(await f.produce(['src/c.ts']))[0]!, planVersion: 9 };
+    f.gate.value = { state: 'done', planId: 'p1' };
+    f.watchdog.consider(outside);
+    f.watchdog.consider(unknown);
+    const event = await waitFor(() => f.watchdog.events().find((e) => e.phase === 'pending'), 'a pending event');
+    expect(event.changes.map((c) => c.path).sort()).toEqual(['b.ts', 'src/c.ts']);
   });
 
   it('raises a deleted file whose plan only modifies it', async () => {
