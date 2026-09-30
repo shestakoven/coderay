@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -10,6 +11,21 @@ export const MAX_DIFF_LINES = 2000;
 const BATCH = 500;
 const EXEC = 0o111;
 const MAX_OUTPUT = 128 * 1024 * 1024;
+const HASH = /^[0-9a-f]{40,64}$/;
+const INHERITED_GIT_ENV = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SHALLOW_FILE|GRAFT_FILE|REPLACE_REF_BASE|NO_REPLACE_OBJECTS|AUTHOR_\w+|COMMITTER_\w+|INTERNAL_\w+)$/;
+let tempCounter = 0;
+
+const isHash = (value: string): boolean => HASH.test(value);
+
+function unsafeSnapshotPath(path: string): boolean {
+  return path === '' || path.includes('\0') || path.split('/').some((part) => part === '' || part === '.' || part === '..' || part.toLowerCase() === '.git');
+}
+
+function cleanEnv(extra: Record<string, string> | undefined): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(process.env)) if (!INHERITED_GIT_ENV.test(key)) env[key] = value;
+  return { ...env, ...extra };
+}
 
 export interface StoredBlob { hash: string; stored: boolean; size: number; mode: number }
 
@@ -17,7 +33,7 @@ interface GitOptions { input?: string | Buffer; env?: Record<string, string> }
 
 function git(args: string[], options: GitOptions = {}): Promise<Buffer> {
   return new Promise((resolve, reject) => {
-    const child = spawn('git', args, { env: { ...process.env, ...options.env }, stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('git', args, { env: cleanEnv(options.env), stdio: ['pipe', 'pipe', 'pipe'] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let size = 0;
@@ -66,13 +82,11 @@ function parseHunks(text: string): { hunks: DiffHunk[]; truncated: boolean } {
 }
 
 export class ShadowRepo {
-  private counter = 0;
-
   private constructor(private readonly dir: string, private readonly emptyBlob: string) {}
 
   static async open(dir: string): Promise<ShadowRepo> {
     mkdirSync(dir, { recursive: true });
-    await git(['init', '--bare', '-q', dir]);
+    await git(['init', '--bare', '-q', '--', dir]);
     for (const [key, value] of [['gc.auto', '0'], ['core.autocrlf', 'false'], ['user.name', 'ide'], ['user.email', 'ide@localhost']]) {
       await git(['--git-dir', dir, 'config', key!, value!]);
     }
@@ -95,7 +109,7 @@ export class ShadowRepo {
       if (stat.isSymbolicLink()) return await this.text(await readlink(abs), store);
       if (!stat.isFile()) return null;
       const write = store && stat.size <= MAX_BLOB_BYTES;
-      const out = await this.run(['hash-object', ...(write ? ['-w'] : []), '--no-filters', abs]);
+      const out = await this.run(['hash-object', ...(write ? ['-w'] : []), '--no-filters', '--', abs]);
       return { hash: out.toString().trim(), stored: write, size: stat.size, mode: stat.mode & EXEC ? 0o755 : 0o644 };
     } catch { return null; }
   }
@@ -112,7 +126,7 @@ export class ShadowRepo {
     for (const p of paths) {
       let stat;
       try { stat = await lstat(p); } catch { continue; }
-      if (stat.isFile() && stat.size <= MAX_BLOB_BYTES && !p.includes('\n')) {
+      if (stat.isFile() && stat.size <= MAX_BLOB_BYTES && !/[\r\n]/.test(p)) {
         batchable.push({ path: p, size: stat.size, mode: stat.mode & EXEC ? 0o755 : 0o644 });
       } else {
         result.set(p, await this.put(p));
@@ -135,10 +149,13 @@ export class ShadowRepo {
   }
 
   async read(hash: string): Promise<Buffer | null> {
+    if (!isHash(hash)) return null;
     try { return await this.run(['cat-file', 'blob', hash]); } catch { return null; }
   }
 
   private async existing(hashes: string[]): Promise<Set<string>> {
+    if (hashes.length === 0) return new Set();
+    hashes = hashes.filter(isHash);
     if (hashes.length === 0) return new Set();
     const out = await this.run(['cat-file', '--batch-check'], { input: hashes.join('\n') + '\n' });
     const found = new Set<string>();
@@ -157,9 +174,9 @@ export class ShadowRepo {
     const content = await this.read(hash);
     if (content === null) return 'missing-blob';
     await mkdir(dirname(abs), { recursive: true });
-    const temp = `${abs}.ide-${process.pid}-${this.counter++}`;
+    const temp = `${abs}.ide-${process.pid}-${tempCounter++}-${randomBytes(6).toString('hex')}`;
     try {
-      await writeFile(temp, content);
+      await writeFile(temp, content, { flag: 'wx' });
       await chmod(temp, mode);
       await rename(temp, abs);
     } catch (error) {
@@ -176,21 +193,21 @@ export class ShadowRepo {
     const present = await this.existing([a, b]);
     if (!present.has(a) || !present.has(b)) return { ...EMPTY_DIFF, missing: true };
     const flags = ['--no-color', '--no-ext-diff', '--no-textconv'];
-    const [numstat] = (await this.run(['diff', ...flags, '--numstat', a, b])).toString().split('\n');
+    const [numstat] = (await this.run(['diff', ...flags, '--numstat', a, b, '--'])).toString().split('\n');
     const [addedText, removedText] = (numstat ?? '').split('\t');
     if (addedText === '-' || removedText === '-') return { ...EMPTY_DIFF, binary: true };
-    const { hunks, truncated } = parseHunks((await this.run(['diff', ...flags, '--unified=3', a, b])).toString());
+    const { hunks, truncated } = parseHunks((await this.run(['diff', ...flags, '--unified=3', a, b, '--'])).toString());
     return { binary: false, truncated, missing: false, added: Number(addedText), removed: Number(removedText), hunks };
   }
 
   async snapshot(id: string, files: { path: string; hash: string | null; mode?: number }[]): Promise<string> {
     const present = await this.existing([...new Set(files.flatMap((f) => (f.hash === null ? [] : [f.hash])))]);
-    const entries = files.filter((f) => f.hash !== null && present.has(f.hash));
+    const entries = files.filter((f) => f.hash !== null && present.has(f.hash) && !unsafeSnapshotPath(f.path));
     const scratch = await mkdtemp(join(tmpdir(), 'ide-snapshot-'));
     try {
       const env = { GIT_INDEX_FILE: join(scratch, 'index') };
-      const lines = entries.map((f) => `${f.mode === 0o755 ? '100755' : '100644'} ${f.hash}\t${f.path}\n`).join('');
-      await this.run(['update-index', '--add', '--index-info'], { input: lines, env });
+      const records = entries.map((f) => `${f.mode === 0o755 ? '100755' : '100644'} ${f.hash}\t${f.path}\0`).join('');
+      await this.run(['update-index', '--add', '-z', '--index-info'], { input: records, env });
       const tree = (await this.run(['write-tree'], { env })).toString().trim();
       const sha = (await this.run(['commit-tree', tree, '-m', id])).toString().trim();
       await this.run(['update-ref', `refs/ide/snapshots/${id}`, sha]);

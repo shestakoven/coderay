@@ -1,9 +1,26 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { MAX_BLOB_BYTES, ShadowRepo } from '../../src/history/shadow';
 import { tempDir } from '../helpers';
+
+const hooks = vi.hoisted(() => ({ afterLstat: null as null | ((path: string) => void) }));
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>();
+  return {
+    ...actual,
+    lstat: async (path: Parameters<typeof actual.lstat>[0], ...rest: unknown[]) => {
+      const stat = await (actual.lstat as (...a: unknown[]) => Promise<Awaited<ReturnType<typeof actual.lstat>>>)(path, ...rest);
+      hooks.afterLstat?.(String(path));
+      return stat;
+    },
+  };
+});
+
+function vanishAfterStat(target: string): void {
+  hooks.afterLstat = (path) => { if (path === target) { hooks.afterLstat = null; rmSync(path, { force: true }); } };
+}
 
 const saved: Record<string, string | undefined> = {};
 const ISOLATION = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
@@ -70,12 +87,13 @@ describe('ShadowRepo.put', () => {
     expect(await shadow.read(blob!.hash)).toBeNull();
   });
 
-  it('returns null for a missing path, a directory and an unreadable file', async () => {
+  it('returns null for a missing path, a directory and a file that vanishes after stat', async () => {
     const { shadow } = await open(); const w = tempDir('w-');
-    mkdirSync(join(w, 'd')); writeFileSync(join(w, 'locked'), 'x'); chmodSync(join(w, 'locked'), 0o000);
+    mkdirSync(join(w, 'd')); writeFileSync(join(w, 'vanishing'), 'x');
     expect(await shadow.put(join(w, 'gone'))).toBeNull();
     expect(await shadow.put(join(w, 'd'))).toBeNull();
-    expect(await shadow.put(join(w, 'locked'))).toBeNull();
+    vanishAfterStat(join(w, 'vanishing'));
+    expect(await shadow.put(join(w, 'vanishing'))).toBeNull();
   });
 
   it('records a symlink by the hash of its target text', async () => {
@@ -122,10 +140,10 @@ describe('ShadowRepo.putMany', () => {
     expect(many.get(join(w, 'big'))!.stored).toBe(false);
   });
 
-  it('does not fail the other paths when one is unreadable', async () => {
+  it('does not fail the other paths when one vanishes after stat', async () => {
     const { shadow } = await open(); const w = tempDir('w-');
     writeFileSync(join(w, 'a'), 'a'); writeFileSync(join(w, 'locked'), 'l'); writeFileSync(join(w, 'c'), 'c');
-    chmodSync(join(w, 'locked'), 0o000);
+    vanishAfterStat(join(w, 'locked'));
     const got = await shadow.putMany([join(w, 'a'), join(w, 'locked'), join(w, 'c')]);
     expect([...got.values()].map((b) => b !== null)).toEqual([true, false, true]);
     expect((await shadow.read(got.get(join(w, 'c'))!.hash))!.toString()).toBe('c');
@@ -288,5 +306,109 @@ describe('ShadowRepo.snapshot', () => {
     const empty = await shadow.snapshot('empty', []);
     expect(git(dir, 'rev-parse', 'refs/ide/snapshots/empty').trim()).toBe(empty);
     expect(git(dir, 'ls-tree', '-r', 'refs/ide/snapshots/empty').trim()).toBe('');
+  });
+});
+
+describe('review fixes', () => {
+  const withEnv = async (env: Record<string, string>, body: () => Promise<void>) => {
+    const before = Object.fromEntries(Object.keys(env).map((k) => [k, process.env[k]]));
+    Object.assign(process.env, env);
+    try { await body(); } finally {
+      for (const [k, v] of Object.entries(before)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  };
+
+  it('keeps paths that differ only by a trailing CR apart in putMany', async () => {
+    const { shadow } = await open(); const w = tempDir('w-');
+    writeFileSync(join(w, 'cr'), 'plain'); writeFileSync(join(w, 'cr\r'), 'with cr');
+    const got = await shadow.putMany([join(w, 'cr'), join(w, 'cr\r')]);
+    expect((await shadow.read(got.get(join(w, 'cr'))!.hash))!.toString()).toBe('plain');
+    expect((await shadow.read(got.get(join(w, 'cr\r'))!.hash))!.toString()).toBe('with cr');
+  });
+
+  it('stores CRLF byte-exactly through putMany under autocrlf', async () => {
+    await withEnv({ GIT_CONFIG_COUNT: '1', GIT_CONFIG_KEY_0: 'core.autocrlf', GIT_CONFIG_VALUE_0: 'true' }, async () => {
+      const { shadow } = await open(); const w = tempDir('w-');
+      writeFileSync(join(w, 'a'), 'a\r\nb\r\n'); writeFileSync(join(w, 'b'), 'x');
+      const got = await shadow.putMany([join(w, 'a'), join(w, 'b')]);
+      expect((await shadow.read(got.get(join(w, 'a'))!.hash))!.toString()).toBe('a\r\nb\r\n');
+    });
+  });
+
+  it('snapshots paths with a newline or a leading quote, and skips .git paths on purpose', async () => {
+    const { shadow, dir } = await open(); const w = tempDir('w-');
+    writeFileSync(join(w, 'f'), 'content');
+    const hash = (await shadow.put(join(w, 'f')))!.hash;
+    await shadow.snapshot('odd', [
+      { path: 'a\nb.txt', hash }, { path: '"quoted".txt', hash }, { path: 'ok/f', hash },
+      { path: '.git/config', hash }, { path: 'sub/.git/hooks/x', hash }, { path: '../escape', hash },
+    ]);
+    const listed = git(dir, 'ls-tree', '-r', '-z', '--name-only', 'refs/ide/snapshots/odd').split('\0').filter(Boolean).sort();
+    expect(listed).toEqual(['"quoted".txt', 'a\nb.txt', 'ok/f']);
+  });
+
+  it.each([
+    ['diff', (s: ShadowRepo, out: string) => s.diff(`--output=${out}`, null).then(() => undefined)],
+    ['read', (s: ShadowRepo, out: string) => s.read(`--output=${out}`).then(() => undefined)],
+    ['restore', (s: ShadowRepo, out: string) => s.restore(`--output=${out}`, out + '.r', 0o644).then(() => undefined)],
+    ['snapshot', (s: ShadowRepo, out: string) => s.snapshot('h', [{ path: 'x', hash: `--output=${out}` }]).then(() => undefined)],
+  ])('never passes an option-like hash to git (%s)', async (_name, call) => {
+    const { shadow } = await open(); const out = join(tempDir('w-'), 'pwned');
+    await call(shadow, out);
+    expect(existsSync(out)).toBe(false);
+  });
+
+  it('reports option-like and rev-expression hashes as missing', async () => {
+    const { shadow } = await open(); const w = tempDir('w-'); writeFileSync(join(w, 'f'), 'x');
+    const good = (await shadow.put(join(w, 'f')))!.hash;
+    await shadow.snapshot('e1', [{ path: 'f', hash: good }]);
+    const rev = 'refs/ide/snapshots/e1:f';
+    expect(await shadow.read(rev)).toBeNull();
+    expect(await shadow.read('-h')).toBeNull();
+    expect(await shadow.restore(rev, join(w, 'out'), 0o644)).toBe('missing-blob');
+    expect(existsSync(join(w, 'out'))).toBe(false);
+    expect(await shadow.diff(rev, good)).toMatchObject({ missing: true });
+    await shadow.snapshot('e2', [{ path: 'f', hash: rev }]);
+    expect(await shadow.read(good)).not.toBeNull();
+  });
+
+  it('ignores git environment variables inherited from the process', async () => {
+    await withEnv({
+      GIT_AUTHOR_NAME: 'evil', GIT_COMMITTER_NAME: 'evil', GIT_INDEX_FILE: join(tempDir('x-'), 'bogus-index'),
+      GIT_WORK_TREE: tempDir('x-'), GIT_OBJECT_DIRECTORY: join(tempDir('x-'), 'objects'),
+    }, async () => {
+      const { shadow, dir } = await open(); const w = tempDir('w-'); writeFileSync(join(w, 'f'), 'x');
+      const blob = (await shadow.put(join(w, 'f')))!;
+      await shadow.snapshot('env', [{ path: 'f', hash: blob.hash }]);
+      const clean = { ...process.env }; for (const k of ['GIT_AUTHOR_NAME', 'GIT_COMMITTER_NAME', 'GIT_INDEX_FILE', 'GIT_WORK_TREE', 'GIT_OBJECT_DIRECTORY']) delete clean[k];
+      const inspect = (...args: string[]) => execFileSync('git', ['--git-dir', dir, ...args], { encoding: 'utf8', env: clean });
+      expect(inspect('cat-file', 'blob', blob.hash)).toBe('x');
+      expect(inspect('log', '-1', '--format=%an|%cn', 'refs/ide/snapshots/env').trim()).toBe('ide|ide');
+    });
+  });
+
+  it('removes its temp file when the rename fails', async () => {
+    const { shadow } = await open(); const w = tempDir('w-');
+    writeFileSync(join(w, 'src'), 'x');
+    const blob = (await shadow.put(join(w, 'src')))!;
+    mkdirSync(join(w, 'dir')); writeFileSync(join(w, 'dir', 'keep'), 'k');
+    await expect(shadow.restore(blob.hash, join(w, 'dir'), 0o644)).rejects.toThrow();
+    expect(readdirSync(w).sort()).toEqual(['dir', 'src']);
+  });
+
+  it('never reuses a temp name across instances', async () => {
+    const dir = tempDir('shadow-');
+    const one = await ShadowRepo.open(dir); const two = await ShadowRepo.open(dir);
+    const w = tempDir('w-'); writeFileSync(join(w, 'src'), 'x');
+    const blob = (await one.put(join(w, 'src')))!;
+    await Promise.all(Array.from({ length: 20 }, (_, i) => (i % 2 ? one : two).restore(blob.hash, join(w, `o${i}`), 0o644)));
+    expect(readdirSync(w).filter((n) => n.includes('.ide-'))).toEqual([]);
+  });
+
+  it('reads the one-line hunk header with a default count of 1', async () => {
+    const { shadow } = await open(); const w = tempDir('w-');
+    writeFileSync(join(w, 'a'), 'a\n'); writeFileSync(join(w, 'b'), 'b\n');
+    const a = (await shadow.put(join(w, 'a')))!.hash; const b = (await shadow.put(join(w, 'b')))!.hash;
+    expect((await shadow.diff(a, b)).hunks[0]).toMatchObject({ oldStart: 1, oldLines: 1, newStart: 1, newLines: 1 });
   });
 });
