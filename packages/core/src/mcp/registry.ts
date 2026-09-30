@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import type { FileHashes, McpEntry, McpLevel, McpServerView, SettingsView } from '@ide/protocol';
+import type { FileHashes, McpEntry, McpLevel, McpServerView, McpSettingsView } from '@ide/protocol';
 import { isRecord } from '../json';
 import {
   entryHash,
@@ -72,7 +72,7 @@ export class McpRegistry {
     this.ledgerPath = join(options.home, 'settings-ledger.json');
   }
 
-  view(): SettingsView {
+  view(): McpSettingsView {
     const { servers, problems, externalEdits } = this.evaluate();
     return {
       servers: servers.map(({ name, level, entry, entryHash: hash, status, reason }) => ({ name, level, entry, entryHash: hash, status, reason })),
@@ -134,7 +134,7 @@ export class McpRegistry {
     this.writeLedger({ mcpHash: shown.ideServers, trustHash });
   }
 
-  private evaluate(): { servers: Evaluated[]; problems: string[]; externalEdits: SettingsView['externalEdits'] } {
+  private evaluate(): { servers: Evaluated[]; problems: string[]; externalEdits: McpSettingsView['externalEdits'] } {
     const ide = readMcpFile(this.idePath);
     const project = this.readProject();
     const ledger = this.readLedger();

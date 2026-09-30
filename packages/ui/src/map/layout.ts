@@ -9,6 +9,7 @@ export type MapNodeData = {
   stale?: boolean;
   fileCount?: number;
   parseError?: boolean;
+  ghost?: boolean;
   expanded: boolean;
 };
 
@@ -96,6 +97,7 @@ export async function layoutGraph(
         stale: node.stale,
         fileCount: node.fileCount,
         parseError: node.parseError,
+        ghost: node.ghost,
         expanded: expanded.has(node.id),
       },
     });

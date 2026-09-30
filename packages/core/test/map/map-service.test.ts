@@ -438,4 +438,15 @@ describe('MapService', () => {
     expect(progress[0]).toEqual({ done: 0, total: Object.keys(PROJECT).length });
     expect(progress.at(-1)).toBeNull();
   });
+
+  it('ignores an idle signal before it has started', async () => {
+    const service = new MapService({
+      root: tempDir('ide-map-'), projectName: 'demo', stateDir: tempDir('ide-state-'),
+      reasoning: noModel, embed: new FakeEmbedModel(), isAgentIdle: () => true, onChange: () => undefined, embeddingRule: null,
+    });
+    services.push(service);
+    service.onAgentIdle();
+    await service.idle();
+    expect(service.view().status.grouping).toBe('idle');
+  });
 });

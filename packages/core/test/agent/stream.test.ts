@@ -96,6 +96,10 @@ describe('parseStreamLine', () => {
     expect(noise.map((event) => parseStreamLine(line(event)))).toEqual(noise.map(() => ({ type: 'ignored' })));
   });
 
+  it('ignores tool_progress heartbeats of a long MCP call', () => {
+    expect(parseStreamLine(JSON.stringify({ type: 'tool_progress', tool_use_id: 'toolu_1', heartbeat: true }))).toEqual({ type: 'ignored' });
+  });
+
   it('labels an unknown event or invalid JSON as unknown instead of throwing', () => {
     expect(parseStreamLine(line({ type: 'brand_new' }))).toEqual({ type: 'unknown', label: 'brand_new' });
     expect(parseStreamLine(line({ type: 'system', subtype: 'brand_new' }))).toEqual({ type: 'unknown', label: 'system/brand_new' });

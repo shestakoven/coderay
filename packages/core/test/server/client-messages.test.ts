@@ -49,4 +49,49 @@ describe('parseClientMessage', () => {
     ];
     expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null, null]);
   });
+
+  it('parses a policy save for a level with the policy object, leaving validation to PolicyStore', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.save', requestId: 'r1', level: 'project', policy: { mode: 'A' } })))
+      .toEqual({ type: 'policy.save', requestId: 'r1', level: 'project', policy: { mode: 'A' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.save', requestId: 'r1', level: 'team', policy: {} }))).toBeNull();
+  });
+
+  it('parses a confirmation of outside policy edits with both hashes', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a', project: 'b' } })))
+      .toEqual({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a', project: 'b' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'policy.confirm-external-edits', requestId: 'r2', hashes: { ide: 'a' } }))).toBeNull();
+  });
+
+  it('parses a plan answer with its plan id, version and answer', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'changes', feedback: 'less' } })))
+      .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'changes', feedback: 'less' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'approve' } })))
+      .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'approve' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 1.5, answer: { kind: 'approve' } }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 1, answer: { kind: 'reject' } }))).toBeNull();
+  });
+
+  it('parses a gate answer and refuses an unknown one', () => {
+    expect(parseClientMessage(JSON.stringify({ type: 'gate.answer', promptId: 'g', answer: 'expand-plan' })))
+      .toEqual({ type: 'gate.answer', promptId: 'g', answer: 'expand-plan' });
+    expect(parseClientMessage(JSON.stringify({ type: 'gate.answer', promptId: 'g', answer: 'always' }))).toBeNull();
+  });
+
+  it('refuses a plan answer without a string plan id or with a version below 1', () => {
+    const bad = [
+      { type: 'plan.answer', version: 1, answer: { kind: 'approve' } },
+      { type: 'plan.answer', planId: 7, version: 1, answer: { kind: 'approve' } },
+      { type: 'plan.answer', planId: 'p', version: 0, answer: { kind: 'approve' } },
+      { type: 'plan.answer', planId: 'p', version: -1, answer: { kind: 'approve' } },
+    ];
+    expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null, null, null]);
+  });
+
+  it('refuses a gate answer without a string prompt id', () => {
+    const bad = [
+      { type: 'gate.answer', answer: 'deny' },
+      { type: 'gate.answer', promptId: 7, answer: 'deny' },
+    ];
+    expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null]);
+  });
 });

@@ -8,11 +8,17 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { MAX_CLIENT_FRAME_BYTES, type ClientMessage, type MapSnapshot, type ServerMessage } from '@ide/protocol';
 import { parseClientMessage } from './client-messages';
 
+export interface HttpRoute {
+  path: string;
+  handle(req: IncomingMessage, res: ServerResponse): void;
+}
+
 export interface ServerOptions {
   port: number;
   token: string;
   staticDir?: string;
   allowedOrigins?: string[];
+  routes?: HttpRoute[];
   snapshot: () => MapSnapshot | null;
   greeting?: () => ServerMessage[];
   onClientMessage?: (message: ClientMessage, reply: (message: ServerMessage) => void) => void;
@@ -42,6 +48,11 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
   const http = createServer((req, res) => {
     if (!isLocalHost(req.headers.host, port)) {
       res.writeHead(401).end();
+      return;
+    }
+    const route = options.routes?.find((candidate) => candidate.path === pathOf(req.url));
+    if (route) {
+      route.handle(req, res);
       return;
     }
     void serveStatic(options.staticDir, req.url ?? '/', res);
@@ -151,6 +162,14 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
 
 function isLocalHost(host: string | undefined, port: number): boolean {
   return !!(host && [`127.0.0.1:${port}`, `localhost:${port}`].includes(host));
+}
+
+function pathOf(url: string | undefined): string {
+  try {
+    return new URL(url ?? '/', 'http://localhost').pathname;
+  } catch {
+    return '';
+  }
 }
 
 function isAllowedUpgrade(req: IncomingMessage, origin: string | undefined, port: number, options: ServerOptions): boolean {

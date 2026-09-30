@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ChatItem, SessionState, TaskKind, TaskView, ToolStatus, TurnView } from '@ide/protocol';
-import { canSend, canStop, chatReducer, childItems, initialChatState, stopControl, turnGroups } from '../src/chat/chat-state';
+import { canSend, canStop, chatReducer, childItems, decisionLabel, initialChatState, stopControl, turnGroups } from '../src/chat/chat-state';
 
 const session = {
   id: 's1', claudeSessionId: 'c1', status: 'running' as const, model: 'haiku', cliVersion: '2.1.281', permissionMode: 'bypassPermissions', startedAt: 1,
@@ -11,7 +11,7 @@ const turn = (id: string, kind: TurnView['kind'], state: 'waiting' | 'running' |
 const message = (id: string, seq: number, turnId: string | null, text: string): ChatItem =>
   ({ kind: 'message', id, seq, turnId, parentToolUseId: null, role: 'assistant', text, ts: seq });
 const tool = (id: string, seq: number, turnId: string | null, parentToolUseId: string | null = null, status: ToolStatus = 'ok'): ChatItem =>
-  ({ kind: 'tool', id, seq, turnId, parentToolUseId, tool: 'Bash', summary: 'npm test', status, startedAt: seq, endedAt: status === 'running' ? null : seq });
+  ({ kind: 'tool', id, seq, turnId, parentToolUseId, tool: 'Bash', summary: 'npm test', status, startedAt: seq, endedAt: status === 'running' ? null : seq, decision: null, targets: [] });
 const task = (id: string, kind: TaskKind, endedAt: number | null = null): TaskView =>
   ({ id, toolUseId: null, kind, description: id, status: endedAt === null ? 'running' : 'completed', startedAt: 1, endedAt });
 const chat = (partial: Partial<SessionState>) =>
@@ -73,5 +73,12 @@ describe('canSend and canStop', () => {
     const tasks = [task('a1', 'subagent')];
     expect(stopControl(chat({ tasks })).label).toBe('Stop');
     expect(stopControl(chat({ turns: [turn('t1', 'user', 'waiting')], tasks })).label).toBe('Stop');
+  });
+});
+
+describe('decisionLabel', () => {
+  it('labels a tool row by the decision the gate made', () => {
+    expect([null, 'allow', 'unchecked', 'deny', 'ask-approved', 'ask-denied', 'flag'].map((decision) => decisionLabel(decision as never)))
+      .toEqual(['', '', '', 'blocked', 'allowed by you', 'denied by you', 'flagged']);
   });
 });

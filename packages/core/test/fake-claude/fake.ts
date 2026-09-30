@@ -11,6 +11,8 @@ export interface FakeRecord {
   ignoredSignal?: string;
   keepsRunning?: boolean;
   stdin?: { type: string; [key: string]: unknown };
+  hook?: { id: string; tool: string; allowed: boolean; reason: string; exit: number | null };
+  mcp?: { id: string; tool: string; text: string; isError: boolean };
 }
 
 export const FAKE_CLAUDE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url));

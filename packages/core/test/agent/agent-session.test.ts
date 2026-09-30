@@ -4,9 +4,11 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync
 import { basename, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem, SessionServerMessage } from '@ide/protocol';
-import { AgentSession, SessionError, type AgentSessionOptions } from '../../src/agent/agent-session';
+import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
+import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
+import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
@@ -25,14 +27,14 @@ interface Harness {
 async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}): Promise<Harness> {
   const home = overrides.home ?? tempDir('ide-home-');
   const root = overrides.root ?? tempDir('ide-root-');
-  const store = openStore(projectDir(home, root));
+  const store = overrides.store ?? openStore(projectDir(home, root));
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
   const session = new AgentSession({ root, home, store, claude: fakeClaude(scenario, recordFile), ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(async () => {
     await session.close();
-    store.close();
+    if (!overrides.store) store.close();
   });
   await session.start();
   const records = () => readRecords(recordFile);
@@ -440,16 +442,30 @@ describe('AgentSession', () => {
     );
   });
 
-  it('logs instead of crashing when a listener throws while claude exits', async () => {
+  it('logs and still tells the exit, tool-end and idle listeners when a message listener throws', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => errors.mockRestore());
     const h = await harness('crash-mid-turn');
+    let armed = false;
+    const ended: string[] = [];
+    let idles = 0;
+    let exits = 0;
     h.session.onMessage((message) => {
-      if (message.type === 'session.patch' && message.patch.session?.status === 'crashed') throw new Error('boom');
+      if (armed && message.type === 'session.patch') throw new Error('boom');
+    });
+    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onIdle(() => {
+      idles += 1;
+    });
+    h.session.onProcessExit(() => {
+      exits += 1;
     });
     h.session.send('go');
-    await waitFor(() => h.session.state().session?.status === 'crashed', 'session crashed');
-    expect(errors).toHaveBeenCalledWith('agent: could not process claude exit', expect.any(Error));
+    armed = true;
+    const handled = () => exits === 1 || errors.mock.calls.some(([line]) => line === 'agent: could not process claude exit');
+    await waitFor(handled, 'claude exit handled');
+    expect([exits, ended, idles, h.session.state().session?.status]).toEqual([1, ['toolu_fx_crash'], 1, 'crashed']);
+    expect(errors).toHaveBeenCalledWith('agent: a session listener threw', expect.any(Error));
   });
 
   it('keeps the chat going in memory and logs when the history cannot be saved', async () => {
@@ -461,5 +477,190 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(texts(h.session.state().items)).toEqual(['hi', 'OK']);
     expect(errors).toHaveBeenCalledWith('agent: could not save session history', expect.any(Error));
+  });
+});
+
+const COMPONENTS = [{ id: 'auth', name: 'Auth' }];
+const gateBase = (home: string, root: string, sessionId: string) => `${basename(projectDir(home, root))}-${sessionId}`;
+const gateFiles = (home: string, root: string, sessionId: string | null) => {
+  const base = join(runDir(home), gateBase(home, root, sessionId ?? 'none'));
+  return [`${base}.settings.json`, `${base}.hook.json`];
+};
+
+function realGate(home: string, root: string): SessionGate {
+  return {
+    write: (sessionId) => ({
+      settingsPath: writeGateFiles(runDir(home), gateBase(home, root, sessionId), { url: 'http://127.0.0.1:1/hook', secret: 'test-secret' }).settingsPath,
+    }),
+    remove: (sessionId) => removeGateFiles(runDir(home), gateBase(home, root, sessionId)),
+    systemPrompt: () => systemPrompt(COMPONENTS),
+  };
+}
+
+async function gatedHarness(scenario: string, overrides: Partial<AgentSessionOptions> = {}): Promise<Harness> {
+  const home = overrides.home ?? tempDir('ide-home-');
+  const root = overrides.root ?? tempDir('ide-root-');
+  return harness(scenario, { home, root, gate: realGate(home, root), ...overrides });
+}
+
+const decision = (toolUseId: string) => ({
+  toolUseId, decision: 'allow' as const, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE: allowed', decidedAt: 1,
+});
+
+describe('AgentSession with the gate', () => {
+  it('passes the hook settings, the IDE system prompt and a fresh system prompt before the permission flags, on the first spawn and on resume', async () => {
+    const h = await gatedHarness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
+    await h.session.restart();
+    h.session.send('again');
+    const [first, resumed] = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude resumed');
+    const files = gateFiles(h.home, h.root, h.session.sessionId());
+    const tail = (argv: string[] | undefined) => argv?.slice(argv.indexOf('--disallowedTools') + 2);
+    const expected = [
+      '--settings', files[0], '--append-system-prompt', systemPrompt(COMPONENTS), '--system-prompt-snapshot', 'off',
+      '--dangerously-skip-permissions', '--permission-prompt-tool', 'stdio',
+    ];
+    expect([flag(resumed, '--resume'), tail(first), tail(resumed)]).toEqual([flag(first, '--session-id'), expected, expected]);
+    expect(files.map((file) => existsSync(file))).toEqual([true, true]);
+  });
+
+  it('does not start claude when the hook settings cannot be written, and says why', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => errors.mockRestore());
+    const home = tempDir('ide-home-');
+    writeFileSync(runDir(home), 'not a directory');
+    const h = await gatedHarness('multi-turn', { home });
+    expect(() => h.session.send('hi')).toThrow(new SessionError('no-gate').message);
+    const { session, turns, items } = h.session.state();
+    expect([session?.status, turns, items.length]).toEqual(['stopped', [], 1]);
+    expect(texts(items)[0]).toMatch(/^The IDE could not write the hook settings for claude \(.+\), so the agent was not started\.$/);
+    expect(texts(items)[0]).toContain(runDir(home));
+  });
+
+  it('removes the gate files of the session when claude exits', async () => {
+    const h = await gatedHarness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const files = gateFiles(h.home, h.root, h.session.sessionId());
+    const whileRunning = files.map((file) => existsSync(file));
+    await h.session.restart();
+    expect([whileRunning, files.map((file) => existsSync(file))]).toEqual([[true, true], [false, false]]);
+  });
+
+  it("deletes a stale session's gate files at core start", async () => {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: await deadPid() });
+    realGate(home, root).write('session-1');
+    const files = gateFiles(home, root, 'session-1');
+
+    await gatedHarness('multi-turn', { home, root });
+
+    expect(files.map((file) => existsSync(file))).toEqual([false, false]);
+  });
+
+  it('shows a decision that arrives before its tool call on the chat row when the call appears', async () => {
+    const h = await harness('interrupt-bash');
+    h.session.send('run it');
+    h.session.recordDecision(decision('toolu_fx_bash'));
+    const item = await waitFor(() => h.session.state().items.find((candidate) => candidate.kind === 'tool'), 'tool row');
+    expect(item).toMatchObject({ decision: 'allow', targets: ['src/app.ts'] });
+  });
+
+  it('adds a decision that arrives after its tool call to the chat row, and sends the row again', async () => {
+    const h = await harness('interrupt-bash');
+    h.session.send('run it');
+    await waitFor(() => h.session.state().items.some((candidate) => candidate.kind === 'tool'), 'tool row');
+    h.session.recordDecision({ ...decision('toolu_fx_bash'), decision: 'ask-approved' });
+    const patched = h.broadcasts.flatMap((message) => (message.type === 'session.patch' ? (message.patch.items ?? []) : []));
+    const row = h.session.state().items.find((candidate) => candidate.id === 'toolu_fx_bash');
+    expect([patched.at(-1), row]).toMatchObject([
+      { id: 'toolu_fx_bash', decision: 'ask-approved', targets: ['src/app.ts'] },
+      { id: 'toolu_fx_bash', decision: 'ask-approved', targets: ['src/app.ts'] },
+    ]);
+  });
+
+  it('keeps the decisions of a session across a core restart', async () => {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const first = await harness('explain-then-bash', { home, root });
+    first.session.send('test it');
+    await waitFor(() => closedTurns(first).length === 1, 'turn closed');
+    first.session.recordDecision(decision('toolu_fx_tests'));
+    await first.session.close();
+    const second = await harness('explain-then-bash', { home, root, store: first.store });
+    expect(second.session.state().items.find((item) => item.kind === 'tool')).toMatchObject({ decision: 'allow' });
+  });
+
+  it('gives the last assistant message before a tool call as its context, and the latest one for a call not seen yet', async () => {
+    const h = await harness('explain-then-bash');
+    h.session.send('test it');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect([h.session.context('toolu_fx_tests'), h.session.context('toolu_later')]).toEqual([
+      { parentToolUseId: null, lastMessage: 'Running the tests first.' },
+      { parentToolUseId: null, lastMessage: 'Tests pass.' },
+    ]);
+  });
+
+  it('is idle when no turn is open, and tells listeners once when it becomes idle again', async () => {
+    const h = await harness('multi-turn');
+    let signals = 0;
+    h.session.onIdle(() => {
+      signals += 1;
+    });
+    expect(h.session.isIdle()).toBe(true);
+    h.session.send('hi');
+    expect(h.session.isIdle()).toBe(false);
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect([h.session.isIdle(), signals]).toEqual([true, 1]);
+  });
+
+  it('is not idle while a background subagent runs after the turn closed', async () => {
+    const h = await harness('async-subagent');
+    const idleWhenATurnCloses: boolean[] = [];
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.turns?.some((turn) => turn.closedAt !== null)) idleWhenATurnCloses.push(h.session.isIdle());
+    });
+    h.session.send('start a subagent');
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect([idleWhenATurnCloses, h.session.isIdle()]).toEqual([[false, true], true]);
+  });
+
+  it('tells listeners when a tool call ends and when claude exits', async () => {
+    const h = await harness('crash-mid-turn');
+    const ended: string[] = [];
+    let exits = 0;
+    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onProcessExit(() => {
+      exits += 1;
+    });
+    h.session.send('go');
+    await waitFor(() => exits === 1, 'claude exited');
+    expect(ended).toEqual(['toolu_fx_crash']);
+  });
+
+  it('still ends the session and tells the other listeners when a tool-end, idle or exit listener throws', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => errors.mockRestore());
+    const h = await harness('crash-mid-turn');
+    let exits = 0;
+    h.session.onToolEnd(() => {
+      throw new Error('tool-end listener');
+    });
+    h.session.onIdle(() => {
+      throw new Error('idle listener');
+    });
+    h.session.onProcessExit(() => {
+      throw new Error('exit listener');
+    });
+    h.session.onProcessExit(() => {
+      exits += 1;
+    });
+    h.session.send('go');
+    await waitFor(() => errors.mock.calls.length > 0, 'an error logged');
+    expect([exits, h.session.state().session?.status, texts(h.session.state().items).at(-1)]).toEqual([
+      1, 'crashed', 'claude stopped unexpectedly (exit code 1): fatal: simulated crash',
+    ]);
   });
 });

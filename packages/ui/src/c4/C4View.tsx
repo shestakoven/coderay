@@ -12,10 +12,15 @@ import {
 } from '@xyflow/react';
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { C4Model, MapSnapshot } from '@ide/protocol';
 import { c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
 import { focusOf, type Selection } from './focus';
+import { c4NodePlans, componentCard, locateComponent, type NodePlan } from '../plan/c4-marks';
+import { usePlanOverlay } from '../plan/overlay';
+import { PromptPopover } from '../plan/PromptPopover';
+import { promptTarget } from '../plan/prompt-text';
+import { StepBadges } from '../plan/StepBadges';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 
@@ -40,18 +45,23 @@ function Icon({ name }: { name: string }) {
   return <svg className="c4-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" dangerouslySetInnerHTML={{ __html: ICONS[name] ?? ICONS.box! }} />;
 }
 
-function C4Card({ data, selected }: NodeProps<C4FlowNode>) {
-  const cls = ['c4-card', data.kind, data.external && 'external', data.dim && 'dim', data.root && 'root', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', selected && 'selected'].filter(Boolean).join(' ');
+const NodePlansContext = createContext<Map<string, NodePlan>>(new Map());
+
+function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
+  const plan = useContext(NodePlansContext).get(id);
+  const cls = ['c4-card', data.kind, data.external && 'external', data.dim && 'dim', data.root && 'root', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', plan && 'in-plan', selected && 'selected'].filter(Boolean).join(' ');
+  const planLine = plan && !data.expanded ? `${plan.line}${plan.creates ? ` · +${plan.creates} new` : ''}` : null;
   return (
     <div className={cls} style={{ ['--acc' as string]: data.accent }}>
       <Handle type="target" position={Position.Left} />
+      {plan && <StepBadges steps={plan.steps} />}
       <div className="c4-title">
         <Icon name={data.icon} />
         <span>{data.title}</span>
         {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret">{data.expanded ? '▾' : '▸'}</span>}
       </div>
       <div className="c4-sub">{data.subtitle}</div>
-      {data.detail && <div className="c4-detail">{data.detail}</div>}
+      {planLine ? <div className="c4-detail c4-plan-line">{planLine}</div> : data.detail && <div className="c4-detail">{data.detail}</div>}
       <Handle type="source" position={Position.Right} />
     </div>
   );
@@ -121,13 +131,22 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
   }, [signature, resetKey, setNodes, setEdges, fitBounds, setCenter, getZoom]);
 
   const focus = useMemo(() => focusOf(selection, nodes, edges), [selection, nodes, edges]);
+  const overlay = usePlanOverlay();
+  const nodePlans = useMemo(() => c4NodePlans(nodes, model, overlay.marks), [nodes, model, overlay.marks]);
+  const nodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
+  const promptTargetId = overlay.prompt ? promptTarget(overlay.prompt)?.componentId ?? null : null;
+  const promptNode = promptTargetId ? locateComponent(promptTargetId, model, { expanded: root ? null : expanded, root, nodeIds }).node : null;
   const shownNodes = useMemo(
     () =>
       nodes.map((n) => {
-        const className = !focus ? '' : focus.nodes.has(n.id) ? 'c4-focus' : focus.context.has(n.id) ? '' : 'c4-dim';
-        return n.className === className ? n : { ...n, className };
+        const inPlan = nodePlans.has(n.id) || nodes.some((child) => child.parentId === n.id && nodePlans.has(child.id));
+        const className = focus
+          ? focus.nodes.has(n.id) ? 'c4-focus' : focus.context.has(n.id) ? '' : 'c4-dim'
+          : overlay.dimOthers && !inPlan ? 'c4-dim' : '';
+        const withPrompt = n.id === promptNode ? `${className} oop-target`.trim() : className;
+        return n.className === withPrompt ? n : { ...n, className: withPrompt };
       }),
-    [nodes, focus],
+    [nodes, focus, nodePlans, overlay.dimOthers, promptNode],
   );
   const shownEdges = useMemo(
     () =>
@@ -146,12 +165,29 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
     [edges, focus],
   );
 
+  useEffect(() => {
+    const componentId = overlay.focus?.componentIds[0];
+    if (!componentId) return;
+    const target = locateComponent(componentId, model, { expanded: root ? null : expanded, root, nodeIds });
+    if (root && target.node?.startsWith('root:')) {
+      setSelection({ type: 'node', id: target.node });
+      return;
+    }
+    if (root) setRoot(null);
+    const container = model.containers.find((candidate) => candidate.id === target.container);
+    if (!container) return;
+    needFit.current = false;
+    setExpanded(container.id);
+    setSelection({ type: 'node', id: componentCard(container, componentId) });
+  }, [overlay.focus?.nonce]);
+
   const toggle = (id: string) => {
     needFit.current = false;
     setExpanded((current) => (current === id ? null : id));
   };
 
   return (
+    <NodePlansContext.Provider value={nodePlans}>
     <div className="map c4">
       <ReactFlow
         nodes={shownNodes}
@@ -204,6 +240,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       >
         <Background gap={24} />
         <Controls showInteractive={false} />
+        <PromptPopover nodeId={promptNode} />
       </ReactFlow>
       <div className="c4-toolbar">
         <span className="c4-crumbs">
@@ -240,6 +277,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       />
       <C4Details snapshot={snapshot} model={model} selection={selection} />
     </div>
+    </NodePlansContext.Provider>
   );
 }
 

@@ -6,8 +6,16 @@ import { fileURLToPath } from 'node:url';
 import { onTestFinished } from 'vitest';
 import type { Lang, MapStatus } from '@ide/protocol';
 import type { IndexedFile } from '../src/model';
+import type { SessionRecord } from '../src/store/store';
 
 export const fixture = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
+
+export function sessionRecord(id: string, cwd: string): SessionRecord {
+  return {
+    id, claudeSessionId: `claude-${id}`, cwd, status: 'running', model: null, cliVersion: null,
+    pid: null, launchId: null, conversationStarted: true, startedAt: 1,
+  };
+}
 
 export function indexed(path: string, lang: Lang, imports: string[], overrides: Partial<IndexedFile> = {}): IndexedFile {
   return { path, lang, contentHash: path, imports, symbols: [], parseError: false, ...overrides };

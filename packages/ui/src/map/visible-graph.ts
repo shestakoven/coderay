@@ -9,6 +9,7 @@ export interface VisibleNode {
   parentId?: string;
   fileCount?: number;
   parseError?: boolean;
+  ghost?: boolean;
 }
 
 export interface VisibleEdge {
@@ -27,7 +28,7 @@ const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
 export const graphSignature = (graph: VisibleGraph): string => JSON.stringify(graph);
 
-export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string>): VisibleGraph {
+export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string>, ghosts: { path: string; componentId: string }[] = []): VisibleGraph {
   const parseErrors = new Map(snapshot.files.map((f) => [f.path, f.parseError]));
   const nodes: VisibleNode[] = [];
   const visibleOf = new Map<string, string>();
@@ -52,6 +53,11 @@ export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string
   for (const file of snapshot.files.filter((f) => f.componentId === null)) {
     nodes.push({ id: file.path, kind: 'file', label: fileName(file.path), parseError: file.parseError });
     visibleOf.set(file.path, file.path);
+  }
+
+  for (const ghost of ghosts) {
+    if (!expanded.has(ghost.componentId)) continue;
+    nodes.push({ id: `new:${ghost.path}`, kind: 'file', label: fileName(ghost.path), parentId: ghost.componentId, ghost: true });
   }
 
   const weights = new Map<string, VisibleEdge>();

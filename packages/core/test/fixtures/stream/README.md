@@ -17,8 +17,10 @@ Trimming keeps a recording's field names and the order of the events it keeps. I
 | `{"fake":"stderr","text":"…"}` | Write a line to stderr. |
 | `{"fake":"exit","code":N}` | Flush stdout and stderr, then exit with code N. |
 | `{"fake":"hang"}` | Never answer; runs until killed or until stdin closes. |
+| `{"fake":"tool","id","name","input","result"?,"apply"?,"streamed"?}` | Emit a `tool_use`, run the `PreToolUse` hooks of `--settings` with the CLI's stdin shape, then either emit a hook error `tool_result` (exit 2, or a JSON `deny` on exit 0; JSON on any other exit is ignored) or, with `apply`, perform the call (Write writes, Edit replaces, Bash runs `sh -c`) and emit `result`. Any other hook failure lets the call run. `"streamed": false` skips the `tool_use`, standing for one still in claude's output buffer. An interrupt kills a running hook. |
+| `{"fake":"mcp","id","tool","input"}` | The same for `mcp__idecore__<tool>`: emit the `tool_use`, run the hooks, then call the tool on the `idecore` server of `--mcp-config` with the MCP SDK client and emit its text as the `tool_result`. An interrupt aborts the call (the SDK sends `notifications/cancelled`). |
 
-The fake replaces `$SESSION` with the id passed as `--resume` or `--session-id`.
+The fake replaces `$SESSION` with the id passed as `--resume` or `--session-id`, and `$CWD` with its working directory, the project root.
 
 An interrupt during an open turn is answered in the order of `spike/out/c5b-interrupt-turn-with-subagent.jsonl`, `fx-interrupt-bash.jsonl` and `c22f-prompt-cancel.jsonl`:
 1. for each async subagent still running (`task_type: "local_agent"`), a `task_updated` `killed` and a `task_notification` `stopped`, then a `control_cancel_request` for a `control_request` still waiting for its answer;
@@ -43,3 +45,10 @@ The fake then skips to the next `await-user`. An interrupt with no turn open get
 | `hang.jsonl` | A claude that never answers. | Synthetic, for stale-process and kill tests. |
 | `stubborn.jsonl` | A claude that ignores SIGTERM and has a child process. | Synthetic, for the SIGKILL fallback. |
 | `keeps-running.jsonl` | A claude that outlives its stdin. | Synthetic, for the core-exit test. |
+| `explain-then-bash.jsonl` | An assistant message, a Bash call, its result and a closing message. | Synthetic, with the event shapes of multi-turn.jsonl and interrupt-bash.jsonl. |
+| `gate-small-plan.jsonl` | A small plan on `src/app.ts` (approved at once), its step, and the Write it covers. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
+| `gate-big-plan.jsonl` | The same with a plan on the directory `src`, which waits for the user. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
+| `gate-no-plan.jsonl` | A Write with no plan. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
+| `gate-out-of-plan.jsonl` | The small plan, then a Write to `src/other.ts`, outside it. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
+| `gate-out-of-plan-unstreamed.jsonl` | The same, with the out-of-plan Write's `tool_use` never streamed. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
+| `gate-bash.jsonl` | A Bash call that only reads and one that writes a project file, with no plan. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
