@@ -44,6 +44,11 @@ function globBase(glob: string): string {
   return segments.join('/');
 }
 
+export const globSpecificity = (glob: string): number => {
+  const base = globBase(glob);
+  return base === '' ? 0 : base.split('/').length;
+};
+
 // The directory a glob covers entirely: "src/lib/**" → "src/lib", "**" → ""; null for any other shape.
 function wholeDirectory(glob: string): string | null {
   if (glob === '**') return '';

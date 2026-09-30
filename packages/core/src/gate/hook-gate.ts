@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import type { ControlMode, GateAnswer, GatePreview, GatePromptView, GateTarget, GateTargetKind, Policy, ToolDecision } from '@ide/protocol';
 import { summarizeToolInput } from '../agent/tools';
 import { isRecord } from '../json';
-import { ownerIndex } from '../plans/freeze';
+import { globOwners, ownerIndex } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
 import type { PlanService } from '../plans/plan-service';
 import type { GateEventRecord, GateResolution, Store, ToolDecisionRecord } from '../store/store';
@@ -234,11 +234,13 @@ export class HookGate {
 
   private async classify(landings: Landing[], policy: Policy, home: string): Promise<ClassifiedTarget[]> {
     const infos = await classifyPaths(landings.map((landing) => landing.abs), { root: this.options.root, policy, home, tempRoots: this.options.tempRoots });
-    const owner = ownerIndex(this.options.components());
+    const components = this.options.components();
+    const owner = ownerIndex(components);
     return infos.map((info, index) => ({
       raw: landings[index]!.raw, kind: info.cls, rel: info.rel, abs: info.abs, dir: info.isDir,
       mkdir: landings[index]!.mkdir, exists: info.exists, guarded: info.guarded, why: info.why,
-      unowned: info.cls === 'enforced' && info.rel !== null && !info.isDir && !info.exists && owner(info.rel, false) === null,
+      unowned: info.cls === 'enforced' && info.rel !== null && !info.isDir && !info.exists && owner(info.rel, false) === null
+        && globOwners(components, info.rel).length === 0,
     }));
   }
 

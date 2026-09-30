@@ -147,6 +147,18 @@ describe('HookGate', () => {
     expect([owned?.permissionDecision, owned?.permissionDecisionReason]).toEqual(['deny', expect.not.stringContaining('no component owns')]);
   });
 
+  it('does not say no component owns the directory when two components tie for the new file', async () => {
+    const { root, call, approve } = await setup({ mode: 'A' });
+    components.push({ id: 'x1', name: 'X1', files: [], globs: ['tie/**'] }, { id: 'x2', name: 'X2', files: [], globs: ['tie/**'] });
+    try {
+      await approve();
+      const tied = await call('Write', { file_path: join(root, 'tie/new.ts') });
+      expect([tied?.permissionDecision, tied?.permissionDecisionReason]).toEqual(['deny', expect.not.stringContaining('no component owns')]);
+    } finally {
+      components.splice(-2);
+    }
+  });
+
   it('allows and flags an out-of-scope write in mode C', async () => {
     const { root, call, approve, store, decisions } = await setup({ mode: 'C' });
     await approve();

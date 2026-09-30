@@ -2,7 +2,7 @@ import { statSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { FrozenScope, PlanReview, PlanStep, Policy } from '@ide/protocol';
 import { classifyPaths } from '../gate/paths';
-import { escapeGlob, globMatches } from '../gate/scope';
+import { escapeGlob, globMatches, globSpecificity } from '../gate/scope';
 import type { ComponentRef } from './plan-input';
 
 export interface ReviewContext {
@@ -47,8 +47,15 @@ export function freezeScope(steps: PlanStep[], root: string, components: Compone
   return { paths: [...paths].sort(), globs: [...globs].sort() };
 }
 
-const globOwners = (components: ComponentRef[], rel: string): ComponentRef[] =>
-  components.filter((component) => component.globs.some((glob) => globMatches(rel, glob)));
+// The components whose most specific matching glob is the most specific of all; more than one is a tie.
+export function globOwners(components: ComponentRef[], rel: string): ComponentRef[] {
+  const scored = components.flatMap((component) => {
+    const depths = component.globs.filter((glob) => globMatches(rel, glob)).map(globSpecificity);
+    return depths.length === 0 ? [] : [{ component, depth: Math.max(...depths) }];
+  });
+  const best = Math.max(-1, ...scored.map((entry) => entry.depth));
+  return scored.filter((entry) => entry.depth === best).map((entry) => entry.component);
+}
 
 // The instant-assignment rules of spec §4.1 for a planned file: listed files, then globs, then siblings.
 export function ownerIndex(components: ComponentRef[]): (rel: string, exists: boolean) => string | null {
