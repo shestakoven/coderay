@@ -99,10 +99,12 @@ function allowedPatterns(entries: string[], home: string): string[] {
   })))];
 }
 
+export const guardedMatcher = (policy: Policy) => ignore().add(policy.guarded);
+
 export async function classifyPaths(paths: string[], ctx: ClassifyContext): Promise<PathInfo[]> {
   const home = ctx.home ?? homedir();
   const temps = ctx.tempRoots ?? defaultTempRoots();
-  const guarded = ignore().add(ctx.policy.guarded);
+  const guarded = guardedMatcher(ctx.policy);
   const harness = ignore().add(ctx.policy.harness);
   const allowed = allowedPatterns(ctx.policy.outsideAllowed, home);
   const infos = paths.map((abs): PathInfo => {
