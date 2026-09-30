@@ -41,6 +41,8 @@ let keepRunning = false;
 let interrupt = null;
 let inTurn = false;
 let lastAnswer = 'allow';
+let ignoringSigterm = false;
+let reapHooked = false;
 let wake = () => {};
 
 record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null });
@@ -64,9 +66,35 @@ createInterface({ input: process.stdin })
     }
     wake();
   })
-  .on('close', () => {
-    if (!keepRunning) process.exit(0);
+  .on('close', async () => {
+    if (keepRunning) return;
+    await reapShells();
+    process.exit(0);
   });
+
+// Real claude does not orphan its background tasks; interrupts never call this (c6, c7).
+async function reapShells() {
+  const live = [...backgroundShells.values()].filter((shell) => !shell.exited);
+  const signalGroups = (signal) => {
+    for (const shell of live) {
+      try {
+        process.kill(-shell.pid, signal);
+      } catch {}
+    }
+  };
+  signalGroups('SIGTERM');
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 300);
+    const check = setInterval(() => {
+      if (live.every((shell) => shell.exited)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    }, 20);
+    setTimeout(() => clearInterval(check), 400).unref();
+  });
+  signalGroups('SIGKILL');
+}
 
 function waitUntil(ready, ms) {
   return new Promise((resolve) => {
@@ -190,13 +218,22 @@ function perform(step) {
 
 function spawnBackground(step) {
   const child = spawn('/bin/sh', ['-c', step.input.command], { cwd: process.cwd(), detached: true, stdio: 'ignore' });
-  const shell = { taskId: `task_bg_${step.id}`, exited: false, onExit: [] };
+  const shell = { taskId: `task_bg_${step.id}`, pid: child.pid, exited: false, onExit: [] };
   child.on('exit', () => {
     shell.exited = true;
     for (const fire of shell.onExit) fire();
   });
   child.unref();
   backgroundShells.set(step.id, shell);
+  if (!reapHooked) {
+    reapHooked = true;
+    for (const signal of ['SIGTERM', 'SIGINT']) {
+      process.on(signal, async () => {
+        await reapShells();
+        if (!ignoringSigterm) process.exit(signal === 'SIGTERM' ? 143 : 130);
+      });
+    }
+  }
   record({ background: { id: step.id, pid: child.pid } });
   emit({ type: 'system', subtype: 'task_started', task_id: shell.taskId, tool_use_id: step.id, description: step.input.description ?? step.input.command, is_backgrounded: true, task_type: 'local_bash', session_id: sessionId });
 }
@@ -339,6 +376,7 @@ while (index < steps.length) {
     const sleeper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
     record({ sleeperPid: sleeper.pid });
   } else if (step.fake === 'ignore-sigterm') {
+    ignoringSigterm = true;
     process.on('SIGTERM', () => record({ ignoredSignal: 'SIGTERM' }));
   } else if (step.fake === 'ignore-stdin-close') {
     keepRunning = true;
@@ -347,6 +385,7 @@ while (index < steps.length) {
     process.stderr.write(`${step.text}\n`);
   } else if (step.fake === 'exit') {
     await new Promise((resolve) => process.stderr.write('', () => process.stdout.write('', resolve)));
+    await reapShells();
     process.exit(step.code);
   } else if (step.fake === 'hang') {
     await new Promise(() => setInterval(() => {}, 60_000));

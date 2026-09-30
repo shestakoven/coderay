@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -101,9 +101,9 @@ describe('the fake claude', { timeout: 20_000 }, () => {
     expect(h.closedTurns()[0]?.resultSubtype).toBe('error_during_execution');
     expect(h.tool('toolu_w')?.status).toBe('rejected');
     await waitFor(() => h.records().some((r) => r.mcpWrite), 'writer finished');
-    expect(h.files().length).toBeLessThanOrEqual(2);
-    await new Promise((resolve) => setTimeout(resolve, 700));
-    expect(h.files().length).toBeLessThanOrEqual(2);
+    expect(h.files()).toEqual(['f0.txt']);
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(h.files()).toEqual(['f0.txt']);
   });
 
   it('keeps writing after the interrupt when the server ignores cancel', async () => {
@@ -114,6 +114,7 @@ describe('the fake claude', { timeout: 20_000 }, () => {
     await h.turnClosed();
     expect(h.closedTurns()[0]?.resultSubtype).toBe('error_during_execution');
     expect(h.tool('toolu_w')?.status).toBe('rejected');
+    expect(h.files().length).toBeLessThan(5);
     await waitFor(() => h.files().length === 5, 'every file written', 10_000);
     expect(h.tool('toolu_w')?.status).toBe('rejected');
   });
@@ -137,6 +138,9 @@ describe('the fake claude', { timeout: 20_000 }, () => {
   it('keeps a background command running across an interrupt and reports its end', async () => {
     const scratch = tempDir('ide-bg-');
     const stopFlag = join(scratch, 'stop.flag');
+    onTestFinished(() => {
+      writeFileSync(stopFlag, '');
+    });
     const command = `while [ ! -e ${stopFlag} ]; do sleep 0.05; done`;
     const h = await run([
       AWAIT, INIT,
@@ -149,6 +153,11 @@ describe('the fake claude', { timeout: 20_000 }, () => {
     await waitFor(() => h.tool('toolu_bg')?.status === 'ok', 'background call returned');
     expect(h.session.state().tasks).toMatchObject([{ kind: 'shell', status: 'running', toolUseId: 'toolu_bg' }]);
     const pid = await waitFor(() => h.records().find((r) => r.background)?.background?.pid, 'pid recorded');
+    onTestFinished(() => {
+      try {
+        process.kill(-pid, 'SIGKILL');
+      } catch {}
+    });
     expect(h.session.stop()).toBe(true);
     await h.turnClosed();
     expect(isAlive(pid)).toBe(true);
@@ -156,6 +165,42 @@ describe('the fake claude', { timeout: 20_000 }, () => {
     writeFileSync(stopFlag, '');
     await waitFor(() => h.session.state().tasks[0]?.status === 'completed', 'task end reported');
     expect(isAlive(pid)).toBe(false);
+  });
+
+  describe.each([
+    ['stdin closes', (child: ChildProcess) => child.stdin?.end(), []],
+    ['it gets SIGTERM', (child: ChildProcess) => child.kill('SIGTERM'), []],
+    ['it runs an exit step', () => {}, [{ fake: 'exit', code: 0 }]],
+  ] as const)('when %s', (_name, end, tail) => {
+    it('takes its background shell down with it', async () => {
+      const scratch = tempDir('ide-bg-');
+      const stopFlag = join(scratch, 'stop.flag');
+      const recordFile = join(scratch, 'record.jsonl');
+      const command = `while [ ! -e ${stopFlag} ]; do sleep 0.05; done`;
+      const file = scenarioFile([
+        AWAIT, INIT, { fake: 'tool', id: 'toolu_bg', name: 'Bash', input: { command }, background: true }, RESULT, AWAIT, ...tail,
+      ]);
+      const child = spawn(process.execPath, [FAKE_CLAUDE], {
+        cwd: scratch, env: { ...process.env, FAKE_CLAUDE_SCENARIO: file, FAKE_CLAUDE_RECORD: recordFile }, stdio: ['pipe', 'ignore', 'ignore'],
+      });
+      const exited = new Promise((resolve) => child.once('exit', resolve));
+      onTestFinished(() => {
+        writeFileSync(stopFlag, '');
+        child.kill('SIGKILL');
+      });
+      child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'go' } })}\n`);
+      const pid = await waitFor(() => readRecords(recordFile).find((r) => r.background)?.background?.pid, 'pid recorded');
+      onTestFinished(() => {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {}
+      });
+      expect(isAlive(pid)).toBe(true);
+      if (tail.length > 0) child.stdin.write(`${JSON.stringify({ type: 'user', message: { role: 'user', content: 'again' } })}\n`);
+      end(child);
+      await exited;
+      await waitFor(() => !isAlive(pid), 'background shell gone');
+    });
   });
 
   it('kills a background subagent on an interrupt with no turn open, without a turn', async () => {

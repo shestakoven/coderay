@@ -37,7 +37,13 @@ An interrupt during an open turn is answered in the order of `spike/out/c5b-inte
 4. a rejected `tool_result` for each main-thread `tool_use` still unanswered, with the rejection text of the recording, then the text block `[Request interrupted by user for tool use]`;
 5. a `result` with subtype `error_during_execution` and the recorded `errors` line.
 
-The fake then skips to the next `await-user`. An interrupt with no turn open (before the first `await-user` turn, or after a `result`) gets the kill of running async subagents (c5) and the `control_response`, and starts no turn (spike c9). Background `local_bash` tasks are never killed (c6, c7).
+The fake then skips to the next `await-user`. An interrupt with no turn open (before the first `await-user` turn, or after a `result`) gets the kill of running async subagents (c5) and the `control_response`, and starts no turn (spike c9). Background `local_bash` tasks are never killed by an interrupt (c6, c7); the fake kills their process groups only when it ends itself (stdin close, SIGTERM, SIGINT or an `exit` step), as real claude does not orphan its tasks.
+
+Fixture-writing notes:
+- An idle interrupt kills a running subagent, so do not script a completion line for one that a test interrupts.
+- New fixtures should give `await-control-response` a `request` id.
+- After `task-end` the fake emits only `task_updated` and `task_notification`: no agent-initiated `init`/`result` with `origin: task-notification` (c8) and no `end_time` on `task_updated`.
+- Leniency: `Edit` silently does nothing when `old_string` is missing; `mcp-write` and `tool` do not validate their fields.
 
 | Fixture | Scenario | Provenance |
 |---|---|---|
@@ -62,3 +68,4 @@ The fake then skips to the next `await-user`. An interrupt with no turn open (be
 | `gate-bash.jsonl` | A Bash call that only reads and one that writes a project file, with no plan. | Synthetic: event shapes from `multi-turn.jsonl` and `interrupt-bash.jsonl`; the hook error text is that of spike c17 ("PreToolUse:Write hook error: …"). |
 | `silent-tool-turn.jsonl` | A turn with an assistant message, then a turn whose only output is a Bash call that keeps running. | Synthetic: event shapes from `explain-then-bash.jsonl`; the `sleep` directive keeps the second turn open. |
 | `text-then-wait.jsonl` | A turn with an assistant message that stays open. | Synthetic: event shapes from `explain-then-bash.jsonl`; the `sleep` directive keeps the turn open. |
+| `mcp-write`, `parent`, `skipHook`, `background`, `task-end`, `when` (directives above) | Synthetic, from spike rows: c19/c19b (MCP cancel honored or ignored), v4 (subagent call with `parent_tool_use_id`), 2b/2c (hook failed open), c6/c7 (background `local_bash` survives an interrupt), c5 (idle interrupt kills async subagents), c22b/c22f (prompt request and answer shapes). |
