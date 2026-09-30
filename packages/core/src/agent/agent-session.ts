@@ -12,7 +12,7 @@ import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, typ
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { parseStreamLine, type StreamEvent } from './stream';
 import { DISALLOWED_TOOLS, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
-import { TurnTracker, type Change } from './tracker';
+import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
 export type McpServers = Record<string, object>;
 
@@ -80,6 +80,8 @@ export class AgentSession {
   private readonly exitListeners = new Set<() => void>();
   private readonly toolEndListeners = new Set<(toolUseId: string) => void>();
   private readonly userMessageListeners = new Set<() => void>();
+  private readonly toolResultListeners = new Set<(info: ToolEndInfo) => void>();
+  private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -149,6 +151,24 @@ export class AgentSession {
   onToolEnd(listener: (toolUseId: string) => void): () => void {
     this.toolEndListeners.add(listener);
     return () => this.toolEndListeners.delete(listener);
+  }
+
+  onToolResult(listener: (info: ToolEndInfo) => void): () => void {
+    this.toolResultListeners.add(listener);
+    return () => this.toolResultListeners.delete(listener);
+  }
+
+  onTaskEnd(listener: (toolUseId: string) => void): () => void {
+    this.taskEndListeners.add(listener);
+    return () => this.taskEndListeners.delete(listener);
+  }
+
+  runningSubagents(): number {
+    return this.openTasks('subagent');
+  }
+
+  runningShell(): boolean {
+    return this.openTasks('shell') > 0;
   }
 
   onUserMessage(listener: () => void): () => void {
@@ -420,6 +440,7 @@ export class AgentSession {
     const store = this.options.store;
     const patch: SessionPatch = {};
     const ended: string[] = [];
+    const endedTasks: string[] = [];
     for (const change of changes) {
       if (change.kind === 'turn') {
         this.persist(() => store.saveTurn(session.id, change.turn));
@@ -438,6 +459,7 @@ export class AgentSession {
         if (change.tool.endedAt !== null) ended.push(change.tool.toolUseId);
       } else if (change.kind === 'task') {
         this.persist(() => store.saveTask(session.id, change.task));
+        if (change.task.endedAt !== null && change.task.toolUseId !== null && this.tasks.get(change.task.id)?.endedAt === null) endedTasks.push(change.task.toolUseId);
         this.tasks.set(change.task.id, change.task);
         (patch.tasks ??= []).push(change.task);
       } else if (change.kind === 'prompt') {
@@ -465,8 +487,17 @@ export class AgentSession {
       }
     }
     this.emit({ type: 'session.patch', patch });
-    for (const toolUseId of ended) notify(this.toolEndListeners, toolUseId);
+    for (const toolUseId of ended) {
+      notify(this.toolEndListeners, toolUseId);
+      const info = this.tracker.endInfo(toolUseId);
+      if (info) notify(this.toolResultListeners, info);
+    }
+    for (const toolUseId of endedTasks) notify(this.taskEndListeners, toolUseId);
     this.checkIdle();
+  }
+
+  private openTasks(kind: TaskView['kind']): number {
+    return [...this.tasks.values()].filter((task) => task.kind === kind && task.endedAt === null).length;
   }
 
   private checkIdle(): void {

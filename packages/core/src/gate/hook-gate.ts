@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { ControlMode, GateAnswer, GatePreview, GatePromptView, GateTarget, GateTargetKind, Policy, ToolDecision } from '@ide/protocol';
 import { summarizeToolInput } from '../agent/tools';
 import { isRecord } from '../json';
@@ -11,6 +11,7 @@ import type { PlanService } from '../plans/plan-service';
 import type { GateEventRecord, GateResolution, Store, ToolDecisionRecord } from '../store/store';
 import { classifyPaths, expandHome, realTarget } from './paths';
 import { decide, describeTargets, targetName, type ClassifiedTarget, type GuardDecision } from './scope-guard';
+import type { ToolCall } from '../watchdog/activity';
 import { shellWrites, type ShellTarget } from './shell';
 import { FILE_PATH_FIELD, toolClass, type ToolClass } from './tools';
 
@@ -76,6 +77,8 @@ interface Pending {
   settle(outcome: Outcome): void;
 }
 
+const ALLOWED = new Set<ToolDecision>(['allow', 'unchecked', 'ask-approved', 'flag']);
+
 const allow = (reason: string): HookAnswer => ({ permissionDecision: 'allow', permissionDecisionReason: reason });
 const deny = (reason: string): HookAnswer => ({ permissionDecision: 'deny', permissionDecisionReason: reason });
 
@@ -85,6 +88,7 @@ export class HookGate {
   private readonly newId: () => string;
   private readonly promptListeners = new Set<(prompts: GatePromptView[]) => void>();
   private readonly decisionListeners = new Set<(decision: ToolDecisionRecord) => void>();
+  private readonly allowedListeners = new Set<(call: ToolCall) => void>();
   private readonly waiting = new Map<string, Pending>();
   private closed: GatePromptView[] = [];
 
@@ -102,6 +106,11 @@ export class HookGate {
   onDecision(listener: (decision: ToolDecisionRecord) => void): () => void {
     this.decisionListeners.add(listener);
     return () => this.decisionListeners.delete(listener);
+  }
+
+  onAllowed(listener: (call: ToolCall) => void): () => void {
+    this.allowedListeners.add(listener);
+    return () => this.allowedListeners.delete(listener);
   }
 
   prompts(): GatePromptView[] {
@@ -286,6 +295,30 @@ export class HookGate {
         console.error('gate: a decision listener threw', error);
       }
     }
+    if (ALLOWED.has(decision)) this.announce(input, judged, decision);
+  }
+
+  private announce(input: HookInput, judged: Judged, decision: ToolDecision): void {
+    const cls = toolClass(input.toolName);
+    const background = cls === 'shell' && (input.toolName === 'Monitor' || input.toolInput.run_in_background === true);
+    const call: ToolCall = {
+      toolUseId: input.toolUseId, parentToolUseId: this.options.context(input.toolUseId).parentToolUseId, tool: input.toolName, toolClass: cls,
+      targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
+      allTracked: judged.targets.some((target) => target.kind === 'all-tracked'),
+      cwdRel: background ? this.relativeCwd(input.cwd) : null, background, allowedOnce: decision === 'ask-approved' || decision === 'flag',
+    };
+    for (const listener of this.allowedListeners) {
+      try {
+        listener(call);
+      } catch (error) {
+        console.error('gate: an allowed-call listener threw', error);
+      }
+    }
+  }
+
+  private relativeCwd(cwd: string): string | null {
+    const rel = relative(this.options.root, cwd);
+    return rel.startsWith('..') || isAbsolute(rel) ? null : rel;
   }
 
   private event(input: HookInput, judged: Judged, mode: ControlMode, resolution: GateResolution): void {

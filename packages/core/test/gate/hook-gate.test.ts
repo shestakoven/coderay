@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { ControlMode, PlanTarget } from '@ide/protocol';
 import { GateError, HookGate, type GateContext } from '../../src/gate/hook-gate';
+import type { ToolCall } from '../../src/watchdog/activity';
 import { hookRoute } from '../../src/gate/hook-route';
 import { reviewPlan } from '../../src/plans/freeze';
 import type { ComponentRef } from '../../src/plans/plan-input';
@@ -478,5 +479,127 @@ describe('hookRoute', () => {
     const response = await post('s3cret', { tool_name: 'Write', tool_use_id: 't3', tool_input: { file_path: join(root, 'src/app.ts') }, cwd: root });
     expect(response.status).toBe(200);
     expect(JSON.parse(response.body)).toEqual({ permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' });
+  });
+});
+
+describe('HookGate onAllowed', () => {
+  async function watched(options: Options = {}) {
+    const h = await setup(options);
+    const calls: ToolCall[] = [];
+    h.gate.onAllowed((call) => calls.push(call));
+    return { ...h, calls };
+  }
+  const base = { parentToolUseId: null, allTracked: false, cwdRel: null, background: false, allowedOnce: false };
+
+  it('reports an allowed write with its project-relative target and no allow-once', async () => {
+    const { root, call, approve, calls } = await watched();
+    await approve();
+    await call('Write', { file_path: join(root, 'src/app.ts'), content: 'x' });
+    expect(calls).toEqual([{ ...base, toolUseId: 'toolu_1', tool: 'Write', toolClass: 'file-writer', targets: ['src/app.ts'] }]);
+  });
+
+  it('reports an unchecked call: a read, and a shell command that writes no project files', async () => {
+    const { root, call, calls } = await watched();
+    await call('Read', { file_path: join(root, 'src/app.ts') }, undefined, 'r1');
+    await call('Bash', { command: 'ls -la' }, undefined, 'b1');
+    expect(calls).toEqual([
+      { ...base, toolUseId: 'r1', tool: 'Read', toolClass: 'read', targets: [] },
+      { ...base, toolUseId: 'b1', tool: 'Bash', toolClass: 'shell', targets: [] },
+    ]);
+  });
+
+  it('reports a call the user allowed once with allowedOnce', async () => {
+    const { root, call, approve, pending, gate, calls } = await watched();
+    await approve();
+    const answer = call('Edit', { file_path: join(root, 'src/other.ts'), old_string: 'b', new_string: 'c' });
+    const prompt = await pending();
+    expect(calls).toEqual([]);
+    gate.answer(prompt.id, 'allow-once');
+    await answer;
+    expect(calls).toEqual([{ ...base, toolUseId: 'toolu_1', tool: 'Edit', toolClass: 'file-writer', targets: ['src/other.ts'], allowedOnce: true }]);
+  });
+
+  it('reports a flagged call with allowedOnce', async () => {
+    const { root, call, approve, calls } = await watched({ mode: 'C' });
+    await approve();
+    await call('Write', { file_path: join(root, 'src/other.ts') });
+    expect(calls).toMatchObject([{ targets: ['src/other.ts'], allowedOnce: true }]);
+  });
+
+  it('reports a call that the plan expansion let through with allowedOnce', async () => {
+    const { root, call, approve, pending, gate, calls } = await watched();
+    await approve();
+    const answer = call('Write', { file_path: join(root, 'src/other.ts') });
+    gate.answer((await pending()).id, 'expand-plan');
+    await answer;
+    expect(calls.map((c) => [c.targets, c.allowedOnce])).toEqual([[['src/other.ts'], true]]);
+  });
+
+  it('does not report a call denied for lack of a plan, or one whose prompt timed out', async () => {
+    const { root, call, approve, calls } = await watched({ holdMs: 20 });
+    expect((await call('Write', { file_path: join(root, 'src/app.ts') }))?.permissionDecision).toBe('deny');
+    await approve();
+    expect((await call('Write', { file_path: join(root, 'src/other.ts') }, undefined, 'slow'))?.permissionDecision).toBe('deny');
+    expect(calls).toEqual([]);
+  });
+
+  it('does not report a call the user denied', async () => {
+    const { root, call, approve, pending, gate, calls } = await watched();
+    await approve();
+    const answer = call('Write', { file_path: join(root, 'src/other.ts') });
+    gate.answer((await pending()).id, 'deny');
+    await answer;
+    expect(calls).toEqual([]);
+  });
+
+  it('takes the parent tool use id from the call context', async () => {
+    const { root, call, approve, calls } = await watched({ context: { parentToolUseId: 'task_9', lastMessage: null } });
+    await approve();
+    await call('Write', { file_path: join(root, 'src/app.ts') });
+    expect(calls[0]?.parentToolUseId).toBe('task_9');
+  });
+
+  it('marks a run_in_background shell and gives its directory relative to the project', async () => {
+    const { root, call, approve, calls } = await watched();
+    await approve();
+    await call('Bash', { command: 'echo x > app.ts', run_in_background: true }, undefined, 'bg', join(root, 'src'));
+    await call('Bash', { command: 'echo x > app.ts' }, undefined, 'fg', join(root, 'src'));
+    expect(calls).toEqual([
+      { ...base, toolUseId: 'bg', tool: 'Bash', toolClass: 'shell', targets: ['src/app.ts'], background: true, cwdRel: 'src' },
+      { ...base, toolUseId: 'fg', tool: 'Bash', toolClass: 'shell', targets: ['src/app.ts'] },
+    ]);
+  });
+
+  it('marks Monitor as background, with the project root as its directory', async () => {
+    const { call, calls } = await watched();
+    await call('Monitor', { command: 'tail -f log.txt' }, undefined, 'mon');
+    expect(calls).toEqual([{ ...base, toolUseId: 'mon', tool: 'Monitor', toolClass: 'shell', targets: [], background: true, cwdRel: '' }]);
+  });
+
+  it('gives no directory for a background shell that runs outside the project', async () => {
+    const { call, calls } = await watched();
+    await call('Bash', { command: 'ls', run_in_background: true }, undefined, 'out', tempDir('ide-elsewhere-'));
+    expect(calls[0]).toMatchObject({ background: true, cwdRel: null });
+  });
+
+  it('reports allTracked from the shell heuristic', async () => {
+    const { call, approve, calls } = await watched({ mode: 'C' });
+    await approve();
+    await call('Bash', { command: 'git checkout .' });
+    expect(calls).toMatchObject([{ tool: 'Bash', allTracked: true }]);
+  });
+
+  it('stops telling a listener that unsubscribed and survives one that throws', async () => {
+    const { root, gate, call, approve } = await watched();
+    await approve();
+    const seen: string[] = [];
+    const off = gate.onAllowed((c) => seen.push(c.toolUseId));
+    gate.onAllowed(() => {
+      throw new Error('listener boom');
+    });
+    expect((await call('Write', { file_path: join(root, 'src/app.ts') }, undefined, 'one'))?.permissionDecision).toBe('allow');
+    off();
+    await call('Write', { file_path: join(root, 'src/app.ts') }, undefined, 'two');
+    expect(seen).toEqual(['one']);
   });
 });

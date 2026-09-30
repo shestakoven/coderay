@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { McpServerState, PromptAnswer, PromptBody, PromptStatus, TaskKind, TaskView, TurnKind, TurnView } from '@ide/protocol';
+import type { McpServerState, PromptAnswer, PromptBody, PromptStatus, TaskKind, TaskView, ToolStatus, TurnKind, TurnView } from '@ide/protocol';
 import type { MessageRecord, PromptRecord, ToolEventRecord } from '../store/store';
 import type { AssistantBlock, StreamEvent, ToolResultBlock } from './stream';
 
@@ -19,10 +19,20 @@ export interface OpenWork {
   prompts: PromptRecord[];
 }
 
+export interface ToolEndInfo {
+  toolUseId: string;
+  tool: string;
+  parentToolUseId: string | null;
+  status: ToolStatus;
+  toolUseAt: number;
+  endedAt: number;
+}
+
 export interface TrackerOptions {
   nextSeq?: number;
   open?: OpenWork;
   now?: () => number;
+  mono?: () => number;
   newId?: () => string;
 }
 
@@ -35,6 +45,9 @@ const PLAN_MODE = 'plan';
 
 export class TurnTracker {
   private readonly now: () => number;
+  private readonly mono: () => number;
+  private readonly toolStarts = new Map<string, number>();
+  private readonly toolEnds = new Map<string, ToolEndInfo>();
   private readonly newId: () => string;
   private seq: number;
   private readonly openTurns: TurnView[];
@@ -49,6 +62,7 @@ export class TurnTracker {
 
   constructor(options: TrackerOptions = {}) {
     this.now = options.now ?? Date.now;
+    this.mono = options.mono ?? (() => performance.now());
     this.newId = options.newId ?? randomUUID;
     this.seq = options.nextSeq ?? 1;
     this.openTurns = [...(options.open?.turns ?? [])];
@@ -60,6 +74,12 @@ export class TurnTracker {
 
   hasOpenTurn(): boolean {
     return this.openTurns.length > 0;
+  }
+
+  endInfo(toolUseId: string): ToolEndInfo | null {
+    const info = this.toolEnds.get(toolUseId) ?? null;
+    this.toolEnds.delete(toolUseId);
+    return info;
   }
 
   canInterrupt(): boolean {
@@ -190,6 +210,7 @@ export class TurnTracker {
         status: 'running', toolUseAt: this.now(), endedAt: null,
       };
       this.openTools.set(tool.toolUseId, tool);
+      this.toolStarts.set(tool.toolUseId, this.mono());
       changes.push({ kind: 'tool', tool });
     }
     return changes;
@@ -203,6 +224,7 @@ export class TurnTracker {
       this.openTools.delete(tool.toolUseId);
       const status = result.text.trimStart().startsWith(REJECTED) ? 'rejected' : result.isError ? 'error' : 'ok';
       changes.push({ kind: 'tool', tool: { ...tool, status, endedAt: this.now() } });
+      this.finish(tool, status);
     }
     return changes;
   }
@@ -246,8 +268,16 @@ export class TurnTracker {
       if (!matches(tool)) continue;
       this.openTools.delete(tool.toolUseId);
       changes.push({ kind: 'tool', tool: { ...tool, status: 'unfinished', endedAt: now } });
+      this.finish(tool, 'unfinished');
     }
     return changes;
+  }
+
+  private finish(tool: ToolEventRecord, status: ToolStatus): void {
+    const endedAt = this.mono();
+    const toolUseAt = this.toolStarts.get(tool.toolUseId) ?? endedAt;
+    this.toolStarts.delete(tool.toolUseId);
+    this.toolEnds.set(tool.toolUseId, { toolUseId: tool.toolUseId, tool: tool.tool, parentToolUseId: tool.parentToolUseId, status, toolUseAt, endedAt });
   }
 
   private openTurn(kind: TurnKind, startedAt: number | null): TurnView {

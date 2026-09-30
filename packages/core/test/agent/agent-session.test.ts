@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem, SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
+import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
 import { aliveRoute, Canary } from '../../src/gate/canary';
@@ -775,5 +776,101 @@ describe('AgentSession waiting for the session-start hook', () => {
     await h.ping();
     await waitFor(() => userMessages(h).length === 1, 'message delivered');
     expect(userMessages(h)[0]).toMatchObject({ message: { content: 'again' } });
+  });
+});
+
+describe('AgentSession feeds for the watchdog', () => {
+  const S = '$SESSION';
+  const line = (o: object) => JSON.stringify(o);
+  const backgroundShell = () => {
+    const file = join(tempDir('ide-scenario-'), 'background-shell.jsonl');
+    writeFileSync(file, [
+      line({ fake: 'await-user' }),
+      line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: 'Bash', input: { command: 'sleep 5', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
+      line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 5', is_backgrounded: true, task_type: 'local_bash', session_id: S }),
+      line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),
+      line({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: S }),
+      line({ fake: 'sleep', ms: 20 }),
+      line({ type: 'system', subtype: 'task_updated', task_id: 'task_sh', patch: { status: 'completed' }, session_id: S }),
+      line({ fake: 'await-user' }),
+    ].join('\n'));
+    return { FAKE_CLAUDE_SCENARIO: file };
+  };
+
+  it('reports every tool result with monotonic stamps, its status and its parent', async () => {
+    const h = await harness('async-subagent');
+    const ended: ToolEndInfo[] = [];
+    h.session.onToolResult((info) => ended.push(info));
+    const before = performance.now();
+    h.session.send('start a subagent');
+    await waitFor(() => ended.length === 2, 'both tool results');
+    const after = performance.now();
+    expect(ended.map((e) => [e.toolUseId, e.tool, e.parentToolUseId, e.status])).toEqual([
+      ['toolu_fx_agent', 'Agent', null, 'ok'],
+      ['toolu_fx_sub_write', 'Write', 'toolu_fx_agent', 'ok'],
+    ]);
+    for (const e of ended) {
+      expect(e.toolUseAt).toBeGreaterThanOrEqual(before);
+      expect(e.endedAt).toBeGreaterThanOrEqual(e.toolUseAt);
+      expect(e.endedAt).toBeLessThanOrEqual(after);
+    }
+  });
+
+  it('keeps the stored times of a tool call as dates', async () => {
+    const h = await harness('async-subagent');
+    h.session.send('start a subagent');
+    await waitFor(() => h.store.history(h.session.sessionId() as string).toolEvents.some((t) => t.toolUseId === 'toolu_fx_sub_write' && t.endedAt !== null), 'stored');
+    const stored = h.store.history(h.session.sessionId() as string).toolEvents;
+    for (const t of stored) expect(Math.abs((t.toolUseAt as number) - Date.now())).toBeLessThan(60_000);
+  });
+
+  it('reports a call cut short by a crash as unfinished', async () => {
+    const h = await harness('crash-mid-turn');
+    const ended: ToolEndInfo[] = [];
+    h.session.onToolResult((info) => ended.push(info));
+    h.session.send('go');
+    await waitFor(() => ended.length === 1, 'tool result');
+    expect(ended[0]).toMatchObject({ toolUseId: 'toolu_fx_crash', status: 'unfinished' });
+  });
+
+  it('tells when a background task ends, once, with the tool call that started it, and counts running subagents', async () => {
+    const h = await harness('async-subagent');
+    const taskEnds: string[] = [];
+    const running: number[] = [];
+    h.session.onTaskEnd((toolUseId) => taskEnds.push(toolUseId));
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) running.push(h.session.runningSubagents());
+    });
+    h.session.send('start a subagent');
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect([taskEnds, running, h.session.runningSubagents()]).toEqual([['toolu_fx_agent'], [1, 0], 0]);
+  });
+
+  it('counts running background shell calls', async () => {
+    const h = await harness('async-subagent', {}, backgroundShell());
+    const shell: boolean[] = [];
+    const taskEnds: string[] = [];
+    h.session.onTaskEnd((toolUseId) => taskEnds.push(toolUseId));
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) shell.push(h.session.runningShell());
+    });
+    h.session.send('start a shell');
+    await waitFor(() => taskEnds.length === 1, 'shell task ended');
+    expect([shell, taskEnds, h.session.runningShell(), h.session.runningSubagents()]).toEqual([[true, false], ['toolu_sh'], false, 0]);
+  });
+
+  it('stops telling a listener that unsubscribed, and tells the others when one throws', async () => {
+    const h = await harness('async-subagent');
+    const seen: string[] = [];
+    const off = h.session.onToolResult(() => seen.push('off'));
+    h.session.onToolResult(() => {
+      throw new Error('listener boom');
+    });
+    h.session.onToolResult((info) => seen.push(info.toolUseId));
+    off();
+    h.session.send('start a subagent');
+    await waitFor(() => seen.length === 2, 'results delivered');
+    expect(seen).toEqual(['toolu_fx_agent', 'toolu_fx_sub_write']);
   });
 });
