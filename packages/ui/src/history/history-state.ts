@@ -70,6 +70,9 @@ export const pendingEvent = (h: HistoryView): WatchdogEventView | null =>
 
 export type NodeState = 'modified' | 'in-progress' | 'out-of-plan';
 
+export const nodeStateClass = (states: NodeState[]): 'out-of-plan' | 'in-progress' | 'modified' | '' =>
+  states.includes('out-of-plan') ? 'out-of-plan' : states.includes('in-progress') ? 'in-progress' : states.includes('modified') ? 'modified' : '';
+
 export interface NodeChanges {
   files: string[];
   added: number;
@@ -118,6 +121,17 @@ export function nodeChanges(h: HistoryView, snapshot: MapSnapshot | null, nodeId
   if ([...latest.values()].some((c) => activeStep(h, c))) states.push('in-progress');
   if (changes.some((c) => c.outOfPlan && c.resolution === null) || [...pendingPaths].some((path) => files.has(path))) states.push('out-of-plan');
   return { files: touched, added, removed, states, changes: [...changes].sort((a, b) => a.at - b.at) };
+}
+
+export function changeIndex(h: HistoryView, snapshot: MapSnapshot | null): Map<string, NodeChanges> {
+  const index = new Map<string, NodeChanges>();
+  if (h.changes.length === 0 && h.events.length === 0) return index;
+  const ids = [...(snapshot?.components.map((c) => c.id) ?? []), ...new Set(h.changes.map((c) => c.path))];
+  for (const id of ids) {
+    const found = nodeChanges(h, snapshot, id);
+    if (found.files.length > 0 || found.states.length > 0) index.set(id, found);
+  }
+  return index;
 }
 
 export interface StepGroup {

@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { GateAnswer, GatePromptView } from '@ide/protocol';
+import type { NodeChanges } from '../history/history-state';
 import { EMPTY_MARKS, type Marks } from './plan-state';
 
 export interface PlanOverlay {
@@ -9,6 +10,8 @@ export interface PlanOverlay {
   prompt: GatePromptView | null;
   prompts: GatePromptView[];
   eventFiles: Set<string>;
+  changes: Map<string, NodeChanges>;
+  highlight: Set<string>;
   answerPrompt(answer: GateAnswer): void;
   onAnchor(anchored: boolean): void;
 }
@@ -20,6 +23,8 @@ export const PlanOverlayContext = createContext<PlanOverlay>({
   prompt: null,
   prompts: [],
   eventFiles: new Set(),
+  changes: new Map(),
+  highlight: new Set(),
   answerPrompt: () => undefined,
   onAnchor: () => undefined,
 });

@@ -4,9 +4,11 @@ import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, S
 import { ChatPanel } from './chat/ChatPanel';
 import { chatReducer, initialChatState } from './chat/chat-state';
 import { dialogEvent, eventFilePaths } from './history/dialog-state';
-import { historyReducer, initialHistoryState } from './history/history-state';
+import { changeIndex, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
 import { WatchdogDialog } from './history/WatchdogDialog';
-import { DetailsPanel } from './map/DetailsPanel';
+import { DiffPanel } from './history/DiffPanel';
+import { Timeline } from './history/Timeline';
+import { DetailsPanel, type DetailsTab } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
 import { PlanOverlayContext, type PlanOverlay } from './plan/overlay';
@@ -35,6 +37,8 @@ export function App() {
   const [panel, setPanel] = useState<{ key: string; open: boolean }>({ key: '', open: false });
   const [focus, setFocus] = useState<{ componentIds: string[]; nonce: number } | null>(null);
   const [anchored, setAnchored] = useState(false);
+  const [tab, setTab] = useState<DetailsTab>('details');
+  const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const snapshot = state.snapshot;
   const shown = useMemo(() => planOnMap(plans.plans), [plans.plans]);
   const marks = useMemo(() => planMarks(shown, snapshot), [shown, snapshot]);
@@ -134,7 +138,22 @@ export function App() {
     const requestId = crypto.randomUUID();
     return send({ type: 'history.diff', requestId, path, before, after }) ? requestId : null;
   };
-  const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, answerPrompt, onAnchor: setAnchored };
+  const changes = useMemo(() => changeIndex(hist.history, snapshot), [hist.history, snapshot]);
+  const latestPlan = useMemo(() => (shown ? (plans.plans.filter((plan) => plan.id === shown.id).at(-1) ?? null) : null), [plans.plans, shown]);
+  const selectTimelineItem = (item: TimelineItem): void => {
+    const paths = new Set(item.files);
+    const owners = new Set(snapshot?.files.filter((file) => paths.has(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
+    setHighlight(new Set([...paths, ...owners]));
+    if (owners.size > 0) focusComponents([...owners]);
+    const first = item.files[0];
+    if (first === undefined) return;
+    const owner = snapshot?.files.find((file) => file.path === first)?.componentId;
+    if (owner && !state.expanded.has(owner)) dispatch({ type: 'toggle', componentId: owner });
+    dispatch({ type: 'select', id: first });
+    setView('components');
+    setTab('changes');
+  };
+  const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, changes, highlight, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
   return (
     <div className="app">
@@ -190,7 +209,23 @@ export function App() {
                 <ReactFlowProvider>
                   <MapView state={state} dispatch={dispatch} />
                 </ReactFlowProvider>
-                <DetailsPanel state={state} />
+                <DetailsPanel
+                  state={state}
+                  tab={tab}
+                  onTab={setTab}
+                  changes={(nodeId) => (
+                    <DiffPanel
+                      nodeId={nodeId}
+                      history={hist.history}
+                      plans={plans.plans}
+                      snapshot={snapshot}
+                      filter={chat.filter}
+                      onFilter={(filter) => dispatchChat({ type: 'filter', filter })}
+                      diffs={hist.results}
+                      requestDiff={requestDiff}
+                    />
+                  )}
+                />
               </>
             )}
             {shown && (
@@ -211,6 +246,7 @@ export function App() {
         <ChatPanel
           chat={chat}
           send={send}
+          onClearFilter={() => dispatchChat({ type: 'filter', filter: null })}
           onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
           prompts={pendingPrompts(plans.prompts)}
           dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
@@ -223,6 +259,7 @@ export function App() {
           planRow={shown ? { text: `${planTitle(shown)} · on the map`, onOpen: () => setPanelOpen(true) } : null}
         />
       </main>
+      <Timeline plans={plans.plans} latestPlan={latestPlan} history={hist.history} results={hist.results} chat={chat} send={send} onSelect={selectTimelineItem} />
       {settingsOpen && (
         <SettingsPanel
           settings={settings}

@@ -14,9 +14,11 @@ import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { C4Model, MapSnapshot } from '@ide/protocol';
+import type { NodeState } from '../history/history-state';
 import { c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
 import { focusOf, type Selection } from './focus';
 import { c4NodePlans, componentCard, locateComponent, type NodePlan } from '../plan/c4-marks';
+import { nodeStateClass } from '../history/history-state';
 import { markCounts } from '../history/dialog-state';
 import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { PromptPopover } from '../plan/PromptPopover';
@@ -47,10 +49,13 @@ function Icon({ name }: { name: string }) {
 }
 
 const NodePlansContext = createContext<Map<string, NodePlan>>(new Map());
+interface NodeChange { states: NodeState[]; added: number; removed: number; files: number }
+const NodeChangesContext = createContext<Map<string, NodeChange>>(new Map());
 
 function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
   const plan = useContext(NodePlansContext).get(id);
   const pending = useContext(PendingCountsContext).get(id);
+  const changed = useContext(NodeChangesContext).get(id);
   const cls = ['c4-card', data.kind, data.external && 'external', data.dim && 'dim', data.root && 'root', data.expanded && 'expanded', data.warn && 'warn', data.slim && 'slim', plan && 'in-plan', selected && 'selected'].filter(Boolean).join(' ');
   const planLine = plan && !data.expanded ? `${plan.line}${plan.creates ? ` · +${plan.creates} new` : ''}` : null;
   return (
@@ -64,6 +69,7 @@ function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
         {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret">{data.expanded ? '▾' : '▸'}</span>}
       </div>
       <div className="c4-sub">{data.subtitle}</div>
+      {changed && <div className="c4-detail change-line">+{changed.added} {'\u2212'}{changed.removed} {'\u00b7'} {changed.files} file{changed.files === 1 ? '' : 's'}</div>}
       {planLine ? <div className="c4-detail c4-plan-line">{planLine}</div> : data.detail && <div className="c4-detail">{data.detail}</div>}
       <Handle type="source" position={Position.Right} />
     </div>
@@ -148,6 +154,20 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       ...overlay.prompts.map((p) => place(promptTarget(p)?.componentId)),
     ]);
   }, [snapshot.files, model, root, expanded, nodeIds, overlay.eventFiles, overlay.prompts]);
+  const nodeChangeMarks = useMemo(() => {
+    const marks = new Map<string, NodeChange>();
+    const place = (componentId: string): string | null =>
+      locateComponent(componentId, model, { expanded: root ? null : expanded, root, nodeIds }).node;
+    for (const [componentId, found] of overlay.changes) {
+      const node = place(componentId);
+      if (!node || !snapshot.components.some((c) => c.id === componentId)) continue;
+      const seen = marks.get(node) ?? { states: [], added: 0, removed: 0, files: 0 };
+      marks.set(node, {
+        states: [...seen.states, ...found.states], added: seen.added + found.added, removed: seen.removed + found.removed, files: seen.files + found.files.length,
+      });
+    }
+    return marks;
+  }, [overlay.changes, snapshot.components, model, root, expanded, nodeIds]);
   const shownNodes = useMemo(
     () =>
       nodes.map((n) => {
@@ -155,10 +175,12 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         const className = focus
           ? focus.nodes.has(n.id) ? 'c4-focus' : focus.context.has(n.id) ? '' : 'c4-dim'
           : overlay.dimOthers && !inPlan ? 'c4-dim' : '';
-        const withPrompt = pendingCounts.has(n.id) ? `${className} oop-target`.trim() : className;
+        const stateClass = nodeStateClass(nodeChangeMarks.get(n.id)?.states ?? []);
+        const withState = `${className} ${stateClass}`.trim();
+        const withPrompt = pendingCounts.has(n.id) ? `${withState} oop-target`.trim() : withState;
         return n.className === withPrompt ? n : { ...n, className: withPrompt };
       }),
-    [nodes, focus, nodePlans, overlay.dimOthers, pendingCounts],
+    [nodes, focus, nodePlans, overlay.dimOthers, pendingCounts, nodeChangeMarks],
   );
   const shownEdges = useMemo(
     () =>
@@ -200,6 +222,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
 
   return (
     <NodePlansContext.Provider value={nodePlans}>
+    <NodeChangesContext.Provider value={nodeChangeMarks}>
     <PendingCountsContext.Provider value={pendingCounts}>
     <div className="map c4">
       <ReactFlow
@@ -291,6 +314,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       <C4Details snapshot={snapshot} model={model} selection={selection} />
     </div>
     </PendingCountsContext.Provider>
+    </NodeChangesContext.Provider>
     </NodePlansContext.Provider>
   );
 }

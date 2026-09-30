@@ -1,5 +1,7 @@
 import type { ChatItem, McpServerState, SessionPatch, SessionState, SessionView, TaskView, ToolDecision, TurnView } from '@ide/protocol';
 
+export interface ChatFilter { nodeId: string; label: string; toolUseIds: ReadonlySet<string>; files: ReadonlySet<string> }
+
 export interface ChatState {
   session: SessionView | null;
   turns: Record<string, TurnView>;
@@ -7,20 +9,22 @@ export interface ChatState {
   tasks: Record<string, TaskView>;
   mcpServers: McpServerState[];
   error: string | null;
+  filter: ChatFilter | null;
 }
 
 export type ChatAction =
   | { type: 'snapshot'; state: SessionState }
   | { type: 'patch'; patch: SessionPatch }
   | { type: 'error'; message: string }
-  | { type: 'dismiss-error' };
+  | { type: 'dismiss-error' }
+  | { type: 'filter'; filter: ChatFilter | null };
 
 export interface TurnGroup {
   turn: TurnView | null;
   items: ChatItem[];
 }
 
-export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], error: null };
+export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], error: null, filter: null };
 
 const byId = <T extends { id: string }>(values: T[]): Record<string, T> => Object.fromEntries(values.map((value) => [value.id, value]));
 const merge = <T extends { id: string }>(current: Record<string, T>, updates: T[] | undefined): Record<string, T> =>
@@ -38,6 +42,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tasks: byId(action.state.tasks),
         mcpServers: action.state.mcpServers,
         error: state.error,
+        filter: state.filter,
       };
     case 'patch':
       return {
@@ -52,6 +57,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
       return { ...state, error: action.message };
     case 'dismiss-error':
       return { ...state, error: null };
+    case 'filter':
+      return { ...state, filter: action.filter };
   }
 }
 
@@ -92,3 +99,15 @@ const DECISION_LABEL: Record<ToolDecision, string> = {
 };
 
 export const decisionLabel = (decision: ToolDecision | null): string => (decision ? DECISION_LABEL[decision] : '');
+
+export function filterItems(items: ChatItem[], f: ChatFilter | null): ChatItem[] {
+  if (f === null) return items;
+  const keep = new Set<number>();
+  items.forEach((item, i) => {
+    if (item.kind !== 'tool' || !(f.toolUseIds.has(item.id) || item.targets.some((t) => f.files.has(t)))) return;
+    keep.add(i);
+    const before = items[i - 1];
+    if (before?.kind === 'message' && before.role === 'assistant') keep.add(i - 1);
+  });
+  return items.filter((_, i) => keep.has(i));
+}

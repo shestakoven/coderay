@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ToolStatus } from '@ide/protocol';
-import { canSend, canStop, childItems, decisionLabel, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
+import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
@@ -9,9 +9,10 @@ const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', err
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
 
-export function ChatPanel({ chat, send, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
+export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
   chat: ChatState;
   send: (message: ClientMessage) => boolean;
+  onClearFilter: () => void;
   onDismissError: () => void;
   planRow: { text: string; onOpen: () => void } | null;
   prompts: GatePromptView[];
@@ -60,12 +61,18 @@ export function ChatPanel({ chat, send, onDismissError, planRow, prompts, prompt
       {planRow && (
         <button className="plan-row" onClick={planRow.onOpen}>≡ {planRow.text}</button>
       )}
+      {chat.filter && (
+        <div className="chat-filter" data-testid="chat-filter">
+          <span>Filtered to {chat.filter.label}</span>
+          <button onClick={onClearFilter}>Clear filter</button>
+        </div>
+      )}
       <div className="chat-log">
-        {groups.map((group) => (
+        {groups.map((group) => ({ group, items: filterItems(group.items, chat.filter) })).filter(({ items }) => items.length > 0).map(({ group, items }) => (
           <div key={group.items[0]?.id} className={`turn ${group.turn?.kind ?? 'outside'}`}>
             {group.turn?.kind === 'agent-initiated' && <div className="turn-marker">↻ agent-initiated turn</div>}
             {!group.turn && group.items.some((item) => item.kind !== 'notice') && <div className="turn-marker">outside a turn</div>}
-            {group.items.map((item) => <Item key={item.id} item={item} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
+            {items.map((item) => <Item key={item.id} item={item} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
             {group.turn?.resultSubtype && TURN_END[group.turn.resultSubtype] && (
               <div className="turn-end">{TURN_END[group.turn.resultSubtype]}</div>
             )}
