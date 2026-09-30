@@ -121,18 +121,16 @@ describe('LocalEmbedModel', () => {
     });
 
     it('waits no longer than closeWaitMs for a running batch', async () => {
-      const { model } = await runningBatch(10_000, 200);
-      const began = Date.now();
+      const { model, cacheDir } = await runningBatch(10_000, 200);
       await model.close();
-      expect(Date.now() - began).toBeLessThan(2000);
+      expect(markers(cacheDir, 'finished-')).toEqual([]);
     });
 
     it('closes without waiting when no batch is running', async () => {
-      const model = start('slow-embed-worker', tempDir('ide-models-'), 5000);
+      const model = start('slow-embed-worker', tempDir('ide-models-'), 600_000);
       await waitFor(() => model.status().state === 'ready', 'model ready');
-      const began = Date.now();
       await model.close();
-      expect(Date.now() - began).toBeLessThan(1000);
+      expect(model.status().state).toBe('ready');
     });
   });
 });

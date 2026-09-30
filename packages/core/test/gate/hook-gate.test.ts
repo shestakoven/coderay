@@ -38,6 +38,7 @@ interface Options {
   throwPolicy?: boolean;
   hold?: Hold;
   onPolicy?: () => void;
+  now?: () => number;
 }
 
 async function setup(options: Options = {}) {
@@ -62,7 +63,7 @@ async function setup(options: Options = {}) {
     },
     plans, components: () => components,
     context: () => options.context ?? { parentToolUseId: null, lastMessage: 'Fixing the greeting.' },
-    home, tempRoots: [], holdMs: options.holdMs, hold: options.hold,
+    home, tempRoots: [], holdMs: options.holdMs, hold: options.hold, now: options.now,
   });
   const decisions: ToolDecisionRecord[] = [];
   gate.onDecision((decision) => decisions.push(decision));
@@ -326,7 +327,6 @@ describe('HookGate', () => {
       void promise.then(() => (state.done = true));
       return state;
     };
-    const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
     const pause = () => new Promise((resolve) => setTimeout(resolve, 40));
 
     it('answers a held call only after the release, and judges it then', async () => {
@@ -450,21 +450,20 @@ describe('HookGate', () => {
       expect(decisions.map((decision) => decision.decision)).toEqual(['ask-approved']);
     });
 
-    it('gives a call one budget in all: a prompt, its withdrawal, the hold and the fresh prompt share holdMs', async () => {
+    it('gives a call one budget in all: once its prompt and the hold used holdMs, no fresh prompt is asked', async () => {
       const hold = new Hold();
-      const { root, call, approve, pending, gate } = await setup({ hold, holdMs: 600 });
+      let t = 0;
+      const { root, call, approve, pending, gate } = await setup({ hold, holdMs: 600, now: () => t });
       await approve();
-      const started = Date.now();
       const answer = call('Write', { file_path: join(root, 'src/other.ts') });
       await pending();
-      await sleep(250);
       hold.hold('event');
+      t = 700;
       gate.withdrawPending('x');
-      await sleep(150);
       hold.release();
       const reply = await answer;
       expect(reply?.permissionDecisionReason).toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
-      expect(Date.now() - started).toBeLessThan(800);
+      expect(gate.prompts().map((prompt) => prompt.status)).toEqual(['dropped']);
     });
 
     it('denies when the budget ran out while the call waited for the release', async () => {

@@ -159,7 +159,7 @@ describe('FailOpenDetector', () => {
     const old = { toolUseAt: 1e9, endedAt: 1e9 + 1 };
     f.detector.toolEnded(end(old));
     f.detector.toolEnded(end(old));
-    await sleepMs(80);
+    await waitFor(() => f.watchdog.events().length === 2, 'the flagged event');
     expect(f.decisions).toMatchObject([{ toolUseId: 'mcp1', decision: 'hook-missing' }]);
     expect(f.watchdog.events().map((event) => event.phase === 'resolved')).toEqual([false, true]);
   });
@@ -198,7 +198,7 @@ describe('FailOpenDetector', () => {
     const f = await fixture();
     f.detector.toolEnded(end({}));
     f.detector.toolEnded(end({}));
-    await sleepMs(80);
+    await waitFor(() => f.watchdog.events().length > 0, 'the event');
     expect(f.decisions).toHaveLength(1);
     expect(f.watchdog.events()).toHaveLength(1);
   });

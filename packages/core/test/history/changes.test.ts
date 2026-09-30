@@ -243,7 +243,7 @@ describe('ChangeService recording', () => {
 });
 
 describe('ChangeService batching', () => {
-  it('records a 300-file burst as one batch with one check-ignore, quickly', async () => {
+  it('records a 300-file burst as one batch with one check-ignore and a handful of git processes, not one per file', async () => {
     const f = await fixture();
     const bin = tempDir('chg-bin-');
     const log = join(bin, 'calls.log');
@@ -256,14 +256,13 @@ describe('ChangeService batching', () => {
     f.service.onChange((c) => batches.push(c.length));
     const path = process.env.PATH;
     process.env.PATH = `${bin}:${path}`;
-    const started = Date.now();
     try {
       await Promise.all(events.map((e) => f.service.handle(e)));
       await f.service.idle();
     } finally { process.env.PATH = path; }
-    expect(Date.now() - started).toBeLessThan(3000);
     expect(batches).toEqual([300]);
     const calls = (execFileSync('cat', [log], { encoding: 'utf8' })).split('\n');
+    expect(calls.filter(Boolean).length).toBeLessThanOrEqual(5);
     expect(calls.filter((l) => l.includes('check-ignore'))).toHaveLength(1);
     expect(f.store.changes('s1')).toHaveLength(300);
   });

@@ -302,15 +302,33 @@ describe('Watchdog collecting and settling', () => {
   });
 
   it('does not open the dialog before the settle window has passed without a new change', async () => {
-    const f = await fixture({ settleMs: 150 });
+    const settles: number[] = [];
+    const f = await fixture({
+      settleMs: 150,
+      shadow: (real) => new Proxy(real, {
+        get(target, key) {
+          if (key === 'snapshot') return (id: string, files: unknown[]) => { settles.push(files.length); return target.snapshot(id, files as never); };
+          const v = Reflect.get(target, key, target);
+          return typeof v === 'function' ? v.bind(target) : v;
+        },
+      }),
+    });
     f.toolCall();
     const [a, b] = await f.produce(['src/a.ts', 'src/b.ts']);
-    f.watchdog.consider(a!);
-    await sleepMs(100);
-    f.watchdog.consider(b!);
-    await sleepMs(100);
-    expect(f.watchdog.events()[0]!.phase).toBe('collecting');
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      f.watchdog.consider(a!);
+      vi.advanceTimersByTime(100);
+      f.watchdog.consider(b!);
+      vi.advanceTimersByTime(100);
+      await new Promise((resolve) => setImmediate(resolve));
+      expect([settles, f.watchdog.events()[0]!.phase]).toEqual([[], 'collecting']);
+      vi.advanceTimersByTime(50);
+    } finally {
+      vi.useRealTimers();
+    }
     await pendingEvent(f);
+    expect(settles).toEqual([2]);
   });
 
   it('opens the dialog once the longest collecting time has passed, although changes keep arriving', async () => {

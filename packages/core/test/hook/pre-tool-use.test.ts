@@ -107,15 +107,13 @@ describe('pre-tool-use hook script', () => {
     expect(run.stderr).not.toContain(SECRET);
   });
 
-  it('exits 2 within a second when its stderr pipe is already full and nobody reads it', async () => {
+  it('exits 2 instead of hanging when its stderr pipe is already full and nobody reads it', async () => {
     const wrapper = join(tempDir('ide-hook-'), 'fill-stderr.mjs');
     writeFileSync(wrapper, `process.stderr.write('x'.repeat(4 * 1024 * 1024));\nawait import(${JSON.stringify(pathToFileURL(HOOK_SCRIPT).href)});\n`);
     const child = spawn(process.execPath, [wrapper, join(tempDir('ide-hook-'), 'missing.json')], { stdio: ['pipe', 'ignore', 'pipe'] });
     child.stdin.end(INPUT);
-    const started = Date.now();
     const code = await new Promise<number | null>((resolve) => child.on('exit', (exitCode) => resolve(exitCode)));
     expect(code).toBe(2);
-    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   it('exits 2, not 0, when a deny cannot be written to its stdout', async () => {

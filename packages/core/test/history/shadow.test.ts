@@ -111,13 +111,11 @@ describe('ShadowRepo timeout', () => {
     const shadow = await ShadowRepo.open(join(dir, 'repo'), { timeoutMs: 200 });
     const real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
     const bin = join(dir, 'bin'); mkdirSync(bin);
-    writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$*" in *cat-file*) exec sleep 5;; esac\nexec ${real} "$@"\n`, { mode: 0o755 });
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\ncase "$*" in *cat-file*) exec sleep 60;; esac\nexec ${real} "$@"\n`, { mode: 0o755 });
     const path = process.env.PATH;
     process.env.PATH = `${bin}:${path}`;
     try {
-      const started = Date.now();
       expect(await shadow.read('a'.repeat(40))).toBeNull();
-      expect(Date.now() - started).toBeLessThan(3000);
     } finally {
       process.env.PATH = path;
     }
@@ -319,7 +317,7 @@ describe('ShadowRepo.diff', () => {
 });
 
 describe('ShadowRepo.snapshot', () => {
-  it('snapshots 300 files under a ref without touching a work tree, skipping null and unstored hashes', async () => {
+  it('snapshots 300 files under a ref with a handful of git processes, without touching a work tree, skipping null and unstored hashes', async () => {
     const { shadow, dir } = await open(); const w = tempDir('w-');
     const files: { path: string; hash: string | null }[] = [];
     const paths = Array.from({ length: 300 }, (_, i) => join(w, `f${i}`));
@@ -327,9 +325,19 @@ describe('ShadowRepo.snapshot', () => {
     const stored = await shadow.putMany(paths);
     paths.forEach((p, i) => files.push({ path: `dir${i % 5}/f${i}`, hash: stored.get(p)!.hash }));
     files.push({ path: 'deleted.txt', hash: null }, { path: 'never-stored.txt', hash: '2'.repeat(40) });
-    const started = Date.now();
-    const sha = await shadow.snapshot('e1', files);
-    expect(Date.now() - started).toBeLessThan(3000);
+    const bin = tempDir('shadow-bin-');
+    const log = join(bin, 'calls.log');
+    const real = execFileSync('which', ['git'], { encoding: 'utf8' }).trim();
+    writeFileSync(join(bin, 'git'), `#!/bin/sh\necho "$@" >> '${log}'\nexec '${real}' "$@"\n`, { mode: 0o755 });
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    let sha: string;
+    try {
+      sha = await shadow.snapshot('e1', files);
+    } finally {
+      process.env.PATH = path;
+    }
+    expect(readFileSync(log, 'utf8').split('\n').filter(Boolean).length).toBeLessThanOrEqual(6);
     expect(sha).toMatch(/^[0-9a-f]{40}$/);
     expect(git(dir, 'rev-parse', 'refs/ide/snapshots/e1').trim()).toBe(sha);
     const listing = git(dir, 'ls-tree', '-r', 'refs/ide/snapshots/e1').split('\n').filter(Boolean);
