@@ -544,4 +544,17 @@ exec '${real}' "$@"
     await f.service.handle(f.ev('a.ts'));
     expect(f.service.changes().map((c) => c.origin)).toEqual(['ide']);
   });
+  it('persists the out-of-plan decision and the event it belongs to', async () => {
+    const f = await fixture();
+    f.ledger.allowed(call({ tool: 'Bash', toolClass: 'shell' }));
+    write(f.root, 'a.ts', 'x');
+    write(f.root, 'b.ts', 'y');
+    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('b.ts'))]);
+    const [a, b] = f.service.changes();
+    const marked = f.service.markOutOfPlan([a!.id], 'ev-1');
+    expect(marked).toHaveLength(1);
+    expect(f.store.changes('s1')[0]).toMatchObject({ outOfPlan: true, eventId: 'ev-1', resolution: null });
+    expect(f.store.changes('s1')[1]).toMatchObject({ id: b!.id, outOfPlan: false, eventId: null });
+    expect(f.service.changes()).toEqual(f.store.changes('s1'));
+  });
 });

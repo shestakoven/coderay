@@ -137,6 +137,14 @@ export class ChangeService {
     this.persistLoose(updated);
   }
 
+  markOutOfPlan(ids: string[], eventId: string): ChangeView[] {
+    this.sync();
+    const wanted = new Set(ids);
+    const updated = this.all.filter((c) => wanted.has(c.id)).map((c) => this.replace({ ...c, outOfPlan: true, eventId }));
+    this.persistLoose(updated);
+    return updated;
+  }
+
   relabelHuman(ids: string[]): void {
     this.sync();
     const wanted = new Set(ids);
