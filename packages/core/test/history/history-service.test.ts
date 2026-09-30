@@ -162,6 +162,30 @@ describe('HistoryService', { timeout: 30_000 }, () => {
     expect(results(replies).map((r) => [r.requestId, typeof r.error])).toEqual([['early', 'string']]);
   });
 
+  it('answers a request queued before start() with a clean error once the runtime is closed', async () => {
+    const b = await build({ scenario: WAIT_TURN, start: false });
+    const diff = vi.spyOn(b.rt.diff, 'diff');
+    const undo = vi.spyOn(b.rt.reverts, 'undo');
+    const rollback = vi.spyOn(b.rt.reverts, 'rollbackStep');
+    const answer = vi.spyOn(b.rt.watchdog, 'answer');
+    const { replies, reply } = collect();
+    const handled = Promise.all([
+      b.rt.history.handle({ type: 'history.diff', requestId: 'd', path: 'notes.txt', before: null, after: null }, reply),
+      b.rt.history.handle({ type: 'revert.undo', requestId: 'u', revertId: 'x' }, reply),
+      b.rt.history.handle({ type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 's', confirm: [] }, reply),
+      b.rt.history.handle({ type: 'watchdog.answer', eventId: 'e', answer: { kind: 'all', answer: 'keep' } }, reply),
+    ]);
+    await b.rt.close();
+    await handled;
+    expect(replies.map((m) => [m.type, 'requestId' in m ? m.requestId : null, m.type === 'error' ? m.message : (m as { error: string | null }).error])).toEqual([
+      ['history.result', 'd', 'the IDE core is shutting down'],
+      ['history.result', 'u', 'the IDE core is shutting down'],
+      ['history.result', 'r', 'the IDE core is shutting down'],
+      ['error', null, 'the IDE core is shutting down'],
+    ]);
+    expect([diff, undo, rollback, answer].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0, 0]);
+  });
+
   it('answers with an error result when the runtime could not start', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const home = tempDir('hs-blocker-');
