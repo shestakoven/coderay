@@ -13,6 +13,7 @@ import { resumeMessage, type ResumeInput } from './resume';
 
 const SETTLE_MS = 1_000;
 const DELIVER_WAIT_MS = 10_000;
+const KEPT_EVENTS = 500;
 
 export class WatchdogError extends Error {}
 
@@ -44,6 +45,7 @@ export interface WatchdogOptions {
   policy: () => Policy;
   toolInfo: (toolUseId: string) => { tool: string; summary: string; stepKey: string | null } | undefined;
   settleMs?: number;
+  keptEvents?: number;
   deliverWaitMs?: number;
   now?: () => number;
   newId?: () => string;
@@ -333,6 +335,7 @@ export class Watchdog {
   }
 
   private flagFailOpen(toolUseId: string, changes: ChangeView[], outOfPlan: boolean, notes: string[]): void {
+    this.prune();
     const at = this.now();
     const event: WatchdogEventView = {
       id: this.newId(), kind: 'fail-open', mode: this.mode(), phase: 'resolved', resolution: 'flagged', changes: [], toolCalls: [],
@@ -370,7 +373,26 @@ export class Watchdog {
     return !covers(gate.scope, { rel: change.path, dir: false, mkdir: false, deleting: change.afterHash === null && !change.unreadable });
   }
 
+  private prune(): void {
+    const kept = this.o.keptEvents ?? KEPT_EVENTS;
+    if (this.all.length <= kept) return;
+    let excess = this.all.length - kept;
+    for (let i = 0; i < this.all.length && excess > 0; ) {
+      const event = this.all[i]!;
+      if (event.phase !== 'resolved' || this.answering.has(event.id)) {
+        i += 1;
+        continue;
+      }
+      this.all.splice(i, 1);
+      this.notes.delete(event.id);
+      this.subagentNames.delete(event.id);
+      this.killed.delete(event.id);
+      excess -= 1;
+    }
+  }
+
   private begin(kind: WatchdogKind = 'watchdog'): WatchdogEventView {
+    this.prune();
     const { hold, session } = this.o;
     hold.hold('the watchdog is waiting for the user');
     const event: WatchdogEventView = {
@@ -485,6 +507,7 @@ export class Watchdog {
     const at = this.now();
     let flagged = this.flagged;
     if (!flagged || at - flagged.at > this.settleMs) {
+      this.prune();
       const event: WatchdogEventView = {
         id: this.newId(), kind: 'watchdog', mode: this.mode(), phase: 'resolved', resolution: 'flagged', changes: [], toolCalls: [],
         interrupted: false, paused: false, runningSubagents: 0, backgroundShell: false, unknownOrigin: false,

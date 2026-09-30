@@ -49,7 +49,7 @@ class StubSession implements WatchdogSession {
   onTurnClosed(): () => boolean { return () => true; }
 }
 
-interface Setup { turnOpen?: boolean; subagents?: number; settleMs?: number; mode?: ControlMode; shadow?: (real: ShadowRepo) => ShadowRepo; storeFails?: boolean }
+interface Setup { turnOpen?: boolean; subagents?: number; settleMs?: number; mode?: ControlMode; shadow?: (real: ShadowRepo) => ShadowRepo; storeFails?: boolean; keptEvents?: number }
 
 async function fixture(o: Setup = {}) {
   const root = tempDir('wd-root-');
@@ -89,7 +89,7 @@ async function fixture(o: Setup = {}) {
     changes, reverts: { revertChanges: () => { throw new Error('not here'); } },
     gate: { withdrawPending: (reason) => { withdrawn.push(reason); } }, policy: () => policy,
     toolInfo: (id) => (info.throws ? (() => { throw new Error('toolInfo exploded'); })() : id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),
-    settleMs: o.settleMs ?? 50, newId: () => `ev${++n}`,
+    settleMs: o.settleMs ?? 50, keptEvents: o.keptEvents, newId: () => `ev${++n}`,
   });
   onTestFinished(async () => { await watchdog.quiesce(); await changes.idle(); });
   const emitted: WatchdogEventView[] = [];
@@ -420,6 +420,17 @@ describe('Watchdog collecting and settling', () => {
     expect(f.watchdog.events()).toHaveLength(1);
     expect(f.watchdog.events()[0]!.changes).toHaveLength(3);
     expect(f.store.watchdogEvents('s1')[0]!.changes).toHaveLength(3);
+  });
+});
+
+describe('Watchdog memory', () => {
+  it('keeps only the newest resolved events in memory, and never an open one', async () => {
+    const f = await fixture({ keptEvents: 2 });
+    f.toolCall();
+    f.watchdog.consider((await f.produce(['src/open.ts']))[0]!);
+    const open = await pendingEvent(f);
+    for (const id of ['t1', 't2', 't3', 't4']) f.watchdog.raiseFailOpen(id, []);
+    expect(f.watchdog.events().map((e) => [e.id, e.phase])).toEqual([[open.id, 'pending'], ['ev4', 'resolved'], ['ev5', 'resolved']]);
   });
 });
 

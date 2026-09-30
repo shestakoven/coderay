@@ -19,6 +19,7 @@ const HASH_CONCURRENCY = 8;
 const GRACE_MS = 2_000;
 const LINE_COUNT_MAX = 100;
 const GIT_BUFFER = 64 * 1024 * 1024;
+const KEPT_CHANGES = 10_000;
 
 export interface ChangeServiceOptions {
   root: string;
@@ -32,6 +33,7 @@ export interface ChangeServiceOptions {
   checkpoints: Checkpoints;
   sessionId: () => string | null;
   graceMs?: number;
+  keptChanges?: number;
 }
 
 type Stamp = { planId: string; planVersion: number; stepKey: string | null } | null;
@@ -348,6 +350,15 @@ export class ChangeService {
 
   private remember(made: ChangeView[]): void {
     this.all.push(...made);
+    const kept = this.o.keptChanges ?? KEPT_CHANGES;
+    if (this.all.length <= kept) return;
+    let excess = this.all.length - kept;
+    this.all = this.all.filter((change) => {
+      if (excess === 0 || (change.eventId !== null && change.resolution === null)) return true;
+      excess -= 1;
+      this.stamps.delete(change.id);
+      return false;
+    });
   }
 
   private replace(next: ChangeView): ChangeView {

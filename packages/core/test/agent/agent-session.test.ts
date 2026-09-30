@@ -155,6 +155,31 @@ describe('AgentSession', () => {
     expect(h.session.state().tasks).toEqual([]);
   });
 
+  it('tells interrupt listeners once when stop or interrupt sends the interrupt, and not when it does not', async () => {
+    const h = await harness('interrupt-bash');
+    const heard = vi.fn();
+    h.session.onInterrupt(heard);
+    expect(h.session.interrupt()).toBe(false);
+    h.session.send('run it');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'tool call started');
+    expect(h.session.interrupt()).toBe(true);
+    expect(heard).toHaveBeenCalledTimes(1);
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    h.session.send('again');
+    await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
+    expect(h.session.stop()).toBe(false);
+    expect(heard).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports whether its process is alive', async () => {
+    const h = await harness('multi-turn');
+    expect(h.session.processAlive()).toBe(false);
+    h.session.send('hi');
+    expect(h.session.processAlive()).toBe(true);
+    await h.session.close();
+    expect(h.session.processAlive()).toBe(false);
+  });
+
   it('answers the next message after a stop', async () => {
     const h = await harness('interrupt-bash');
     h.session.send('run it');

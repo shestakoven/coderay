@@ -1,3 +1,10 @@
+import { createHash } from 'node:crypto';
+
+export type ExpectWrite = (rel: string, hash: string) => void;
+
+export const blobHash = (text: string): string =>
+  createHash('sha1').update(`blob ${Buffer.byteLength(text)}\0`).update(text).digest('hex');
+
 export class IdeWrites {
   private readonly pending = new Map<string, { hash: string | null; until: number }[]>();
 

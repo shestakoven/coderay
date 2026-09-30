@@ -88,6 +88,7 @@ export class AgentSession {
   private readonly toolResultListeners = new Set<(info: ToolEndInfo) => void>();
   private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
   private readonly turnClosedListeners = new Set<() => void>();
+  private readonly interruptListeners = new Set<() => void>();
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -231,6 +232,25 @@ export class AgentSession {
     return this.tracker.hasOpenTurn();
   }
 
+  processAlive(): boolean {
+    return this.process !== null;
+  }
+
+  onInterrupt(listener: () => void): () => boolean {
+    this.interruptListeners.add(listener);
+    return () => this.interruptListeners.delete(listener);
+  }
+
+  hasLiveTask(toolUseId: string): boolean {
+    return [...this.tasks.values()].some((task) => task.toolUseId === toolUseId && task.endedAt === null);
+  }
+
+  toolInfo(toolUseId: string): { tool: string; summary: string; stepKey: string | null } | undefined {
+    const item = this.items.get(toolUseId);
+    if (item?.kind !== 'tool') return undefined;
+    return { tool: item.tool, summary: item.summary, stepKey: this.decisions.get(toolUseId)?.stepKey ?? null };
+  }
+
   onTurnClosed(listener: () => void): () => boolean {
     this.turnClosedListeners.add(listener);
     return () => this.turnClosedListeners.delete(listener);
@@ -323,7 +343,12 @@ export class AgentSession {
   stop(): boolean {
     if (!this.process || !this.tracker.canInterrupt()) return false;
     this.process.write({ type: 'control_request', request_id: `interrupt-${randomUUID()}`, request: { subtype: 'interrupt' } });
+    notify(this.interruptListeners);
     return true;
+  }
+
+  interrupt(): boolean {
+    return this.stop();
   }
 
   answerPrompt(requestId: string, answer: PromptAnswer): void {

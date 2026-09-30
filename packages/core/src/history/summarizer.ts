@@ -114,6 +114,9 @@ export class Summarizer {
   private readonly backoffMs: number[];
   private timer: ReturnType<typeof setTimeout> | undefined;
   private inFlight = false;
+  private closed = false;
+  private running: Promise<void> | null = null;
+  private readonly abort = new AbortController();
 
   constructor(private readonly o: SummarizerOptions) {
     this.now = o.now ?? Date.now;
@@ -122,6 +125,7 @@ export class Summarizer {
   }
 
   request(scope: Scope, ref: string): void {
+    if (this.closed) return;
     const built = this.build(scope, ref);
     if (!built) return;
     const id = `${scope}:${ref}`;
@@ -144,6 +148,14 @@ export class Summarizer {
     this.entries.set(id, { scope, ref, key: built.key, tries: 0, due: this.now() + this.debounceMs, exhausted: false });
     this.emit();
     this.schedule();
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = undefined;
+    this.abort.abort();
+    await this.running;
   }
 
   onChange(listener: (views: SummaryView[]) => void): () => boolean {
@@ -170,7 +182,7 @@ export class Summarizer {
   }
 
   private schedule(): void {
-    if (this.inFlight) return;
+    if (this.inFlight || this.closed) return;
     if (this.timer) clearTimeout(this.timer);
     this.timer = undefined;
     const waiting = [...this.entries.values()].filter((e) => !e.exhausted);
@@ -178,7 +190,7 @@ export class Summarizer {
     const next = Math.min(...waiting.map((e) => e.due));
     this.timer = setTimeout(() => {
       this.timer = undefined;
-      void this.run();
+      this.running = this.run().catch((error) => console.error('summarizer: a run failed', error)).finally(() => { this.running = null; });
     }, Math.max(0, next - this.now()));
   }
 
@@ -201,7 +213,7 @@ export class Summarizer {
     this.inFlight = true;
     let text: string | undefined;
     try {
-      text = cleanAnswer(await this.o.provider.fast.generate({ prompt: built.prompt, schema: SCHEMA }));
+      text = cleanAnswer(await this.o.provider.fast.generate({ prompt: built.prompt, schema: SCHEMA }, { signal: this.abort.signal }));
     } catch {
       text = undefined;
     }

@@ -3,6 +3,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { FileEdge } from '@ide/protocol';
+import { blobHash } from '../../src/history/ide-writes';
 import type { EmbeddingRule } from '../../src/map/embedding-check';
 import type { StructuredRequest } from '../../src/models/types';
 import { MapService } from '../../src/map/map-service';
@@ -42,11 +43,13 @@ interface Setup {
   agentIdle?: boolean;
   settle?: boolean;
   onEmbeddingProgress?: (progress: { done: number; total: number } | null) => void;
+  expectWrite?: (rel: string, hash: string) => void;
+  root?: string;
 }
 
 async function startService(setup: Setup = {}) {
   const tree = setup.tree ?? PROJECT;
-  const root = tempDir('ide-map-');
+  const root = setup.root ?? tempDir('ide-map-');
   await writeTree(root, tree);
   if (setup.mapJson !== undefined) {
     const text = typeof setup.mapJson === 'string' ? setup.mapJson : JSON.stringify(setup.mapJson);
@@ -63,6 +66,7 @@ async function startService(setup: Setup = {}) {
     embeddingRule: setup.embeddingRule ?? null,
     mapPollMs: 20,
     onEmbeddingProgress: setup.onEmbeddingProgress,
+    expectWrite: setup.expectWrite,
   });
   services.push(service);
   await service.start(filesOf(tree), setup.edges ?? []);
@@ -117,6 +121,14 @@ const API_DB_MAP = {
 };
 
 describe('MapService', () => {
+  it('registers the map save with the hash of the bytes it writes, before writing', async () => {
+    const root = tempDir('ide-map-');
+    const expected: { rel: string; hash: string; existed: boolean }[] = [];
+    await startService({ root, expectWrite: (rel, hash) => expected.push({ rel, hash, existed: existsSync(join(root, rel)) }) });
+    const text = await readFile(join(root, '.ide/map.json'), 'utf8');
+    expect(expected).toEqual([{ rel: '.ide/map.json', hash: blobHash(text), existed: false }]);
+  });
+
   it('groups a project without a map on first start and saves the AI map with its globs', async () => {
     const { root, service } = await startService();
     expect(service.view().components.map((component) => [component.id, component.files])).toEqual([

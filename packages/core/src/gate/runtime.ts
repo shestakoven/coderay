@@ -14,6 +14,7 @@ import type { HttpRoute } from '../server/server';
 import type { Store } from '../store/store';
 import { aliveRoute, Canary } from './canary';
 import { HookGate } from './hook-gate';
+import type { Hold } from './hold';
 import { hookRoute } from './hook-route';
 
 export const IDECORE_TIMEOUT_MS = 3_600_000;
@@ -29,6 +30,7 @@ export interface GateRuntimeOptions {
   userHome?: string;
   tempRoots?: string[];
   holdMs?: number;
+  hold?: Hold;
   planDeadlineMs?: number;
   hookDeadlineMs?: number;
 }
@@ -71,6 +73,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     home: options.userHome,
     tempRoots: options.tempRoots,
     holdMs: options.holdMs,
+    hold: options.hold,
   });
   const idecore = idecoreRoute({ secret, plans });
   const url = (path: string) => `http://127.0.0.1:${options.port()}${path}`;

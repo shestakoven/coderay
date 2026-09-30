@@ -190,6 +190,18 @@ describe('Summarizer scheduling', () => {
     expect(f.summarizer.views().map((v) => v.text).sort()).toEqual(['First.', 'Second.']);
   });
 
+  it('cancels the request in flight on close, sends no more and ignores new requests', async () => {
+    const gated = new GatedModel();
+    const f = setup({ provider: { fast: gated }, components: [{ id: 'c1', name: 'Greeter', files: ['src/a.ts'] }] });
+    f.summarizer.request('step', 'p1/s1');
+    f.summarizer.request('component', 'c1');
+    await f.settle();
+    await f.summarizer.close();
+    f.summarizer.request('step', 'p1/s1');
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect([gated.cancelled, gated.requests.length, vi.getTimerCount()]).toEqual([true, 1, 0]);
+  });
+
   it('stays pending after a failing provider and retries with backoff', async () => {
     let calls = 0;
     const flaky = new ScriptedModel(() => {

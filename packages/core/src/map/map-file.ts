@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { statSync, type Stats } from 'node:fs';
 import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { blobHash, type ExpectWrite } from '../history/ide-writes';
 import { isRecord, parseJson } from '../json';
 import { clean, cleanName, DESCRIPTION_MAX, NAME_MAX, SLUG_PATTERN, SUMMARY_MAX } from './grouping';
 
@@ -113,7 +114,7 @@ export function parseMapFile(text: string): MapFileData {
   };
 }
 
-export async function writeMapFile(root: string, data: MapFileWrite, expectedHash: string | null): Promise<MapFileData | 'conflict'> {
+export async function writeMapFile(root: string, data: MapFileWrite, expectedHash: string | null, expectWrite?: ExpectWrite): Promise<MapFileData | 'conflict'> {
   const path = join(root, MAP_FILE);
   const json: Record<string, unknown> = { version: 1, groupedAt: null, components: [], manual: [], assignments: {}, ...data.raw };
   json.version = 1;
@@ -133,6 +134,7 @@ export async function writeMapFile(root: string, data: MapFileWrite, expectedHas
   try {
     await writeFile(temp, text);
     if ((await currentHash(path)) !== expectedHash) return 'conflict';
+    expectWrite?.(MAP_FILE, blobHash(text));
     await rename(temp, path);
     return parseMapFile(text);
   } finally {

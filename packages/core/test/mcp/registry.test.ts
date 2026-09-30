@@ -1,6 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { blobHash } from '../../src/history/ide-writes';
 import { entryHash, fileHash } from '../../src/mcp/config';
 import { McpRegistry, McpSettingsError } from '../../src/mcp/registry';
 import { tempDir } from '../helpers';
@@ -79,6 +80,19 @@ describe('McpRegistry', () => {
     registry.save('project', 'docs', docs, null);
     expect(registry.sessionServers()).toEqual({ docs });
     expect(JSON.parse(readFileSync(join(root, '.ide', 'mcp.json'), 'utf8'))).toEqual({ mcpServers: { docs } });
+  });
+
+  it('registers a project save with the hash of the bytes it writes, before writing, and an IDE-level save not at all', () => {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const expected: { rel: string; hash: string; existed: boolean }[] = [];
+    const registry = new McpRegistry({
+      home, root, now: () => 1000, expectWrite: (rel, hash) => expected.push({ rel, hash, existed: existsSync(join(root, rel)) }),
+    });
+    registry.save('ide', 'docs', docs, null);
+    registry.save('project', 'docs2', docs, null);
+    const text = readFileSync(join(root, '.ide', 'mcp.json'), 'utf8');
+    expect(expected).toEqual([{ rel: '.ide/mcp.json', hash: blobHash(text), existed: false }]);
   });
 
   it('unapproves IDE-level servers after ~/.ide/mcp.json is edited outside Settings, until the edits are confirmed', () => {

@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { EmbeddingPlacement, FileEdge, GroupingPayload, MapComponent, MapStatus } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
+import type { ExpectWrite } from '../history/ide-writes';
 import type { IndexedFile } from '../model';
 import type { EmbedModel, StructuredModel } from '../models/types';
 import { aiCentroids, assignFiles, EMBEDDING_RULE } from './assign';
@@ -27,6 +28,7 @@ export interface MapServiceOptions {
   cooldownMs?: number;
   mapPollMs?: number;
   onEmbeddingProgress?: (progress: { done: number; total: number } | null) => void;
+  expectWrite?: ExpectWrite;
 }
 
 export interface MapView {
@@ -278,7 +280,7 @@ export class MapService {
       if (this.stopped) return;
       let written: MapFileData | 'conflict';
       try {
-        written = await writeMapFile(this.options.root, { ai, groupedAt: this.unsaved.groupedAt, raw: fresh.raw }, fresh.hash);
+        written = await writeMapFile(this.options.root, { ai, groupedAt: this.unsaved.groupedAt, raw: fresh.raw }, fresh.hash, this.options.expectWrite);
       } catch (error) {
         this.map = fresh;
         this.writeWarning = `cannot write ${MAP_FILE} (${(error as Error).message}); the new grouping is kept in memory`;

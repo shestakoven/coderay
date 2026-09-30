@@ -45,7 +45,7 @@ interface Fixture {
   ev(rel: string, exists?: boolean): FsEvent;
 }
 
-async function fixture(o: { root?: string; shadow?: (real: ShadowRepo) => ShadowRepo } = {}): Promise<Fixture> {
+async function fixture(o: { root?: string; shadow?: (real: ShadowRepo) => ShadowRepo; keptChanges?: number } = {}): Promise<Fixture> {
   let root = o.root;
   if (!root) {
     root = tempDir('chg-root-');
@@ -67,6 +67,7 @@ async function fixture(o: { root?: string; shadow?: (real: ShadowRepo) => Shadow
   const checkpoints = new Checkpoints(store, () => 's1');
   const service = new ChangeService({
     root, policy: DEFAULT_POLICY, shadow, baselines, ideWrites, ledger, store, checkpoints, sessionId: () => session.id, plans: { gate: () => gate.value },
+    keptChanges: o.keptChanges,
   });
   return { root, service, ledger, ideWrites, baselines, checkpoints, shadow, store, clock, gate, session, ev: (rel, exists = true) => ({ rel, exists, at: clock.now, wall: Date.now() }) };
 }
@@ -75,6 +76,28 @@ const approved = (activeStep: string | null): PlanGate => ({ state: 'approved', 
 const byPath = (changes: ChangeView[], path: string): ChangeView => changes.find((c) => c.path === path)!;
 
 describe('ChangeService recording', () => {
+  it('keeps at most the newest keptChanges in memory while the store keeps them all', async () => {
+    const f = await fixture({ keptChanges: 2 });
+    for (const [i, rel] of ['a.ts', 'b.ts', 'a.ts', 'b.ts'].entries()) {
+      write(f.root, rel, `v${i}`);
+      await f.service.handle(f.ev(rel));
+    }
+    expect([f.service.changes().length, f.store.changes('s1').length]).toEqual([2, 4]);
+    expect(f.service.changes().map((c) => c.path)).toEqual(['a.ts', 'b.ts']);
+  });
+
+  it('never drops a change that belongs to an open event from memory', async () => {
+    const f = await fixture({ keptChanges: 2 });
+    write(f.root, 'a.ts', 'v0');
+    await f.service.handle(f.ev('a.ts'));
+    f.service.markOutOfPlan([f.service.changes()[0]!.id], 'e1');
+    for (const [i, rel] of ['b.ts', 'b.ts', 'b.ts'].entries()) {
+      write(f.root, rel, `w${i}`);
+      await f.service.handle(f.ev(rel));
+    }
+    expect(f.service.changes().map((c) => [c.path, c.eventId])).toEqual([['a.ts', 'e1'], ['b.ts', null]]);
+  });
+
   it('records one Change per real content change and none for a touch or a duplicate event', async () => {
     const f = await fixture();
     write(f.root, 'a.ts', 'changed');
