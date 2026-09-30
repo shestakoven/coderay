@@ -1,10 +1,8 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import ignore from 'ignore';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChangeView, PlanView, SummaryView } from '@ide/protocol';
 import { guardedMatcher } from '../../src/gate/paths';
-import { Summarizer, type SummarizerOptions } from '../../src/history/summarizer';
+import { Summarizer, sanitizeText, type SummarizerOptions } from '../../src/history/summarizer';
 import type { IndexedFile } from '../../src/model';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { openStore } from '../../src/store/store';
@@ -62,10 +60,6 @@ afterEach(() => { vi.useRealTimers(); });
 
 describe('Summarizer prompt', () => {
   it('is built from names and counts only', async () => {
-    const dir = tempDir('sum-work-');
-    mkdirSync(join(dir, 'src'));
-    writeFileSync(join(dir, 'src/a.ts'), `export const greet = () => '${SENTINEL}';\n`);
-    writeFileSync(join(dir, '.env'), `TOKEN=${SENTINEL}\n`);
     const f = setup({
       changes: [
         change('src/a.ts'),
@@ -80,20 +74,15 @@ describe('Summarizer prompt', () => {
     await f.settle();
     expect(f.requests()).toHaveLength(1);
     const prompt = f.requests()[0]!.prompt;
-    expect(prompt).toContain('src/a.ts');
-    expect(prompt).toContain('Fix the greeting');
-    expect(prompt).toContain('The greeting is too curt');
-    expect(prompt).toContain('Make greetings friendlier');
-    expect(prompt).toContain('greet');
-    expect(prompt).toContain('"added":5');
-    expect(prompt).toContain('"removed":1');
-    expect(prompt).toContain('3 protected file(s)');
+    expect(prompt).toBe(
+      'Describe in one sentence, in English, what this plan step did. Use only these facts; the file list is complete and no file contents are available. Answer with JSON {"summary": "<one sentence>"}.\n' +
+        '{"files":[{"added":5,"path":"src/a.ts","removed":1,"symbols":[{"kind":"function","name":"greet"}]}],"goal":"Make greetings friendlier","protectedFiles":3,"rationale":"The greeting is too curt","ref":"p1/s1","scope":"step","targets":[{"op":"modify","path":"src/a.ts"}],"title":"Fix the greeting"}\n' +
+        '3 protected file(s) are not listed.',
+    );
     expect(prompt).not.toContain(SENTINEL);
     expect(prompt).not.toContain('.env');
     expect(prompt).not.toContain('.omc');
     expect(prompt).not.toContain('debug.log');
-    expect(prompt).not.toMatch(/^[+-][^+-]/m);
-    expect(prompt).not.toContain('@@');
   });
 
   it('describes a component from its changed enforced files, ignoring unassigned ones', async () => {
@@ -298,5 +287,152 @@ describe('Summarizer onChange', () => {
     f.summarizer.request('step', 'p1/s1');
     await f.settle();
     expect(seen).toHaveLength(count);
+  });
+});
+
+describe('sanitizeText', () => {
+  it('passes clean text unchanged', () => {
+    expect(sanitizeText('Make greetings friendlier in the UI.', isProtected)).toBe('Make greetings friendlier in the UI.');
+  });
+
+  it('replaces protected paths by their name or basename', () => {
+    expect(sanitizeText('Read .env and src/.env.local, then .ide/mcp.json.', isProtected)).toBe(
+      'Read a protected file and a protected file, then a protected file.',
+    );
+    expect(sanitizeText('touch .git/hooks/pre-commit and .claude/settings.json and .omc/state/x', isProtected)).toBe(
+      'touch a protected file and a protected file and a protected file',
+    );
+    expect(sanitizeText('edit src/a.ts', isProtected)).toBe('edit src/a.ts');
+  });
+
+  it('drops code fences and inline code', () => {
+    const text = 'Change it:\n```ts\nconst x = 1;\n```\nthen `run x` again ```unclosed code';
+    expect(sanitizeText(text, isProtected)).toBe('Change it: then again');
+  });
+
+  it('caps the length', () => {
+    expect(sanitizeText('word '.repeat(200), isProtected, 120)).toHaveLength(119);
+  });
+
+  it.each([
+    ['a long base64-looking token', 'use Zm9vYmFyMTIzNDU2Nzg5MGFiY2RlZg now'],
+    ['a long hex token', 'hash 0123456789abcdef0123456789abcdef'],
+    ['an sk- key', 'key sk-proj1234 here'],
+    ['a ghp_ token', 'use ghp_abcdef please'],
+    ['an AKIA key', 'AKIAIOSFODNN7EXAMPLE was used'],
+    ['an xox token', 'slack xoxb-123 token'],
+    ['a Bearer header', 'send Bearer abc.def'],
+    ['a key=value secret', 'set API_TOKEN=hunter2 first'],
+    ['a key: value secret', 'the password: hunter2'],
+    ['a PEM header', 'paste -----BEGIN PRIVATE KEY----- here'],
+  ])('refuses %s', (_name, text) => {
+    expect(sanitizeText(text, isProtected)).toBeNull();
+  });
+});
+
+describe('Summarizer free text', () => {
+  it('sanitizes goal, title, rationale and component names before the prompt', async () => {
+    const f = setup({
+      plans: [plan({ goal: 'Touch .env safely', steps: [{ ...plan().steps[0]!, title: 'Edit ```secret()``` code', rationale: 'Because `x` and src/.env.local' }] })],
+      components: [{ id: 'c1', name: '.claude', files: ['src/a.ts'] }],
+    });
+    f.summarizer.request('step', 'p1/s1');
+    f.summarizer.request('component', 'c1');
+    await f.settle();
+    await f.settle();
+    expect(f.requests()).toHaveLength(2);
+    for (const { prompt } of f.requests()) {
+      expect(prompt).not.toContain('.env');
+      expect(prompt).not.toContain('.claude');
+      expect(prompt).not.toContain('secret()');
+    }
+    expect(f.requests()[0]!.prompt).toContain('"goal":"Touch a protected file safely"');
+  });
+
+  it('caps goal, title and rationale', async () => {
+    const f = setup({ plans: [plan({ goal: 'goal '.repeat(80), steps: [{ ...plan().steps[0]!, title: 't '.repeat(200), rationale: 'r '.repeat(300) }] })] });
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    const json = JSON.parse(f.requests()[0]!.prompt.split('\n')[1]!) as { goal: string; title: string; rationale: string };
+    expect(json.goal.length).toBeLessThanOrEqual(200);
+    expect(json.title.length).toBeLessThanOrEqual(120);
+    expect(json.rationale.length).toBeLessThanOrEqual(300);
+  });
+
+  it('computes the key from the sanitized facts', async () => {
+    const a = setup({ plans: [plan({ goal: 'Edit .env' })] });
+    const b = setup({ plans: [plan({ goal: 'Edit .env.local' })] });
+    a.summarizer.request('step', 'p1/s1');
+    b.summarizer.request('step', 'p1/s1');
+    expect(a.summarizer.views()[0]!.key).toBe(b.summarizer.views()[0]!.key);
+  });
+
+  it('sends nothing and counts no try when the text looks like a secret, and sends once it is fixed', async () => {
+    const f = setup({ plans: [plan({ goal: 'Use API_TOKEN=hunter2' })] });
+    f.summarizer.request('step', 'p1/s1');
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(f.requests()).toHaveLength(0);
+    expect(f.summarizer.views()).toMatchObject([{ scope: 'step', ref: 'p1/s1', text: null, pending: true }]);
+    f.state.plans = [plan()];
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    expect(f.requests()).toHaveLength(1);
+    expect(f.summarizer.views()).toMatchObject([{ text: 'Greets politely.', pending: false }]);
+  });
+
+  it('blocks a component whose name looks like a secret', async () => {
+    const f = setup({ components: [{ id: 'c1', name: 'sk-live1234', files: ['src/a.ts'] }] });
+    f.summarizer.request('component', 'c1');
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(f.requests()).toHaveLength(0);
+    expect(f.summarizer.views()).toMatchObject([{ text: null, pending: true }]);
+  });
+});
+
+describe('Summarizer replaced requests and stored rows', () => {
+  it('does not count a stale call failure against the replacing request', async () => {
+    const gated = new GatedModel();
+    const f = setup({ provider: { fast: gated } });
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    expect(gated.requests).toHaveLength(1);
+    f.state.changes = [change('src/a.ts', { added: 40 })];
+    f.summarizer.request('step', 'p1/s1');
+    gated.answer({});
+    await vi.advanceTimersByTimeAsync(2_100);
+    expect(gated.requests).toHaveLength(2);
+  });
+
+  it('shows the newest stored row of a ref even when rows share a timestamp', () => {
+    const f = setup();
+    f.store.saveSummary({ key: 'k-old', scope: 'step', ref: 'p1/s1', text: 'Old.', createdAt: 5 });
+    f.store.saveSummary({ key: 'k-new', scope: 'step', ref: 'p1/s1', text: 'New.', createdAt: 5 });
+    expect(f.summarizer.views()).toEqual([{ key: 'k-new', scope: 'step', ref: 'p1/s1', text: 'New.', pending: false }]);
+  });
+
+  it('keeps the older text, marked pending, while a new input is waiting', async () => {
+    const f = setup({ provider: { fast: new ScriptedModel({ summary: 'Old.' }, { summary: 'New.' }) } });
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    f.state.changes = [change('src/a.ts', { added: 77 })];
+    f.summarizer.request('step', 'p1/s1');
+    expect(f.summarizer.views()).toMatchObject([{ text: 'Old.', pending: true }]);
+    await f.settle();
+    expect(f.summarizer.views()).toMatchObject([{ text: 'New.', pending: false }]);
+  });
+
+  it('returns to an earlier stored input without a call and shows its text', async () => {
+    const f = setup({ provider: { fast: new ScriptedModel({ summary: 'A.' }, { summary: 'B.' }) } });
+    const original = f.state.changes;
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    f.state.changes = [change('src/a.ts', { added: 77 })];
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    f.state.changes = original;
+    f.summarizer.request('step', 'p1/s1');
+    await f.settle();
+    expect(f.requests()).toHaveLength(2);
+    expect(f.summarizer.views()).toMatchObject([{ text: 'A.', pending: false }]);
   });
 });

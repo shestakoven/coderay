@@ -33,6 +33,10 @@ interface Built {
   prompt: string;
 }
 
+type Facts = Record<string, unknown>;
+
+const blockedKey = (scope: Scope, ref: string): string => createHash('sha256').update(`blocked:${scope}:${ref}`).digest('hex');
+
 const MAX_TRIES = 3;
 const MAX_CHARS = 200;
 const SCHEMA = { type: 'object', properties: { summary: { type: 'string' } }, required: ['summary'], additionalProperties: false };
@@ -50,6 +54,40 @@ function cleanAnswer(answer: unknown): string | undefined {
   if (typeof summary !== 'string') return undefined;
   const text = summary.replace(/\s*[\r\n]+\s*/g, ' ').trim().slice(0, MAX_CHARS).trim();
   return text === '' ? undefined : text;
+}
+
+const PROTECTED_WORDS = 'a protected file';
+const GOAL_CHARS = 200;
+const TITLE_CHARS = 120;
+const RATIONALE_CHARS = 300;
+const LONG_TOKEN = 24;
+
+function pathProtected(core: string, isProtected: (rel: string) => boolean): boolean {
+  const segments = core.replace(/^(\.\/)+/, '').replace(/^\/+/, '').split('/').filter(Boolean);
+  try {
+    return segments.some((_, i) => { const rel = segments.slice(i).join('/'); return isProtected(rel) || isProtected(`${rel}/`); });
+  } catch {
+    return true;
+  }
+}
+
+function looksSecret(core: string): boolean {
+  if (/^(sk-|ghp_|AKIA|xox)/.test(core)) return true;
+  return core.split('/').some((part) => part.length >= LONG_TOKEN && /^[A-Za-z0-9+_=-]+$/.test(part) && (/^[0-9a-fA-F]+$/.test(part) || (/\d/.test(part) && /[A-Za-z]/.test(part))));
+}
+
+export function sanitizeText(text: string, isProtected: (rel: string) => boolean, max = Number.POSITIVE_INFINITY): string | null {
+  const plain = text.replace(/```[\s\S]*?(```|$)/g, ' ').replace(/`[^`]*`/g, ' ').replace(/`/g, ' ').replace(/\s+/g, ' ').trim();
+  if (/-----BEGIN/.test(plain) || /\bBearer\s/.test(plain) || /[\w-]*(token|secret|password|key)[\w-]*\s*[=:]\s*\S/i.test(plain)) return null;
+  const parts = plain.split(/(\s+)/).map((part) => {
+    const match = /^([("'[]*)(.*?)([)"'\],;:.!?]*)$/.exec(part);
+    const [, lead = '', core = '', tail = ''] = match ?? [];
+    if (core === '') return part;
+    if (looksSecret(core)) return null;
+    return pathProtected(core, isProtected) ? `${lead}${PROTECTED_WORDS}${tail}` : part;
+  });
+  if (parts.includes(null)) return null;
+  return parts.join('').slice(0, max).trim();
 }
 
 export class Summarizer {
@@ -70,11 +108,21 @@ export class Summarizer {
   request(scope: Scope, ref: string): void {
     const built = this.build(scope, ref);
     if (!built) return;
-    if (this.o.store.summaries().some((summary) => summary.key === built.key)) {
-      this.entries.delete(`${scope}:${ref}`);
+    const id = `${scope}:${ref}`;
+    if (built === 'blocked') {
+      this.entries.set(id, { scope, ref, key: blockedKey(scope, ref), tries: 0, due: 0, exhausted: true });
+      this.emit();
       return;
     }
-    const id = `${scope}:${ref}`;
+    const stored = this.o.store.summaries().filter((summary) => summary.scope === scope && summary.ref === ref);
+    const hit = stored.find((summary) => summary.key === built.key);
+    if (hit) {
+      this.entries.delete(id);
+      const newest = stored.at(-1)!;
+      if (newest.key !== hit.key) this.o.store.saveSummary({ ...hit, createdAt: Math.max(this.now(), newest.createdAt + 1) });
+      this.emit();
+      return;
+    }
     const existing = this.entries.get(id);
     if (existing && existing.key === built.key && !existing.exhausted && existing.tries > 0) return;
     this.entries.set(id, { scope, ref, key: built.key, tries: 0, due: this.now() + this.debounceMs, exhausted: false });
@@ -90,7 +138,7 @@ export class Summarizer {
   views(): SummaryView[] {
     const byRef = new Map<string, SummaryView>();
     for (const s of this.o.store.summaries()) byRef.set(`${s.scope}:${s.ref}`, { key: s.key, scope: s.scope, ref: s.ref, text: s.text, pending: false });
-    for (const [id, e] of this.entries) byRef.set(id, { key: e.key, scope: e.scope, ref: e.ref, text: null, pending: true });
+    for (const [id, e] of this.entries) byRef.set(id, { key: e.key, scope: e.scope, ref: e.ref, text: byRef.get(id)?.text ?? null, pending: true });
     return [...byRef.values()];
   }
 
@@ -125,8 +173,11 @@ export class Summarizer {
     if (!ready) return this.schedule();
     const [id, entry] = ready;
     const built = this.build(entry.scope, entry.ref);
-    if (!built) {
-      this.entries.delete(id);
+    if (!built || built === 'blocked') {
+      if (built) {
+        entry.key = blockedKey(entry.scope, entry.ref);
+        entry.exhausted = true;
+      } else this.entries.delete(id);
       this.emit();
       return this.schedule();
     }
@@ -148,7 +199,7 @@ export class Summarizer {
       }
     }
     const current = this.entries.get(id);
-    if (text === undefined && current) {
+    if (text === undefined && current && current.key === built.key) {
       current.tries += 1;
       if (current.tries >= MAX_TRIES) current.exhausted = true;
       else current.due = this.now() + (this.backoffMs[current.tries - 1] ?? this.backoffMs.at(-1) ?? 0);
@@ -157,9 +208,9 @@ export class Summarizer {
     this.schedule();
   }
 
-  private build(scope: Scope, ref: string): Built | undefined {
+  private build(scope: Scope, ref: string): Built | 'blocked' | undefined {
     const facts = scope === 'step' ? this.stepFacts(ref) : this.componentFacts(ref);
-    if (!facts) return undefined;
+    if (!facts || facts === 'blocked') return facts;
     const json = JSON.stringify(canonical({ ...facts, ref, scope }));
     const key = createHash('sha256').update(json).digest('hex');
     const lead =
@@ -188,7 +239,7 @@ export class Summarizer {
     return { files, protectedFiles: protectedPaths.size };
   }
 
-  private stepFacts(ref: string): Record<string, unknown> | undefined {
+  private stepFacts(ref: string): Facts | 'blocked' | undefined {
     const at = ref.lastIndexOf('/');
     if (at < 0) return undefined;
     const plan = this.o.plans().find((p) => p.id === ref.slice(0, at));
@@ -202,15 +253,19 @@ export class Summarizer {
     }
     const changed = this.o.changes().filter((c) => c.planId === plan.id && c.stepKey === step.key);
     const { files, protectedFiles } = this.filesFacts(changed, protectedPaths);
-    return { goal: plan.goal, title: step.title, rationale: step.rationale, targets, files, protectedFiles };
+    const text = [sanitizeText(plan.goal, this.o.isProtected, GOAL_CHARS), sanitizeText(step.title, this.o.isProtected, TITLE_CHARS), sanitizeText(step.rationale, this.o.isProtected, RATIONALE_CHARS)];
+    if (text.includes(null)) return 'blocked';
+    const [goal, title, rationale] = text;
+    return { goal, title, rationale, targets, files, protectedFiles };
   }
 
-  private componentFacts(ref: string): Record<string, unknown> | undefined {
+  private componentFacts(ref: string): Facts | 'blocked' | undefined {
     const component = this.o.components().find((c) => c.id === ref);
     if (!component) return undefined;
     const members = new Set(component.files);
     const changed = this.o.changes().filter((c) => members.has(c.path));
     const { files, protectedFiles } = this.filesFacts(changed, new Set());
-    return { name: component.name, files, protectedFiles };
+    const name = sanitizeText(component.name, this.o.isProtected, TITLE_CHARS);
+    return name === null ? 'blocked' : { name, files, protectedFiles };
   }
 }
