@@ -420,6 +420,11 @@ export class Watchdog {
     this.notes.set(event.id, [...(this.notes.get(event.id) ?? []), text]);
   }
 
+  async quiesce(): Promise<void> {
+    this.clearTimer();
+    await this.settling;
+  }
+
   private clearTimer(): void {
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;

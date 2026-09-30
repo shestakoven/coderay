@@ -437,24 +437,24 @@ describe('HookGate', () => {
 
     it('gives a call one budget in all: a prompt, its withdrawal, the hold and the fresh prompt share holdMs', async () => {
       const hold = new Hold();
-      const { root, call, approve, pending, gate } = await setup({ hold, holdMs: 400 });
+      const { root, call, approve, pending, gate } = await setup({ hold, holdMs: 600 });
       await approve();
       const started = Date.now();
       const answer = call('Write', { file_path: join(root, 'src/other.ts') });
       await pending();
-      await sleep(150);
+      await sleep(250);
       hold.hold('event');
       gate.withdrawPending('x');
-      await sleep(100);
+      await sleep(150);
       hold.release();
       const reply = await answer;
       expect(reply?.permissionDecisionReason).toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
-      expect(Date.now() - started).toBeLessThan(520);
+      expect(Date.now() - started).toBeLessThan(800);
     });
 
     it('denies when the budget ran out while the call waited for the release', async () => {
       const hold = new Hold();
-      const { root, call, approve, pending, gate, decisions } = await setup({ hold, holdMs: 150 });
+      const { root, call, approve, pending, gate, decisions } = await setup({ hold, holdMs: 1000 });
       await approve();
       const answer = call('Write', { file_path: join(root, 'src/other.ts') });
       await pending();

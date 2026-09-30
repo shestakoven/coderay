@@ -17,7 +17,7 @@ import { openStore } from '../../src/store/store';
 import { ActivityLedger } from '../../src/watchdog/activity';
 import type { ToolCall } from '../../src/watchdog/activity';
 import type { FsEvent } from '../../src/watchdog/watcher';
-import { sessionRecord, tempDir } from '../helpers';
+import { sessionRecord, tempDir, waitFor } from '../helpers';
 
 const saved: Record<string, string | undefined> = {};
 const ISOLATION = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
@@ -87,9 +87,8 @@ async function fixture() {
   };
   const approve = async (input: unknown = PLAN): Promise<void> => {
     const call = state.plans.propose(input);
-    await new Promise((r) => setTimeout(r, 20));
-    const waiting = state.plans.plans().find((p: PlanView) => p.status === 'proposed');
-    if (waiting) state.plans.answer(waiting.id, waiting.version, { kind: 'approve' });
+    const waiting = await waitFor(() => state.plans.plans().find((p: PlanView) => p.status === 'proposed'), 'the plan proposed');
+    state.plans.answer(waiting.id, waiting.version, { kind: 'approve' });
     await call;
   };
   const stepWork = async (key: string, edits: Edit[], finish = true): Promise<void> => {
@@ -400,7 +399,7 @@ describe('step rollback', () => {
     await f.approve();
     await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }]);
     void f.plans.propose({ goal: 'Rollback', steps: PLAN.steps.slice(0, 2) });
-    await new Promise((r) => setTimeout(r, 20));
+    await waitFor(() => f.plans.plans().some((p) => p.version === 2 && p.status === 'proposed'), 'the revision proposed');
     expect(f.plans.plans().at(-1)).toMatchObject({ version: 2, status: 'proposed' });
     expect((await f.reverts.previewStepRollback('plan-1', 's1')).allowed).toBe(true);
     expect(await f.reverts.previewStepRollback('plan-1', 's3')).toMatchObject({ allowed: false, reason: 'this step has not run' });

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import type { ChangeView, ControlMode, FileAnswer, WatchdogAnswer, WatchdogEventView } from '@ide/protocol';
 import { Hold } from '../../src/gate/hold';
 import { Baselines, scanTree } from '../../src/history/baselines';
@@ -92,6 +92,7 @@ async function fixture(o: Setup = {}) {
     gate: { withdrawPending: () => undefined }, policy: () => policy,
     toolInfo: () => undefined, settleMs: 30, newId: () => `ev${++n}`, deliverWaitMs: o.deliverWaitMs,
   });
+  onTestFinished(async () => { await watchdog.quiesce(); await changes.idle(); });
   const emitted: WatchdogEventView[] = [];
   watchdog.onChange((e) => emitted.push(e));
   const produce = async (rels: string[], content = 'agent version'): Promise<ChangeView[]> => {

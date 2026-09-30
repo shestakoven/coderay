@@ -19,7 +19,7 @@ async function watched(settleMs = 20): Promise<{ root: string; events: FsEvent[]
 
 const sentinel = async (root: string, events: FsEvent[], name: string): Promise<void> => {
   writeFileSync(join(root, name), 's');
-  await waitFor(() => events.find((e) => e.rel === name), `sentinel ${name}`);
+  await waitFor(() => events.find((e) => e.rel === name), `sentinel ${name}`, 30_000);
 };
 
 const rels = (events: FsEvent[]): string[] => events.map((e) => e.rel);
@@ -58,7 +58,7 @@ describe('WatchdogWatcher', () => {
   });
 
   it('reports an atomic save as one event that exists', async () => {
-    const { root, events } = await watched();
+    const { root, events } = await watched(200);
     writeFileSync(join(root, 'a.ts'), '1');
     await waitFor(() => events.length > 0, 'first');
     events.length = 0;

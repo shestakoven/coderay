@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import { Hold } from '../../src/gate/hold';
 import { Baselines, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
@@ -60,6 +60,7 @@ async function world(root: string, storeDir: string, shadowDir: string) {
     gate: { withdrawPending: () => undefined }, policy: () => DEFAULT_POLICY,
     toolInfo: () => undefined, settleMs: 30, newId: () => `ev-${store.watchdogEvents('s1').length}-${++n}`,
   });
+  onTestFinished(async () => { await watchdog.quiesce(); await changes.idle(); });
   return { store, shadow, baselines, changes, session, hold, watchdog };
 }
 

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView, ControlMode, FrozenScope, WatchdogEventView } from '@ide/protocol';
 import { Hold } from '../../src/gate/hold';
 import type { PlanGate } from '../../src/gate/scope-guard';
@@ -91,6 +91,7 @@ async function fixture(o: Setup = {}) {
     toolInfo: (id) => (info.throws ? (() => { throw new Error('toolInfo exploded'); })() : id === 't1' ? { tool: 'Bash', summary: 'npm run gen', stepKey: null } : undefined),
     settleMs: o.settleMs ?? 50, newId: () => `ev${++n}`,
   });
+  onTestFinished(async () => { await watchdog.quiesce(); await changes.idle(); });
   const emitted: WatchdogEventView[] = [];
   watchdog.onChange((e) => emitted.push(e));
   const produce = async (rels: string[], content = 'changed'): Promise<ChangeView[]> => {

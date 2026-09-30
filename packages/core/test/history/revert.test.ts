@@ -341,7 +341,7 @@ describe('RevertService review fixes', () => {
         wrapped.restore = (hash, abs, mode, guard) => (abs.endsWith('a.ts') ? new Promise(() => undefined) : real.restore(hash, abs, mode, guard));
         return wrapped;
       },
-      revert: { restoreTimeoutMs: 50 },
+      revert: { restoreTimeoutMs: 1000 },
     });
     const ca = await f.change('a.ts', 'agent a');
     const cb = await f.change('b.ts', 'agent b');

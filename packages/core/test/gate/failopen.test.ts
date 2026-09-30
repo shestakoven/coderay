@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView, ControlMode } from '@ide/protocol';
 import type { ToolEndInfo } from '../../src/agent/tracker';
 import { FailOpenDetector, NO_HOOK_TOOLS } from '../../src/gate/failopen';
@@ -82,6 +82,7 @@ async function fixture(o: { mode?: ControlMode; detector?: Partial<ConstructorPa
     reverts: { revertChanges: () => { throw new Error('not here'); } }, gate, policy: () => policy,
     toolInfo: () => undefined, settleMs: 50, newId: () => `ev${++n}`,
   });
+  onTestFinished(async () => { await watchdog.quiesce(); await changes.idle(); });
   const decisions: ToolDecisionRecord[] = [];
   gate.onDecision((r) => decisions.push(r));
   const detector = new FailOpenDetector({ gate, ledger, changes, watchdog, record: (r) => decisions.push(r), ...o.detector });
