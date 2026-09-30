@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClaudeCommand } from '../../src/agent/claude-process';
 import { fixture } from '../helpers';
@@ -13,6 +14,8 @@ export interface FakeRecord {
   stdin?: { type: string; [key: string]: unknown };
   hook?: { id: string; tool: string; allowed: boolean; reason: string; exit: number | null };
   mcp?: { id: string; tool: string; text: string; isError: boolean };
+  background?: { id: string; pid: number };
+  mcpWrite?: { id: string; tool: string; written: string[] };
 }
 
 export const FAKE_CLAUDE = fileURLToPath(new URL('./fake-claude.mjs', import.meta.url));
@@ -21,7 +24,7 @@ export function fakeClaude(scenario: string, recordFile: string): ClaudeCommand 
   return {
     command: process.execPath,
     args: [FAKE_CLAUDE],
-    env: { FAKE_CLAUDE_SCENARIO: fixture(`stream/${scenario}.jsonl`), FAKE_CLAUDE_RECORD: recordFile },
+    env: { FAKE_CLAUDE_SCENARIO: isAbsolute(scenario) ? scenario : fixture(`stream/${scenario}.jsonl`), FAKE_CLAUDE_RECORD: recordFile },
   };
 }
 
