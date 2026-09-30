@@ -713,30 +713,30 @@ describe('AgentSession with the gate', () => {
   });
 });
 
+const SECRET = 'canary-secret';
+
+async function canaryHarness(scenario: string, hooks: 'on' | 'off', canaryMs: number) {
+  const home = tempDir('ide-home-');
+  const root = tempDir('ide-root-');
+  const canary = new Canary();
+  const server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: [aliveRoute({ secret: SECRET, canary })] });
+  onTestFinished(() => server.close());
+  const gate: SessionGate = {
+    write: (sessionId) => ({
+      settingsPath: writeGateFiles(runDir(home), gateBase(home, root, sessionId), { url: `http://127.0.0.1:${server.port}/hook`, secret: SECRET, sessionId }).settingsPath,
+    }),
+    remove: (sessionId) => removeGateFiles(runDir(home), gateBase(home, root, sessionId)),
+    systemPrompt: () => systemPrompt(COMPONENTS),
+    canary,
+  };
+  const h = await harness(scenario, { home, root, gate, canaryMs }, { FAKE_CLAUDE_HOOKS: hooks });
+  const ping = () => fetch(`http://127.0.0.1:${server.port}/hook/alive`, {
+    method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ sessionId: h.session.sessionId() }),
+  });
+  return { ...h, ping };
+}
+
 describe('AgentSession waiting for the session-start hook', () => {
-  const SECRET = 'canary-secret';
-
-  async function canaryHarness(scenario: string, hooks: 'on' | 'off', canaryMs: number) {
-    const home = tempDir('ide-home-');
-    const root = tempDir('ide-root-');
-    const canary = new Canary();
-    const server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: [aliveRoute({ secret: SECRET, canary })] });
-    onTestFinished(() => server.close());
-    const gate: SessionGate = {
-      write: (sessionId) => ({
-        settingsPath: writeGateFiles(runDir(home), gateBase(home, root, sessionId), { url: `http://127.0.0.1:${server.port}/hook`, secret: SECRET, sessionId }).settingsPath,
-      }),
-      remove: (sessionId) => removeGateFiles(runDir(home), gateBase(home, root, sessionId)),
-      systemPrompt: () => systemPrompt(COMPONENTS),
-      canary,
-    };
-    const h = await harness(scenario, { home, root, gate, canaryMs }, { FAKE_CLAUDE_HOOKS: hooks });
-    const ping = () => fetch(`http://127.0.0.1:${server.port}/hook/alive`, {
-      method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ sessionId: h.session.sessionId() }),
-    });
-    return { ...h, ping };
-  }
-
   const userMessages = (h: Harness) => h.stdin().filter((message) => message.type === 'user');
 
   it('holds the first message until the session-start hook has reported', async () => {
@@ -914,5 +914,57 @@ describe('AgentSession feeds for the watchdog', () => {
     h.session.send('start a subagent');
     await waitFor(() => seen.length === 2, 'results delivered');
     expect(seen).toEqual(['toolu_fx_agent', 'toolu_fx_sub_write']);
+  });
+});
+
+describe('AgentSession notes from the watchdog', () => {
+  const userWrites = (h: Harness) => h.stdin().filter((message) => message.type === 'user');
+
+  it('prepends a queued note to the next user message and shows it as a notice, with the message text unchanged', async () => {
+    const h = await harness('multi-turn');
+    h.session.queueNote('[IDE] The user kept a.ts.');
+    h.session.send('continue please');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[IDE] The user kept a.ts.\n\ncontinue please' } }]);
+    const items = h.session.state().items;
+    expect(items.find((item) => item.kind === 'message' && item.role === 'user')).toMatchObject({ text: 'continue please' });
+    expect(items.find((item) => item.kind === 'notice')).toMatchObject({ text: '[IDE] The user kept a.ts.' });
+    h.session.send('and once more');
+    await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
+    expect(userWrites(h)[1]).toMatchObject({ message: { content: 'and once more' } });
+  });
+
+  it('writes an absorbed note into the open turn without opening a turn of its own', async () => {
+    const h = await harness('interrupt-bash');
+    h.session.send('run it');
+    await waitFor(() => userWrites(h).length === 1, 'first message delivered');
+    const turnsBefore = h.session.state().turns.length;
+    h.session.sendAbsorbed('[IDE] note');
+    await waitFor(() => userWrites(h).length === 2, 'note delivered');
+    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[IDE] note' } });
+    const state = h.session.state();
+    expect(state.turns).toHaveLength(turnsBefore);
+    expect(state.items.filter((item) => item.kind === 'message' && item.role === 'user')).toHaveLength(1);
+    expect(state.items.find((item) => item.kind === 'notice')).toMatchObject({ text: 'IDE note sent to the agent' });
+  });
+
+  it('refuses an absorbed note when there is no process or no open turn', async () => {
+    const h = await harness('multi-turn');
+    expect(() => h.session.sendAbsorbed('[IDE] note')).toThrow(SessionError);
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(() => h.session.sendAbsorbed('[IDE] note')).toThrow(SessionError);
+    expect(userWrites(h)).toHaveLength(1);
+  });
+
+  it('holds an absorbed note behind the session-start hook like the first message', async () => {
+    const h = await canaryHarness('interrupt-bash', 'off', 5000);
+    h.session.send('run it');
+    await waitFor(() => h.argvs().length === 1, 'claude started');
+    h.session.sendAbsorbed('[IDE] note');
+    expect(userWrites(h)).toEqual([]);
+    await h.ping();
+    await waitFor(() => userWrites(h).length === 2, 'both delivered');
+    expect(userWrites(h).map((m) => (m.message as { content: string }).content)).toEqual(['run it', '[IDE] note']);
   });
 });

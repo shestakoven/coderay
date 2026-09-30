@@ -1,15 +1,20 @@
 import { randomUUID } from 'node:crypto';
-import type { ChangeView, ControlMode, EventResolution, Policy, WatchdogEventView, WatchdogToolCall } from '@ide/protocol';
+import type { ChangeView, ControlMode, EventResolution, FileAnswer, Policy, WatchdogAnswer, WatchdogEventView, WatchdogToolCall } from '@ide/protocol';
 import type { Hold } from '../gate/hold';
 import type { HookGate } from '../gate/hook-gate';
 import type { PlanGate } from '../gate/scope-guard';
 import { covers } from '../gate/scope';
 import type { ChangeService } from '../history/changes';
+import type { RevertService } from '../history/revert';
 import type { ShadowRepo } from '../history/shadow';
 import type { PlanService } from '../plans/plan-service';
 import type { Store } from '../store/store';
+import { resumeMessage, type ResumeInput } from './resume';
 
 const SETTLE_MS = 1_000;
+const DELIVER_WAIT_MS = 10_000;
+
+export class WatchdogError extends Error {}
 
 export interface WatchdogSession {
   hasOpenTurn(): boolean;
@@ -33,14 +38,21 @@ export interface WatchdogOptions {
   root: string;
   plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand'>;
   changes: ChangeService;
+  reverts: Pick<RevertService, 'revertChanges'>;
   gate: Pick<HookGate, 'withdrawPending'>;
   policy: () => Policy;
   toolInfo: (toolUseId: string) => { tool: string; summary: string; stepKey: string | null } | undefined;
   settleMs?: number;
+  deliverWaitMs?: number;
   now?: () => number;
   newId?: () => string;
 }
 
+const FILE_ANSWERS: ReadonlySet<string> = new Set(['keep', 'revert', 'mine']);
+const ANSWERS: ReadonlySet<string> = new Set([...FILE_ANSWERS, 'expand-plan']);
+const RESOLUTION: Record<FileAnswer | 'expand-plan', EventResolution> = {
+  keep: 'kept', revert: 'reverted', mine: 'relabeled-human', 'expand-plan': 'plan-expanded',
+};
 const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 const isGitState = (rel: string): boolean => rel === '.git/HEAD' || rel === '.git/refs' || rel.startsWith('.git/refs/');
 const insideProject = (rel: string): boolean => rel !== '' && rel !== '..' && !rel.startsWith('../') && !rel.startsWith('/') && !/^[A-Za-z]:/.test(rel);
@@ -53,6 +65,7 @@ export class Watchdog {
   private flagged: { event: WatchdogEventView; at: number } | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private settling: Promise<void> | null = null;
+  private readonly answering = new Set<string>();
   private readonly settleMs: number;
   private readonly now: () => number;
   private readonly newId: () => string;
@@ -88,6 +101,123 @@ export class Watchdog {
     event.resolvedAt = this.now();
     this.persist(event);
     this.emit(event);
+  }
+
+  stopAgent(eventId: string): void {
+    const event = this.all.find((e) => e.id === eventId);
+    if (!event || event.phase === 'resolved') throw new WatchdogError('That question is no longer open.');
+    if (event.interrupted) return;
+    this.step(event, 'interrupt the agent', () => { event.interrupted = this.o.session.interrupt(); });
+    if (!event.interrupted) return;
+    this.persist(event);
+    this.emit(event);
+  }
+
+  async answer(eventId: string, answer: WatchdogAnswer): Promise<void> {
+    const event = this.all.find((e) => e.id === eventId);
+    if (!event) throw new WatchdogError('That question does not exist.');
+    if (this.answering.has(eventId)) throw new WatchdogError('That question is already being answered.');
+    if (event.phase !== 'pending') throw new WatchdogError('That question is not waiting for an answer.');
+    this.answering.add(eventId);
+    try {
+      await this.apply(event, answer);
+    } finally {
+      this.answering.delete(eventId);
+    }
+  }
+
+  private decide(event: WatchdogEventView, answer: WatchdogAnswer): Map<string, FileAnswer | 'expand-plan'> {
+    const paths = [...new Set(event.changes.map((c) => c.path))];
+    const decisions = new Map<string, FileAnswer | 'expand-plan'>();
+    if (answer.kind === 'all') {
+      if (!ANSWERS.has(answer.answer)) throw new WatchdogError('That answer is not one of keep, revert, mine or expand-plan.');
+      if (answer.answer === 'expand-plan' && !event.canExpand) throw new WatchdogError('The plan cannot be expanded for these files.');
+      for (const path of paths) decisions.set(path, answer.answer);
+    } else {
+      for (const [path, value] of Object.entries(answer.files)) {
+        if (!paths.includes(path)) throw new WatchdogError(`${path} is not one of the files in this question.`);
+        if (!FILE_ANSWERS.has(value)) throw new WatchdogError(`${value} is not one of keep, revert or mine.`);
+      }
+      for (const path of paths) decisions.set(path, Object.hasOwn(answer.files, path) ? answer.files[path]! : 'keep');
+    }
+    for (const [path, value] of decisions) {
+      if (isGitState(path) && value !== 'keep') throw new WatchdogError(`${path} can only be kept: the IDE does not roll back git state.`);
+    }
+    return decisions;
+  }
+
+  private async apply(event: WatchdogEventView, answer: WatchdogAnswer): Promise<void> {
+    const decisions = this.decide(event, answer);
+    const pathsOf = (what: FileAnswer | 'expand-plan'): string[] => [...decisions].filter(([, v]) => v === what).map(([path]) => path);
+    const idsOf = (paths: string[]): string[] => event.changes.filter((c) => paths.includes(c.path)).map((c) => c.id);
+    const input: ResumeInput = {
+      kept: pathsOf('keep'), reverted: [], added: pathsOf('expand-plan'), mine: pathsOf('mine'), conflicts: [],
+      interrupted: event.interrupted, killedSubagents: event.interrupted && event.runningSubagents > 0 ? [`${event.runningSubagents} async subagents`] : [],
+      backgroundShell: event.backgroundShell, unknownOrigin: event.unknownOrigin, failOpen: event.kind === 'fail-open',
+    };
+    const revertPaths = pathsOf('revert');
+    if (revertPaths.length > 0) {
+      const record = await this.o.reverts.revertChanges({ changeIds: idsOf(revertPaths), eventId: event.id });
+      for (const file of record.files) {
+        if (file.outcome === 'restored' || file.outcome === 'deleted' || file.outcome === 'recreated') input.reverted.push(file.path);
+        else input.conflicts.push({ path: file.path, reason: file.reason ?? file.outcome });
+      }
+    }
+    if (input.mine.length > 0) this.o.changes.relabelHuman(idsOf(input.mine));
+    if (input.kept.length > 0) this.o.changes.setResolution(idsOf(input.kept), 'kept', event.id);
+    if (input.added.length > 0) {
+      try {
+        this.o.plans.expand(input.added.map((path) => this.expandTarget(event, path)));
+      } catch (error) {
+        throw new WatchdogError(`Could not expand the plan: ${describe(error)}`);
+      }
+      this.o.changes.setResolution(idsOf(input.added), 'plan-expanded', event.id);
+    }
+    const resolutions = new Set([...decisions.values()].map((v) => RESOLUTION[v]));
+    const resolution: EventResolution = resolutions.size === 1 ? [...resolutions][0]! : resolutions.size === 0 ? (answer.kind === 'all' ? RESOLUTION[answer.answer] : 'kept') : 'mixed';
+    this.step(event, 'refresh the changes', () => { event.changes = event.changes.map((c) => this.fresh(c)); });
+    if (input.conflicts.length > 0) {
+      event.reason = [event.reason, `Not restored: ${input.conflicts.map((c) => `${c.path} (${c.reason})`).join('; ')}`].filter(Boolean).join('\n');
+    }
+    this.close(event.id, resolution);
+    try {
+      await this.deliver(event, resumeMessage(input), input.reverted.length + input.added.length + input.mine.length + input.conflicts.length > 0);
+    } catch (error) {
+      console.error('watchdog: could not tell the agent', error);
+      event.reason = [event.reason, `Could not tell the agent: ${describe(error)}`].filter(Boolean).join('\n');
+      this.persist(event);
+      this.emit(event);
+    } finally {
+      this.o.hold.release();
+    }
+  }
+
+  private expandTarget(event: WatchdogEventView, path: string): { rel: string; exists: boolean; dir: boolean; deleted: boolean } {
+    const own = event.changes.filter((c) => c.path === path);
+    const deleted = own.at(-1)!.afterHash === null && !own.at(-1)!.unreadable;
+    return { rel: path, exists: deleted || own[0]!.beforeHash !== null, dir: false, deleted };
+  }
+
+  private async deliver(event: WatchdogEventView, text: string, changed: boolean): Promise<void> {
+    const { session } = this.o;
+    if (!event.interrupted && !changed) return;
+    if (!session.processAlive()) return session.queueNote(text);
+    if (event.interrupted) {
+      if (!(await this.turnClosed()) || !session.processAlive()) return session.queueNote(text);
+      return session.send(text);
+    }
+    if (session.hasOpenTurn()) return session.sendAbsorbed(text);
+    session.queueNote(text);
+  }
+
+  private turnClosed(): Promise<boolean> {
+    const { session } = this.o;
+    if (!session.hasOpenTurn()) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const off = session.onTurnClosed(() => { clearTimeout(timer); off(); resolve(true); });
+      const timer = setTimeout(() => { off(); resolve(false); }, this.o.deliverWaitMs ?? DELIVER_WAIT_MS);
+      timer.unref?.();
+    });
   }
 
   consider(change: ChangeView): void {

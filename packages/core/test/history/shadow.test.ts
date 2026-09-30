@@ -194,6 +194,17 @@ describe('ShadowRepo.restore', () => {
     expect(statSync(target).mode & 0o777).toBe(0o644);
   });
 
+  it('never sets setuid, setgid or sticky bits, whatever mode it is given', async () => {
+    const { shadow } = await open(); const w = tempDir('w-');
+    const src = join(w, 'src'); writeFileSync(src, 'x');
+    const blob = (await shadow.put(src))!;
+    const target = join(w, 'f');
+    await shadow.restore(blob.hash, target, 0o6755);
+    expect(statSync(target).mode & 0o7777).toBe(0o755);
+    await shadow.restore(blob.hash, target, 0o100644);
+    expect(statSync(target).mode & 0o7777).toBe(0o644);
+  });
+
   it('deletes on null, and a missing file is fine', async () => {
     const { shadow } = await open(); const w = tempDir('w-');
     writeFileSync(join(w, 'f'), 'x');

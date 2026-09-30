@@ -186,7 +186,7 @@ export class ShadowRepo {
     const temp = `${abs}.ide-${process.pid}-${tempCounter++}-${randomBytes(6).toString('hex')}`;
     try {
       await writeFile(temp, content, { flag: 'wx' });
-      await chmod(temp, mode);
+      await chmod(temp, mode & 0o777);
       if (guard && !(await guard())) {
         await rm(temp, { force: true });
         return 'changed';

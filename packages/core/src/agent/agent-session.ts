@@ -45,6 +45,7 @@ const SESSION_ERRORS = {
   'bad-answer': 'That answer does not fit the question.',
   'no-gate': 'The IDE could not prepare the hook settings for claude, so the agent was not started.',
   'hook-off': HOOK_OFF_NOTICE,
+  'no-turn': 'The agent has no open turn to add a note to.',
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -98,6 +99,7 @@ export class AgentSession {
   private hookReady = true;
   private refused = false;
   private pendingSends: string[] = [];
+  private notes: string[] = [];
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -224,9 +226,28 @@ export class AgentSession {
     if (!this.process) this.spawn();
     if (!this.process) throw new SessionError('no-gate');
     notify(this.userMessageListeners);
+    const notes = this.notes.splice(0);
+    const payload = [...notes, text].join('\n\n');
+    if (this.hookReady) this.process.write(userMessage(payload));
+    else this.pendingSends.push(payload);
+    this.apply(this.tracker.userMessage(text));
+    for (const note of notes) this.apply(this.tracker.notice(note));
+  }
+
+  queueNote(text: string): void {
+    if (text.trim() === '') throw new SessionError('empty');
+    this.notes.push(text);
+  }
+
+  sendAbsorbed(text: string): void {
+    if (text.trim() === '') throw new SessionError('empty');
+    if (this.terminating) throw new SessionError('restarting');
+    if (this.refused) throw new SessionError('hook-off');
+    if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
+    if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
     if (this.hookReady) this.process.write(userMessage(text));
     else this.pendingSends.push(text);
-    this.apply(this.tracker.userMessage(text));
+    this.apply(this.tracker.notice('IDE note sent to the agent'));
   }
 
   stop(): boolean {
@@ -257,6 +278,7 @@ export class AgentSession {
     await this.terminate('new');
     this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
+    this.notes = [];
     this.reset(null);
   }
 
