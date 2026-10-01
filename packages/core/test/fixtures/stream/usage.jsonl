@@ -1,0 +1,7 @@
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"/fake/project","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.281"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}],"usage":{"input_tokens":10,"cache_creation_input_tokens":1000,"cache_read_input_tokens":95000,"output_tokens":4}},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"sub"}],"usage":{"input_tokens":5,"cache_creation_input_tokens":0,"cache_read_input_tokens":7,"output_tokens":1}},"parent_tool_use_id":"toolu_sub","session_id":"$SESSION"}
+{"type":"rate_limit_event","rate_limit_info":{"status":"allowed","rateLimitType":"five_hour","unifiedWindows":{"five_hour":{"utilization":0.42,"resetsAt":1790898600},"seven_day":{"utilization":0.07,"resetsAt":1791482400}}},"session_id":"$SESSION"}
+{"type":"result","subtype":"success","is_error":false,"result":"OK","modelUsage":{"claude-haiku-4-5-20251001":{"contextWindow":200000}},"session_id":"$SESSION"}
+{"fake":"await-user"}

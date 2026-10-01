@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import type { SessionServerMessage } from '@ide/protocol';
+import { EMPTY_USAGE, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions } from '../../src/agent/agent-session';
 import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
@@ -509,7 +509,7 @@ describe('AgentSession.start with several chats', () => {
     const { home, root, store } = seededStore();
     store.setMeta('activeSessionId', '');
     const h = await harness('multi-turn', { home, root, store });
-    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [] }, null]);
+    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE }, null]);
   });
 
   it('opens no chat when the active chat was ended', async () => {
@@ -597,5 +597,31 @@ describe('AgentSession.deleteAllSessions', () => {
     const h = await harness('multi-turn');
     await h.session.deleteAllSessions();
     expect(h.session.listChats()).toEqual({ activeId: null, sessions: [] });
+  });
+});
+
+describe('AgentSession usage', () => {
+  it('reports the context of the chat and the account limits, and tells clients when they change', async () => {
+    const h = await harness('usage');
+    await ask(h, 'hi');
+    expect(h.session.state().usage).toEqual({
+      contextTokens: 96_010, contextWindow: 200_000, fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 },
+    });
+    const patches = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.usage ? [message.patch.usage] : []));
+    expect(patches.at(-1)).toEqual(h.session.state().usage);
+    expect(patches.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('starts a new chat with an empty context but keeps the account limits', async () => {
+    const h = await harness('usage');
+    await ask(h, 'hi');
+    await h.session.newSession();
+    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 } });
+    expect(lastSnapshot(h)).toMatchObject({ state: { usage: { contextTokens: null } } });
+  });
+
+  it('shows no usage before the agent has said anything', async () => {
+    const h = await harness('usage');
+    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, fiveHour: null, sevenDay: null });
   });
 });

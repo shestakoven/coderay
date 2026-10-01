@@ -3,7 +3,7 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import WebSocket from 'ws';
-import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
+import { EMPTY_USAGE, type ClientMessage, type MapSnapshot, type ServerMessage } from '@ide/protocol';
 import { startServer, type RunningServer } from '../../src/server/server';
 import { mapStatus, tempDir, waitFor } from '../helpers';
 
@@ -196,7 +196,7 @@ describe('server', () => {
   });
 
   it('sends greeting messages right after the map snapshot on connect', async () => {
-    const empty = { session: null, turns: [], items: [], tasks: [], mcpServers: [] };
+    const empty = { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE };
     const svr = await startServer({ port: 0, token: TOKEN, snapshot: () => snapshot(1), greeting: () => [{ type: 'session.snapshot', state: empty }] });
     onTestFinished(() => svr.close());
     const { messages } = await connect({}, svr.port);

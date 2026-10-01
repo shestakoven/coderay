@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { ChatItem, SessionServerMessage } from '@ide/protocol';
+import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
 import type { ToolEndInfo } from '../../src/agent/tracker';
@@ -449,7 +449,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     await h.session.newSession();
-    expect(h.session.state()).toEqual({ session: null, turns: [], items: [], tasks: [], mcpServers: [] });
+    expect(h.session.state()).toEqual({ session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE });
     h.session.send('hello again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'second claude spawned');
     expect(flag(argvs[1], '--session-id')).not.toBe(flag(argvs[0], '--session-id'));

@@ -132,12 +132,29 @@ export interface McpServerState {
   status: string;
 }
 
+export interface LimitWindow {
+  /** Share of the window already used, 0 to 1. */
+  utilization: number;
+  /** Unix seconds. */
+  resetsAt: number;
+}
+
+export interface UsageView {
+  contextTokens: number | null;
+  contextWindow: number | null;
+  fiveHour: LimitWindow | null;
+  sevenDay: LimitWindow | null;
+}
+
+export const EMPTY_USAGE: UsageView = { contextTokens: null, contextWindow: null, fiveHour: null, sevenDay: null };
+
 export interface SessionState {
   session: SessionView | null;
   turns: TurnView[];
   items: ChatItem[];
   tasks: TaskView[];
   mcpServers: McpServerState[];
+  usage: UsageView;
 }
 
 export interface SessionPatch {
@@ -146,6 +163,7 @@ export interface SessionPatch {
   items?: ChatItem[];
   tasks?: TaskView[];
   mcpServers?: McpServerState[];
+  usage?: UsageView;
 }
 
 export type SessionServerMessage =

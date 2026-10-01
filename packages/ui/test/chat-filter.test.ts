@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatItem } from '@ide/protocol';
+import { EMPTY_USAGE, type ChatItem } from '@ide/protocol';
 import { chatReducer, filterItems, initialChatState, type ChatFilter } from '../src/chat/chat-state';
 
 const msg = (id: string, seq: number, role: 'user' | 'assistant' = 'assistant'): ChatItem =>
@@ -39,7 +39,7 @@ describe('chat filter state', () => {
     const f = filter();
     const set = chatReducer(initialChatState, { type: 'filter', filter: f });
     expect(set.filter).toBe(f);
-    const snap = chatReducer(set, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [] } });
+    const snap = chatReducer(set, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE } });
     expect(snap.filter).toBe(f);
     expect(chatReducer(snap, { type: 'filter', filter: null }).filter).toBeNull();
   });

@@ -541,3 +541,9 @@ body.resizing .resizer { pointer-events: auto; }
 .terminal-host .xterm-viewport { background-color: transparent !important; }
 .bottom-area { flex: none; }
 .bottom-area[hidden] { display: none; }
+
+.usage-meters { display: inline-flex; gap: 10px; min-width: 0; font-size: 11px; color: var(--muted); white-space: nowrap; }
+.usage-meter { display: inline-flex; align-items: center; gap: 5px; }
+.usage-bar { width: 28px; height: 4px; border-radius: 2px; background: var(--line); background-image: linear-gradient(currentColor, currentColor); background-repeat: no-repeat; background-size: var(--fill) 100%; }
+.usage-meter.warn { color: var(--warn); }
+.usage-meter.high { color: var(--error); }

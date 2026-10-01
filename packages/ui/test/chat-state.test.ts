@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatItem, SessionState, TaskKind, TaskView, ToolStatus, TurnView } from '@ide/protocol';
+import { EMPTY_USAGE, type ChatItem, type SessionState, type TaskKind, type TaskView, type ToolStatus, type TurnView } from '@ide/protocol';
 import { canSend, canStop, chatReducer, childItems, decisionLabel, initialChatState, stopControl, turnGroups } from '../src/chat/chat-state';
 
 const session = {
@@ -15,12 +15,12 @@ const tool = (id: string, seq: number, turnId: string | null, parentToolUseId: s
 const task = (id: string, kind: TaskKind, endedAt: number | null = null): TaskView =>
   ({ id, toolUseId: null, kind, description: id, status: endedAt === null ? 'running' : 'completed', startedAt: 1, endedAt });
 const chat = (partial: Partial<SessionState>) =>
-  chatReducer(initialChatState, { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], ...partial } });
+  chatReducer(initialChatState, { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE, ...partial } });
 
 describe('chatReducer', () => {
   it('replaces the whole chat on a snapshot', () => {
     const before = chat({ turns: [turn('t1', 'user')], items: [message('m1', 1, 't1', 'old')] });
-    const after = chatReducer(before, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [] } });
+    const after = chatReducer(before, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE } });
     expect([after.session, Object.keys(after.turns), Object.keys(after.items)]).toEqual([null, [], []]);
   });
 

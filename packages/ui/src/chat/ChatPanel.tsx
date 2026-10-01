@@ -7,6 +7,7 @@ import { PromptCard } from './PromptCard';
 import { ChatSwitcher, type ChatList } from './ChatSwitcher';
 import { Icon } from '../layout/Icon';
 import { MarkdownText } from './MarkdownText';
+import { UsageMeter } from './UsageMeter';
 import { ModelControls } from './ModelControls';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
@@ -127,6 +128,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
         />
         <div className="composer-actions">
           <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
+          <UsageMeter usage={chat.usage} />
           <span className="spacer" />
           {sendable ? (
             <button className="composer-action send" onClick={submit} disabled={draft.trim() === ''} title="Send (Enter)" aria-label="Send">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { PlanStepView, PlanView, RollbackPreview, TaskView, TurnView } from '@ide/protocol';
+import { EMPTY_USAGE, type PlanStepView, type PlanView, type RollbackPreview, type TaskView, type TurnView } from '@ide/protocol';
 import { chatReducer, initialChatState, type ChatState } from '../src/chat/chat-state';
 import { canConfirmRollback, canOfferRollback, rollbackReducer, type RollbackState } from '../src/history/timeline-state';
 import { timelineSummary } from '../src/history/Timeline';
@@ -63,7 +63,7 @@ const session = { id: 's1', claudeSessionId: 'c', status: 'running' as const, mo
 const turn = (closedAt: number | null): TurnView => ({ id: 't', kind: 'user', openedAt: 1, startedAt: 2, closedAt, resultSubtype: closedAt ? 'success' : null });
 const task = (endedAt: number | null): TaskView => ({ id: 'k', toolUseId: null, kind: 'subagent', description: 'd', status: 'running', startedAt: 1, endedAt });
 const chatWith = (turns: TurnView[], tasks: TaskView[]): ChatState =>
-  chatReducer(initialChatState, { type: 'snapshot', state: { session, turns, items: [], tasks, mcpServers: [] } });
+  chatReducer(initialChatState, { type: 'snapshot', state: { session, turns, items: [], tasks, mcpServers: [], usage: EMPTY_USAGE } });
 const step: PlanStepView = { key: 'a', order: 1, title: 'A', rationale: '', status: 'done', targets: [] };
 const plan: PlanView = {
   id: 'p1', version: 2, goal: 'g', status: 'approved', approvedBy: 'user-card', steps: [step], scope: { paths: [], globs: [] }, owners: {},

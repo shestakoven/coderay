@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  EFFORT_LEVELS,
+  EFFORT_LEVELS, EMPTY_USAGE,
   type ChatItem, type ChatSummary, type EffortLevel, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
-  type SessionState, type SessionView, type TaskView, type TurnView,
+  type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
 import { defaultTranscriptsDir, largest, recoverTranscript, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
@@ -14,6 +14,7 @@ import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRec
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { parseStreamLine, type StreamEvent } from './stream';
+import { parseUsage } from './usage';
 import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
@@ -108,6 +109,7 @@ export class AgentSession {
   private tasks = new Map<string, TaskView>();
   private mcpServers: McpServerState[] = [];
   private permissionMode: string | null = null;
+  private usage: UsageView = EMPTY_USAGE;
   private process: ClaudeProcess | null = null;
   private exitReason: ExitReason | null = null;
   private terminating = false;
@@ -232,6 +234,7 @@ export class AgentSession {
       items: [...this.items.values()].sort((a, b) => a.seq - b.seq),
       tasks: [...this.tasks.values()],
       mcpServers: this.mcpServers,
+      usage: this.usage,
     };
   }
 
@@ -515,6 +518,7 @@ export class AgentSession {
     this.tasks = new Map();
     this.mcpServers = [];
     this.permissionMode = null;
+    this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
     this.decisions.clear();
     this.emit({ type: 'session.snapshot', state: this.state() });
@@ -527,6 +531,7 @@ export class AgentSession {
     this.turns = new Map(history.turns.map((turn) => [turn.id, turn]));
     this.mcpServers = [];
     this.permissionMode = null;
+    this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
     this.decisions.clear();
     for (const decision of history.decisions) this.decisions.set(decision.toolUseId, decision);
@@ -587,6 +592,7 @@ export class AgentSession {
   private onLine(line: string): void {
     try {
       const event = parseStreamLine(line);
+      this.trackUsage(line);
       if (!event) return;
       if (event.type === 'unknown') {
         if (!this.reportedUnknown.has(event.label)) console.warn(`agent: ignoring unknown stream event "${event.label}"`);
@@ -597,6 +603,15 @@ export class AgentSession {
     } catch (error) {
       console.error('agent: could not handle a stream event', error);
     }
+  }
+
+  private trackUsage(line: string): void {
+    const update = parseUsage(line, this.session?.model ?? null);
+    if (!update) return;
+    const usage = { ...this.usage, ...update };
+    if (JSON.stringify(usage) === JSON.stringify(this.usage)) return;
+    this.usage = usage;
+    this.emit({ type: 'session.patch', patch: { usage } });
   }
 
   private handle(event: StreamEvent): Change[] {

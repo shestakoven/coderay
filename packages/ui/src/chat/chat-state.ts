@@ -1,4 +1,4 @@
-import type { ChatItem, McpServerState, SessionPatch, SessionState, SessionView, TaskView, ToolDecision, TurnView } from '@ide/protocol';
+import { EMPTY_USAGE, type ChatItem, type McpServerState, type SessionPatch, type SessionState, type SessionView, type TaskView, type ToolDecision, type TurnView, type UsageView } from '@ide/protocol';
 
 export interface ChatFilter { nodeId: string; label: string; toolUseIds: ReadonlySet<string>; files: ReadonlySet<string> }
 
@@ -8,6 +8,7 @@ export interface ChatState {
   items: Record<string, ChatItem>;
   tasks: Record<string, TaskView>;
   mcpServers: McpServerState[];
+  usage: UsageView;
   error: string | null;
   filter: ChatFilter | null;
 }
@@ -24,7 +25,7 @@ export interface TurnGroup {
   items: ChatItem[];
 }
 
-export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], error: null, filter: null };
+export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], usage: EMPTY_USAGE, error: null, filter: null };
 
 const byId = <T extends { id: string }>(values: T[]): Record<string, T> => Object.fromEntries(values.map((value) => [value.id, value]));
 const merge = <T extends { id: string }>(current: Record<string, T>, updates: T[] | undefined): Record<string, T> =>
@@ -41,6 +42,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         items: byId(action.state.items),
         tasks: byId(action.state.tasks),
         mcpServers: action.state.mcpServers,
+        usage: action.state.usage,
         error: state.error,
         filter: state.filter,
       };
@@ -52,6 +54,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         items: merge(state.items, action.patch.items),
         tasks: merge(state.tasks, action.patch.tasks),
         mcpServers: action.patch.mcpServers ?? state.mcpServers,
+        usage: action.patch.usage ?? state.usage,
       };
     case 'error':
       return { ...state, error: action.message };

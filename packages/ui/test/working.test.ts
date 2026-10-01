@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { ChatItem, PromptStatus, SessionState, ToolStatus, TurnView } from '@ide/protocol';
+import { EMPTY_USAGE, type ChatItem, type PromptStatus, type SessionState, type ToolStatus, type TurnView } from '@ide/protocol';
 import { chatReducer, initialChatState } from '../src/chat/chat-state';
 import { elapsedLabel, workingState } from '../src/chat/working';
 
@@ -10,7 +10,7 @@ const tool = (id: string, seq: number, name: string, summary: string, status: To
 const prompt = (id: string, seq: number, status: PromptStatus): ChatItem =>
   ({ kind: 'prompt', id, seq, turnId: 't1', parentToolUseId: null, body: { tool: 'ExitPlanMode', plan: 'p' }, status, answer: null, ts: seq });
 const chat = (partial: Partial<SessionState>) =>
-  chatReducer(initialChatState, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], ...partial } });
+  chatReducer(initialChatState, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE, ...partial } });
 const openTurn = [turn('t1', 100, 200)];
 const labelOf = (items: ChatItem[]) => workingState(chat({ turns: openTurn, items }), null)?.label;
 
