@@ -42,6 +42,8 @@ const { values } = parseArgs({
     'ide-home': { type: 'string' },
     'token-stdin': { type: 'boolean', default: false },
     claude: { type: 'string', default: 'claude' },
+    'no-map-mcp': { type: 'boolean', default: false },
+    'no-agent-search': { type: 'boolean', default: false },
   },
 });
 
@@ -86,6 +88,10 @@ try {
     root, home, store,
     policy: () => policy.effective(),
     components: () => (snapshot?.components ?? []).map(({ id, name, files, globs }) => ({ id, name, files, globs })),
+    map: values['no-map-mcp'] ? undefined : () => snapshot ?? null,
+    search: values['no-agent-search']
+      ? undefined
+      : async (query, limit) => (mapService ? mapService.search(query, limit) : { ok: false, error: 'The project map is not ready yet.' }),
     port: () => {
       if (!server) throw new Error('the IDE core is not listening yet');
       return server.port;
@@ -157,12 +163,6 @@ try {
   let deployWatch: { close(): Promise<void> } | undefined;
   const progress = new ProgressReporter((current) => server?.broadcast({ type: 'map.progress', progress: current }));
 
-  const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
-    switch (message.type) {
-      case 'chat.send':
-        agent.send(message.text);
-        broadcastSessions();
-        return;
   let modelList: Promise<ModelInfo[]> | undefined;
   const modelCatalog = (): Promise<ModelInfo[]> => {
     modelList ??= fetchModels({ command: values.claude, args: [] }, root).then((list) => {
@@ -172,6 +172,12 @@ try {
     return modelList;
   };
 
+  const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
+    switch (message.type) {
+      case 'chat.send':
+        agent.send(message.text);
+        broadcastSessions();
+        return;
       case 'chat.stop':
         agent.stop();
         return;
@@ -184,15 +190,15 @@ try {
       case 'session.list':
         reply(sessionsSnapshot());
         return;
+      case 'models.list':
+        reply({ type: 'models.snapshot', models: await modelCatalog() });
+        return;
       case 'session.switch':
         await agent.switchSession(message.id);
         return;
       case 'session.configure':
         await agent.configure(message.modelChoice, message.effort);
         broadcastSessions();
-      case 'models.list':
-        reply({ type: 'models.snapshot', models: await modelCatalog() });
-        return;
         return;
       case 'prompt.answer':
         agent.answerPrompt(message.requestId, message.answer);

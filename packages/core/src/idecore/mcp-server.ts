@@ -2,7 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { MapSnapshot } from '@ide/protocol';
 import { z } from 'zod';
+import type { SearchOutcome } from '../map/map-service';
 import type { PlanService } from '../plans/plan-service';
 import { BodyError, isAgentRequest, readJsonBody, requireSecret } from '../server/agent-http';
 import type { HttpRoute } from '../server/server';
@@ -29,10 +31,31 @@ const proposeInput = {
 };
 const stepInput = { key: z.string(), phase: z.enum(['start', 'done']) };
 
+const MAP_OVERVIEW_DESCRIPTION = 'Read-only: the IDE project map. Returns every component with id, name, summary, file count and the components it depends on.';
+const MAP_COMPONENT_DESCRIPTION = 'Read-only: one component of the IDE project map by id: description, key files, all files with their exported symbols.';
+
+const SEARCH_DESCRIPTION = [
+  'Semantic search over project files by meaning, for questions like "where is X handled" or "which file does Y" when you are getting to know the project.',
+  'Do not use it for exact names, strings or error messages: the vectors do not find them, use grep for those.',
+  'Returns files ranked by similarity with path, componentId, similarity and up to 5 exported symbol names; it does not return file contents.',
+  'The ranking is heuristic: confirm by reading the file.',
+].join(' ');
+const DEFAULT_SEARCH_LIMIT = 10;
+const MAX_SEARCH_LIMIT = 30;
+const MAX_SEARCH_SYMBOLS = 5;
+const searchInput = { query: z.string(), limit: z.number().int().min(1).max(MAX_SEARCH_LIMIT).optional() };
+
 const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: JSON.stringify(value) }] });
 const failure = (message: string) => ({ content: [{ type: 'text' as const, text: message }], isError: true });
 
-export function idecoreRoute(options: { secret: string; plans: PlanService }): IdecoreRoute {
+export interface IdecoreRouteOptions {
+  secret: string;
+  plans: PlanService;
+  map?: () => MapSnapshot | null;
+  search?: (query: string, limit: number) => Promise<SearchOutcome>;
+}
+
+export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
   requireSecret(options.secret);
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
@@ -46,6 +69,46 @@ export function idecoreRoute(options: { secret: string; plans: PlanService }): I
       const outcome = options.plans.step(input);
       return outcome.ok ? result({ ok: true }) : failure(outcome.error);
     });
+    const { map } = options;
+    if (map) {
+      server.registerTool('map_overview', { description: MAP_OVERVIEW_DESCRIPTION }, () => {
+        const snapshot = map();
+        if (!snapshot) return failure('The project map is not ready yet.');
+        const owner = new Map(snapshot.files.map((file) => [file.path, file.componentId]));
+        const links = new Map<string, Set<string>>();
+        for (const edge of snapshot.fileEdges) {
+          const from = owner.get(edge.from);
+          const to = owner.get(edge.to);
+          if (from && to && from !== to) links.set(from, (links.get(from) ?? new Set()).add(to));
+        }
+        return result(snapshot.components.map(({ id, name, summary, files, stale }) => ({
+          id, name, summary, files: files.length, stale, dependsOn: [...(links.get(id) ?? [])],
+        })));
+      });
+      server.registerTool('map_component', { description: MAP_COMPONENT_DESCRIPTION, inputSchema: { id: z.string() } }, ({ id }) => {
+        const snapshot = map();
+        const component = snapshot?.components.find((item) => item.id === id);
+        if (!snapshot || !component) return failure(`There is no component "${id}" on the map.`);
+        const symbols = new Map(snapshot.files.map((file) => [file.path, file.symbols.filter((s) => s.exported).map((s) => s.name)]));
+        const { name, summary, description, keyFiles, files } = component;
+        return result({ id, name, summary, description, keyFiles, files: files.map((path) => ({ path, symbols: symbols.get(path) ?? [] })) });
+      });
+    }
+    const { search } = options;
+    if (search) {
+      server.registerTool('search_code', { description: SEARCH_DESCRIPTION, inputSchema: searchInput }, async ({ query, limit }) => {
+        const outcome = await search(query, limit ?? DEFAULT_SEARCH_LIMIT);
+        if (!outcome.ok) return failure(outcome.error);
+        const files = new Map(options.map?.()?.files.map((file) => [file.path, file]));
+        const results = outcome.hits.map(({ path, similarity }) => ({
+          path,
+          componentId: files.get(path)?.componentId ?? null,
+          similarity: Math.round(similarity * 100) / 100,
+          symbols: (files.get(path)?.symbols ?? []).filter((s) => s.exported).slice(0, MAX_SEARCH_SYMBOLS).map((s) => s.name),
+        }));
+        return result(outcome.indexed < outcome.total ? { note: `index incomplete: ${outcome.indexed}/${outcome.total}`, results } : results);
+      });
+    }
     return server;
   };
 

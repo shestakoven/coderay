@@ -1,12 +1,13 @@
 import { randomBytes } from 'node:crypto';
 import { basename } from 'node:path';
-import type { McpEntry, Policy } from '@ide/protocol';
+import type { MapSnapshot, McpEntry, Policy } from '@ide/protocol';
 import type { AgentSession, SessionGate } from '../agent/agent-session';
 import { systemPrompt } from '../agent/system-prompt';
 import { requireSecret } from '../server/agent-http';
 import { removeGateFiles, writeGateFiles } from '../hook/gate-files';
 import { projectDir, runDir } from '../home';
 import { idecoreRoute } from '../idecore/mcp-server';
+import type { SearchOutcome } from '../map/map-service';
 import { reviewPlan } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
 import { PlanService } from '../plans/plan-service';
@@ -25,6 +26,8 @@ export interface GateRuntimeOptions {
   store: Store;
   policy: () => Policy;
   components: () => ComponentRef[];
+  map?: () => MapSnapshot | null;
+  search?: (query: string, limit: number) => Promise<SearchOutcome>;
   port: () => number;
   secret?: string;
   userHome?: string;
@@ -75,7 +78,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     holdMs: options.holdMs,
     hold: options.hold,
   });
-  const idecore = idecoreRoute({ secret, plans });
+  const idecore = idecoreRoute({ secret, plans, map: options.map, search: options.search });
   const url = (path: string) => `http://127.0.0.1:${options.port()}${path}`;
   const base = (id: string) => `${basename(projectDir(options.home, options.root))}-${id}`;
   return {
@@ -87,7 +90,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     sessionGate: {
       write: (id) => ({ settingsPath: writeGateFiles(runDir(options.home), base(id), { url: url('/hook'), secret, sessionId: id, deadlineMs: options.hookDeadlineMs }).settingsPath }),
       remove: (id) => removeGateFiles(runDir(options.home), base(id)),
-      systemPrompt: () => systemPrompt(options.components()),
+      systemPrompt: () => systemPrompt(options.components(), options.map !== undefined, options.search !== undefined),
       canary,
     },
     attach(agent) {

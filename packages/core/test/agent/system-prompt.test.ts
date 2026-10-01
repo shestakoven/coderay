@@ -19,4 +19,19 @@ describe('systemPrompt', () => {
   it('asks for paths when the map has no components yet', () => {
     expect(systemPrompt([]).split('\n').at(-1)).toBe('The project map has no components yet; name project paths in your plans.');
   });
+
+  it('mentions the search tool only when it is enabled', () => {
+    expect(systemPrompt([], false, true)).toContain('mcp__idecore__search_code');
+    expect(systemPrompt([], false, false)).not.toContain('search_code');
+    expect(systemPrompt([])).not.toContain('search_code');
+  });
+
+  it('adds one search line regardless of the map tools line', () => {
+    const count = (prompt: string) => prompt.split('\n').filter((line) => line.includes('mcp__idecore__search_code')).length;
+    expect([count(systemPrompt([], true, true)), count(systemPrompt([], false, true))]).toEqual([1, 1]);
+  });
+
+  it('leaves the map tools line out when only the search tool is on', () => {
+    expect(systemPrompt([], false, true)).not.toContain('map_overview');
+  });
 });

@@ -1,12 +1,15 @@
 export const MAX_LISTED_COMPONENTS = 300;
 
-export function systemPrompt(components: { id: string; name: string }[]): string {
+export function systemPrompt(components: { id: string; name: string }[], mapTools = false, searchTool = false): string {
   const listed = components.slice(0, MAX_LISTED_COMPONENTS).map((component) => `- ${component.id} — ${component.name}`);
   const more = components.length > MAX_LISTED_COMPONENTS
     ? [`- …and ${components.length - MAX_LISTED_COMPONENTS} more; name project paths for those.`]
     : [];
   return [
     'You are working inside the AI-Control IDE. It shows your plan on a map of the project and blocks changes that no approved plan covers.',
+    ...(mapTools
+      ? ['', 'Before your first Grep, Glob or exploratory Bash command in a session, call mcp__idecore__map_overview. Do not explore the project by hand before it.']
+      : []),
     '',
     'Rules:',
     '1. Before you change any project file (Write, Edit, NotebookEdit, or a shell command that writes, moves or deletes files), call mcp__idecore__propose_plan with a goal and steps. Each step has a key, a title, a rationale and targets. A target is {"componentId": "<id from the list below>"} or {"path": "<project path>"}, with "op": "modify", "create" or "delete".',
@@ -15,6 +18,12 @@ export function systemPrompt(components: { id: string; name: string }[]): string
     '4. A write outside the approved plan is blocked or waits for the user. If you need more files, call propose_plan again with the whole plan, keeping the active and done steps.',
     '5. Reading files and running commands that write no project files need no plan.',
     '6. Tool errors that start with "IDE:" come from this IDE on behalf of the user. Follow them.',
+    ...(mapTools
+      ? ['7. After map_overview, call mcp__idecore__map_component with an id for that component\'s files and exported symbols before you search its files by hand.']
+      : []),
+    ...(searchTool
+      ? [`${mapTools ? 8 : 7}. To find which files deal with a topic when you do not know the names, call mcp__idecore__search_code with a description; for exact names or strings use grep, and read the file to confirm a hit.`]
+      : []),
     '',
     'A small plan may be approved at once, without waiting for the user.',
     '',

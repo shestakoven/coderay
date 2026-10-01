@@ -15,6 +15,7 @@ import { emptyMapFile, MAP_FILE, readMapFile, watchMapFile, writeMapFile, type A
 import { RegroupScheduler, type RegroupOutcome } from './regroup-scheduler';
 import { changedFiles, componentEdges, mapKey, staleness, type GroupingBaseline, type Staleness } from './staleness';
 import { importTargets } from './test-files';
+import { dot } from './vectors';
 
 export interface MapServiceOptions {
   root: string;
@@ -30,6 +31,10 @@ export interface MapServiceOptions {
   onEmbeddingProgress?: (progress: { done: number; total: number } | null) => void;
   expectWrite?: ExpectWrite;
 }
+
+export type SearchOutcome =
+  | { ok: true; hits: { path: string; similarity: number }[]; indexed: number; total: number }
+  | { ok: false; error: string };
 
 export interface MapView {
   components: MapComponent[];
@@ -151,6 +156,22 @@ export class MapService {
       manualFiles: this.manualFiles,
       status,
     };
+  }
+
+  async search(query: string, limit: number): Promise<SearchOutcome> {
+    const status = this.options.embed.status();
+    if (status.state === 'unavailable') return { ok: false, error: `The embedding model is unavailable: ${status.reason}` };
+    const [target] = await this.options.embed.embed([query]);
+    if (!target) return { ok: false, error: 'The embedding model returned no vector for the query.' };
+    const scored: { path: string; similarity: number }[] = [];
+    for (const file of this.files) {
+      const vector = this.embeddings.vector(file.path);
+      if (!vector) continue;
+      const norm = Math.sqrt(dot(vector, vector) * dot(target, target));
+      scored.push({ path: file.path, similarity: norm === 0 ? 0 : dot(vector, target) / norm });
+    }
+    scored.sort((a, b) => b.similarity - a.similarity);
+    return { ok: true, hits: scored.slice(0, limit), indexed: scored.length, total: this.files.length };
   }
 
   regroup(): Promise<RegroupOutcome> {
