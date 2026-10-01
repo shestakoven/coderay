@@ -170,6 +170,20 @@ describe('shellWrites', () => {
     expect(writes('git status && git log --oneline && git commit -m "a > b"').allTracked).toBe(false);
   });
 
+  it('does not mark git apply that only touches the index', () => {
+    expect([writes('git apply --cached p.patch').allTracked, writes('git apply --cached --index p.patch').allTracked, writes('git apply p.patch').allTracked]).toEqual([false, true, true]);
+  });
+
+  it('lets xargs git rm --cached through and keeps every other xargs git writer unresolved', () => {
+    const unresolved = ['? xargs runs a command that writes files it reads from its input'];
+    expect(targets('git ls-files | xargs git rm -q --cached')).toEqual([]);
+    expect(targets('git ls-files | xargs -0 git add')).toEqual([]);
+    expect(targets('git ls-files | xargs git rm')).toEqual(unresolved);
+    expect(targets('git ls-files | xargs git rm -- --cached')).toEqual(unresolved);
+    expect(targets('git ls-files | xargs git mv')).toEqual(unresolved);
+    expect(writes('ls | xargs git checkout').allTracked).toBe(true);
+  });
+
   it('leaves find -delete, find -exec rm, xargs rm and eval unresolved', () => {
     expect(targets("find . -name '*.tmp' -delete")).toEqual(['? find deletes or changes the files it finds']);
     expect(targets('find . -exec rm {} \\;')).toEqual(['? find deletes or changes the files it finds']);

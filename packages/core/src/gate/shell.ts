@@ -67,6 +67,7 @@ const KEYWORDS = new Set(['{', '}', '!', 'then', 'do', 'else', 'elif', 'if', 'wh
 const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec', 'nice', 'env']);
 const WORK_TREE_REWRITES = new Set(['checkout', 'switch', 'restore', 'reset', 'stash', 'clean', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'apply', 'am']);
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
+const XARGS_WRITES = 'xargs runs a command that writes files it reads from its input';
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
 const PLAIN_MKTEMP_FLAGS = new Set(['-d', '-q', '-u', '--directory', '--quiet', '--dry-run', '--tmpdir']);
 const CHMOD_OPTIONS = new Set(['-c', '--changes', '-f', '--silent', '--quiet', '-v', '--verbose', '--no-preserve-root', '--preserve-root', '-R', '--recursive', '-H', '-L', '-P', '-h', '--help', '--version']);
@@ -373,16 +374,22 @@ function command(name: string, args: Word[], state: State, depth: number): void 
     case 'find':
       find(args, state);
       return;
-    case 'xargs':
+    case 'xargs': {
+      const gitAt = args.findIndex((word) => literalText(word) === 'git');
+      if (gitAt !== -1) {
+        xargsGit(args.slice(gitAt + 1), state);
+        return;
+      }
       if (
         args.some((word) => {
           const base = posix.basename(literalText(word) ?? '');
           return WRITERS.has(base) || SHELLS.has(base);
         })
       ) {
-        state.targets.push(unresolved('xargs', 'xargs runs a command that writes files it reads from its input'));
+        state.targets.push(unresolved('xargs', XARGS_WRITES));
       }
       return;
+    }
     case 'eval':
       state.targets.push(unresolved('eval', 'eval runs text the IDE cannot read'));
       return;
@@ -501,8 +508,27 @@ function git(args: Word[], state: State): void {
   if (!word) return;
   const sub = literalText(word);
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
-  else if (WORK_TREE_REWRITES.has(sub)) state.allTracked = true;
+  else if (WORK_TREE_REWRITES.has(sub)) state.allTracked = !(sub === 'apply' && appliesToIndexOnly(args.slice(i + 1)));
   else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), args.slice(i + 1), state);
+}
+
+// git xargs reads the paths from its input, so only a command that writes none of them is known to be harmless.
+function xargsGit(args: Word[], state: State): void {
+  const sub = args.map((word) => literalText(word)).find((text) => text === null || !text.startsWith('-'));
+  const indexOnly = sub === 'rm' && removesFromIndexOnly(args.slice(args.findIndex((word) => literalText(word) === 'rm') + 1));
+  if ((sub === 'rm' && !indexOnly) || sub === 'mv') state.targets.push(unresolved('xargs', XARGS_WRITES));
+  else git(args, state);
+}
+
+// --cached before any -- changes the index only; after it, --cached names a file.
+function removesFromIndexOnly(rest: Word[]): boolean {
+  const end = rest.findIndex((arg) => literalText(arg) === '--');
+  return (end === -1 ? rest : rest.slice(0, end)).some((arg) => literalText(arg) === '--cached');
+}
+
+function appliesToIndexOnly(rest: Word[]): boolean {
+  const options = rest.map((arg) => literalText(arg));
+  return options.includes('--cached') && !options.includes('--index');
 }
 
 function gitPaths(sub: 'mv' | 'rm', global: Word[], rest: Word[], state: State): void {
@@ -516,9 +542,7 @@ function gitPaths(sub: 'mv' | 'rm', global: Word[], rest: Word[], state: State):
     moveOrCopy('mv', rest, state);
     return;
   }
-  const end = rest.findIndex((arg) => literalText(arg) === '--');
-  const options = end === -1 ? rest : rest.slice(0, end);
-  if (options.some((arg) => literalText(arg) === '--cached')) return;
+  if (removesFromIndexOnly(rest)) return;
   for (const target of operands(rest, [])) addTarget(target, state, { deleting: true });
 }
 
