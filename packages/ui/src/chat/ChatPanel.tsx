@@ -5,6 +5,7 @@ import { PromptBody } from '../plan/PromptBody';
 import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
 import { ChatSwitcher, type ChatList } from './ChatSwitcher';
+import { Icon } from '../layout/Icon';
 import { ModelControls } from './ModelControls';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
@@ -126,8 +127,16 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
         <div className="composer-actions">
           <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} enabled={sendable} send={send} />
           <span className="spacer" />
-          <button onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title}>{stop.label}</button>
-          <button onClick={submit} disabled={!sendable || draft.trim() === ''}>Send</button>
+          {sendable ? (
+            <button className="composer-action send" onClick={submit} disabled={draft.trim() === ''} title="Send (Enter)" aria-label="Send">
+              <Icon name="send" size={18} />
+            </button>
+          ) : (
+            <button className="composer-action stop" onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title} aria-label={stop.label}>
+              <Icon name="stop" size={18} />
+              {stop.label !== 'Stop' && <span>{stop.label.slice('Stop'.length).trim()}</span>}
+            </button>
+          )}
         </div>
       </footer>
     </section>

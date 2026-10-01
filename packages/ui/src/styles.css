@@ -394,10 +394,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-list-row.on { background: var(--selection); }
 .chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-list-meta { font-size: 11px; }
-.model-controls { display: flex; gap: 6px; flex: 1 1 100%; }
+.model-controls { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; }
 .model-controls select { background: var(--raised); color: var(--fg); border: 1px solid var(--line); border-radius: var(--r-1); padding: 2px 4px; font: inherit; font-size: 12px; }
 .model-controls select:disabled { opacity: 0.5; }
-.composer-actions { align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.composer-actions { align-items: center; flex-wrap: nowrap; gap: 8px; }
 .composer-actions .spacer { flex: 1; }
 
 /* Agent at work */
@@ -452,3 +452,11 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 
 .c4-caret { display: grid; place-items: center; width: 30px; height: 30px; margin: -6px -6px -6px auto; padding: 0; border-radius: var(--r-1); color: var(--c4-muted); cursor: pointer; }
 .c4-caret:hover { background: var(--raised); color: var(--fg); }
+
+.composer-action { display: inline-flex; align-items: center; justify-content: center; gap: 4px; height: 32px; min-width: 36px; padding: 0 8px; border-radius: var(--r-1); flex: none; }
+.composer-action.send { background: var(--accent); border-color: var(--accent); color: #fff; }
+.composer-action.send:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.composer-action.send:disabled { background: var(--raised); border-color: var(--line); color: var(--muted); opacity: 1; }
+.composer-action.stop { color: var(--error); }
+.composer-action.stop:disabled { color: var(--muted); }
+.model-controls select { height: 32px; }
