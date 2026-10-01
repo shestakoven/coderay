@@ -203,7 +203,7 @@ export class Watchdog {
     const revertPaths = pathsOf('revert');
     if (revertPaths.length > 0) {
       const record = await this.o.reverts.revertChanges({ changeIds: idsOf(revertPaths), eventId: event.id });
-      for (const file of record.files) {
+      for (const file of [...record.files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))) {
         if (file.outcome === 'restored' || file.outcome === 'deleted' || file.outcome === 'recreated') input.reverted.push(file.path);
         else input.conflicts.push({ path: file.path, reason: file.reason ?? file.outcome });
       }

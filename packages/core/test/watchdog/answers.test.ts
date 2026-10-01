@@ -310,6 +310,14 @@ describe('Watchdog.answer refusals', () => {
     expect(event(f, e.id).resolution).toBe('reverted');
   });
 
+  it('lists the reverted files in path order, whatever order their changes arrived in', async () => {
+    const f = await fixture({ turnOpen: false });
+    const e = await f.raise(await f.produce(['b.ts', 'a.ts']));
+    expect(f.changes.changes().map((c) => c.path)).toEqual(['b.ts', 'a.ts']);
+    await answer(f, e.id, all('revert'));
+    expect(f.session.of('note:')[0]).toContain('Restored to their earlier content: a.ts, b.ts.');
+  });
+
   it('opens a new event, and keeps the hold, for a change that arrives while the revert runs', async () => {
     const f = await fixture();
     const e = await f.raise(await f.produce(['a.ts']));
