@@ -47,17 +47,17 @@ interface VisibleEdge {
 }
 
 const SIZE: Record<C4Kind, { width: number; height: number }> = {
-  person: { width: 150, height: 58 },
-  container: { width: 230, height: 82 },
-  group: { width: 230, height: 90 },
-  external: { width: 200, height: 58 },
-  component: { width: 210, height: 52 },
-  shared: { width: 210, height: 52 },
+  person: { width: 180, height: 70 },
+  container: { width: 280, height: 100 },
+  group: { width: 280, height: 108 },
+  external: { width: 240, height: 70 },
+  component: { width: 250, height: 62 },
+  shared: { width: 250, height: 62 },
 };
-const SLIM = { width: 210, height: 64 };
+const SLIM = { width: 250, height: 76 };
 const COLUMNS = 2;
 const GAP = 12;
-const HEADER = 64;
+const HEADER = 84;
 
 const ROLE_COLUMN = { ui: 1, api: 2, worker: 3, service: 3 } as const;
 const ROLE_ACCENT = { ui: 'var(--c4-ui)', api: 'var(--c4-api)', worker: 'var(--c4-worker)', service: 'var(--c4-api)' } as const;
@@ -263,7 +263,7 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
   return { nodes, edges: [...edges.values()] };
 }
 
-const ROOT_COMPONENT = { width: 250, height: 74 };
+const ROOT_COMPONENT = { width: 300, height: 88 };
 const sizeOf = (node: VisibleNode) => (node.data.slim ? SLIM : node.kind === 'component' && node.data.detail ? ROOT_COMPONENT : SIZE[node.kind]);
 
 export async function layoutC4(

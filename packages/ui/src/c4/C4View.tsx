@@ -45,6 +45,14 @@ const ICONS: Record<string, string> = {
   stack: '<rect x="2.5" y="6" width="11" height="7.5" rx="1.5"/><path d="M4 4h8M5.5 2h5"/>',
 };
 
+function CaretIcon({ open }: { open: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={open ? 'm6 9 6 6 6-6' : 'm9 18 6-6-6-6'} />
+    </svg>
+  );
+}
+
 function Icon({ name }: { name: string }) {
   return <svg className="c4-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" dangerouslySetInnerHTML={{ __html: ICONS[name] ?? ICONS.box! }} />;
 }
@@ -67,7 +75,7 @@ function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
       <div className="c4-title">
         <Icon name={data.icon} />
         <span>{data.title}</span>
-        {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret">{data.expanded ? '▾' : '▸'}</span>}
+        {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret" title={data.expanded ? 'Collapse' : 'Expand'}><CaretIcon open={data.expanded === true} /></span>}
       </div>
       <div className="c4-sub">{data.subtitle}</div>
       {changed && <div className="c4-detail change-line">+{changed.added} {'\u2212'}{changed.removed} {'\u00b7'} {changed.files} file{changed.files === 1 ? '' : 's'}</div>}
