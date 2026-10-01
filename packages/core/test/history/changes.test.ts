@@ -21,6 +21,7 @@ beforeAll(() => { for (const [k, v] of Object.entries(ISOLATION)) { saved[k] = p
 afterAll(() => { for (const k of Object.keys(ISOLATION)) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k]; } });
 
 const sh = (cwd: string, ...args: string[]): string => execFileSync('git', args, { cwd, encoding: 'utf8' });
+const blobHash = (cwd: string, text: string): string => execFileSync('git', ['hash-object', '--stdin'], { cwd, input: text, encoding: 'utf8' }).trim();
 const call = (o: Partial<ToolCall>): ToolCall => ({
   toolUseId: 't1', parentToolUseId: null, tool: 'Write', toolClass: 'file-writer', targets: [], allTracked: false,
   cwdRel: null, background: false, allowedOnce: false, ...o,
@@ -145,23 +146,29 @@ describe('ChangeService recording', () => {
     expect(f.store.baselines().map((b) => b.path)).toContain('new.ts');
   });
 
-  it('records a recorded path against an in-memory last hash, with no baseline and no blob', async () => {
+  it('does not track a gitignored path or a harness path: no change, no baseline, no blob, no listener call, while enforced files in the same batch are recorded', async () => {
     const f = await fixture();
+    const heard: string[][] = [];
+    f.service.onChange((c) => heard.push(c.map((x) => x.path).sort()));
     write(f.root, 'dist/x.js', 'v1');
-    await f.service.handle(f.ev('dist/x.js'));
-    write(f.root, 'dist/x.js', 'v1');
-    await f.service.handle(f.ev('dist/x.js'));
+    write(f.root, '.omc/state.json', '{}');
+    write(f.root, 'a.ts', 'changed');
+    write(f.root, '.env', 'K=2');
+    await Promise.all([f.service.handle(f.ev('dist/x.js')), f.service.handle(f.ev('.omc/state.json')), f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('.env'))]);
     write(f.root, 'dist/x.js', 'v2');
     await f.service.handle(f.ev('dist/x.js'));
-    write(f.root, '.omc/state.json', '{}');
-    await f.service.handle(f.ev('.omc/state.json'));
-    const dist = f.service.changes().filter((c) => c.path === 'dist/x.js');
-    expect(dist).toHaveLength(2);
-    expect(dist[1]!.beforeHash).toBe(dist[0]!.afterHash);
-    expect(dist[0]).toMatchObject({ enforcement: 'recorded', stored: false, added: null, removed: null, beforeHash: null });
-    expect(await f.shadow.read(dist[0]!.afterHash!)).toBeNull();
-    expect(f.baselines.get('dist/x.js')).toBeUndefined();
-    expect(byPath(f.service.changes(), '.omc/state.json').enforcement).toBe('recorded');
+    rmSync(join(f.root, '.omc/state.json'));
+    await f.service.handle(f.ev('.omc/state.json', false));
+    rmSync(join(f.root, 'dist/x.js'));
+    await f.service.handle(f.ev('dist/x.js', false));
+    expect(f.service.changes().map((c) => [c.path, c.enforcement]).sort()).toEqual([['.env', 'enforced'], ['a.ts', 'enforced']]);
+    expect(f.store.changes('s1').map((c) => c.path).sort()).toEqual(['.env', 'a.ts']);
+    expect(heard).toEqual([['.env', 'a.ts']]);
+    for (const rel of ['dist/x.js', '.omc/state.json']) {
+      expect(f.baselines.get(rel)).toBeUndefined();
+      expect(f.store.baselines().map((b) => b.path)).not.toContain(rel);
+    }
+    for (const text of ['v1', 'v2', '{}']) expect(await f.shadow.read(blobHash(f.root, text))).toBeNull();
   });
 
   it('labels an expected IDE write as ide, once, and does not stamp it with the step', async () => {
@@ -215,11 +222,11 @@ describe('ChangeService recording', () => {
     expect(byPath(f.service.changes(), 'fresh.ts').origin).toBe('agent-tool');
     f.ledger.clear();
     f.ledger.allowed(call({ toolUseId: 'once', tool: 'Bash', toolClass: 'shell', allowedOnce: true }));
-    write(f.root, 'dist/o.js', 'o');
+    sh(f.root, 'symbolic-ref', 'HEAD', 'refs/heads/once');
     write(f.root, 'b.ts', 'o');
-    await Promise.all([f.service.handle(f.ev('dist/o.js')), f.service.handle(f.ev('b.ts'))]);
-    expect(byPath(f.service.changes(), 'dist/o.js').origin).toBe('agent-tool');
-    expect(byPath(f.service.changes(), 'b.ts').origin).toBe('agent');
+    await Promise.all([f.service.handle(f.ev('.git/HEAD')), f.service.handle(f.ev('b.ts'))]);
+    expect(byPath(f.service.changes(), '.git/HEAD')).toMatchObject({ enforcement: 'recorded', origin: 'agent-tool' });
+    expect(byPath(f.service.changes(), 'b.ts')).toMatchObject({ enforcement: 'enforced', origin: 'agent' });
   });
 
   it('does not turn a late exists event for the old name after a case-only rename into a change', async () => {
@@ -352,6 +359,24 @@ describe('ChangeService git internals', () => {
     expect(changes[2]!.beforeHash).toBe(changes[0]!.afterHash);
   });
 
+  it('records a git-internal path against an in-memory last hash, with no baseline and no blob, and nothing for a duplicate', async () => {
+    const f = await fixture();
+    sh(f.root, 'symbolic-ref', 'HEAD', 'refs/heads/v1');
+    await f.service.handle(f.ev('.git/HEAD'));
+    await f.service.handle(f.ev('.git/HEAD'));
+    sh(f.root, 'symbolic-ref', 'HEAD', 'refs/heads/v1');
+    await f.service.handle(f.ev('.git/HEAD'));
+    sh(f.root, 'symbolic-ref', 'HEAD', 'refs/heads/v2');
+    await f.service.handle(f.ev('.git/HEAD'));
+    const [first, second, ...rest] = f.service.changes();
+    expect(rest).toEqual([]);
+    expect(first).toMatchObject({ path: '.git/HEAD', enforcement: 'recorded', stored: false, added: null, removed: null, beforeHash: null });
+    expect(first!.afterHash).toBe(blobHash(f.root, 'ref: refs/heads/v1\n'));
+    expect(second).toMatchObject({ path: '.git/HEAD', beforeHash: first!.afterHash, afterHash: blobHash(f.root, 'ref: refs/heads/v2\n') });
+    expect(await f.shadow.read(first!.afterHash!)).toBeNull();
+    expect(f.baselines.get('.git/HEAD')).toBeUndefined();
+  });
+
   it('reads .git/HEAD of a linked worktree from its real location', async () => {
     const main = tempDir('chg-main-');
     sh(main, 'init', '-q');
@@ -482,14 +507,14 @@ describe('ChangeService failure handling', () => {
     f.checkpoints.begin('p1', 's1');
     f.ledger.allowed(call({ targets: ['a.ts'] }));
     write(f.root, 'a.ts', 'changed');
-    write(f.root, 'dist/x.js', 'v1');
-    await expect(Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))])).rejects.toThrow('disk full');
+    sh(f.root, 'symbolic-ref', 'HEAD', 'refs/heads/topic');
+    await expect(Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('.git/HEAD'))])).rejects.toThrow('disk full');
     expect(f.service.changes()).toEqual([]);
     expect(heard).toEqual([]);
     expect(f.baselines.get('a.ts')!.hash).toBe(before);
     expect(f.checkpoints.manifests('p1', 's1')!.after).toEqual({});
-    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))]);
-    expect(f.service.changes().map((c) => [c.path, c.beforeHash === null ? null : c.beforeHash === before])).toEqual([['a.ts', true], ['dist/x.js', null]]);
+    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('.git/HEAD'))]);
+    expect(f.service.changes().map((c) => [c.path, c.beforeHash === null ? null : c.beforeHash === before])).toEqual([['a.ts', true], ['.git/HEAD', null]]);
     expect(heard).toEqual([2]);
     expect(f.store.changes('s1')).toHaveLength(2);
   });
@@ -519,15 +544,16 @@ describe('ChangeService failure handling', () => {
 
   it('rejects a batch and advances nothing while there is no session', async () => {
     const f = await fixture();
-    const before = f.baselines.get('a.ts')!.hash;
+    const before = { a: f.baselines.get('a.ts')!.hash, b: f.baselines.get('b.ts')!.hash };
     f.session.id = null;
     write(f.root, 'a.ts', 'x');
-    write(f.root, 'dist/x.js', 'v1');
-    await expect(Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))])).rejects.toThrow('no session');
-    expect(f.baselines.get('a.ts')!.hash).toBe(before);
+    write(f.root, 'b.ts', 'y');
+    await expect(Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('b.ts'))])).rejects.toThrow('no session');
+    expect([f.baselines.get('a.ts')!.hash, f.baselines.get('b.ts')!.hash]).toEqual([before.a, before.b]);
+    expect(f.service.changes()).toEqual([]);
     f.session.id = 's1';
-    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('dist/x.js'))]);
-    expect(f.service.changes().map((c) => c.path)).toEqual(['a.ts', 'dist/x.js']);
+    await Promise.all([f.service.handle(f.ev('a.ts')), f.service.handle(f.ev('b.ts'))]);
+    expect(f.service.changes().map((c) => [c.path, c.beforeHash])).toEqual([['a.ts', before.a], ['b.ts', before.b]]);
   });
 
   it('stamps each event with the step that was active when it arrived', async () => {

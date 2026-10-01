@@ -190,9 +190,13 @@ export class ChangeService {
     this.sync();
     const latest = new Map<string, Queued>();
     for (const q of queued) latest.set(q.event.rel, q);
-    const rels = [...latest.keys()];
     const { root, policy, shadow, baselines } = this.o;
-    const infos = await classifyPaths(rels.map((rel) => join(root, rel)), { root, policy });
+    const seen = [...latest.keys()];
+    const classified = await classifyPaths(seen.map((rel) => join(root, rel)), { root, policy });
+    // Gitignored files and harness paths (.omc/) are not history: they only bury the changes worth reviewing.
+    const watched = classified.map((info) => info.why !== 'gitignored' && info.why !== 'a harness path');
+    const rels = seen.filter((_, i) => watched[i]);
+    const infos = classified.filter((_, i) => watched[i]);
     const enforcedRels = rels.filter((_, i) => infos[i]!.cls === 'enforced');
     const recordedRels = rels.filter((_, i) => infos[i]!.cls !== 'enforced');
     const real = await this.gitPaths(rels.filter((rel) => rel.startsWith('.git/')));

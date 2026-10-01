@@ -126,13 +126,27 @@ describe('step rollback', () => {
     await f.stepWork('s1', [
       { rel: 'a.ts', text: 'a-new' },
       { rel: 'b.ts', text: 'b-new', by: 'tool' },
-      { rel: 'dist/out.js', text: 'built', by: 'tool' },
-      { rel: '.omc/state.json', text: '{}', by: 'tool' },
+      { rel: '.git/HEAD', text: 'ref: refs/heads/other\n', by: 'tool' },
     ]);
     const preview = await f.reverts.previewStepRollback('plan-1', 's1');
     expect(preview).toMatchObject({ planId: 'plan-1', stepKey: 's1', allowed: true, reason: null, autoFiles: ['a.ts'], confirmFiles: ['b.ts'], conflicts: [] });
-    expect(preview.notRolledBack.map((n) => n.path).sort()).toEqual(['.omc/state.json', 'dist/out.js']);
+    expect(preview.notRolledBack.map((n) => n.path)).toEqual(['.git/HEAD']);
     expect(preview.notRolledBack.every((n) => n.why.length > 0)).toBe(true);
+  });
+
+  it('leaves gitignored and harness files out of the preview and the rollback entirely', async () => {
+    const f = await fixture();
+    await f.approve();
+    await f.stepWork('s1', [
+      { rel: 'a.ts', text: 'a-new' },
+      { rel: 'dist/out.js', text: 'built', by: 'tool' },
+      { rel: '.omc/state.json', text: '{}', by: 'tool' },
+    ]);
+    expect(f.changes.changes().map((c) => c.path)).toEqual(['a.ts']);
+    const preview = await f.reverts.previewStepRollback('plan-1', 's1');
+    expect([preview.autoFiles, preview.confirmFiles, preview.notRolledBack, preview.conflicts]).toEqual([['a.ts'], [], [], []]);
+    await f.reverts.rollbackStep('plan-1', 's1', []);
+    expect([read(f.root, 'a.ts'), read(f.root, 'dist/out.js'), read(f.root, '.omc/state.json')]).toEqual(['a-original', 'built', '{}']);
   });
 
   it('puts .git/HEAD in notRolledBack and never writes it', async () => {

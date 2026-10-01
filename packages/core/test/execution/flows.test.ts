@@ -58,13 +58,11 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     expect([f.file('src/other.ts'), f.file('src/third.ts'), f.runtime.hold.isHeld()]).toEqual([OTHER_CHANGED, THIRD, false]);
   });
 
-  it('records a write to a gitignored or harness path without interrupting, and interrupts for a guarded path', async () => {
+  it('does not track or interrupt for a write to a gitignored or harness path, and interrupts for a guarded path', async () => {
     const f = await execFlow('exec-mcp-write-paths', { files: { '.gitignore': 'dist/\n' } });
     await f.send();
     await waitFor(() => closedTurns(f).length === 1, 'the first turn closed');
-    const recorded = await waitFor(() => (['dist/out.js', '.omc/note.txt'].every((p) => f.changes().some((c) => c.path === p)) ? f.changes() : undefined), 'the recorded changes');
-    expect(recorded.filter((c) => c.path === 'dist/out.js' || c.path === '.omc/note.txt').map((c) => [c.path, c.origin, c.enforcement, c.outOfPlan]))
-      .toEqual(expect.arrayContaining([['dist/out.js', 'agent-tool', 'recorded', false], ['.omc/note.txt', 'agent-tool', 'recorded', false]]));
+    expect([f.exists('dist/out.js'), f.exists('.omc/note.txt')]).toEqual([true, true]);
     await f.runtime.changes.idle();
     await f.runtime.watchdog.quiesce();
     expect([f.events(), f.interrupts(), f.runtime.hold.isHeld()]).toEqual([[], 0, false]);
@@ -73,6 +71,8 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     expect(event.changes.map((c) => [c.path, c.enforcement])).toEqual([['.env', 'enforced']]);
     await waitFor(() => f.interrupts() >= 1, 'the interrupt to reach the agent');
     expect([event.interrupted, f.interrupts(), f.runtime.hold.isHeld()]).toEqual([true, 1, true]);
+    await f.runtime.changes.idle();
+    expect(f.changes().map((c) => [c.path, c.enforcement])).toEqual([['.env', 'enforced']]);
   });
 
   it('answers keep with the resume message and no revert', async () => {
@@ -273,11 +273,12 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     expect([stored.map((d) => d.decision), item?.kind === 'tool' ? item.decision : null]).toEqual([['hook-pending'], 'hook-pending']);
   });
 
-  it('rolls a step back without touching harness and recorded-only files, and previews the agent-tool files', async () => {
+  it('rolls a step back without touching gitignored and harness files, which are not tracked, and previews the agent-tool files', async () => {
     const f = await execFlow('exec-step-rollback', { files: { '.gitignore': 'dist/\n' } });
     await f.send();
     await waitFor(() => closedTurns(f).length === 1, 'the turn closed');
-    await waitFor(() => ['src/other.ts', 'dist/out.js', '.omc/note.txt'].every((rel) => f.changes().some((c) => c.path === rel)), 'the changes recorded');
+    await waitFor(() => f.changes().some((c) => c.path === 'src/other.ts'), 'the changes recorded');
+    expect([f.exists('dist/out.js'), f.exists('.omc/note.txt')]).toEqual([true, true]);
     f.session.send('finish');
     const plan = await waitFor(() => f.runtime.gate.plans.plans().find((p) => p.status === 'done'), 'the plan done');
     await waitFor(() => f.runtime.checkpoints.views().find((view) => view.sealedAt !== null), 'the sealed checkpoint');
@@ -285,7 +286,8 @@ describe('the watchdog flows on the fake claude', { timeout: 30_000 }, () => {
     await f.runtime.changes.idle();
     const preview = await f.runtime.reverts.previewStepRollback(plan.id, 'edit');
     expect(preview).toMatchObject({ allowed: true, autoFiles: ['src/app.ts'], confirmFiles: ['src/other.ts'] });
-    expect(preview.notRolledBack.map((file) => file.path).sort()).toEqual(['.omc/note.txt', 'dist/out.js']);
+    expect(preview.notRolledBack).toEqual([]);
+    expect(f.changes().map((c) => c.path).filter((path) => path === 'dist/out.js' || path === '.omc/note.txt')).toEqual([]);
     await f.runtime.reverts.rollbackStep(plan.id, 'edit', ['src/other.ts']);
     expect([f.file('src/app.ts'), f.file('src/other.ts')]).toEqual(["export const greeting = 'helo';\n", OTHER_ORIGINAL]);
     expect([f.file('dist/out.js'), f.file('.omc/note.txt')]).toEqual(['built\n', 'note\n']);
