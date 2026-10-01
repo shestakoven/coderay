@@ -65,11 +65,11 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
 
   return (
     <footer className="timeline" data-testid="timeline">
-      <div className="bottom-tabs" role="tablist">
-        <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} role="tab" aria-selected={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
+      <div className="bottom-tabs">
+        <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
           <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={14} /> {timelineSummary(items)}
         </button>
-        <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} role="tab" aria-selected={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
+        <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} aria-pressed={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
           <Icon name="terminal" size={14} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
         </button>
       </div>

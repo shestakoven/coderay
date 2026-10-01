@@ -25,7 +25,7 @@ test('the terminal runs commands in the project, survives a reload and closes', 
   await expect(page.getByText('core connected')).toBeVisible();
   await page.keyboard.press('Control+`');
   await expect(page.locator('.terminal-host:visible .xterm-rows')).toContainText('hi-3', { timeout: 15000 });
-  await expect(page.getByRole('tab', { name: /Terminal/ })).toContainText('1');
+  await expect(page.getByRole('button', { name: /^Terminal · / })).toContainText('1');
 
   await page.getByRole('button', { name: /^Close / }).click();
   await expect(page.locator('.terminal-host:visible .xterm-rows')).not.toContainText('hi-3', { timeout: 15000 });
