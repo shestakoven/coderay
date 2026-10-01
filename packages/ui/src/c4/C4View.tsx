@@ -40,7 +40,8 @@ const ICONS: Record<string, string> = {
   doc: '<path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3"/>',
   globe: '<circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13"/>',
   mail: '<rect x="1.5" y="3.5" width="13" height="9" rx="1"/><path d="M1.5 4.5l6.5 5 6.5-5"/>',
-  box: '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/>',
+  box: '<path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7z"/><path d="M2.5 4.5L8 7.5l5.5-3M8 7.5v7"/>',
+  play: '<path d="M5 3l8 5-8 5z" fill="currentColor"/>',
   plug: '<path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 0 1-9 0zM8 12v2.5"/>',
   stack: '<rect x="2.5" y="6" width="11" height="7.5" rx="1.5"/><path d="M4 4h8M5.5 2h5"/>',
 };
