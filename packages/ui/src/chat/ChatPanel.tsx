@@ -4,6 +4,8 @@ import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks,
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
+import { ChatSwitcher, type ChatList } from './ChatSwitcher';
+import { ModelControls } from './ModelControls';
 
 const RECOVERED = "recovered from claude's transcript";
 
@@ -11,8 +13,9 @@ const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', err
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
 
-export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
+export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
   chat: ChatState;
+  chats: ChatList;
   send: (message: ClientMessage) => boolean;
   onClearFilter: () => void;
   onDismissError: () => void;
@@ -48,7 +51,8 @@ export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, 
   return (
     <section className="chat">
       <header className="chat-header">
-        <span className="chat-status">{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
+        <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
+        <span className="chat-status muted">{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
@@ -57,7 +61,6 @@ export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, 
         )}
         <span className="spacer" />
         <button onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'}>Restart</button>
-        <button onClick={() => send({ type: 'session.new' })} disabled={!chat.session}>New session</button>
       </header>
       {dialog}
       {planRow && (
@@ -103,6 +106,8 @@ export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, 
           placeholder={sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
         />
         <div className="composer-actions">
+          <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} enabled={sendable} send={send} />
+          <span className="spacer" />
           <button onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title}>{stop.label}</button>
           <button onClick={submit} disabled={!sendable || draft.trim() === ''}>Send</button>
         </div>

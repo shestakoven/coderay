@@ -1,4 +1,9 @@
-import type { ClientMessage, FileAnswer, FileHashes, McpEntry, McpLevel, PlanAnswer, Policy, PromptAnswer, WatchdogAnswer } from '@ide/protocol';
+import {
+  EFFORT_LEVELS,
+  type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
+  type WatchdogAnswer,
+} from '@ide/protocol';
+import { isModelChoice } from '../agent/tools';
 import { isRecord } from '../json';
 
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
@@ -11,15 +16,25 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before, after, revertId, stepKey, confirm } = value;
+  const {
+    type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
+    after, revertId, stepKey, confirm, id, modelChoice, effort,
+  } = value;
   switch (type) {
     case 'chat.send':
       return typeof text === 'string' ? { type, text } : null;
     case 'chat.stop':
     case 'session.restart':
     case 'session.new':
+    case 'session.list':
     case 'settings.get':
       return { type };
+    case 'session.switch':
+      return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
+    case 'session.configure':
+      return (modelChoice === null || (typeof modelChoice === 'string' && isModelChoice(modelChoice))) && (effort === null || isEffort(effort))
+        ? { type, modelChoice, effort }
+        : null;
     case 'prompt.answer': {
       const parsed = parseAnswer(answer);
       return typeof requestId === 'string' && parsed ? { type, requestId, answer: parsed } : null;
@@ -95,6 +110,9 @@ function parsePlanAnswer(value: unknown): PlanAnswer | null {
 
 const MAX_CONFIRM_FILES = 5000;
 const MAX_PATH_LENGTH = 4096;
+const MAX_ID_LENGTH = 100;
+
+const isEffort = (value: unknown): value is EffortLevel => EFFORT_LEVELS.includes(value as EffortLevel);
 
 const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
 

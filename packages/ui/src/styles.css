@@ -380,3 +380,22 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-header { gap: 6px; padding: 6px 10px; }
 .chat-header button { white-space: nowrap; padding: 2px 8px; }
 .chat-status { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Chats, model and effort */
+.chat-switcher { position: relative; display: flex; gap: 4px; min-width: 0; }
+.chat-switcher-button { display: flex; gap: 6px; align-items: center; min-width: 0; max-width: 190px; padding: 2px 8px; background: none; border-color: transparent; font-weight: 600; }
+.chat-switcher-button:hover { background: var(--raised); }
+.chat-switcher-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-new { padding: 2px 8px; }
+.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: 300px; max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.chat-list-empty { padding: 8px; }
+.chat-list-row { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; border-radius: var(--r-1); }
+.chat-list-row:hover:not(:disabled) { background: var(--raised); }
+.chat-list-row.on { background: var(--selection); }
+.chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.chat-list-meta { font-size: 11px; }
+.model-controls { display: flex; gap: 6px; flex: 1 1 100%; }
+.model-controls select { background: var(--raised); color: var(--fg); border: 1px solid var(--line); border-radius: var(--r-1); padding: 2px 4px; font: inherit; font-size: 12px; }
+.model-controls select:disabled { opacity: 0.5; }
+.composer-actions { align-items: center; flex-wrap: wrap; gap: 6px 8px; }
+.composer-actions .spacer { flex: 1; }

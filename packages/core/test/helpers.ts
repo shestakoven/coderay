@@ -12,7 +12,7 @@ export const fixture = (name: string): string => fileURLToPath(new URL(`./fixtur
 
 export function sessionRecord(id: string, cwd: string): SessionRecord {
   return {
-    id, claudeSessionId: `claude-${id}`, cwd, status: 'running', model: null, cliVersion: null,
+    id, claudeSessionId: `claude-${id}`, cwd, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
     pid: null, launchId: null, conversationStarted: true, startedAt: 1,
   };
 }

@@ -27,6 +27,7 @@ import { LeftPanel } from './layout/LeftPanel';
 import { loadPanels, panelReducer, savePanels } from './layout/panel-state';
 import { ComponentTree, FileTree } from './layout/Trees';
 import { OpenProjectDialog, useOpenProject } from './project/OpenProjectDialog';
+import type { ChatList } from './chat/ChatSwitcher';
 
 const storage = (): Storage | undefined => {
   try {
@@ -62,6 +63,7 @@ export function App() {
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, undefined, () => loadPanels(storage()));
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
+  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [] });
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
   const openProject = useOpenProject();
@@ -119,6 +121,9 @@ export function App() {
           break;
         case 'history.result':
           dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview });
+          break;
+        case 'sessions.snapshot':
+          setChats({ activeId: message.activeId, sessions: message.sessions });
           break;
         case 'project.info':
           if (knownRoot.current !== null && knownRoot.current !== message.info.root) location.reload();
@@ -354,6 +359,7 @@ export function App() {
             <div className="right-body" hidden={panels.rightTab !== 'agent'}>
               <ChatPanel
                 chat={chat}
+                chats={chats}
                 send={send}
                 onClearFilter={() => dispatchChat({ type: 'filter', filter: null })}
                 onDismissError={() => dispatchChat({ type: 'dismiss-error' })}

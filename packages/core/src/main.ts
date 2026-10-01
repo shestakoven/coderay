@@ -99,6 +99,7 @@ try {
     claude: { command: values.claude, args: [] },
     mcpServers: () => registry.sessionServers(),
     gate: rt.sessionGate,
+    canLeave: () => rt.canLeave(),
   });
   session = agent;
   rt.attach(agent);
@@ -112,6 +113,14 @@ try {
   const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: { ...registry.view(), policy: policy.view() } });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
+  const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats() });
+  const broadcastSessions = (): void => {
+    try {
+      server?.broadcast(sessionsSnapshot());
+    } catch (error) {
+      console.error('IDE core: could not list the chats', error);
+    }
+  };
 
   const changeSettings = (message: SettingsClientMessage): void => {
     switch (message.type) {
@@ -147,6 +156,7 @@ try {
     switch (message.type) {
       case 'chat.send':
         agent.send(message.text);
+        broadcastSessions();
         return;
       case 'chat.stop':
         agent.stop();
@@ -156,6 +166,16 @@ try {
         return;
       case 'session.new':
         await agent.newSession();
+        return;
+      case 'session.list':
+        reply(sessionsSnapshot());
+        return;
+      case 'session.switch':
+        await agent.switchSession(message.id);
+        return;
+      case 'session.configure':
+        await agent.configure(message.modelChoice, message.effort);
+        broadcastSessions();
         return;
       case 'prompt.answer':
         agent.answerPrompt(message.requestId, message.answer);
@@ -223,6 +243,7 @@ try {
       { type: 'project.info', info: { root, name: projectName, home: homedir(), recent: recent.list() } },
       { type: 'map.progress', progress: progress.get() },
       { type: 'session.snapshot', state: agent.state() },
+      sessionsSnapshot(),
       plansSnapshot(),
       gateSnapshot(),
       settingsSnapshot(),
@@ -239,8 +260,12 @@ try {
   server = running;
   agent.onMessage((message) => {
     running.broadcast(message);
-    if (message.type === 'session.snapshot') running.broadcast(plansSnapshot());
+    if (message.type !== 'session.snapshot') return;
+    running.broadcast(plansSnapshot());
+    broadcastSessions();
   });
+  agent.onTurnClosed(broadcastSessions);
+  agent.onProcessExit(broadcastSessions);
   rt.gate.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
   rt.gate.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
   rt.history.onPatch((patch) => running.broadcast({ type: 'history.patch', patch }));

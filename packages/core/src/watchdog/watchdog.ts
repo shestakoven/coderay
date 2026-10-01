@@ -66,6 +66,7 @@ const insideProject = (rel: string): boolean => rel !== '' && rel !== '..' && !r
 export class Watchdog {
   private readonly listeners = new Set<(event: WatchdogEventView) => void>();
   private readonly all: WatchdogEventView[] = [];
+  private loadedFor: string | null | undefined = undefined;
   private open: WatchdogEventView | null = null;
   private readonly notes = new Map<string, string[]>();
   private flagged: { event: WatchdogEventView; at: number } | null = null;
@@ -345,10 +346,19 @@ export class Watchdog {
     }
   }
 
+  reload(): void {
+    const sessionId = this.o.sessionId();
+    // With no session yet the ended chat's events stay visible; the next chat's first message replaces them.
+    if (sessionId === null || sessionId === this.loadedFor || this.isPending()) return;
+    this.all.length = 0;
+    this.restore();
+  }
+
   restore(): void {
     let stored: WatchdogEventView[] = [];
     try {
       const sessionId = this.o.sessionId();
+      this.loadedFor = sessionId;
       if (sessionId !== null) stored = this.o.store.watchdogEvents(sessionId);
     } catch (error) {
       console.error('watchdog: could not load the stored events', error);

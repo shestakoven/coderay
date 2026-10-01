@@ -58,7 +58,7 @@ interface Seed {
 function seedRunningSession(home: string, root: string, seed: Seed): void {
   const store = openStore(projectDir(home, root));
   store.saveSession({
-    id: 'session-1', claudeSessionId: seed.claudeSessionId, cwd: root, status: 'running', model: null, cliVersion: null,
+    id: 'session-1', claudeSessionId: seed.claudeSessionId, cwd: root, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
     pid: seed.pid, launchId: seed.claudeSessionId, conversationStarted: true, startedAt: 1,
   });
   store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
@@ -1032,7 +1032,7 @@ describe('AgentSession after a core crash', () => {
     const claudeSessionId = randomUUID();
     const store = openStore(projectDir(home, root));
     store.saveSession({
-      id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, cliVersion: null,
+      id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
       pid: null, launchId: null, conversationStarted: true, startedAt: 1,
     });
     store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
