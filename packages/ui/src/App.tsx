@@ -27,6 +27,8 @@ import { ActivityBar } from './layout/ActivityBar';
 import { DetailsSlotContext } from './layout/DetailsSlot';
 import { LeftPanel } from './layout/LeftPanel';
 import { loadPanels, panelReducer, savePanels } from './layout/panel-state';
+import { Resizer } from './layout/Resizer';
+import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes, type SizedPanel } from './layout/sizes';
 import { ComponentTree, FileTree } from './layout/Trees';
 import { OpenProjectDialog, useOpenProject } from './project/OpenProjectDialog';
 import type { ChatList } from './chat/ChatSwitcher';
@@ -63,6 +65,7 @@ export function App() {
   const [tab, setTab] = useState<DetailsTab>('details');
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, undefined, () => loadPanels(storage()));
+  const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [] });
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
@@ -188,6 +191,13 @@ export function App() {
     + (settings?.policy.externalEdits.ide || settings?.policy.externalEdits.project ? 1 : 0);
 
   useEffect(() => savePanels(storage(), panels), [panels]);
+  useEffect(() => saveSizes(storage(), sizes), [sizes]);
+  const resize = (panel: SizedPanel, size: number): void => {
+    const other = panel === 'left' ? (panels.right ? sizes.right : 0) : panel === 'right' ? (panels.left ? sizes.left : 0) : 0;
+    const next = clampSize(panel, size, { viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, otherSideWidth: other });
+    setSizes((current) => (current[panel] === next ? current : { ...current, [panel]: next }));
+  };
+  const resetSize = (panel: SizedPanel): void => setSizes((current) => ({ ...current, [panel]: DEFAULT_SIZES[panel] }));
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
@@ -277,7 +287,7 @@ export function App() {
   const showRight = panels.right;
   return (
     <DetailsSlotContext.Provider value={detailsSlot}>
-      <div className={`app shell${panels.focus ? ' focus' : ''}`}>
+      <div className={`app shell${panels.focus ? ' focus' : ''}`} style={{ '--left-w': `${sizes.left}px`, '--right-w': `${sizes.right}px`, '--bottom-h': `${sizes.bottom}px` } as React.CSSProperties}>
         <header className="topbar">
           <button className="project-button" onClick={() => setOpenDialog(true)} title={projectInfo?.root ?? 'Open project…'}>
             <span className="project">{snapshot?.projectName ?? projectInfo?.name ?? '…'}</span>
@@ -334,6 +344,7 @@ export function App() {
               files={snapshot ? <FileTree snapshot={snapshot} changes={changes} selected={state.selected} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
             />
           )}
+          {panels.left && <Resizer orientation="vertical" label="Resize project panel" value={sizes.left} min={LIMITS.left.min} max={LIMITS.left.max} grow={1} onResize={(size) => resize('left', size)} onReset={() => resetSize('left')} />}
           <main className="map-area">
             <MapActivity progress={progress} status={snapshot?.status ?? null} />
             <PlanOverlayContext.Provider value={overlay}>
@@ -349,6 +360,7 @@ export function App() {
               {!showC4 && mapDetails}
             </PlanOverlayContext.Provider>
           </main>
+          {showRight && <Resizer orientation="vertical" label="Resize agent panel" value={sizes.right} min={LIMITS.right.min} max={LIMITS.right.max} grow={-1} onResize={(size) => resize('right', size)} onReset={() => resetSize('right')} />}
           <aside className="right-panel" hidden={!showRight} aria-label="Agent and details">
             <div className="seg" role="tablist">
               <button role="tab" aria-selected={panels.rightTab === 'agent'} className={panels.rightTab === 'agent' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'agent' })}>Agent</button>
@@ -377,6 +389,7 @@ export function App() {
             </div>
           </aside>
         </div>
+        {!panels.focus && panels.bottom && <Resizer orientation="horizontal" label="Resize timeline" value={sizes.bottom} min={LIMITS.bottom.min} max={LIMITS.bottom.max} grow={-1} onResize={(size) => resize('bottom', size)} onReset={() => resetSize('bottom')} />}
         {!panels.focus && (
           <Timeline plans={plans.plans} latestPlan={latestPlan} history={hist.history} results={hist.results} chat={chat} send={send} onSelect={selectTimelineItem} open={panels.bottom} onToggle={() => dispatchPanels({ type: 'toggle', panel: 'bottom' })} />
         )}

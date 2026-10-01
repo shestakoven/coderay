@@ -460,3 +460,23 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .composer-action.stop { color: var(--error); }
 .composer-action.stop:disabled { color: var(--muted); }
 .model-controls select { height: 32px; }
+
+/* Resizable panels */
+.left-panel { width: var(--left-w, 264px); min-width: 200px; }
+.right-panel { width: var(--right-w, 340px); min-width: 280px; }
+.timeline-list { max-height: var(--bottom-h, 200px); }
+.map-area { min-width: 320px; }
+.resizer { position: relative; flex: none; z-index: 6; background: var(--border); }
+.resizer.vertical { width: 1px; cursor: col-resize; }
+.resizer.horizontal { height: 1px; cursor: row-resize; }
+.resizer::before { content: ''; position: absolute; }
+.resizer.vertical::before { top: 0; bottom: 0; left: -3px; right: -3px; }
+.resizer.horizontal::before { left: 0; right: 0; top: -3px; bottom: -3px; }
+.resizer:hover, .resizer:focus-visible, .resizer.dragging { background: var(--accent); outline: none; }
+.resizer.vertical:hover, .resizer.vertical:focus-visible, .resizer.vertical.dragging { box-shadow: 0 0 0 1px var(--accent); }
+.resizer.horizontal:hover, .resizer.horizontal:focus-visible, .resizer.horizontal.dragging { box-shadow: 0 0 0 1px var(--accent); }
+body.resizing { user-select: none; }
+body.resizing.vertical { cursor: col-resize; }
+body.resizing.horizontal { cursor: row-resize; }
+body.resizing * { pointer-events: none; }
+body.resizing .resizer { pointer-events: auto; }
