@@ -9,7 +9,7 @@ export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusSte
   plan: PlanView;
   snapshot: MapSnapshot | null;
   open: boolean;
-  onToggle: () => void;
+  onToggle?: () => void;
   onAnswer: (answer: PlanAnswer) => void;
   onFocusStep: (index: number) => void;
 }) {
@@ -17,11 +17,18 @@ export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusSte
   const [feedback, setFeedback] = useState('');
   return (
     <div className={`plan-panel ${plan.status}`} data-testid="plan-panel">
-      <button className="plan-panel-head" onClick={onToggle} aria-expanded={open}>
-        <span className="plan-dot" />
-        <b>{planTitle(plan)}</b>
-        <span className="plan-toggle">{open ? '▾' : '▸'}</span>
-      </button>
+      {onToggle ? (
+        <button className="plan-panel-head" onClick={onToggle} aria-expanded={open}>
+          <span className="plan-dot" />
+          <b>{planTitle(plan)}</b>
+          <span className="plan-toggle">{open ? '▾' : '▸'}</span>
+        </button>
+      ) : (
+        <div className="plan-panel-head">
+          <span className="plan-dot" />
+          <b>{planTitle(plan)}</b>
+        </div>
+      )}
       {open && (
         <>
           <div className="plan-goal">{plan.goal}</div>

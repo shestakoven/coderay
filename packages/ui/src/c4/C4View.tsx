@@ -24,6 +24,7 @@ import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { PromptPopover } from '../plan/PromptPopover';
 import { promptTarget } from '../plan/prompt-text';
 import { StepBadges } from '../plan/StepBadges';
+import { DetailsAside } from '../layout/DetailsSlot';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 
@@ -334,19 +335,19 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
   if (!selection) {
     if (model.warnings.length === 0 && model.tooling.length === 0) return null;
     return (
-      <aside className="details c4-notes">
+      <DetailsAside className="details c4-notes" inline>
         {model.tooling.length > 0 && <p className="muted">Tooling (not drawn): {model.tooling.join(', ')}</p>}
         {model.warnings.map((w) => (
           <p key={w} className="warn">{w}</p>
         ))}
-      </aside>
+      </DetailsAside>
     );
   }
   const componentName = (id: string) => snapshot.components.find((c) => c.id === id)?.name ?? (id === 'unassigned' ? 'Unassigned files' : id);
   if (selection.type === 'edge') {
     const links = model.links.filter((l) => selection.ids.includes(l.id));
     return (
-      <aside className="details">
+      <DetailsAside>
         {links.map((l) => (
           <section key={l.id}>
             <h2>
@@ -364,13 +365,13 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </section>
         ))}
-      </aside>
+      </DetailsAside>
     );
   }
   const rootComponent = selection.id.startsWith('root:') ? snapshot.components.find((c) => `root:${c.id}` === selection.id) : undefined;
   if (rootComponent) {
     return (
-      <aside className="details">
+      <DetailsAside>
         <h2>{rootComponent.name}</h2>
         {rootComponent.summary && <p className="summary">{rootComponent.summary}</p>}
         {rootComponent.description && <p>{rootComponent.description}</p>}
@@ -386,7 +387,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </>
         )}
-      </aside>
+      </DetailsAside>
     );
   }
   const container = model.containers.find((c) => c.id === selection.id);
@@ -396,7 +397,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
   if (shown) {
     const list = container ? [container] : members;
     return (
-      <aside className="details">
+      <DetailsAside>
         <h2>{container ? container.name : `${members.length} containers from one build`}</h2>
         <p className="muted">
           {shown.role} · {shown.tech}
@@ -431,13 +432,13 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </>
         )}
-      </aside>
+      </DetailsAside>
     );
   }
   if (external) {
     const users = model.links.filter((l) => l.to === external.id).map((l) => nameOf(model, l.from));
     return (
-      <aside className="details">
+      <DetailsAside>
         <h2>{external.name}</h2>
         <p className="muted">{external.kind} · classified from names only</p>
         <h3>Identifiers</h3>
@@ -450,7 +451,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
         </ul>
         <h3>Used by</h3>
         <p>{users.join(', ')}</p>
-      </aside>
+      </DetailsAside>
     );
   }
   return null;

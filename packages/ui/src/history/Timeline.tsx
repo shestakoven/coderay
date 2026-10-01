@@ -14,6 +14,8 @@ interface Props {
   chat: ChatState;
   send: (message: ClientMessage) => boolean;
   onSelect: (item: TimelineItem) => void;
+  open: boolean;
+  onToggle: () => void;
 }
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -23,8 +25,7 @@ export function timelineSummary(items: TimelineItem[]): string {
   return [plural(count('step'), 'step'), plural(count('event') + count('gate'), 'event'), plural(count('revert'), 'revert')].join(' · ');
 }
 
-export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect }: Props) {
-  const [open, setOpen] = useState(false);
+export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle }: Props) {
   const [rollback, dispatch] = useReducer(rollbackReducer, null);
   const [undoing, setUndoing] = useState<Record<string, string>>({});
   const items = useMemo(() => timelineItems(plans, history), [plans, history]);
@@ -58,7 +59,7 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
 
   return (
     <footer className="timeline" data-testid="timeline">
-      <button className="timeline-bar" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <button className="timeline-bar" onClick={onToggle} aria-expanded={open}>
         {open ? '▾' : '▸'} {timelineSummary(items)}
       </button>
       {open && (

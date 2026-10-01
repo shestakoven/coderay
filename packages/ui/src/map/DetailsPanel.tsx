@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react';
 import type { MapComponent, MapFile } from '@ide/protocol';
 import type { MapState } from './map-state';
+import { DetailsAside } from '../layout/DetailsSlot';
 
 export type DetailsTab = 'details' | 'changes';
 
@@ -11,10 +12,10 @@ export function DetailsPanel({ state, tab, onTab, changes }: { state: MapState; 
   if (!component && !file) return null;
   if (tab === 'changes' && selected) {
     return (
-      <aside className="details">
+      <DetailsAside>
         <Tabs tab={tab} onTab={onTab} />
         {changes(selected)}
-      </aside>
+      </DetailsAside>
     );
   }
   const tabs = <Tabs tab={tab} onTab={onTab} />;
@@ -33,7 +34,7 @@ function Tabs({ tab, onTab }: { tab: DetailsTab; onTab: (tab: DetailsTab) => voi
 
 function ComponentDetails({ component, tabs }: { component: MapComponent; tabs: ReactNode }) {
   return (
-    <aside className="details">
+    <DetailsAside>
       {tabs}
       <h2>{component.name}</h2>
       {component.summary && <p className="summary">{component.summary}</p>}
@@ -62,13 +63,13 @@ function ComponentDetails({ component, tabs }: { component: MapComponent; tabs: 
           <li key={path}>{path}</li>
         ))}
       </ul>
-    </aside>
+    </DetailsAside>
   );
 }
 
 function FileDetails({ file, owner, tabs }: { file: MapFile; owner: MapComponent | undefined; tabs: ReactNode }) {
   return (
-    <aside className="details">
+    <DetailsAside>
       {tabs}
       <h2>{file.path}</h2>
       <p className="muted">
@@ -87,6 +88,6 @@ function FileDetails({ file, owner, tabs }: { file: MapFile; owner: MapComponent
           </li>
         ))}
       </ul>
-    </aside>
+    </DetailsAside>
   );
 }

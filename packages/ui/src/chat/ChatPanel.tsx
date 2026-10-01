@@ -48,7 +48,7 @@ export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, 
   return (
     <section className="chat">
       <header className="chat-header">
-        <span>{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
+        <span className="chat-status">{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
