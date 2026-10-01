@@ -57,7 +57,7 @@ const SIZE: Record<C4Kind, { width: number; height: number }> = {
 const SLIM = { width: 210, height: 64 };
 const COLUMNS = 2;
 const GAP = 12;
-const HEADER = 64;
+const HEADER = 80;
 
 const ROLE_COLUMN = { ui: 1, api: 2, worker: 3, service: 3 } as const;
 const ROLE_ACCENT = { ui: 'var(--c4-ui)', api: 'var(--c4-api)', worker: 'var(--c4-worker)', service: 'var(--c4-api)' } as const;
