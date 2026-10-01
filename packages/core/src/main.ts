@@ -174,7 +174,12 @@ try {
         return;
       case 'project.open': {
         const target = validateProjectPath(message.path);
-        const error = 'error' in target ? target.error : target.root === root ? 'That project is already open.' : null;
+        let error = 'error' in target ? target.error : target.root === root ? 'That project is already open.' : null;
+        if (error === null && !('error' in target)) {
+          const probe = acquireCoreLock(projectDir(home, target.root));
+          if (probe.acquired) probe.release();
+          else error = `That project is already open in another IDE core (pid ${probe.holder}).`;
+        }
         reply({ type: 'project.open.result', requestId: message.requestId, error });
         if (error !== null || 'error' in target) return;
         recent.add(target.root);
