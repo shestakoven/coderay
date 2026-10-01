@@ -1,17 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_USAGE, type UsageView } from '@ide/protocol';
 import { chatReducer, initialChatState } from '../src/chat/chat-state';
-import { contextMeter, formatTokens, levelOf, limitMeter, resetsIn, usageMeters } from '../src/chat/usage';
+import { contextMeter, levelOf, limitMeter, resetsIn, usageMeters } from '../src/chat/usage';
 
 const NOW = 1_000_000_000_000;
 const inSeconds = (seconds: number) => NOW / 1000 + seconds;
 const usage = (partial: Partial<UsageView>): UsageView => ({ ...EMPTY_USAGE, ...partial });
-
-describe('formatTokens', () => {
-  it.each([[0, '0'], [950, '950'], [1000, '1k'], [96_010, '96k'], [200_000, '200k'], [1_000_000, '1M'], [1_250_000, '1.3M']])('%i is %s', (tokens, text) => {
-    expect(formatTokens(tokens)).toBe(text);
-  });
-});
 
 describe('levelOf', () => {
   it('turns to a warning at 70% and to high at 90%', () => {
@@ -30,14 +24,16 @@ describe('contextMeter', () => {
     expect(contextMeter(EMPTY_USAGE)).toBeNull();
   });
 
-  it('shows used, window and share, and warns as the window fills', () => {
-    expect(contextMeter(usage({ contextTokens: 96_010, contextWindow: 200_000 }))).toMatchObject({ text: 'ctx 96k / 200k · 48%', fraction: 96_010 / 200_000, level: 'ok' });
+  it('shows only the share of the window in use, never tokens, and warns as it fills', () => {
+    expect(contextMeter(usage({ contextTokens: 96_010, contextWindow: 200_000 }))).toEqual({
+      text: 'ctx 48%', title: '48% of the context window is in use', fraction: 96_010 / 200_000, level: 'ok',
+    });
     expect(contextMeter(usage({ contextTokens: 150_000, contextWindow: 200_000 }))?.level).toBe('warn');
     expect(contextMeter(usage({ contextTokens: 190_000, contextWindow: 200_000 }))?.level).toBe('high');
   });
 
-  it('shows only the tokens while the window is not known yet', () => {
-    expect(contextMeter(usage({ contextTokens: 96_010 }))).toMatchObject({ text: 'ctx 96k', fraction: null, level: 'ok' });
+  it('shows nothing while the window is not known, since no share can be given', () => {
+    expect([contextMeter(usage({ contextTokens: 96_010 })), contextMeter(usage({ contextTokens: 5, contextWindow: 0 }))]).toEqual([null, null]);
   });
 
   it('caps the bar at a full window', () => {
@@ -61,7 +57,7 @@ describe('limitMeter', () => {
 describe('usageMeters', () => {
   it('lists the context first, then the five-hour and the seven-day limit, skipping what is unknown', () => {
     const all = usage({ contextTokens: 1000, contextWindow: 200_000, fiveHour: { utilization: 0.1, resetsAt: inSeconds(60) }, sevenDay: { utilization: 0.2, resetsAt: inSeconds(60) } });
-    expect(usageMeters(all, NOW).map((meter) => meter.text)).toEqual(['ctx 1k / 200k · 1%', '5h 10%', '7d 20%']);
+    expect(usageMeters(all, NOW).map((meter) => meter.text)).toEqual(['ctx 1%', '5h 10%', '7d 20%']);
     expect(usageMeters(usage({ sevenDay: all.sevenDay }), NOW).map((meter) => meter.text)).toEqual(['7d 20%']);
     expect(usageMeters(EMPTY_USAGE, NOW)).toEqual([]);
   });

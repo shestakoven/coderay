@@ -2,7 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, ProjectInfo, SettingsView } from '@ide/protocol';
 import { ChatPanel } from './chat/ChatPanel';
-import { chatReducer, initialChatState } from './chat/chat-state';
+import { canSend, chatReducer, initialChatState } from './chat/chat-state';
 import { dialogEvent, eventFilePaths } from './history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
 import { WatchdogDialog } from './history/WatchdogDialog';
@@ -14,7 +14,7 @@ import { MapView } from './map/MapView';
 import { MapActivity } from './map/MapActivity';
 import { PlanOverlayContext, type PlanOverlay } from './plan/overlay';
 import { PlanPanel } from './plan/PlanPanel';
-import { chimeKey, playChime } from './plan/chime';
+import { chimeKey, finishedWorking, playChime, playDone, type Activity } from './plan/chime';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, planTitle, waitsForUser } from './plan/plan-state';
 import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
@@ -53,6 +53,7 @@ export function App() {
   const token = useMemo(launchToken, []);
   const [state, dispatch] = useReducer(mapReducer, initialMapState);
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
+  const stoppedByUser = useRef(false);
   const [plans, dispatchPlans] = useReducer(planReducer, initialPlanState);
   const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
@@ -193,6 +194,7 @@ export function App() {
       dispatchChat({ type: 'error', message: 'Not connected to the IDE core.' });
       return false;
     }
+    if (message.type === 'chat.stop') stoppedByUser.current = true;
     return true;
   };
 
@@ -259,6 +261,13 @@ export function App() {
   useEffect(() => {
     if (waitingPlan) playChime();
   }, [waitingPlan]);
+  const activity: Activity = { chatId: chat.session?.id ?? null, busy: !canSend(chat) };
+  const lastActivity = useRef<Activity | null>(null);
+  useEffect(() => {
+    if (finishedWorking(lastActivity.current, activity, stoppedByUser.current)) playDone();
+    if (!activity.busy) stoppedByUser.current = false;
+    lastActivity.current = activity;
+  }, [activity.chatId, activity.busy]);
   const prompt = pendingPrompts(plans.prompts)[0] ?? null;
   const answerPlan = (answer: PlanAnswer) => {
     if (shown) send({ type: 'plan.answer', planId: shown.id, version: shown.version, answer });

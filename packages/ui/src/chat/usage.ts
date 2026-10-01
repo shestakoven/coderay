@@ -16,12 +16,6 @@ export const levelOf = (fraction: number): Level => (fraction >= HIGH_AT ? 'high
 
 const percent = (fraction: number): string => `${Math.round(fraction * 100)}%`;
 
-export function formatTokens(tokens: number): string {
-  if (tokens >= 1_000_000) return `${Number((tokens / 1_000_000).toFixed(1))}M`;
-  if (tokens >= 1000) return `${Math.round(tokens / 1000)}k`;
-  return String(tokens);
-}
-
 export function resetsIn(resetsAt: number, now: number): string {
   const minutes = Math.max(0, Math.round((resetsAt * 1000 - now) / 60_000));
   if (minutes < 60) return `${minutes}m`;
@@ -32,12 +26,11 @@ export function resetsIn(resetsAt: number, now: number): string {
 
 export function contextMeter(usage: UsageView): Meter | null {
   const { contextTokens: used, contextWindow: window } = usage;
-  if (used === null) return null;
-  if (window === null || window <= 0) return { text: `ctx ${formatTokens(used)}`, title: `${used} tokens in the context`, fraction: null, level: 'ok' };
+  if (used === null || window === null || window <= 0) return null;
   const fraction = used / window;
   return {
-    text: `ctx ${formatTokens(used)} / ${formatTokens(window)} · ${percent(fraction)}`,
-    title: `${used} of ${window} tokens of the context window are in use`,
+    text: `ctx ${percent(fraction)}`,
+    title: `${percent(fraction)} of the context window is in use`,
     fraction: Math.min(1, fraction),
     level: levelOf(fraction),
   };
