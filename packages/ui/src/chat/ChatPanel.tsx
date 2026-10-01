@@ -6,11 +6,14 @@ import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
 import { ChatSwitcher, type ChatList } from './ChatSwitcher';
 import { ModelControls } from './ModelControls';
+import { WorkingIndicator } from './WorkingIndicator';
+import { workingState } from './working';
 
 const RECOVERED = "recovered from claude's transcript";
 
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
+const START_WAIT_MS = 15000;
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
 
 export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
@@ -27,6 +30,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
   dialog: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
+  const [sentAt, setSentAt] = useState<number | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const groups = turnGroups(chat);
   const itemCount = Object.keys(chat.items).length;
@@ -34,13 +38,26 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
   const tasks = runningTasks(chat);
   const stop = stopControl(chat);
 
+  const working = workingState(chat, sentAt);
+  const active = working !== null;
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
-  }, [itemCount]);
+  }, [itemCount, active]);
+  useEffect(() => {
+    if (sentAt === null) return;
+    const timer = setTimeout(() => setSentAt(null), START_WAIT_MS);
+    return () => clearTimeout(timer);
+  }, [sentAt]);
+  useEffect(() => {
+    if (sentAt !== null && (chat.error !== null || Object.values(chat.turns).some((turn) => turn.closedAt === null))) setSentAt(null);
+  }, [sentAt, chat.error, chat.turns]);
 
   const submit = (): void => {
     if (!sendable || draft.trim() === '') return;
-    if (send({ type: 'chat.send', text: draft })) setDraft('');
+    if (send({ type: 'chat.send', text: draft })) {
+      setDraft('');
+      setSentAt(Date.now());
+    }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
     if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -50,9 +67,9 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
 
   return (
     <section className="chat">
-      <header className="chat-header">
+      <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
-        <span className="chat-status muted">{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
+        <span className="chat-status muted" title={chat.session?.model ?? undefined}>{chat.session ? (chat.session.status === 'refused' ? 'hook off' : chat.session.status) : 'no session yet'}</span>
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
@@ -83,6 +100,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
             )}
           </div>
         ))}
+        {working && <WorkingIndicator key={working.since} working={working} />}
         <div ref={end} />
       </div>
       {prompts.map((prompt, index) => (
