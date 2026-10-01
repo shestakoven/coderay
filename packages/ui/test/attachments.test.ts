@@ -49,23 +49,23 @@ describe('addAttachments', () => {
     expect(new Set(result.attachments.map((item) => item.id)).size).toBe(2);
   });
 
-  it('accepts exactly four images', async () => {
-    const files = [1, 2, 3, 4].map((n) => file(`${n}.png`, 'image/png'));
+  it('accepts exactly twenty images', async () => {
+    const files = Array.from({ length: 20 }, (_, i) => i + 1).map((n) => file(`${n}.png`, 'image/png'));
     const result = await addAttachments([], files);
-    expect([result.attachments.length, result.problem]).toEqual([4, null]);
+    expect([result.attachments.length, result.problem]).toEqual([20, null]);
   });
 
-  it('rejects the fifth image with a limit message and keeps the first four', async () => {
-    const files = [1, 2, 3, 4, 5].map((n) => file(`${n}.png`, 'image/png'));
+  it('rejects the 21st image with a limit message and keeps the first twenty', async () => {
+    const files = Array.from({ length: 21 }, (_, i) => i + 1).map((n) => file(`${n}.png`, 'image/png'));
     const result = await addAttachments([], files);
-    expect(result.attachments.map((item) => item.name)).toEqual(['1.png', '2.png', '3.png', '4.png']);
-    expect(result.problem).toBe('At most 4 images per message.');
+    expect(result.attachments.map((item) => item.name)).toEqual(Array.from({ length: 20 }, (_, i) => `${i + 1}.png`));
+    expect(result.problem).toBe('At most 20 images per message.');
   });
 
   it('counts the existing attachments toward the limit', async () => {
-    const result = await addAttachments([existing('a'), existing('b'), existing('c')], [file('x.png', 'image/png'), file('y.png', 'image/png')]);
-    expect(result.attachments.map((item) => item.name)).toEqual(['a.png', 'b.png', 'c.png', 'x.png']);
-    expect(result.problem).toBe('At most 4 images per message.');
+    const result = await addAttachments(Array.from({ length: 19 }, (_, i) => existing(`e${i}`)), [file('x.png', 'image/png'), file('y.png', 'image/png')]);
+    expect(result.attachments.map((item) => item.name)).toHaveLength(20);
+    expect(result.problem).toBe('At most 20 images per message.');
   });
 
   it.each(['image/svg+xml', 'image/bmp', 'application/pdf', ''])('rejects the type "%s" and names the file', async (type) => {
@@ -74,11 +74,11 @@ describe('addAttachments', () => {
     expect(result.problem).toBe('doc.bin: only PNG, JPEG, GIF and WebP are supported.');
   });
 
-  it('rejects a file over 1 MiB and accepts one of exactly 1 MiB', async () => {
-    const big = await addAttachments([], [file('big.png', 'image/png', 1024 * 1024 + 1)]);
-    const edge = await addAttachments([], [file('edge.png', 'image/png', 1024 * 1024)]);
-    expect([big.attachments.length, big.problem, edge.attachments.length, edge.problem]).toEqual([0, 'big.png is larger than 1 MB.', 1, null]);
-    expect(MAX_IMAGE_BYTES).toBe(1048576);
+  it('rejects a file over 5 MiB and accepts one of exactly 5 MiB', async () => {
+    const big = await addAttachments([], [file('big.png', 'image/png', 5 * 1024 * 1024 + 1)]);
+    const edge = await addAttachments([], [file('edge.png', 'image/png', 5 * 1024 * 1024)]);
+    expect([big.attachments.length, big.problem, edge.attachments.length, edge.problem]).toEqual([0, 'big.png is larger than 5 MB.', 1, null]);
+    expect(MAX_IMAGE_BYTES).toBe(5242880);
   });
 
   it('keeps the good files when another file in the batch is rejected', async () => {

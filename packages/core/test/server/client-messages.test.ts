@@ -27,12 +27,12 @@ describe('parseClientMessage', () => {
       expect(send({ images: [] })).toBeNull();
     });
 
-    it('accepts exactly four images', () => {
-      expect(send({ images: [png, png, png, png] })).toMatchObject({ images: [png, png, png, png] });
+    it('accepts exactly twenty images', () => {
+      expect(send({ images: Array(20).fill(png) })).toMatchObject({ images: Array(20).fill(png) });
     });
 
-    it('rejects five images', () => {
-      expect(send({ images: [png, png, png, png, png] })).toBeNull();
+    it('rejects twenty-one images', () => {
+      expect(send({ images: Array(21).fill(png) })).toBeNull();
     });
 
     it.each(['image/svg+xml', 'image/bmp', 'text/plain', ''])('rejects the media type "%s"', (mediaType) => {

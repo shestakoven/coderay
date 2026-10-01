@@ -1,7 +1,7 @@
 import type { ToolDecision } from './plans';
 
-export const MAX_CLIENT_FRAME_BYTES = 8 * 1024 * 1024;
-export const MAX_CHAT_IMAGES = 4;
+export const MAX_CLIENT_FRAME_BYTES = 32 * 1024 * 1024;
+export const MAX_CHAT_IMAGES = 20;
 export const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 
 export interface ChatImage {

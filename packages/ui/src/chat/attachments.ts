@@ -1,6 +1,7 @@
-import { IMAGE_MEDIA_TYPES, MAX_CHAT_IMAGES, type ChatImage } from '@ide/protocol';
+import { IMAGE_MEDIA_TYPES, MAX_CHAT_IMAGES, MAX_CLIENT_FRAME_BYTES, type ChatImage } from '@ide/protocol';
 
-export const MAX_IMAGE_BYTES = 1024 * 1024;
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+export const MAX_TOTAL_BASE64 = MAX_CLIENT_FRAME_BYTES - 1024 * 1024;
 
 export interface Attachment extends ChatImage {
   id: string;
@@ -33,8 +34,10 @@ export async function addAttachments(current: Attachment[], files: File[]): Prom
       problem = `At most ${MAX_CHAT_IMAGES} images per message.`;
       break;
     }
+    const total = attachments.reduce((sum, item) => sum + item.data.length, 0);
     if (!isImageType(file.type)) problem = `${file.name || 'Image'}: only PNG, JPEG, GIF and WebP are supported.`;
-    else if (file.size > MAX_IMAGE_BYTES) problem = `${file.name || 'Image'} is larger than 1 MB.`;
+    else if (file.size > MAX_IMAGE_BYTES) problem = `${file.name || 'Image'} is larger than 5 MB.`;
+    else if (total + Math.ceil(file.size / 3) * 4 > MAX_TOTAL_BASE64) problem = 'Images together are too large to send.';
     else attachments.push({ id: crypto.randomUUID(), name: file.name || 'image', mediaType: file.type, data: await toBase64(file) });
   }
   return { attachments, problem };
