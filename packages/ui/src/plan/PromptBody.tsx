@@ -1,12 +1,12 @@
 import type { GateAnswer, GatePreview, GatePromptView } from '@ide/protocol';
-import { agentReason, prefixed, promptHint, promptTarget } from './prompt-text';
+import { agentReason, prefixed, promptHint, promptTarget, targetLabel } from './prompt-text';
 
 export function PromptBody({ prompt, onAnswer }: { prompt: GatePromptView; onAnswer: (answer: GateAnswer) => void }) {
   const target = promptTarget(prompt);
   return (
     <>
       <div className="oop-head">
-        <span className="oop-tag">Out of plan</span> {prompt.tool} <code>{target?.path ?? prompt.summary}</code>
+        <span className="oop-tag">Out of plan</span> {prompt.tool} <code>{targetLabel(target, prompt.summary)}</code>
       </div>
       <div className="oop-reason">
         <span className="muted">Agent: </span>

@@ -22,7 +22,7 @@ const PROPOSE_DESCRIPTION = [
   'To change an approved plan, call it again with the whole plan and keep the active and done steps.',
 ].join(' ');
 
-const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time.';
+const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time; starting the next step finishes the active one, so "done" is only needed for the last step.';
 
 const target = z.object({ componentId: z.string().optional(), path: z.string().optional(), op: z.enum(['modify', 'create', 'delete']) });
 const proposeInput = {

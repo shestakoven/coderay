@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 
 import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
-import { promptTarget } from '../plan/prompt-text';
+import { promptTarget, targetLabel } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
 import { ChatSwitcher, type ChatList } from './ChatSwitcher';
 import { Icon } from '../layout/Icon';
@@ -20,13 +20,12 @@ const TURN_END: Record<string, string> = { error_during_execution: 'stopped', cr
 const START_WAIT_MS = 15000;
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
 
-export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
+export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
   onClearFilter: () => void;
   onDismissError: () => void;
-  planRow: { text: string; onOpen: () => void } | null;
   prompts: GatePromptView[];
   promptAnchored: boolean;
   onAnswerPrompt: (id: string, answer: GateAnswer) => void;
@@ -97,9 +96,6 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
         <button onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'}>Restart</button>
       </header>
       {dialog}
-      {planRow && (
-        <button className="plan-row" onClick={planRow.onOpen}>≡ {planRow.text}</button>
-      )}
       {chat.filter && (
         <div className="chat-filter" data-testid="chat-filter">
           <span>Filtered to {chat.filter.label}</span>
@@ -123,7 +119,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
       {prompts.map((prompt, index) => (
         <details key={prompt.id} className="prompt gate" open={!(index === 0 && promptAnchored)} data-testid="gate-card">
           <summary>
-            ⚠ Out of plan: {prompt.tool} <code>{promptTarget(prompt)?.path ?? prompt.summary}</code>
+            ⚠ Out of plan: {prompt.tool} <code>{targetLabel(promptTarget(prompt), prompt.summary)}</code>
             {index === 0 && promptAnchored ? ' · on the map' : ''}
           </summary>
           <PromptBody prompt={prompt} onAnswer={(answer) => onAnswerPrompt(prompt.id, answer)} />
@@ -169,7 +165,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
             void attach(imageFiles(event.target.files ?? []));
             event.target.value = '';
           }} />
-          <button className="composer-action" onClick={() => fileInput.current?.click()} title="Attach images" aria-label="Attach images">
+          <button className="composer-action" onClick={() => fileInput.current?.click()} disabled={!sendable} title="Attach images" aria-label="Attach images">
             <Icon name="paperclip" size={18} />
           </button>
           <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />

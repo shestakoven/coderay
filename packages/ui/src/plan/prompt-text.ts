@@ -2,6 +2,8 @@ import type { GatePromptView, GateTarget } from '@ide/protocol';
 
 export const promptTarget = (prompt: GatePromptView): GateTarget | null => prompt.targets.find((target) => !target.inScope) ?? null;
 
+export const targetLabel = (target: GateTarget | null, fallback: string): string => (target ? `${target.deleting ? 'delete ' : ''}${target.path}` : fallback);
+
 export const agentReason = (prompt: GatePromptView): string => prompt.reason ?? 'The agent wrote nothing before this call.';
 
 export function promptHint(prompt: GatePromptView): string {
@@ -13,7 +15,8 @@ export function promptHint(prompt: GatePromptView): string {
     unresolved: 'cannot be known before the call runs',
     'all-tracked': 'rewrites every tracked file',
   }[target.kind];
-  return `${target.path} ${why}. The call waits for your answer.`;
+  const deleting = target.kind === 'enforced' && target.deleting;
+  return `${deleting ? `Deleting ${target.path} is not in the approved plan (a delete step is needed even for a file the plan creates)` : `${target.path} ${why}`}. The call waits for your answer.`;
 }
 
 export function prefixed(prefix: string, text: string, maxLines = 12): string {

@@ -10,6 +10,10 @@ describe('systemPrompt', () => {
     expect(prompt.split('\n').slice(-3)).toEqual(['Components of this project (id — name):', '- auth — Auth', '- billing — Billing']);
   });
 
+  it('says that starting the next step finishes the active one', () => {
+    expect(systemPrompt([])).toContain('starting the next step finishes the active one, so "done" is only needed for the last step');
+  });
+
   it('lists at most 300 components and says how many more there are', () => {
     const components = Array.from({ length: 302 }, (_, index) => ({ id: `c${index}`, name: `C${index}` }));
     const lines = systemPrompt(components).split('\n');

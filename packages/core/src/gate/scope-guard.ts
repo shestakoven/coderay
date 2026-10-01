@@ -56,7 +56,7 @@ export function describeTargets(targets: ClassifiedTarget[]): string {
   const names = targets.map((target) => {
     if (target.kind === 'all-tracked') return 'every tracked file (a git command that rewrites the work tree)';
     if (target.kind === 'unresolved') return `${target.raw} (${target.why})`;
-    return targetName(target);
+    return target.deleting ? `${targetName(target)} (delete)` : targetName(target);
   });
   const shown = names.slice(0, MAX_LISTED).join(', ');
   return names.length > MAX_LISTED ? `${shown} and ${names.length - MAX_LISTED} more` : shown;
