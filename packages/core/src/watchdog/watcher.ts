@@ -111,6 +111,7 @@ export class WatchdogWatcher {
       }
     };
     watcher.on('add', raw).on('change', raw).on('unlink', raw);
+    watcher.on('error', (error) => console.error('watchdog: watch error', error));
     // a file written into a directory in the same tick as its creation can be missed by chokidar's own scan
     watcher.on('addDir', (abs) => {
       if (!inProbe(abs)) scan(abs);
