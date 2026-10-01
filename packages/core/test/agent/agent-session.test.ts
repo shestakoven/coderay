@@ -100,7 +100,7 @@ describe('AgentSession', () => {
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
     const session = h.session.state().session;
     expect(argv).toEqual([
-      '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
+      '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
       '--session-id', session?.claudeSessionId,
       '--model', 'sonnet', '--effort', 'medium',
       '--mcp-config', join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),

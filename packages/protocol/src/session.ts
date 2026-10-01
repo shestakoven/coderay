@@ -176,6 +176,7 @@ export interface SessionPatch {
 export type SessionServerMessage =
   | { type: 'session.snapshot'; state: SessionState }
   | { type: 'session.patch'; patch: SessionPatch }
+  | { type: 'session.delta'; text: string }
   | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[] }
   | { type: 'models.snapshot'; models: ModelInfo[] }
   | { type: 'error'; message: string };

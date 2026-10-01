@@ -50,7 +50,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
   const active = working !== null;
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
-  }, [itemCount, active]);
+  }, [itemCount, active, chat.draft.length]);
   useEffect(() => {
     if (sentAt === null) return;
     const timer = setTimeout(() => setSentAt(null), START_WAIT_MS);
@@ -117,6 +117,11 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
             )}
           </div>
         ))}
+        {chat.draft !== '' && (
+          <div className="turn">
+            <div className="msg assistant rich"><MarkdownText text={chat.draft} /></div>
+          </div>
+        )}
         {working && <WorkingIndicator key={working.since} working={working} />}
         <div ref={end} />
       </div>

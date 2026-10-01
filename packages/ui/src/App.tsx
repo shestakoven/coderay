@@ -108,6 +108,9 @@ export function App() {
         case 'session.snapshot':
           dispatchChat({ type: 'snapshot', state: message.state });
           break;
+        case 'session.delta':
+          dispatchChat({ type: 'delta', text: message.text });
+          break;
         case 'session.patch':
           dispatchChat({ type: 'patch', patch: message.patch });
           break;

@@ -16,6 +16,7 @@ export type StreamEvent =
   | { type: 'mode'; permissionMode: string }
   | { type: 'assistant'; parentToolUseId: string | null; blocks: AssistantBlock[] }
   | { type: 'user'; parentToolUseId: string | null; toolResults: ToolResultBlock[] }
+  | { type: 'text_delta'; parentToolUseId: string | null; text: string }
   | { type: 'result'; subtype: string; origin: string | null }
   | { type: 'task_started'; taskId: string; toolUseId: string | null; backgrounded: boolean; description: string }
   | { type: 'task_notification'; taskId: string; toolUseId: string | null; status: string }
@@ -25,7 +26,7 @@ export type StreamEvent =
   | { type: 'ignored' }
   | { type: 'unknown'; label: string };
 
-const IGNORED_TYPES = new Set(['stream_event', 'rate_limit_event', 'control_response', 'tool_progress']);
+const IGNORED_TYPES = new Set(['rate_limit_event', 'control_response', 'tool_progress']);
 const IGNORED_SYSTEM = new Set([
   'hook_started', 'hook_progress', 'hook_response', 'thinking_tokens', 'status',
   'task_progress', 'background_tasks_changed', 'compact_boundary', 'commands_changed',
@@ -53,6 +54,8 @@ export function parseStreamLine(line: string): StreamEvent | null {
       return { type: 'assistant', parentToolUseId, blocks: contentBlocks(event).flatMap(assistantBlock) };
     case 'user':
       return { type: 'user', parentToolUseId, toolResults: contentBlocks(event).flatMap(toolResult) };
+    case 'stream_event':
+      return textDelta(event, parentToolUseId);
     case 'result': {
       const origin = event.origin;
       return { type: 'result', subtype: text(event.subtype) ?? 'unknown', origin: isRecord(origin) ? (text(origin.kind) ?? 'unknown') : null };
@@ -69,6 +72,13 @@ export function parseStreamLine(line: string): StreamEvent | null {
     default:
       return IGNORED_TYPES.has(type) ? { type: 'ignored' } : { type: 'unknown', label: type };
   }
+}
+
+function textDelta(event: Json, parentToolUseId: string | null): StreamEvent {
+  const inner = isRecord(event.event) ? event.event : {};
+  const delta = isRecord(inner.delta) ? inner.delta : {};
+  const chunk = inner.type === 'content_block_delta' && delta.type === 'text_delta' ? text(delta.text) : null;
+  return chunk === null || chunk === '' ? { type: 'ignored' } : { type: 'text_delta', parentToolUseId, text: chunk };
 }
 
 function parseSystem(event: Json): StreamEvent {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_USAGE, type ChatItem, type SessionState, type TaskKind, type TaskView, type ToolStatus, type TurnView } from '@ide/protocol';
+import { EMPTY_USAGE, type ChatItem, type SessionPatch, type SessionState, type TaskKind, type TaskView, type ToolStatus, type TurnView } from '@ide/protocol';
 import { canSend, canStop, chatReducer, childItems, decisionLabel, initialChatState, stopControl, turnGroups } from '../src/chat/chat-state';
 
 const session = {
@@ -29,6 +29,55 @@ describe('chatReducer', () => {
     const after = chatReducer(before, { type: 'patch', patch: { turns: [turn('t1', 'user')], items: [tool('b1', 1, 't1'), message('m2', 2, 't1', 'done')] } });
     expect(after.turns.t1?.closedAt).toBe(3);
     expect(Object.values(after.items).map((item) => (item.kind === 'tool' ? item.status : item.kind === 'message' ? item.text : ''))).toEqual(['ok', 'done']);
+  });
+});
+
+describe('chatReducer draft', () => {
+  const delta = (state: ReturnType<typeof chat>, text: string) => chatReducer(state, { type: 'delta', text });
+  const streaming = () => delta(delta(chat({ turns: [turn('t1', 'user', 'running')] }), 'Hel'), 'lo');
+  const patch = (state: ReturnType<typeof chat>, p: SessionPatch) => chatReducer(state, { type: 'patch', patch: p });
+
+  it('starts with an empty draft', () => {
+    expect(chat({}).draft).toBe('');
+  });
+
+  it('appends streamed text deltas in order', () => {
+    expect(streaming().draft).toBe('Hello');
+  });
+
+  it('clears the draft on a snapshot', () => {
+    const after = chatReducer(streaming(), { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE } });
+    expect(after.draft).toBe('');
+  });
+
+  it('clears the draft when the finished top-level assistant message arrives', () => {
+    expect(patch(streaming(), { items: [message('m1', 1, 't1', 'Hello')] }).draft).toBe('');
+  });
+
+  it('clears the draft when the turn closes', () => {
+    expect(patch(streaming(), { turns: [turn('t1', 'user')] }).draft).toBe('');
+  });
+
+  it('keeps the draft on a patch that only changes a still-open turn', () => {
+    expect(patch(streaming(), { turns: [turn('t1', 'user', 'running')] }).draft).toBe('Hello');
+  });
+
+  it('keeps the draft when a tool item arrives', () => {
+    expect(patch(streaming(), { items: [tool('b1', 2, 't1')] }).draft).toBe('Hello');
+  });
+
+  it('keeps the draft when a user message arrives', () => {
+    const user: ChatItem = { kind: 'message', id: 'u1', seq: 2, turnId: 't1', parentToolUseId: null, role: 'user', text: 'more', ts: 2 };
+    expect(patch(streaming(), { items: [user] }).draft).toBe('Hello');
+  });
+
+  it('keeps the draft when a subagent message arrives', () => {
+    const sub: ChatItem = { ...message('s1', 2, null, 'sub text'), parentToolUseId: 'agent' };
+    expect(patch(streaming(), { items: [sub] }).draft).toBe('Hello');
+  });
+
+  it('keeps the draft on a usage patch', () => {
+    expect(patch(streaming(), { usage: EMPTY_USAGE }).draft).toBe('Hello');
   });
 });
 

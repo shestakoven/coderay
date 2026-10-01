@@ -620,6 +620,11 @@ export class AgentSession {
       const event = parseStreamLine(line);
       this.trackUsage(line);
       if (!event) return;
+      if (event.type === 'text_delta') {
+        // Subagent text is shown only once it is complete.
+        if (event.parentToolUseId === null) this.emit({ type: 'session.delta', text: event.text });
+        return;
+      }
       if (event.type === 'unknown') {
         if (!this.reportedUnknown.has(event.label)) console.warn(`agent: ignoring unknown stream event "${event.label}"`);
         this.reportedUnknown.add(event.label);
@@ -823,7 +828,7 @@ function userMessage(text: string, images: ChatImage[]): object {
 
 function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {
   return [
-    '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
+    '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
     session.conversationStarted ? '--resume' : '--session-id', session.claudeSessionId,
     ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
     ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),

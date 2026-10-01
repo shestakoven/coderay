@@ -96,6 +96,43 @@ describe('parseStreamLine', () => {
     expect(noise.map((event) => parseStreamLine(line(event)))).toEqual(noise.map(() => ({ type: 'ignored' })));
   });
 
+  describe('streamed text', () => {
+    const delta = (text: unknown, parent: string | null = null, deltaType = 'text_delta') =>
+      line({ type: 'stream_event', parent_tool_use_id: parent, event: { type: 'content_block_delta', index: 0, delta: { type: deltaType, text } } });
+
+    it('reads a text delta of the main agent with a null parent tool use id', () => {
+      expect(parseStreamLine(delta('Hel'))).toEqual({ type: 'text_delta', parentToolUseId: null, text: 'Hel' });
+    });
+
+    it('reads a text delta of a subagent with the id of the Agent call that started it', () => {
+      expect(parseStreamLine(delta('lo', 'toolu_agent'))).toEqual({ type: 'text_delta', parentToolUseId: 'toolu_agent', text: 'lo' });
+    });
+
+    it('ignores a text delta with empty text', () => {
+      expect(parseStreamLine(delta(''))).toEqual({ type: 'ignored' });
+    });
+
+    it('ignores a text delta without text', () => {
+      expect(parseStreamLine(line({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'text_delta' } } }))).toEqual({ type: 'ignored' });
+    });
+
+    it('ignores thinking and tool input deltas', () => {
+      const thinking = line({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'thinking_delta', thinking: 'hmm' } } });
+      const input = line({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'content_block_delta', delta: { type: 'input_json_delta', partial_json: '{"a"' } } });
+      expect([parseStreamLine(thinking), parseStreamLine(input)]).toEqual([{ type: 'ignored' }, { type: 'ignored' }]);
+    });
+
+    it('ignores a delta that carries text but is not a content_block_delta', () => {
+      const event = line({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', delta: { type: 'text_delta', text: 'x' } } });
+      expect(parseStreamLine(event)).toEqual({ type: 'ignored' });
+    });
+
+    it('ignores message_start and a stream event without an inner event', () => {
+      const start = line({ type: 'stream_event', parent_tool_use_id: null, event: { type: 'message_start', message: {} } });
+      expect([parseStreamLine(start), parseStreamLine(line({ type: 'stream_event' }))]).toEqual([{ type: 'ignored' }, { type: 'ignored' }]);
+    });
+  });
+
   it('ignores tool_progress heartbeats of a long MCP call', () => {
     expect(parseStreamLine(JSON.stringify({ type: 'tool_progress', tool_use_id: 'toolu_1', heartbeat: true }))).toEqual({ type: 'ignored' });
   });

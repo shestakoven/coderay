@@ -9,6 +9,7 @@ export interface ChatState {
   tasks: Record<string, TaskView>;
   mcpServers: McpServerState[];
   usage: UsageView;
+  draft: string;
   error: string | null;
   filter: ChatFilter | null;
 }
@@ -16,6 +17,7 @@ export interface ChatState {
 export type ChatAction =
   | { type: 'snapshot'; state: SessionState }
   | { type: 'patch'; patch: SessionPatch }
+  | { type: 'delta'; text: string }
   | { type: 'error'; message: string }
   | { type: 'dismiss-error' }
   | { type: 'filter'; filter: ChatFilter | null };
@@ -25,13 +27,18 @@ export interface TurnGroup {
   items: ChatItem[];
 }
 
-export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], usage: EMPTY_USAGE, error: null, filter: null };
+export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], usage: EMPTY_USAGE, draft: '', error: null, filter: null };
 
 const byId = <T extends { id: string }>(values: T[]): Record<string, T> => Object.fromEntries(values.map((value) => [value.id, value]));
 const merge = <T extends { id: string }>(current: Record<string, T>, updates: T[] | undefined): Record<string, T> =>
   updates?.length ? { ...current, ...byId(updates) } : current;
 const bySeq = (a: ChatItem, b: ChatItem) => a.seq - b.seq;
 const openTurns = (state: ChatState) => Object.values(state.turns).filter((turn) => turn.closedAt === null);
+
+// The finished message (or the end of the turn) replaces the streamed text.
+const draftEnded = (patch: SessionPatch): boolean =>
+  (patch.items ?? []).some((item) => item.kind === 'message' && item.role === 'assistant' && item.parentToolUseId === null) ||
+  (patch.turns ?? []).some((turn) => turn.closedAt !== null);
 
 export function chatReducer(state: ChatState, action: ChatAction): ChatState {
   switch (action.type) {
@@ -43,6 +50,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tasks: byId(action.state.tasks),
         mcpServers: action.state.mcpServers,
         usage: action.state.usage,
+        draft: '',
         error: state.error,
         filter: state.filter,
       };
@@ -55,7 +63,10 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tasks: merge(state.tasks, action.patch.tasks),
         mcpServers: action.patch.mcpServers ?? state.mcpServers,
         usage: action.patch.usage ?? state.usage,
+        draft: draftEnded(action.patch) ? '' : state.draft,
       };
+    case 'delta':
+      return { ...state, draft: state.draft + action.text };
     case 'error':
       return { ...state, error: action.message };
     case 'dismiss-error':
