@@ -1,8 +1,7 @@
-import { mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { readdirSync } from 'node:fs';
 import { lstat } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
-import { watch, type FSWatcher } from 'chokidar';
+import { watchRecursive, type RecursiveWatch } from '../watch/recursive';
 
 export interface FsEvent {
   rel: string;
@@ -12,8 +11,6 @@ export interface FsEvent {
 }
 
 const EXCLUDED = new Set(['node_modules', '.venv', 'venv', '__pycache__']);
-const PROBE_ATTEMPTS = 20;
-const PROBE_WAIT_MS = 50;
 const READY_MS = 10_000;
 const GIT_KEEP = /^\.git\/(HEAD$|refs(\/|$)|hooks(\/|$)|config$|info(\/|$))/;
 
@@ -37,8 +34,7 @@ export interface WatchdogWatcherOptions {
 }
 
 export class WatchdogWatcher {
-  private watcher: FSWatcher | null = null;
-  private probeDir: string | null = null;
+  private watcher: RecursiveWatch | null = null;
   private generation = 0;
   private abortStart: ((error: Error) => void) | null = null;
   private readonly listeners = new Set<(e: FsEvent) => void>();
@@ -65,91 +61,85 @@ export class WatchdogWatcher {
   }
 
   private async open(): Promise<void> {
-    const rel = (abs: string): string => relative(this.o.root, abs).split(sep).join('/');
-    // fs.watch on macOS has no started callback; a write to a second watched dir proves the stream is live.
-    // The probe dir is removed only in stop(): removing it earlier silently killed watching of root.
-    const probeDir = mkdtempSync(join(tmpdir(), 'watchdog-probe-'));
-    this.probeDir = probeDir;
-    const inProbe = (abs: string): boolean => abs === probeDir || abs.startsWith(probeDir + sep);
-    const ignored = (abs: string): boolean => {
-      if (inProbe(abs)) return false;
-      const r = rel(abs);
-      if (r === '') return false;
-      if (r.split('/').some((s) => EXCLUDED.has(s))) return true;
-      return r.startsWith('.git/') && !GIT_KEEP.test(r);
-    };
-    let probeSeen = false;
-    const watcher = watch([this.o.root, probeDir], { ignoreInitial: true, followSymlinks: false, ignorePermissionErrors: true, atomic: false, ignored });
-    this.watcher = watcher;
-    const touch = (abs: string): void => {
-      const r = rel(abs);
-      if (this.timers.has(r)) return;
-      const at = performance.now();
-      const wall = Date.now();
-      this.timers.set(r, { at, wall, timer: setTimeout(() => void this.settle(r), this.settleMs) });
-    };
-    const raw = (abs: string): void => {
-      if (inProbe(abs)) {
-        if (!this.o.testHooks?.discardProbeEvents) probeSeen = true;
-        return;
-      }
-      if (this.o.testHooks?.dropRawFileEvents?.(rel(abs))) return;
-      touch(abs);
-    };
-    const scan = (abs: string): void => {
-      let entries;
-      try {
-        entries = readdirSync(abs, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const child = join(abs, entry.name);
-        if (ignored(child)) continue;
-        if (entry.isDirectory()) scan(child);
-        else touch(child);
-      }
-    };
-    watcher.on('add', raw).on('change', raw).on('unlink', raw);
-    watcher.on('error', (error) => console.error('watchdog: watch error', error));
-    // a file written into a directory in the same tick as its creation can be missed by chokidar's own scan
-    watcher.on('addDir', (abs) => {
-      if (!inProbe(abs)) scan(abs);
+    const watcher = watchRecursive(this.o.root, {
+      ignored: (abs) => this.ignored(abs),
+      onEvent: (abs) => {
+        if (!this.o.testHooks?.dropRawFileEvents?.(this.rel(abs))) this.touch(abs);
+      },
+      onError: (error) => console.error('watchdog: watch error', error),
+      probePrefix: 'watchdog-probe-',
+      probeAttempts: this.o.probeAttempts,
+      probeWaitMs: this.o.probeWaitMs,
+      discardProbeEvents: this.o.testHooks?.discardProbeEvents,
     });
+    this.watcher = watcher;
     const generation = this.generation;
-    const stopped = (): Error => new Error('watchdog watcher stopped during start');
     await new Promise<void>((resolve, reject) => {
       const timer = setTimeout(() => reject(new Error('watchdog watcher never reported ready')), this.o.readyMs ?? READY_MS);
       this.abortStart = (error) => {
         clearTimeout(timer);
         reject(error);
       };
-      if (!this.o.testHooks?.swallowReady) {
-        watcher.once('ready', () => {
+      if (this.o.testHooks?.swallowReady) return;
+      watcher.ready.then(
+        () => {
           clearTimeout(timer);
           resolve();
-        });
-      }
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error);
+        },
+      );
     });
     this.abortStart = null;
-    if (generation !== this.generation) throw stopped();
-    const attempts = this.o.probeAttempts ?? PROBE_ATTEMPTS;
-    const waitMs = this.o.probeWaitMs ?? PROBE_WAIT_MS;
-    for (let i = 0; i < attempts && !probeSeen; i++) {
-      writeFileSync(join(probeDir, `p${i}`), '');
-      for (let waited = 0; waited < waitMs && !probeSeen && generation === this.generation; waited += 5) await new Promise((r) => setTimeout(r, 5));
-      if (generation !== this.generation) throw stopped();
+    if (generation !== this.generation) throw new Error('watchdog watcher stopped during start');
+  }
+
+  private rel(abs: string): string {
+    return relative(this.o.root, abs).split(sep).join('/');
+  }
+
+  private ignored(abs: string): boolean {
+    const r = this.rel(abs);
+    // the root itself carries no file to report, and scanning it would replay the whole project
+    if (r === '') return true;
+    if (r.split('/').some((s) => EXCLUDED.has(s))) return true;
+    return r.startsWith('.git/') && !GIT_KEEP.test(r);
+  }
+
+  private touch(abs: string): void {
+    const r = this.rel(abs);
+    if (this.timers.has(r)) return;
+    const at = performance.now();
+    const wall = Date.now();
+    this.timers.set(r, { at, wall, timer: setTimeout(() => void this.settle(r), this.settleMs) });
+  }
+
+  private scan(abs: string): void {
+    let entries;
+    try {
+      entries = readdirSync(abs, { withFileTypes: true });
+    } catch {
+      return;
     }
-    if (!probeSeen) throw new Error('watchdog watcher probe never reported: the file watcher is not delivering events');
+    for (const entry of entries) {
+      const child = join(abs, entry.name);
+      if (this.ignored(child)) continue;
+      if (entry.isDirectory()) this.scan(child);
+      else this.touch(child);
+    }
   }
 
   private async settle(r: string): Promise<void> {
     const entry = this.timers.get(r);
     this.timers.delete(r);
     if (!entry) return;
-    const stat = await lstat(join(this.o.root, r)).then((s) => s, () => null);
-    if (stat?.isDirectory()) return;
+    const abs = join(this.o.root, r);
+    const stat = await lstat(abs).then((s) => s, () => null);
     if (!this.watcher) return;
+    // a directory moved in reports only itself, and its files can land in the same tick as it
+    if (stat?.isDirectory()) return this.scan(abs);
     for (const l of this.listeners) l({ rel: r, exists: stat !== null, at: entry.at, wall: entry.wall });
   }
 
@@ -162,7 +152,5 @@ export class WatchdogWatcher {
     const watcher = this.watcher;
     this.watcher = null;
     await watcher?.close();
-    if (this.probeDir) rmSync(this.probeDir, { recursive: true, force: true });
-    this.probeDir = null;
   }
 }

@@ -1,15 +1,19 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { FSWatcher } from 'chokidar';
 import { onTestFinished, describe, expect, it, vi } from 'vitest';
 import { WatchdogWatcher, type FsEvent } from '../../src/watchdog/watcher';
 import { tempDir, waitFor } from '../helpers';
 
-const created = vi.hoisted(() => ({ watchers: [] as unknown[] }));
-vi.mock('chokidar', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('chokidar')>();
-  return { ...actual, watch: (...args: Parameters<typeof actual.watch>) => { const w = actual.watch(...args); created.watchers.push(w); return w; } };
+const created = vi.hoisted(() => ({ recursive: [] as unknown[] }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const watch = (...args: unknown[]): FSWatcher => {
+    const w = (actual.watch as (...a: unknown[]) => FSWatcher)(...args);
+    if ((args[1] as { recursive?: boolean } | undefined)?.recursive) created.recursive.push(w);
+    return w;
+  };
+  return { ...actual, watch };
 });
 
 async function watched(settleMs = 20): Promise<{ root: string; events: FsEvent[]; received: number[]; watcher: WatchdogWatcher }> {
@@ -335,7 +339,7 @@ describe('WatchdogWatcher', { timeout: 120_000 }, () => {
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => logged.mockRestore());
     const { root, events } = await watched();
-    const fsWatcher = created.watchers.at(-1) as FSWatcher;
+    const fsWatcher = created.recursive.at(-1) as FSWatcher;
     const failure = Object.assign(new Error('EMFILE: too many open files, watch'), { code: 'EMFILE' });
     expect(() => fsWatcher.emit('error', failure)).not.toThrow();
     expect(logged).toHaveBeenCalledWith('watchdog: watch error', failure);
