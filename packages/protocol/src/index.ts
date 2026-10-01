@@ -1,6 +1,7 @@
 import type { HistoryClientMessage, HistoryServerMessage } from './history';
 import type { PlanClientMessage, PlanServerMessage } from './plans';
 import type { ProjectClientMessage, ProjectServerMessage } from './project';
+import type { TerminalClientMessage, TerminalServerMessage } from './terminal';
 import type { ChatClientMessage, SessionServerMessage } from './session';
 import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 
@@ -9,6 +10,7 @@ export * from './settings';
 export * from './plans';
 export * from './history';
 export * from './project';
+export * from './terminal';
 
 export type Lang = 'typescript' | 'python';
 
@@ -166,6 +168,7 @@ export type ServerMessage =
   | SettingsServerMessage
   | PlanServerMessage
   | HistoryServerMessage
-  | ProjectServerMessage;
+  | ProjectServerMessage
+  | TerminalServerMessage;
 
-export type ClientMessage = ChatClientMessage | SettingsClientMessage | PlanClientMessage | HistoryClientMessage | ProjectClientMessage;
+export type ClientMessage = ChatClientMessage | SettingsClientMessage | PlanClientMessage | HistoryClientMessage | ProjectClientMessage | TerminalClientMessage;

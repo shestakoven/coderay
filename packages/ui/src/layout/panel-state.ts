@@ -1,5 +1,6 @@
 export type LeftTab = 'plan' | 'components' | 'files';
 export type RightTab = 'agent' | 'details';
+export type BottomTab = 'timeline' | 'terminal';
 
 interface Visibility {
   left: boolean;
@@ -11,6 +12,7 @@ export interface PanelState extends Visibility {
   focus: boolean;
   leftTab: LeftTab;
   rightTab: RightTab;
+  bottomTab: BottomTab;
   before: Visibility | null;
 }
 
@@ -19,12 +21,13 @@ export type PanelAction =
   | { type: 'focus' }
   | { type: 'left-tab'; tab: LeftTab }
   | { type: 'right-tab'; tab: RightTab }
+  | { type: 'bottom-tab'; tab: BottomTab }
   | { type: 'plan-shown' }
   | { type: 'node-selected' }
   | { type: 'selection-cleared' }
   | { type: 'attention' };
 
-export const initialPanels: PanelState = { left: true, right: true, bottom: false, focus: false, leftTab: 'components', rightTab: 'agent', before: null };
+export const initialPanels: PanelState = { left: true, right: true, bottom: false, focus: false, leftTab: 'components', rightTab: 'agent', bottomTab: 'timeline', before: null };
 
 const visibility = ({ left, right, bottom }: PanelState): Visibility => ({ left, right, bottom });
 
@@ -46,6 +49,8 @@ export function panelReducer(state: PanelState, action: PanelAction): PanelState
       return { ...leaveFocus(state), left: true, leftTab: action.tab };
     case 'right-tab':
       return { ...leaveFocus(state), right: true, rightTab: action.tab };
+    case 'bottom-tab':
+      return { ...leaveFocus(state), bottom: true, bottomTab: action.tab };
     case 'plan-shown':
       return { ...leaveFocus(state), left: true, leftTab: 'plan' };
     case 'node-selected':

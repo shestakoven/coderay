@@ -30,6 +30,7 @@ import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
 import { startServer, type RunningServer } from './server/server';
 import { openStore } from './store/store';
+import { TerminalService } from './terminal/terminal-service';
 
 const { values } = parseArgs({
   options: {
@@ -74,6 +75,7 @@ recent.add(root);
 try {
   const store = openStore(projectDir(home, root));
   const policy = new PolicyStore({ home, root });
+  const terminals = new TerminalService({ root });
   let server: RunningServer | undefined;
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
@@ -191,6 +193,18 @@ try {
       case 'settings.get':
         reply(settingsSnapshot());
         return;
+      case 'terminal.open':
+        terminals.open(message.id, message.cols, message.rows);
+        return;
+      case 'terminal.input':
+        terminals.input(message.id, message.data);
+        return;
+      case 'terminal.resize':
+        terminals.resize(message.id, message.cols, message.rows);
+        return;
+      case 'terminal.close':
+        terminals.close(message.id);
+        return;
       case 'fs.list':
         reply({ type: 'fs.list.result', requestId: message.requestId, ...listDirectories(message.path, homedir()) });
         return;
@@ -251,6 +265,7 @@ try {
       gateSnapshot(),
       settingsSnapshot(),
       { type: 'history.snapshot', history: rt.history.snapshot() },
+      { type: 'terminal.snapshot', terminals: terminals.snapshot() },
     ],
     onClientMessage: (message, reply) => {
       if (closing) {
@@ -273,8 +288,10 @@ try {
   rt.gate.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
   rt.history.onPatch((patch) => running.broadcast({ type: 'history.patch', patch }));
   rt.history.onReset(() => running.broadcast({ type: 'history.snapshot', history: rt.history.snapshot() }));
+  terminals.onMessage((message) => running.broadcast(message));
 
   const shutdown = async (): Promise<void> => {
+    const closingTerminals = terminals.closeAll();
     // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
     await rt.close();
     progress.stop();
@@ -284,6 +301,7 @@ try {
     await models.close();
     await stopping;
     await indexer?.stop();
+    await closingTerminals;
     await running.close();
     store.close();
     lock.release();

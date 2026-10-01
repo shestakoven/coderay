@@ -5,6 +5,7 @@ import {
 } from '@ide/protocol';
 import { isModelChoice } from '../agent/tools';
 import { isRecord } from '../json';
+import { MAX_TERMINAL_INPUT, TERMINAL_ID } from '../terminal/terminal-service';
 
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
 
@@ -18,7 +19,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, stepKey, confirm, id, modelChoice, effort,
+    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -51,6 +52,14 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     }
     case 'watchdog.stop-agent':
       return typeof eventId === 'string' ? { type, eventId } : null;
+    case 'terminal.open':
+      return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
+    case 'terminal.resize':
+      return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
+    case 'terminal.input':
+      return isTerminalId(id) && typeof data === 'string' && data.length <= MAX_TERMINAL_INPUT ? { type, id, data } : null;
+    case 'terminal.close':
+      return isTerminalId(id) ? { type, id } : null;
   }
   if (typeof requestId !== 'string') return null;
   switch (type) {
@@ -113,6 +122,10 @@ const MAX_PATH_LENGTH = 4096;
 const MAX_ID_LENGTH = 100;
 
 const isEffort = (value: unknown): value is EffortLevel => EFFORT_LEVELS.includes(value as EffortLevel);
+
+const isInteger = (value: unknown): value is number => Number.isInteger(value);
+
+const isTerminalId = (value: unknown): value is string => typeof value === 'string' && TERMINAL_ID.test(value);
 
 const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
 

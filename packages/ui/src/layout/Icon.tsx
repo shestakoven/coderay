@@ -12,6 +12,7 @@ const PATHS = {
   'chevron-right': <path d="m9 18 6-6-6-6" />,
   send: <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />,
+  terminal: <><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></>,
   search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>,
 } satisfies Record<string, ReactNode>;
 

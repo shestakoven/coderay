@@ -30,6 +30,8 @@ import { loadPanels, panelReducer, savePanels } from './layout/panel-state';
 import { Resizer } from './layout/Resizer';
 import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes, type SizedPanel } from './layout/sizes';
 import { ComponentTree, FileTree } from './layout/Trees';
+import { TerminalPanel } from './terminal/TerminalPanel';
+import { TerminalHub, type TerminalTab } from './terminal/terminal-hub';
 import { OpenProjectDialog, useOpenProject } from './project/OpenProjectDialog';
 import type { ChatList } from './chat/ChatSwitcher';
 
@@ -65,6 +67,9 @@ export function App() {
   const [tab, setTab] = useState<DetailsTab>('details');
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, undefined, () => loadPanels(storage()));
+  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const sendRef = useRef<(message: ClientMessage) => boolean>(() => false);
+  const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [] });
@@ -126,6 +131,21 @@ export function App() {
         case 'history.result':
           dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview });
           break;
+        case 'terminal.snapshot':
+          hub.restore(message.terminals);
+          break;
+        case 'terminal.opened':
+          hub.opened(message.terminal);
+          break;
+        case 'terminal.output':
+          hub.output(message.id, message.data);
+          break;
+        case 'terminal.exit':
+          hub.exited(message.id, message.code);
+          break;
+        case 'terminal.closed':
+          hub.closed(message.id);
+          break;
         case 'sessions.snapshot':
           setChats({ activeId: message.activeId, sessions: message.sessions });
           break;
@@ -171,6 +191,8 @@ export function App() {
     return true;
   };
 
+  sendRef.current = (message) => connection.current?.send(message) ?? false;
+
   const openSettings = (): void => {
     send({ type: 'settings.get' });
     setSettingsOpen(true);
@@ -192,6 +214,14 @@ export function App() {
 
   useEffect(() => savePanels(storage(), panels), [panels]);
   useEffect(() => saveSizes(storage(), sizes), [sizes]);
+  const terminalOpenRef = useRef(false);
+  terminalOpenRef.current = panels.bottom && panels.bottomTab === 'terminal';
+  const toggleTerminal = (): void => {
+    if (terminalOpenRef.current) dispatchPanels({ type: 'toggle', panel: 'bottom' });
+    else dispatchPanels({ type: 'bottom-tab', tab: 'terminal' });
+  };
+  const toggleTerminalRef = useRef(toggleTerminal);
+  toggleTerminalRef.current = toggleTerminal;
   const resize = (panel: SizedPanel, size: number): void => {
     const other = panel === 'left' ? (panels.right ? sizes.right : 0) : panel === 'right' ? (panels.left ? sizes.left : 0) : 0;
     const next = clampSize(panel, size, { viewportWidth: window.innerWidth, viewportHeight: window.innerHeight, otherSideWidth: other });
@@ -200,6 +230,11 @@ export function App() {
   const resetSize = (panel: SizedPanel): void => setSizes((current) => ({ ...current, [panel]: DEFAULT_SIZES[panel] }));
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if (event.ctrlKey && event.key === '`') {
+        event.preventDefault();
+        toggleTerminalRef.current();
+        return;
+      }
       if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === 'f') dispatchPanels({ type: 'focus' });
     };
@@ -319,6 +354,8 @@ export function App() {
             right={panels.right}
             bottom={panels.bottom}
             focus={panels.focus}
+            terminalOpen={panels.bottom && panels.bottomTab === 'terminal'}
+            onTerminal={toggleTerminal}
             onToggle={(panel) => dispatchPanels({ type: 'toggle', panel })}
             onFocus={() => dispatchPanels({ type: 'focus' })}
             onSettings={openSettings}
@@ -389,10 +426,24 @@ export function App() {
             </div>
           </aside>
         </div>
-        {!panels.focus && panels.bottom && <Resizer orientation="horizontal" label="Resize timeline" value={sizes.bottom} min={LIMITS.bottom.min} max={LIMITS.bottom.max} grow={-1} onResize={(size) => resize('bottom', size)} onReset={() => resetSize('bottom')} />}
-        {!panels.focus && (
-          <Timeline plans={plans.plans} latestPlan={latestPlan} history={hist.history} results={hist.results} chat={chat} send={send} onSelect={selectTimelineItem} open={panels.bottom} onToggle={() => dispatchPanels({ type: 'toggle', panel: 'bottom' })} />
-        )}
+        <div className="bottom-area" hidden={panels.focus}>
+          {panels.bottom && <Resizer orientation="horizontal" label="Resize timeline" value={sizes.bottom} min={LIMITS.bottom.min} max={LIMITS.bottom.max} grow={-1} onResize={(size) => resize('bottom', size)} onReset={() => resetSize('bottom')} />}
+          <Timeline
+            plans={plans.plans}
+            latestPlan={latestPlan}
+            history={hist.history}
+            results={hist.results}
+            chat={chat}
+            send={send}
+            onSelect={selectTimelineItem}
+            open={panels.bottom}
+            onToggle={() => dispatchPanels({ type: 'toggle', panel: 'bottom' })}
+            tab={panels.bottomTab}
+            onTab={(tab) => dispatchPanels({ type: 'bottom-tab', tab })}
+            terminalCount={terminalTabs.length}
+            terminal={<TerminalPanel hub={hub} tabs={terminalTabs} visible={panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
+          />
+        </div>
         <footer className="statusbar">
           <span className={`conn ${status}`}><i className="dot" />{status === 'open' ? 'core connected' : status}</span>
           {snapshot && <span>{snapshot.files.length} files · {snapshot.components.length} components</span>}
