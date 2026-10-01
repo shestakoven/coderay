@@ -188,8 +188,7 @@ describe('WatchdogWatcher', { timeout: 120_000 }, () => {
     const settleMs = 60;
     const { root, events, received } = await watched(settleMs);
     const wallBefore = Date.now();
-    writeFileSync(join(root, 'a.ts'), '1');
-    await waitFor(() => events.length > 0, 'event');
+    await sentinel(root, events, 'a.ts');
     const [event] = events;
     expect(received[0]! - event!.at).toBeGreaterThanOrEqual(settleMs - 5);
     expect(event!.wall).toBeGreaterThanOrEqual(wallBefore);
