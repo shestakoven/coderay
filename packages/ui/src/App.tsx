@@ -18,7 +18,7 @@ import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
-import { MODE_LABEL, withMode } from './settings/policy-form';
+import { MODE_LABEL, MODE_TITLE, withMode } from './settings/policy-form';
 import { initialModeSave, modeSaveReducer } from './settings/mode-save';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
 import { ActivityBar } from './layout/ActivityBar';
@@ -288,8 +288,8 @@ export function App() {
             </button>
           )}
           {settings && (
-            <label className="chip mode" title="Control mode for this project: what happens to a write outside the approved plan">
-              Mode{' '}
+            <label className="chip mode" title={MODE_TITLE}>
+              Out-of-plan writes{' '}
               <select
                 value={settings.policy.effective.mode}
                 onChange={(event) => saveMode(event.target.value as ControlMode)}

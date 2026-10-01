@@ -10,7 +10,15 @@ export interface PolicyForm {
   inherit: Record<keyof Policy, boolean>;
 }
 
-export const MODE_LABEL: Record<ControlMode, string> = { A: 'A · block', B: 'B · ask', C: 'C · allow and flag' };
+export const MODE_LABEL: Record<ControlMode, string> = { A: 'Block', B: 'Ask me', C: 'Allow and flag' };
+
+export const MODE_HINT: Record<ControlMode, string> = {
+  A: 'Block: a write outside the approved plan is denied. If one slips through afterwards, the agent is paused and the change is reverted unless you keep it.',
+  B: 'Ask me: a write outside the approved plan waits for your answer (allow once, expand the plan, or deny).',
+  C: 'Allow and flag: the write goes through and the changed node is flagged on the map. The agent is not interrupted.',
+};
+
+export const MODE_TITLE = `When the agent writes outside the approved plan:\n${(['A', 'B', 'C'] as const).map((mode) => `\u2022 ${MODE_HINT[mode]}`).join('\n')}`;
 
 const FIELDS: (keyof Policy)[] = ['mode', 'autoApproveMaxFiles', 'guarded', 'harness', 'outsideAllowed'];
 const lines = (text: string): string[] => text.split('\n').map((line) => line.trim()).filter(Boolean);
