@@ -25,7 +25,7 @@ import { graphSignature, visibleGraph } from './visible-graph';
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 const FIT_PADDING = 0.1;
 
-export function MapView({ state, dispatch, onRegroup }: { state: MapState; dispatch: Dispatch<MapAction>; onRegroup: () => void }) {
+export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
   const overlay = usePlanOverlay();
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -125,7 +125,6 @@ export function MapView({ state, dispatch, onRegroup }: { state: MapState; dispa
         <CenterOnFocus />
         <PromptPopover nodeId={promptNode} />
         <div className="map-actions">
-          <button type="button" onClick={onRegroup}>Regroup</button>
           <button type="button" onClick={() => setHideTests((value) => !value)}>
             {hideTests ? 'Show test components' : 'Hide test components'}
           </button>

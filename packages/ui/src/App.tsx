@@ -303,7 +303,8 @@ export function App() {
   };
   const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, changes, highlight, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
-  const showC4 = snapshot !== null && c4 !== null;
+  const [componentsView, setComponentsView] = useState(false);
+  const showC4 = snapshot !== null && c4 !== null && !componentsView;
   const selectComponent = (id: string): void => {
     if (!showC4) dispatch({ type: 'select', id });
     focusComponents([id]);
@@ -346,6 +347,12 @@ export function App() {
             <span className="project">{snapshot?.projectName ?? projectInfo?.name ?? '…'}</span>
             <Icon name="chevron-down" size={16} />
           </button>
+          {c4 && (
+            <span className="view-switch">
+              <button className={!componentsView ? 'on' : ''} onClick={() => setComponentsView(false)}>C4</button>
+              <button className={componentsView ? 'on' : ''} onClick={() => setComponentsView(true)}>Components</button>
+            </span>
+          )}
           <span className="topbar-spacer" />
           {shown && (
             <button className={`chip plan-chip ${shown.status}`} onClick={() => dispatchPanels({ type: 'plan-shown' })}>
@@ -402,6 +409,9 @@ export function App() {
           {panels.left && <Resizer orientation="vertical" label="Resize project panel" value={sizes.left} min={LIMITS.left.min} max={LIMITS.left.max} grow={1} onResize={(size) => resize('left', size)} onReset={() => resetSize('left')} />}
           <main className="map-area">
             <MapActivity progress={progress} status={snapshot?.status ?? null} />
+            <div className="map-regroup">
+              <button type="button" onClick={() => send({ type: 'map.regroup' })}>Regroup</button>
+            </div>
             <PlanOverlayContext.Provider value={overlay}>
               {showC4 && snapshot && c4 ? (
                 <ReactFlowProvider>
@@ -409,7 +419,7 @@ export function App() {
                 </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>
-                  <MapView state={state} dispatch={dispatch} onRegroup={() => send({ type: 'map.regroup' })} />
+                  <MapView state={state} dispatch={dispatch} />
                 </ReactFlowProvider>
               )}
               {!showC4 && mapDetails}

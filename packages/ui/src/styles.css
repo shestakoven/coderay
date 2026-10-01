@@ -463,7 +463,10 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .map .react-flow__edge-text { fill: var(--fg); font-size: 11px; }
 .map .react-flow__edge-textbg { fill: var(--surface); }
 .react-flow__node.map-away { opacity: 0.35; transition: opacity var(--dur-fast, 100ms) ease-out; }
-.map-actions { position: absolute; right: 14px; top: 12px; z-index: 5; display: flex; gap: 6px; }
+.map-regroup { position: absolute; right: 14px; top: 12px; z-index: 6; display: flex; gap: 6px; }
+.map-regroup button { padding: 4px 10px; border: 1px solid var(--border, #333); border-radius: var(--r-1); background: var(--surface); color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.map-regroup button:hover { color: var(--fg); }
+.map-actions { position: absolute; right: 190px; top: 12px; z-index: 5; display: flex; gap: 6px; }
 .map-actions button { padding: 4px 10px; border: 1px solid var(--border, #333); border-radius: var(--r-1); background: var(--surface); color: var(--muted); font-size: 11.5px; cursor: pointer; }
 .map-actions button:hover { color: var(--fg); }
 .map-hint { position: absolute; left: 72px; bottom: 14px; z-index: 5; color: var(--muted); font-size: 11.5px; pointer-events: none; }
