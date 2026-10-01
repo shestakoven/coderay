@@ -1,5 +1,5 @@
 export type LeftTab = 'components' | 'files' | 'details';
-export type RightTab = 'agent' | 'plan';
+export type RightTab = 'agent' | 'plan' | 'review';
 export type BottomTab = 'timeline' | 'terminal';
 
 interface Visibility {

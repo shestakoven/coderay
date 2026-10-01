@@ -8,6 +8,8 @@ import { dialogEvent, eventFilePaths } from './history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
 import { WatchdogDialog } from './history/WatchdogDialog';
 import { DiffPanel } from './history/DiffPanel';
+import { ReviewPanel } from './history/ReviewPanel';
+import { reviewCount, reviewGroups } from './history/review-state';
 import { Timeline } from './history/Timeline';
 import { DetailsPanel, type DetailsTab } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
@@ -300,6 +302,11 @@ export function App() {
     if (owner && !state.expanded.has(owner)) dispatch({ type: 'toggle', componentId: owner });
     dispatch({ type: 'select', id: path });
   };
+  const showPathsOnMap = (paths: string[]): void => {
+    const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
+    if (owners.size > 0) focusComponents([...owners]);
+  };
+  const reviewFiles = reviewCount(reviewGroups(hist.history, plans.plans));
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (
     <DetailsPanel
@@ -347,13 +354,17 @@ export function App() {
               Plan
               {shown !== null && <span className="seg-dot" aria-label="has a plan" />}
             </button>
+            <button role="tab" aria-selected={panels.rightTab === 'review'} className={panels.rightTab === 'review' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'review' })}>
+              Review
+              {reviewFiles > 0 && <span className="tab-count">{reviewFiles}</span>}
+            </button>
           </div>
           <div className="topbar-actions">
-            <button className={panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'left' })} title="Project panel" aria-pressed={panels.left}><Icon name="panel-left" size={17} /></button>
-            <button className={panels.right ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'right' })} title="Agent and details" aria-pressed={panels.right}><Icon name="panel-right" size={17} /></button>
-            <button className={panels.focus ? 'on' : ''} onClick={() => dispatchPanels({ type: 'focus' })} title="Focus: map only (F)" aria-pressed={panels.focus}><Icon name="maximize" size={17} /></button>
+            <button className={panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'left' })} title="Project panel" aria-pressed={panels.left}><Icon name="panel-left" size={20} /></button>
+            <button className={panels.right ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'right' })} title="Agent and details" aria-pressed={panels.right}><Icon name="panel-right" size={20} /></button>
+            <button className={panels.focus ? 'on' : ''} onClick={() => dispatchPanels({ type: 'focus' })} title="Focus: map only (F)" aria-pressed={panels.focus}><Icon name="maximize" size={20} /></button>
             <button className="with-badge" onClick={openSettings} title="Settings">
-              <Icon name="settings" size={17} />
+              <Icon name="settings" size={20} />
               {toReview > 0 && <b>{toReview}</b>}
             </button>
           </div>
@@ -402,10 +413,7 @@ export function App() {
                   )}
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
-                  onFocusTargets={(paths) => {
-                    const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
-                    if (owners.size > 0) focusComponents([...owners]);
-                  }}
+                  onFocusTargets={showPathsOnMap}
                 />
               </ErrorBoundary>
             </div>
@@ -422,6 +430,9 @@ export function App() {
               ) : (
                 <div className="empty muted">{shown ? 'The plan is waiting for your answer above the chat.' : 'No plan yet. When the agent proposes one, it appears above the chat and on the map.'}</div>
               )}
+            </div>
+            <div className="right-body" hidden={panels.rightTab !== 'review'}>
+              <ReviewPanel history={hist.history} plans={plans.plans} diffs={hist.results} requestDiff={requestDiff} onShowOnMap={showPathsOnMap} />
             </div>
           </aside>
         </div>

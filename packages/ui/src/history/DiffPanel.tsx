@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { ChangeView, HistoryView, MapSnapshot, PlanView } from '@ide/protocol';
 import type { ChatFilter } from '../chat/chat-state';
 import type { DiffResult } from './WatchdogDialog';
+import { DiffView } from './DiffView';
 import { changesByStep, chatFilterIds, nodeChanges } from './history-state';
 
 interface Props {
@@ -67,7 +68,7 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
   );
 }
 
-function Hunks({ result, failed }: { result: DiffResult | undefined; failed: boolean }) {
+export function Hunks({ result, failed }: { result: DiffResult | undefined; failed: boolean }) {
   if (failed) return <p className="warn">Could not request the diff.</p>;
   if (!result) return <p className="muted">Loading…</p>;
   if (result.error) return <p className="warn">{result.error}</p>;
@@ -75,19 +76,5 @@ function Hunks({ result, failed }: { result: DiffResult | undefined; failed: boo
   if (!diff) return null;
   if (diff.binary) return <p className="muted">Binary file.</p>;
   if (diff.missing) return <p className="muted">The stored content is gone.</p>;
-  return (
-    <pre className="oop-diff">
-      {diff.hunks.map((hunk) => (
-        <div key={`${hunk.oldStart}:${hunk.newStart}`} className="hunk">
-          <div className="muted">@@ -{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@</div>
-          {hunk.lines.map((line, i) => (
-            <span key={i} className={line.op === 'add' ? 'add' : line.op === 'del' ? 'del' : ''}>
-              {line.op === 'add' ? '+' : line.op === 'del' ? '-' : ' '}{line.text}{'\n'}
-            </span>
-          ))}
-        </div>
-      ))}
-      {diff.truncated && <div className="muted">truncated</div>}
-    </pre>
-  );
+  return <DiffView diff={diff} />;
 }

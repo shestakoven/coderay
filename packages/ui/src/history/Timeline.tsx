@@ -25,6 +25,8 @@ interface Props {
   trailing?: ReactNode;
 }
 
+const clock = (at: number): string => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
 export function timelineSummary(items: TimelineItem[]): string {
@@ -67,11 +69,11 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
   return (
     <footer className="timeline" data-testid="timeline">
       <div className="bottom-tabs">
-        <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
-          <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={14} /> {items.length === 0 ? 'Timeline' : timelineSummary(items)}
+        <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} title={timelineSummary(items)} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
+          <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={16} /> Timeline{items.length > 0 && <span className="tab-count">{items.length}</span>}
         </button>
         <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} aria-pressed={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
-          <Icon name="terminal" size={14} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
+          <Icon name="terminal" size={16} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
         </button>
         {trailing && <div className="bottom-status">{trailing}</div>}
       </div>
@@ -84,11 +86,13 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
             const error = revert ? undoText(revert.id) : null;
             return (
               <li key={item.id} className={`tl-item ${item.tone}`}>
+                <time className="tl-time" dateTime={new Date(item.at).toISOString()}>{clock(item.at)}</time>
                 <button className="link-row" onClick={() => onSelect(item)}>{item.label}</button>
+                {item.kind !== 'step' && <span className="tl-kind">{item.kind}</span>}
                 {step && item.ref.planId === latestPlan?.id && canOfferRollback(chat, latestPlan, step) && (
-                  <button title="Roll this step back" onClick={() => openRollback(item.ref.planId!, item.ref.stepKey!)}>↺</button>
+                  <button className="tl-action" title="Roll this step back" aria-label="Roll this step back" onClick={() => openRollback(item.ref.planId!, item.ref.stepKey!)}><Icon name="undo" size={17} /></button>
                 )}
-                {revert && revert.undoneAt === null && <button disabled={undoPending(revert.id) || !agentIdle(chat)} onClick={() => undo(revert.id)}>undo</button>}
+                {revert && revert.undoneAt === null && <button className="tl-action text" disabled={undoPending(revert.id) || !agentIdle(chat)} onClick={() => undo(revert.id)}>undo</button>}
                 {error && <span className="warn"> {error}</span>}
               </li>
             );
