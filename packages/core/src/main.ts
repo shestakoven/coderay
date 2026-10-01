@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
@@ -20,6 +22,9 @@ import { McpRegistry } from './mcp/registry';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
+import { listDirectories } from './project/browse';
+import { RecentProjects } from './project/recent';
+import { successorArgs, validateProjectPath } from './project/switch';
 import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
 import { startServer, type RunningServer } from './server/server';
@@ -60,7 +65,9 @@ if (!lock.acquired) {
   console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
   process.exit(1);
 }
-const token = randomBytes(24).toString('base64url');
+const token = process.env.IDE_CORE_TOKEN || randomBytes(24).toString('base64url');
+const recent = new RecentProjects(home);
+recent.add(root);
 
 try {
   const store = openStore(projectDir(home, root));
@@ -130,6 +137,7 @@ try {
   };
 
   let closing: Promise<void> | undefined;
+  let afterClose: (() => void) | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
   let deployWatch: { close(): Promise<void> } | undefined;
@@ -161,6 +169,26 @@ try {
       case 'settings.get':
         reply(settingsSnapshot());
         return;
+      case 'fs.list':
+        reply({ type: 'fs.list.result', requestId: message.requestId, ...listDirectories(message.path, homedir()) });
+        return;
+      case 'project.open': {
+        const target = validateProjectPath(message.path);
+        const error = 'error' in target ? target.error : target.root === root ? 'That project is already open.' : null;
+        reply({ type: 'project.open.result', requestId: message.requestId, error });
+        if (error !== null || 'error' in target) return;
+        recent.add(target.root);
+        const args = successorArgs(process.argv.slice(2), target.root, running.port);
+        afterClose = () => {
+          spawn(process.execPath, [...process.execArgv, process.argv[1] ?? '', ...args], {
+            detached: true,
+            stdio: 'inherit',
+            env: { ...process.env, IDE_CORE_TOKEN: token },
+          }).unref();
+        };
+        closing ??= shutdown();
+        return;
+      }
       default:
         await routeClientMessage(message, {
           history: (history) => rt.history.handle(history, reply),
@@ -187,6 +215,7 @@ try {
     snapshot: () => snapshot ?? null,
     routes: rt.gate.routes,
     greeting: () => [
+      { type: 'project.info', info: { root, name: projectName, home: homedir(), recent: recent.list() } },
       { type: 'map.progress', progress: progress.get() },
       { type: 'session.snapshot', state: agent.state() },
       plansSnapshot(),
@@ -225,6 +254,7 @@ try {
     await running.close();
     store.close();
     lock.release();
+    afterClose?.();
     process.exit(0);
   };
   let firstInterrupt = 0;

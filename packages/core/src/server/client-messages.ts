@@ -56,6 +56,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isRecord(hashes) && typeof hashes.ide === 'string' && typeof hashes.project === 'string'
         ? { type, requestId, hashes: { ide: hashes.ide, project: hashes.project } }
         : null;
+    case 'fs.list':
+      return path === null || typeof path === 'string' ? { type, requestId, path } : null;
+    case 'project.open':
+      return typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH_LENGTH ? { type, requestId, path } : null;
     case 'history.diff':
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
     case 'revert.undo':
@@ -90,6 +94,7 @@ function parsePlanAnswer(value: unknown): PlanAnswer | null {
 }
 
 const MAX_CONFIRM_FILES = 5000;
+const MAX_PATH_LENGTH = 4096;
 
 const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
 
