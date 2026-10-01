@@ -7,11 +7,11 @@ import {
   useEdgesState,
   useNodesState,
   useReactFlow,
-  type Edge,
 } from '@xyflow/react';
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
-import { useEffect, useMemo, useRef, type Dispatch } from 'react';
+import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react';
+import { focusEdges, type MapEdge } from './edge-focus';
 import { markCounts } from '../history/dialog-state';
 import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { dimsNode } from '../plan/plan-state';
@@ -28,7 +28,8 @@ const FIT_PADDING = 0.1;
 export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
   const overlay = usePlanOverlay();
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [hovered, setHovered] = useState<string | null>(null);
+  const [edges, setEdges, onEdgesChange] = useEdgesState<MapEdge>([]);
   const graph = useMemo(
     () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts) : null),
     [state.snapshot, state.expanded, overlay.marks.ghosts],
@@ -48,16 +49,20 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     };
     return markCounts([...[...overlay.eventFiles].map(place), ...overlay.prompts.map((p) => mapAnchor(p, nodeIds))]);
   }, [nodes, state.snapshot, overlay.eventFiles, overlay.prompts]);
+  const focus = hovered ?? state.selected;
+  const focused = useMemo(() => focusEdges(edges, focus), [edges, focus]);
+  const hiddenCount = useMemo(() => focused.edges.filter((edge) => edge.hidden).length, [focused.edges]);
   const flowNodes = useMemo(
     () =>
       nodes.map((node) => {
         const selected = node.id === state.selected;
         const componentId = node.parentId ?? node.id;
         const dim = dimsNode(overlay.marks, overlay.dimOthers, node.id, componentId) ? 'plan-dim' : '';
-        const className = [dim, pendingCounts.has(node.id) && 'oop-target'].filter(Boolean).join(' ');
+        const away = focused.neighbors !== null && !focused.neighbors.has(node.id) && node.parentId === undefined && !state.expanded.has(node.id);
+        const className = [dim, away && 'map-away', pendingCounts.has(node.id) && 'oop-target'].filter(Boolean).join(' ');
         return !!node.selected === selected && (node.className ?? '') === className ? node : { ...node, selected, className };
       }),
-    [nodes, state.selected, overlay.dimOthers, overlay.marks, pendingCounts],
+    [nodes, state.selected, state.expanded, focused.neighbors, overlay.dimOthers, overlay.marks, pendingCounts],
   );
   const bounds = useMemo(() => layoutBounds(nodes), [nodes]);
   const key = useMemo(() => fitKey(nodes), [nodes]);
@@ -92,7 +97,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     <div className="map">
       <ReactFlow
         nodes={flowNodes}
-        edges={edges}
+        edges={focused.edges}
         nodeTypes={nodeTypes}
         onNodesChange={onNodesChange}
         onEdgesChange={onEdgesChange}
@@ -100,6 +105,8 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
           dispatch({ type: 'select', id: node.id });
           if (node.type === 'component') dispatch({ type: 'toggle', componentId: node.id });
         }}
+        onNodeMouseEnter={(_event, node) => setHovered(node.id)}
+        onNodeMouseLeave={() => setHovered(null)}
         onPaneClick={() => dispatch({ type: 'select', id: null })}
         nodesDraggable={false}
         nodesConnectable={false}
@@ -116,6 +123,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         <FitOnNewComponents fitKey={key} bounds={bounds} />
         <CenterOnFocus />
         <PromptPopover nodeId={promptNode} />
+        {hiddenCount > 0 && focus === null && <div className="map-hint">{hiddenCount} weaker dependencies hidden · hover or select a component to see its links</div>}
       </ReactFlow>
     </div>
     </PendingCountsContext.Provider>

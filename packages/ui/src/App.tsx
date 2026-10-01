@@ -56,7 +56,6 @@ export function App() {
   const modeRequest = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
-  const [view, setView] = useState<'c4' | 'components'>('c4');
   const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
   const connection = useRef<Connection | null>(null);
   const [focus, setFocus] = useState<{ componentIds: string[]; nonce: number } | null>(null);
@@ -237,20 +236,22 @@ export function App() {
     const owner = snapshot?.files.find((file) => file.path === first)?.componentId;
     if (owner && !state.expanded.has(owner)) dispatch({ type: 'toggle', componentId: owner });
     dispatch({ type: 'select', id: first });
-    setView('components');
     setTab('changes');
   };
   const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, changes, highlight, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
-  const showC4 = view === 'c4' && snapshot !== null && c4 !== null;
+  const showC4 = snapshot !== null && c4 !== null;
   const selectComponent = (id: string): void => {
     if (!showC4) dispatch({ type: 'select', id });
     focusComponents([id]);
   };
   const selectFile = (path: string): void => {
     const owner = snapshot?.files.find((file) => file.path === path)?.componentId;
+    if (showC4) {
+      if (owner) focusComponents([owner]);
+      return;
+    }
     if (owner && !state.expanded.has(owner)) dispatch({ type: 'toggle', componentId: owner });
-    setView('components');
     dispatch({ type: 'select', id: path });
   };
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])];
@@ -282,12 +283,6 @@ export function App() {
             <span className="project">{snapshot?.projectName ?? projectInfo?.name ?? '…'}</span>
             <Icon name="chevron-down" size={16} />
           </button>
-          {c4 && (
-            <span className="view-switch">
-              <button className={view === 'c4' ? 'on' : ''} onClick={() => setView('c4')}>C4</button>
-              <button className={view === 'components' ? 'on' : ''} onClick={() => setView('components')}>Components</button>
-            </span>
-          )}
           <span className="topbar-spacer" />
           {shown && (
             <button className={`chip plan-chip ${shown.status}`} onClick={() => dispatchPanels({ type: 'plan-shown' })}>
