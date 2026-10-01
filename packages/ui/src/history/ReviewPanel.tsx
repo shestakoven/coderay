@@ -78,7 +78,7 @@ function ReviewSection({ entry, folded, onFold, open, requested, diffs, onExpand
                     <FilePath path={file.path} />
                     <span className="review-stat"><span className="add">+{file.added}</span> <span className="del">−{file.removed}</span></span>
                   </button>
-                  {open[key] && <Hunks result={result} failed={requestId === null} />}
+                  {open[key] && <Hunks result={result} failed={requestId === null} path={file.path} />}
                 </li>
               );
             })}

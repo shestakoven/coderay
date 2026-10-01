@@ -57,7 +57,7 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
                     {open[change.id] ? '▾' : '▸'} <code>{change.path}</code>
                   </button>{' '}
                   <span className="muted">{change.origin} · {change.resolution ?? 'unresolved'}</span>
-                  {open[change.id] && <Hunks result={result} failed={failed[change.id] === true} />}
+                  {open[change.id] && <Hunks result={result} failed={failed[change.id] === true} path={change.path} />}
                 </li>
               );
             })}
@@ -68,7 +68,7 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
   );
 }
 
-export function Hunks({ result, failed }: { result: DiffResult | undefined; failed: boolean }) {
+export function Hunks({ result, failed, path }: { result: DiffResult | undefined; failed: boolean; path: string }) {
   if (failed) return <p className="warn">Could not request the diff.</p>;
   if (!result) return <p className="muted">Loading…</p>;
   if (result.error) return <p className="warn">{result.error}</p>;
@@ -76,5 +76,5 @@ export function Hunks({ result, failed }: { result: DiffResult | undefined; fail
   if (!diff) return null;
   if (diff.binary) return <p className="muted">Binary file.</p>;
   if (diff.missing) return <p className="muted">The stored content is gone.</p>;
-  return <DiffView diff={diff} />;
+  return <DiffView diff={diff} path={path} />;
 }

@@ -745,3 +745,18 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .review-file .review-path { display: flex; flex: 1; min-width: 0; overflow: visible; text-overflow: clip; }
 .review-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
 .review-base { flex: none; color: var(--fg); }
+.diff-text mark { color: inherit; border-radius: 2px; }
+.diff-row.add mark { background: rgba(115, 201, 145, 0.38); }
+.diff-row.del mark { background: rgba(247, 84, 100, 0.40); }
+
+/* Syntax colors (highlight.js token classes) */
+.diff-text .hljs-keyword, .diff-text .hljs-literal, .diff-text .hljs-selector-tag, .diff-text .hljs-doctag { color: #c792ea; }
+.diff-text .hljs-string, .diff-text .hljs-regexp, .diff-text .hljs-template-variable, .diff-text .hljs-addition { color: #a5d68b; }
+.diff-text .hljs-number, .diff-text .hljs-symbol, .diff-text .hljs-bullet { color: #f2a65a; }
+.diff-text .hljs-comment, .diff-text .hljs-quote { color: #7d8590; font-style: italic; }
+.diff-text .hljs-title, .diff-text .hljs-section, .diff-text .hljs-selector-id, .diff-text .hljs-selector-class { color: #82aaff; }
+.diff-text .hljs-type, .diff-text .hljs-built_in, .diff-text .hljs-class, .diff-text .hljs-tag, .diff-text .hljs-name { color: #5ccfe6; }
+.diff-text .hljs-attr, .diff-text .hljs-attribute, .diff-text .hljs-property, .diff-text .hljs-variable, .diff-text .hljs-params { color: #e6c07b; }
+.diff-text .hljs-meta, .diff-text .hljs-link { color: #7d8590; }
+.diff-text .hljs-strong { font-weight: 700; }
+.diff-text .hljs-emphasis { font-style: italic; }
