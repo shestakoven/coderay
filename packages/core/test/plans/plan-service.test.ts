@@ -248,7 +248,7 @@ describe('PlanService', () => {
 
   describe('starting a step while another is active', () => {
     const three = { ...big, steps: [...big.steps, { key: 'c', title: 'Other', rationale: '', targets: [{ path: 'src/other.ts', op: 'modify' }] }] };
-    const approved = async (plan: typeof big) => {
+    const approved = async (plan: { goal: string; steps: unknown[] }) => {
       const { service } = await setup();
       const events: unknown[] = [];
       service.onStep((e) => events.push(e));
