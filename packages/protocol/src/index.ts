@@ -171,4 +171,11 @@ export type ServerMessage =
   | ProjectServerMessage
   | TerminalServerMessage;
 
-export type ClientMessage = ChatClientMessage | SettingsClientMessage | PlanClientMessage | HistoryClientMessage | ProjectClientMessage | TerminalClientMessage;
+export type ClientMessage =
+  | ChatClientMessage
+  | SettingsClientMessage
+  | PlanClientMessage
+  | HistoryClientMessage
+  | ProjectClientMessage
+  | TerminalClientMessage
+  | { type: 'map.regroup' };

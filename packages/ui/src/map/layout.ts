@@ -114,7 +114,7 @@ export async function layoutGraph(
   };
 }
 
-const ARROW = { type: MarkerType.ArrowClosed, width: 12, height: 12 };
+const ARROW = { type: MarkerType.ArrowClosed, width: 7, height: 7, markerUnits: 'userSpaceOnUse' };
 
 function mergeOpposite(edges: VisibleEdge[]): MapEdge[] {
   const byId = new Map(edges.map((e) => [e.id, e]));
@@ -124,6 +124,7 @@ function mergeOpposite(edges: VisibleEdge[]): MapEdge[] {
     if (back && e.from > e.to) continue;
     merged.push({
       id: e.id,
+      type: 'smoothstep',
       source: e.from,
       target: e.to,
       data: { weight: e.weight + (back?.weight ?? 0) },

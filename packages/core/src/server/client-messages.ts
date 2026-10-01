@@ -32,6 +32,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'session.list':
     case 'models.list':
     case 'session.delete-all':
+    case 'map.regroup':
     case 'settings.get':
       return { type };
     case 'session.delete':

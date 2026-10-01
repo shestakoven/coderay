@@ -34,6 +34,14 @@ describe('visibleGraph', () => {
     expect(graph.edges).toEqual([{ id: 'folder:src/api->folder:src/db', from: 'folder:src/api', to: 'folder:src/db', weight: 2 }]);
   });
 
+  it('hides components made only of test files on request', () => {
+    const snapshot = demoSnapshot();
+    snapshot.components.push({ ...snapshot.components[0]!, id: 'folder:test', name: 'Tests', files: ['test/a.test.ts'] });
+    expect(visibleGraph(snapshot, new Set()).nodes.map((n) => n.id)).toContain('folder:test');
+    expect(visibleGraph(snapshot, new Set(), [], true).nodes.map((n) => n.id)).not.toContain('folder:test');
+    expect(visibleGraph(snapshot, new Set(), [], true).nodes.map((n) => n.id)).toContain('folder:src/api');
+  });
+
   it('carries component summaries and staleness onto component nodes', () => {
     const snapshot = demoSnapshot();
     snapshot.components[0] = { ...snapshot.components[0]!, summary: 'Serves the HTTP API', stale: true };

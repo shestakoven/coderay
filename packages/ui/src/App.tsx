@@ -409,7 +409,7 @@ export function App() {
                 </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>
-                  <MapView state={state} dispatch={dispatch} />
+                  <MapView state={state} dispatch={dispatch} onRegroup={() => send({ type: 'map.regroup' })} />
                 </ReactFlowProvider>
               )}
               {!showC4 && mapDetails}
@@ -436,7 +436,6 @@ export function App() {
                   const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
                   if (owners.size > 0) focusComponents([...owners]);
                 }}
-                planRow={shown ? { text: `${planTitle(shown)} · on the map`, onOpen: () => dispatchPanels({ type: 'plan-shown' }) } : null}
               />
             </div>
             <div className="right-body details-slot" hidden={panels.rightTab !== 'details'} ref={setDetailsEl}>

@@ -215,7 +215,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 @keyframes plan-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(53, 116, 240, 0.75); } 50% { box-shadow: 0 0 0 6px rgba(53, 116, 240, 0); } }
 .chip.plan-chip { color: var(--plan); border-color: var(--plan); background: none; }
 .chip.plan-chip.rejected, .chip.plan-chip.withdrawn, .chip.plan-chip.done { color: var(--muted); border-color: var(--line); }
-.plan-row { text-align: left; background: var(--selection); border: 1px solid var(--accent); border-radius: var(--r-1); padding: 5px 8px; margin: 6px 10px 0; color: var(--fg); font-size: 12px; }
 .c4-toolbar { left: 50%; transform: translateX(-50%); }
 .c4-card.in-plan { border-color: var(--plan); box-shadow: 0 0 0 1px var(--plan); overflow: visible; }
 .c4-card.in-plan.expanded { box-shadow: 0 0 0 1px var(--plan); }
@@ -464,6 +463,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .map .react-flow__edge-text { fill: var(--fg); font-size: 11px; }
 .map .react-flow__edge-textbg { fill: var(--surface); }
 .react-flow__node.map-away { opacity: 0.35; transition: opacity var(--dur-fast, 100ms) ease-out; }
+.map-actions { position: absolute; right: 14px; top: 12px; z-index: 5; display: flex; gap: 6px; }
+.map-actions button { padding: 4px 10px; border: 1px solid var(--border, #333); border-radius: var(--r-1); background: var(--surface); color: var(--muted); font-size: 11.5px; cursor: pointer; }
+.map-actions button:hover { color: var(--fg); }
 .map-hint { position: absolute; left: 72px; bottom: 14px; z-index: 5; color: var(--muted); font-size: 11.5px; pointer-events: none; }
 
 .c4-caret { display: grid; place-items: center; width: 30px; height: 30px; margin: -6px -6px -6px auto; padding: 0; border-radius: var(--r-1); color: var(--c4-muted); cursor: pointer; }

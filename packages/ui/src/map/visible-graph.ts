@@ -30,12 +30,18 @@ const isTestFile = (path: string) => /(^|\/)(test|tests|__tests__)\/|\.(test|spe
 
 export const graphSignature = (graph: VisibleGraph): string => JSON.stringify(graph);
 
-export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string>, ghosts: { path: string; componentId: string }[] = []): VisibleGraph {
+export function visibleGraph(
+  snapshot: MapSnapshot,
+  expanded: ReadonlySet<string>,
+  ghosts: { path: string; componentId: string }[] = [],
+  hideTests = false,
+): VisibleGraph {
   const parseErrors = new Map(snapshot.files.map((f) => [f.path, f.parseError]));
   const nodes: VisibleNode[] = [];
   const visibleOf = new Map<string, string>();
 
   for (const component of snapshot.components) {
+    if (hideTests && component.files.length > 0 && component.files.every(isTestFile)) continue;
     nodes.push({
       id: component.id,
       kind: 'component',

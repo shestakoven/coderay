@@ -6,6 +6,10 @@ describe('parseClientMessage', () => {
     expect(parseClientMessage('{"type":"chat.send","text":"hi"}')).toEqual({ type: 'chat.send', text: 'hi' });
   });
 
+  it('parses a map regroup request', () => {
+    expect(parseClientMessage('{"type":"map.regroup"}')).toEqual({ type: 'map.regroup' });
+  });
+
   it('rejects a chat message without string text', () => {
     expect(parseClientMessage('{"type":"chat.send","text":1}')).toBeNull();
   });

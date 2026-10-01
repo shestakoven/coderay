@@ -184,6 +184,9 @@ try {
       case 'session.restart':
         await agent.restart();
         return;
+      case 'map.regroup':
+        void mapService?.regroup();
+        return;
       case 'session.new':
         await agent.newSession();
         return;

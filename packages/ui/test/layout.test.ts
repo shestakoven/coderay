@@ -42,6 +42,7 @@ describe('layoutGraph', () => {
       ['a', 'b', 5, true, true],
       ['a', 'c', 1, false, true],
     ]);
+    expect(edges.every((e) => e.type === 'smoothstep')).toBe(true);
   });
 
   it('places dependencies left of their dependents', async () => {

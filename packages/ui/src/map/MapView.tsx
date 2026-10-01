@@ -25,14 +25,15 @@ import { graphSignature, visibleGraph } from './visible-graph';
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 const FIT_PADDING = 0.1;
 
-export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
+export function MapView({ state, dispatch, onRegroup }: { state: MapState; dispatch: Dispatch<MapAction>; onRegroup: () => void }) {
   const overlay = usePlanOverlay();
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [edges, setEdges, onEdgesChange] = useEdgesState<MapEdge>([]);
+  const [hideTests, setHideTests] = useState(true);
   const graph = useMemo(
-    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts) : null),
-    [state.snapshot, state.expanded, overlay.marks.ghosts],
+    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts, hideTests) : null),
+    [state.snapshot, state.expanded, overlay.marks.ghosts, hideTests],
   );
   const signature = useMemo(() => (graph ? graphSignature(graph) : null), [graph]);
   const promptNode = useMemo(
@@ -123,6 +124,12 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         <FitOnNewComponents fitKey={key} bounds={bounds} />
         <CenterOnFocus />
         <PromptPopover nodeId={promptNode} />
+        <div className="map-actions">
+          <button type="button" onClick={onRegroup}>Regroup</button>
+          <button type="button" onClick={() => setHideTests((value) => !value)}>
+            {hideTests ? 'Show test components' : 'Hide test components'}
+          </button>
+        </div>
         {hiddenCount > 0 && focus === null && <div className="map-hint">{hiddenCount} weaker dependencies hidden · hover or select a component to see its links</div>}
       </ReactFlow>
     </div>
