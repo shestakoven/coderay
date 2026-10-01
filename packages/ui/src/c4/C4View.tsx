@@ -289,12 +289,14 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         <PromptPopover nodeId={promptNode} />
       </ReactFlow>
       <div className="c4-toolbar">
-        <span className="c4-crumbs">
-          <button className="link" onClick={() => openRoot(null)} disabled={!root}>
-            {snapshot.projectName}
-          </button>
-          {root && <span> / {model.containers.find((c) => c.id === root)?.name}</span>}
-        </span>
+        {root && (
+          <span className="c4-crumbs">
+            <button className="link" onClick={() => openRoot(null)}>
+              {snapshot.projectName}
+            </button>
+            <span> / {model.containers.find((c) => c.id === root)?.name}</span>
+          </span>
+        )}
         {selection && <span className="muted">Showing only the selection's links · Esc or click the background to clear</span>}
         {movedCount > 0 && (
           <button
