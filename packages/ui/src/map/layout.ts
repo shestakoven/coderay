@@ -17,8 +17,8 @@ export type MapNodeData = {
 export type MapFlowNode = Node<MapNodeData, 'component' | 'file'>;
 
 export const NODE_SIZE = {
-  component: { width: 280, height: 86 },
-  file: { width: 200, height: 42 },
+  component: { width: 240, height: 72 },
+  file: { width: 170, height: 34 },
 };
 
 export interface Bounds {
