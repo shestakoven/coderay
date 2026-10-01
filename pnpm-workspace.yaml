@@ -6,3 +6,5 @@ ignoredBuiltDependencies:
   - tree-sitter
   - tree-sitter-python
   - tree-sitter-typescript
+onlyBuiltDependencies:
+  - electron

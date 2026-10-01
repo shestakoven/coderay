@@ -1,0 +1,11 @@
+{
+  "name": "@ide/desktop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "electron main.mjs"
+  },
+  "devDependencies": {
+    "electron": "^44.5.1"
+  }
+}
