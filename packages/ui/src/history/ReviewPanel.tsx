@@ -11,9 +11,10 @@ interface Props {
   diffs: Record<string, DiffResult | undefined>;
   requestDiff: (path: string, before: string | null, after: string | null) => string | null;
   onShowOnMap: (paths: string[]) => void;
+  onStart: () => void;
 }
 
-export function ReviewPanel({ history, plans, diffs, requestDiff, onShowOnMap }: Props) {
+export function ReviewPanel({ history, plans, diffs, requestDiff, onShowOnMap, onStart }: Props) {
   const groups = reviewGroups(history, plans);
   const [requested, setRequested] = useState<Record<string, string | null>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -26,6 +27,10 @@ export function ReviewPanel({ history, plans, diffs, requestDiff, onShowOnMap }:
   if (groups.length === 0) return <div className="empty muted">Nothing to review yet. Changes the agent makes show up here, step by step.</div>;
   return (
     <div className="review" data-testid="review-panel">
+      <div className="review-toolbar">
+        <button className="rm-btn primary" onClick={onStart}>Start review</button>
+        <span className="muted">{groups.reduce((sum, entry) => sum + entry.files.length, 0)} files</span>
+      </div>
       {groups.map((entry) => (
         <ReviewSection
           key={entry.key}
@@ -89,7 +94,7 @@ function ReviewSection({ entry, folded, onFold, open, requested, diffs, onExpand
   );
 }
 
-function FilePath({ path }: { path: string }) {
+export function FilePath({ path }: { path: string }) {
   const slash = path.lastIndexOf('/');
   return (
     <code className="review-path">

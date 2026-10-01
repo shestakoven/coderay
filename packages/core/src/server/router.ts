@@ -3,7 +3,7 @@ import type { ClientMessage, HistoryClientMessage } from '@ide/protocol';
 export type MessageRoute = 'history' | 'settings' | 'unknown';
 export type SettingsClientMessage = Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` }>;
 
-const HISTORY = new Set(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'step.rollback-preview', 'step.rollback']);
+const HISTORY = new Set(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback']);
 const SETTINGS = new Set(['mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits']);
 
 export function routeOf(type: string): MessageRoute {

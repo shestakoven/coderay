@@ -29,7 +29,7 @@ export type FileAnswer = 'keep' | 'revert' | 'mine';
 export type WatchdogAnswer = { kind: 'all'; answer: FileAnswer | 'expand-plan' } | { kind: 'files'; files: Record<string, FileAnswer> };
 export type RevertOutcome = 'restored' | 'deleted' | 'recreated' | 'conflict' | 'not-rolled-back';
 export interface RevertFile { path: string; outcome: RevertOutcome; reason: string | null }
-export interface RevertRecordView { id: string; kind: 'watchdog' | 'step'; eventId: string | null; planId: string | null; stepKey: string | null; changeIds: string[]; files: RevertFile[]; ts: number; undoneAt: number | null }
+export interface RevertRecordView { id: string; kind: 'watchdog' | 'step' | 'review'; eventId: string | null; planId: string | null; stepKey: string | null; changeIds: string[]; files: RevertFile[]; ts: number; undoneAt: number | null }
 export interface RollbackPreview { planId: string; stepKey: string; allowed: boolean; reason: string | null; autoFiles: string[]; confirmFiles: string[]; notRolledBack: { path: string; why: string }[]; conflicts: { path: string; reason: string }[] }
 export interface CheckpointView { planId: string; stepKey: string; cycle: number; before: number; after: number | null; startedAt: number; sealedAt: number | null }
 export interface GateEventView { id: string; kind: 'pre-execution' | 'watchdog' | 'fail-open'; toolUseId: string | null; mode: ControlMode; targets: string[]; resolution: string; ts: number; resolvedAt: number | null }
@@ -48,5 +48,6 @@ export type HistoryClientMessage =
   | { type: 'watchdog.stop-agent'; eventId: string }
   | { type: 'history.diff'; requestId: string; path: string; before: string | null; after: string | null }
   | { type: 'revert.undo'; requestId: string; revertId: string }
+  | { type: 'change.revert'; requestId: string; changeIds: string[] }
   | { type: 'step.rollback-preview'; requestId: string; planId: string; stepKey: string }
   | { type: 'step.rollback'; requestId: string; planId: string; stepKey: string; confirm: string[] };

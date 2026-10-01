@@ -21,7 +21,7 @@ export interface HistoryServiceOptions {
   sessionId: () => string | null;
   changes: Pick<ChangeService, 'changes'>;
   watchdog: Pick<Watchdog, 'events' | 'onChange' | 'answer' | 'stopAgent'>;
-  reverts: Pick<RevertService, 'reverts' | 'onChange' | 'undo' | 'previewStepRollback' | 'rollbackStep'>;
+  reverts: Pick<RevertService, 'reverts' | 'onChange' | 'undo' | 'revertChanges' | 'previewStepRollback' | 'rollbackStep'>;
   checkpoints: Pick<Checkpoints, 'views'>;
   summarizer: Pick<Summarizer, 'views' | 'onChange'>;
   diff: Pick<DiffService, 'diff'>;
@@ -123,6 +123,11 @@ export class HistoryService {
         return { preview: await this.o.reverts.previewStepRollback(message.planId, message.stepKey) };
       case 'revert.undo': {
         const { record } = await this.o.reverts.undo(message.revertId);
+        this.touchChanges(record.changeIds);
+        return {};
+      }
+      case 'change.revert': {
+        const record = await this.o.reverts.revertChanges({ changeIds: message.changeIds, eventId: null, kind: 'review' });
         this.touchChanges(record.changeIds);
         return {};
       }

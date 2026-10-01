@@ -8,6 +8,7 @@ import { dialogEvent, eventFilePaths } from './history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
 import { WatchdogDialog } from './history/WatchdogDialog';
 import { DiffPanel } from './history/DiffPanel';
+import { ReviewMode } from './history/ReviewMode';
 import { ReviewPanel } from './history/ReviewPanel';
 import { reviewCount, reviewGroups } from './history/review-state';
 import { Timeline } from './history/Timeline';
@@ -75,6 +76,7 @@ export function App() {
   const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
+  const [reviewMode, setReviewMode] = useState(false);
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const openProject = useOpenProject();
   const switching = useRef({ requested: false, dropped: false });
@@ -336,17 +338,17 @@ export function App() {
             <span className="project">{snapshot?.projectName ?? projectInfo?.name ?? '…'}</span>
             <Icon name="chevron-down" size={16} />
           </button>
+          <div className="seg topbar-tabs" role="tablist">
+            {LEFT_TABS.map(({ key, label }) => (
+              <button key={key} role="tab" aria-selected={panels.leftTab === key && panels.left} className={panels.leftTab === key && panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'left-tab', tab: key })}>{label}</button>
+            ))}
+          </div>
           {c4 && (
             <span className="view-switch">
               <button className={!componentsView ? 'on' : ''} onClick={() => setComponentsView(false)}>C4</button>
               <button className={componentsView ? 'on' : ''} onClick={() => setComponentsView(true)}>Components</button>
             </span>
           )}
-          <div className="seg topbar-tabs" role="tablist">
-            {LEFT_TABS.map(({ key, label }) => (
-              <button key={key} role="tab" aria-selected={panels.leftTab === key && panels.left} className={panels.leftTab === key && panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'left-tab', tab: key })}>{label}</button>
-            ))}
-          </div>
           <span className="topbar-spacer" />
           <div className="seg topbar-tabs" role="tablist">
             <button role="tab" aria-selected={panels.rightTab === 'agent'} className={panels.rightTab === 'agent' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'agent' })}>Agent</button>
@@ -371,13 +373,13 @@ export function App() {
         </header>
         <div className="workspace">
           <LeftPanel
-            hidden={!panels.left}
+            hidden={!panels.left || reviewMode}
             tab={panels.leftTab}
             components={snapshot ? <ComponentTree snapshot={snapshot} changes={changes} marks={marks} selected={state.selected} onSelectComponent={selectComponent} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
             detailsRef={setDetailsEl}
             files={snapshot ? <FileTree snapshot={snapshot} changes={changes} selected={state.selected} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
           />
-          {panels.left && <Resizer orientation="vertical" label="Resize project panel" value={sizes.left} min={LIMITS.left.min} max={LIMITS.left.max} grow={1} onResize={(size) => resize('left', size)} onReset={() => resetSize('left')} />}
+          {panels.left && !reviewMode && <Resizer orientation="vertical" label="Resize project panel" value={sizes.left} min={LIMITS.left.min} max={LIMITS.left.max} grow={1} onResize={(size) => resize('left', size)} onReset={() => resetSize('left')} />}
           <main className="map-area">
             <MapActivity progress={progress} status={snapshot?.status ?? null} />
             <div className="map-regroup">
@@ -395,6 +397,21 @@ export function App() {
               )}
               {!showC4 && mapDetails}
             </PlanOverlayContext.Provider>
+            {reviewMode && (
+              <ReviewMode
+                history={hist.history}
+                plans={plans.plans}
+                results={hist.results}
+                requestDiff={requestDiff}
+                send={send}
+                root={projectInfo?.root ?? ''}
+                onShowOnMap={(paths) => {
+                  setReviewMode(false);
+                  showPathsOnMap(paths);
+                }}
+                onExit={() => setReviewMode(false)}
+              />
+            )}
           </main>
           {showRight && <Resizer orientation="vertical" label="Resize agent panel" value={sizes.right} min={LIMITS.right.min} max={LIMITS.right.max} grow={-1} onResize={(size) => resize('right', size)} onReset={() => resetSize('right')} />}
           <aside className="right-panel" hidden={!showRight} aria-label="Agent and details">
@@ -432,7 +449,10 @@ export function App() {
               )}
             </div>
             <div className="right-body" hidden={panels.rightTab !== 'review'}>
-              <ReviewPanel history={hist.history} plans={plans.plans} diffs={hist.results} requestDiff={requestDiff} onShowOnMap={showPathsOnMap} />
+              <ReviewPanel history={hist.history} plans={plans.plans} diffs={hist.results} requestDiff={requestDiff} onShowOnMap={showPathsOnMap} onStart={() => {
+                setReviewMode(true);
+                dispatchPanels({ type: 'right-tab', tab: 'agent' });
+              }} />
             </div>
           </aside>
         </div>

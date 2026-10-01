@@ -21,7 +21,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title,
+    after, revertId, changeIds, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -101,6 +101,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
     case 'revert.undo':
       return typeof revertId === 'string' ? { type, requestId, revertId } : null;
+    case 'change.revert':
+      return isConfirmList(changeIds) && changeIds.length > 0 ? { type, requestId, changeIds } : null;
     case 'step.rollback-preview':
       return typeof planId === 'string' && typeof stepKey === 'string' ? { type, requestId, planId, stepKey } : null;
     case 'step.rollback':

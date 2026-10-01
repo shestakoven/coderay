@@ -760,3 +760,48 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .diff-text .hljs-meta, .diff-text .hljs-link { color: #7d8590; }
 .diff-text .hljs-strong { font-weight: 700; }
 .diff-text .hljs-emphasis { font-style: italic; }
+
+/* Review mode: a full-canvas workspace for deciding on the agent's changes */
+.review-toolbar { display: flex; align-items: center; gap: 10px; padding: 4px 4px 8px; }
+.rm-btn { display: inline-flex; align-items: center; gap: 6px; padding: 5px 12px; border-radius: var(--r-1); background: var(--raised); color: var(--fg); border: 1px solid var(--border); font-weight: 500; }
+.rm-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.rm-btn.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+.rm-btn.danger { color: var(--error); }
+.rm-btn.danger:hover:not(:disabled) { border-color: var(--error); }
+.review-mode { position: absolute; inset: 0; z-index: 9; display: flex; background: var(--canvas); }
+.rm-list { width: 320px; flex: none; display: flex; flex-direction: column; min-height: 0; background: var(--bg); }
+.rm-head { display: flex; align-items: center; gap: 10px; padding: 10px 12px 8px; }
+.rm-progress { margin-left: auto; color: var(--muted); font: 12px var(--font-mono); }
+.rm-icon { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; background: none; color: var(--muted); }
+.rm-icon:hover { color: var(--fg); background: var(--raised); }
+.rm-bar { height: 3px; margin: 0 12px 6px; border-radius: 2px; background: var(--raised); overflow: hidden; }
+.rm-bar i { display: block; height: 100%; background: var(--ok); transition: width 0.2s; }
+.rm-scroll { flex: 1; min-height: 0; overflow: auto; padding: 0 6px 12px; }
+.rm-group { margin-bottom: 8px; }
+.rm-group-head { display: flex; align-items: center; gap: 8px; padding: 4px 6px; }
+.rm-group-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.rm-group.out .rm-group-name { color: var(--warn); }
+.rm-group ul { list-style: none; margin: 0; padding: 0; }
+.rm-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--fg); text-align: left; }
+.rm-row:hover { background: var(--raised); }
+.rm-row.on { background: var(--selection); }
+.rm-row.reviewed { color: var(--muted); }
+.rm-mark { display: grid; place-items: center; flex: none; width: 16px; height: 16px; border: 1.5px solid var(--muted); border-radius: 50%; color: var(--bg); }
+.rm-row.reviewed .rm-mark { background: var(--ok); border-color: var(--ok); }
+.rm-row.updated .rm-mark { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 35%, transparent); }
+.rm-row .review-path { display: flex; flex: 1; min-width: 0; }
+.rm-main { flex: 1; min-width: 0; display: flex; flex-direction: column; border-left: 0; }
+.rm-file-head { display: flex; align-items: center; gap: 12px; padding: 10px 16px; background: var(--bg); }
+.rm-file-head .review-path { display: flex; flex: 0 1 auto; min-width: 0; font-size: 13px; }
+.rm-spacer { flex: 1; }
+.rm-tag { padding: 1px 8px; border-radius: 10px; font-size: 11px; font-weight: 600; }
+.rm-tag.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 16%, transparent); }
+.rm-tag.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.rm-error { margin: 8px 16px 0; padding: 6px 10px; border-radius: var(--r-1); color: var(--error); background: color-mix(in srgb, var(--error) 14%, transparent); }
+.rm-diff { flex: 1; min-height: 0; overflow: auto; padding: 12px 16px; }
+.rm-diff .diff-view { max-height: none; margin: 0; font-size: 12.5px; }
+.rm-keys { display: flex; gap: 18px; padding: 6px 16px; color: var(--muted); font-size: 11.5px; background: var(--bg); }
+.rm-keys kbd { margin-right: 4px; padding: 0 5px; border: 1px solid var(--border); border-radius: var(--r-1); font: 11px var(--font-mono); color: var(--fg); }
+.rm-done { flex: 1; display: grid; place-content: center; justify-items: center; gap: 8px; color: var(--ok); }
+.rm-done h2 { margin: 0; color: var(--fg); font-size: 18px; }
+.rm-done p { margin: 0 0 8px; }

@@ -3,6 +3,7 @@ import { latestPlanVersion } from './history-state';
 
 export interface ReviewFile {
   path: string;
+  ids: string[];
   before: string | null;
   after: string | null;
   added: number;
@@ -27,6 +28,7 @@ function files(changes: ChangeView[]): ReviewFile[] {
   for (const change of [...changes].sort((a, b) => a.at - b.at)) byPath.set(change.path, [...(byPath.get(change.path) ?? []), change]);
   return [...byPath].map(([path, own]) => ({
     path,
+    ids: own.map((change) => change.id),
     before: own[0]!.beforeHash,
     after: own[own.length - 1]!.afterHash,
     added: own.reduce((sum, change) => sum + (change.added ?? 0), 0),
@@ -42,7 +44,7 @@ const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryV
 // Out-of-plan changes come first: they are the ones that need a human decision. External changes (made outside the IDE's agent) come last.
 export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGroup[] {
   // 'recorded' marks files the gate does not enforce: gitignored, git internals and harness paths.
-  const reviewable = history.changes.filter((change) => change.enforcement === 'enforced');
+  const reviewable = history.changes.filter((change) => change.enforcement === 'enforced' && change.resolution !== 'reverted');
   const agentChanges = reviewable.filter(byAgent);
   const claimed = new Set<string>();
   const stepGroups: ReviewGroup[] = [];
