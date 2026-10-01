@@ -537,3 +537,65 @@ describe('AgentSession.start with several chats', () => {
     expect([current(second).id, texts(second)]).toEqual([a.id, ['first question', 'OK']]);
   });
 });
+
+describe('AgentSession.deleteSession', () => {
+  it('removes a chat that is not open and leaves the open one alone', async () => {
+    const h = await harness('multi-turn');
+    const { a, b } = await twoChats(h);
+    await h.session.deleteSession(a.id);
+    expect(h.session.listChats()).toMatchObject({ activeId: b.id, sessions: [{ id: b.id }] });
+    expect(h.store.session(a.id)).toBeNull();
+    expect(h.store.history(a.id).messages).toEqual([]);
+    expect(current(h).id).toBe(b.id);
+    expect(texts(h)).toContain('second question');
+  });
+
+  it('stops the claude of the open chat, forgets the chat and leaves an empty one', async () => {
+    const h = await harness('hang');
+    h.session.send('work');
+    await waitFor(() => h.argvs().length === 1 && h.pids().length === 1, 'claude spawned');
+    const open = current(h);
+    const pid = h.pids()[0];
+    await h.session.deleteSession(open.id);
+    expect(isAlive(pid ?? -1)).toBe(false);
+    expect(h.store.session(open.id)).toBeNull();
+    expect(h.store.listSessions()).toEqual([]);
+    expect(h.session.listChats()).toEqual({ activeId: null, sessions: [] });
+    expect(h.session.state()).toMatchObject({ session: null, items: [], turns: [] });
+    expect(lastSnapshot(h)).toMatchObject({ state: { session: null } });
+  });
+
+  it('starts the next message in a fresh chat that keeps the chosen model', async () => {
+    const h = await harness('multi-turn');
+    await h.session.configure('haiku', 'low');
+    await ask(h, 'hi');
+    const old = current(h);
+    await h.session.deleteSession(old.id);
+    await ask(h, 'again');
+    expect(current(h)).toMatchObject({ modelChoice: 'haiku', effort: 'low' });
+    expect(current(h).id).not.toBe(old.id);
+    expect(h.store.listSessions().map((chat) => chat.id)).toEqual([current(h).id]);
+  });
+
+  it('refuses an unknown chat', async () => {
+    const h = await harness('multi-turn');
+    await expect(h.session.deleteSession('nope')).rejects.toMatchObject({ code: 'no-chat' });
+  });
+});
+
+describe('AgentSession.deleteAllSessions', () => {
+  it('stops claude and removes every chat', async () => {
+    const h = await harness('multi-turn');
+    await twoChats(h);
+    const pid = h.pids().at(-1);
+    await h.session.deleteAllSessions();
+    expect(isAlive(pid ?? -1)).toBe(false);
+    expect([h.store.listSessions(), h.store.latestSession(), h.session.listChats()]).toEqual([[], null, { activeId: null, sessions: [] }]);
+  });
+
+  it('works with no chats at all', async () => {
+    const h = await harness('multi-turn');
+    await h.session.deleteAllSessions();
+    expect(h.session.listChats()).toEqual({ activeId: null, sessions: [] });
+  });
+});

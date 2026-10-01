@@ -1,6 +1,6 @@
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { openStore, type MessageRecord, type SessionRecord } from '../../src/store/store';
+import { openStore, type GateEventRecord, type MessageRecord, type PlanRecord, type SessionRecord, type ToolDecisionRecord } from '../../src/store/store';
 import { DatabaseSync } from '../../src/store/sqlite';
 import { tempDir } from '../helpers';
 
@@ -249,5 +249,87 @@ describe('active chat in meta', () => {
     const store = freshStore();
     store.setMeta('activeSessionId', '');
     expect(store.meta('activeSessionId')).toBe('');
+  });
+});
+
+describe('deleting chats', () => {
+  const fill = (store: ReturnType<typeof freshStore>, id: string, startedAt: number) => {
+    store.saveSession(session(id, startedAt));
+    store.saveTurn(id, { id: `t-${id}`, kind: 'user', openedAt: startedAt, startedAt, closedAt: null, resultSubtype: null });
+    store.saveMessage(id, message(1, 'user', `hello ${id}`, startedAt + 1));
+    store.saveToolEvent(id, {
+      toolUseId: `tool-${id}`, seq: 2, turnId: null, parentToolUseId: null, tool: 'Bash', input: '{}', status: 'running', toolUseAt: startedAt + 2, endedAt: null,
+    });
+  };
+
+  it('removes one chat with its conversation and leaves the others', () => {
+    const store = freshStore();
+    fill(store, 'a', 10);
+    fill(store, 'b', 20);
+    store.deleteSession('a');
+    expect(store.session('a')).toBeNull();
+    expect(store.history('a')).toMatchObject({ messages: [], turns: [], toolEvents: [] });
+    expect(store.listSessions().map((chat) => chat.id)).toEqual(['b']);
+    expect(store.history('b').messages.map((m) => m.text)).toEqual(['hello b']);
+    expect(store.history('b').toolEvents).toHaveLength(1);
+  });
+
+  it('removes every chat', () => {
+    const store = freshStore();
+    fill(store, 'a', 10);
+    fill(store, 'b', 20);
+    store.deleteAllSessions();
+    expect([store.listSessions(), store.latestSession(), store.history('a').messages, store.history('b').toolEvents]).toEqual([[], null, [], []]);
+  });
+
+  it('does nothing for an unknown id', () => {
+    const store = freshStore();
+    fill(store, 'a', 10);
+    store.deleteSession('missing');
+    expect(store.listSessions().map((chat) => chat.id)).toEqual(['a']);
+  });
+});
+
+describe('deleting a chat that has a plan', () => {
+  const plan: PlanRecord = {
+    id: 'plan-1', version: 1, goal: 'Fix the bug', status: 'approved', approvedBy: 'auto',
+    steps: [{ key: 'edit', order: 1, title: 'Edit app', rationale: 'the bug is there', targets: [{ path: 'src/app.ts', op: 'modify' }] }],
+    scope: { paths: ['src/app.ts'], globs: [] }, owners: { 'src/app.ts': 'app' }, review: { auto: true, notes: [] },
+    feedback: null, proposedAt: 10, decidedAt: 10,
+  };
+  const decision: ToolDecisionRecord = {
+    toolUseId: 'toolu_1', decision: 'allow', planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE: allowed', decidedAt: 11,
+  };
+  const gateEvent: GateEventRecord = {
+    id: 'ev-1', toolUseId: 'toolu_2', kind: 'pre-execution', mode: 'A', targets: ['src/other.ts'], prompt: null, resolution: 'denied', ts: 12, resolvedAt: 12,
+  };
+  const withPlan = (store: ReturnType<typeof freshStore>, id: string) => {
+    store.saveSession(session(id, 10));
+    store.savePlan(id, { ...plan, id: `plan-${id}` });
+    store.saveStepState(`plan-${id}`, 'edit', 'done');
+    store.saveToolDecision(id, decision);
+    store.saveGateEvent(id, { ...gateEvent, id: `ev-${id}` });
+  };
+
+  it('removes the plan, its step states, the decisions and the gate events with the chat', () => {
+    const store = freshStore();
+    withPlan(store, 'a');
+    withPlan(store, 'b');
+    store.deleteSession('a');
+    expect(store.plans('a')).toEqual({ plans: [], stepStates: {} });
+    expect(store.history('a').decisions).toEqual([]);
+    expect(store.gateEvents('a')).toEqual([]);
+    expect(store.plans('b').plans.map((p) => p.id)).toEqual(['plan-b']);
+    expect(store.plans('b').stepStates).toEqual({ 'plan-b': { edit: 'done' } });
+    expect(store.history('b').decisions).toHaveLength(1);
+    expect(store.gateEvents('b')).toHaveLength(1);
+  });
+
+  it('removes them all with every chat', () => {
+    const store = freshStore();
+    withPlan(store, 'a');
+    withPlan(store, 'b');
+    store.deleteAllSessions();
+    expect([store.plans('b').plans, store.history('b').decisions, store.gateEvents('a'), store.listSessions()]).toEqual([[], [], [], []]);
   });
 });

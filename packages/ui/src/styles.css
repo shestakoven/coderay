@@ -392,6 +392,15 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-list-row { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; border-radius: var(--r-1); }
 .chat-list-row:hover:not(:disabled) { background: var(--raised); }
 .chat-list-row.on { background: var(--selection); }
+.chat-list-item { display: flex; align-items: center; gap: 2px; }
+.chat-list-item .chat-list-row { flex: 1; min-width: 0; }
+.chat-delete { flex: none; padding: 4px 6px; border: 0; background: none; color: var(--muted); border-radius: var(--r-1); opacity: 0.6; }
+.chat-delete:hover, .chat-delete.confirm { opacity: 1; background: var(--raised); }
+.chat-delete.confirm { color: var(--error); }
+.chat-list-footer { margin-top: 4px; padding-top: 4px; border-top: 1px solid var(--line); }
+.chat-delete-all { width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; border-radius: var(--r-1); }
+.chat-delete-all:hover, .chat-delete-all.confirm { background: var(--raised); }
+.chat-delete-all.confirm { color: var(--error); }
 .chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-list-meta { font-size: 11px; }
 .model-controls { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; }

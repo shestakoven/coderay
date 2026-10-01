@@ -163,5 +163,7 @@ export type ChatClientMessage =
   | { type: 'session.list' }
   | { type: 'models.list' }
   | { type: 'session.switch'; id: string }
+  | { type: 'session.delete'; id: string }
+  | { type: 'session.delete-all' }
   | { type: 'session.configure'; modelChoice: string | null; effort: EffortLevel | null }
   | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer };

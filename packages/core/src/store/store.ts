@@ -124,6 +124,8 @@ export interface Store {
   session(id: string): SessionRecord | null;
   listSessions(limit?: number): ChatSummary[];
   saveSession(session: SessionRecord): void;
+  deleteSession(id: string): void;
+  deleteAllSessions(): void;
   saveTurn(sessionId: string, turn: TurnView): void;
   saveMessage(sessionId: string, message: MessageRecord): void;
   saveToolEvent(sessionId: string, event: ToolEventRecord): void;
@@ -496,6 +498,22 @@ const toSummary = (row: Row): SummaryRecord => ({
   key: String(row.key), scope: String(row.scope) as SummaryRecord['scope'], ref: String(row.ref), text: String(row.text), createdAt: Number(row.created_at),
 });
 
+// Every table that references sessions(id) goes with it. File changes, checkpoints and reverts carry no such reference and stay.
+function deleteConversations(db: InstanceType<typeof DatabaseSync>, where: string, params: string[]): void {
+  db.exec('BEGIN');
+  try {
+    db.prepare(`DELETE FROM step_states WHERE plan_id IN (SELECT id FROM plans ${where})`).run(...params);
+    for (const table of ['plans', 'tool_decisions', 'gate_events', 'messages', 'turns', 'tool_events', 'background_tasks', 'prompts']) {
+      db.prepare(`DELETE FROM ${table} ${where}`).run(...params);
+    }
+    db.prepare(`DELETE FROM sessions ${where.replace('session_id', 'id')}`).run(...params);
+    db.exec('COMMIT');
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
 export function openStore(dir: string): Store {
   mkdirSync(dir, { recursive: true });
   chmodSync(dir, PROJECT_DIR_MODE);
@@ -631,6 +649,12 @@ export function openStore(dir: string): Store {
           status: session.status, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
         };
       });
+    },
+    deleteSession(id) {
+      deleteConversations(db, 'WHERE session_id = ?', [id]);
+    },
+    deleteAllSessions() {
+      deleteConversations(db, '', []);
     },
     saveSession(session) {
       upsertSession.run({

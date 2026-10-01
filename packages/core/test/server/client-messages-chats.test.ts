@@ -86,3 +86,18 @@ describe('parseClientMessage session.configure', () => {
     expect(parse({ type: 'session.configure', modelChoice: 'opus', effort: 'low', id: 'a', text: 'x' })).toEqual({ type: 'session.configure', modelChoice: 'opus', effort: 'low' });
   });
 });
+
+describe('parseClientMessage session.delete', () => {
+  it('accepts a chat id and the delete-all request', () => {
+    expect([parse({ type: 'session.delete', id: 'b0a1-uuid' }), parse({ type: 'session.delete-all' })]).toEqual([
+      { type: 'session.delete', id: 'b0a1-uuid' },
+      { type: 'session.delete-all' },
+    ]);
+  });
+
+  it('rejects a missing, empty, non-string or oversized id', () => {
+    expect([
+      parse({ type: 'session.delete' }), parse({ type: 'session.delete', id: '' }), parse({ type: 'session.delete', id: 7 }), parse({ type: 'session.delete', id: 'x'.repeat(101) }),
+    ]).toEqual([null, null, null, null]);
+  });
+});

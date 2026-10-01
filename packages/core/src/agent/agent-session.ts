@@ -423,6 +423,19 @@ export class AgentSession {
     this.reset(null);
   }
 
+  async deleteSession(id: string): Promise<void> {
+    if (!this.options.store.session(id)) throw new SessionError('no-chat');
+    if (this.session?.id !== id) {
+      this.options.store.deleteSession(id);
+      return;
+    }
+    await this.discardActive(() => this.options.store.deleteSession(id));
+  }
+
+  async deleteAllSessions(): Promise<void> {
+    await this.discardActive(() => this.options.store.deleteAllSessions());
+  }
+
   async switchSession(id: string): Promise<void> {
     if (this.session?.id === id) return;
     const target = this.options.store.session(id);
@@ -630,6 +643,17 @@ export class AgentSession {
     const status = reason === null ? 'crashed' : reason === 'new' ? 'ended' : this.refused ? 'refused' : 'stopped';
     this.update({ status, pid: null, launchId: null });
     notify(this.exitListeners);
+  }
+
+  private async discardActive(remove: () => void): Promise<void> {
+    await this.terminate('close');
+    this.clearRefusal();
+    remove();
+    this.notes = [];
+    notify(this.newSessionListeners);
+    this.previous = this.session ?? this.previous;
+    this.setActive('');
+    this.reset(null);
   }
 
   private async terminate(reason: ExitReason): Promise<void> {

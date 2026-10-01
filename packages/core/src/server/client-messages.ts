@@ -29,8 +29,11 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'session.new':
     case 'session.list':
     case 'models.list':
+    case 'session.delete-all':
     case 'settings.get':
       return { type };
+    case 'session.delete':
+      return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
     case 'session.switch':
       return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
     case 'session.configure':

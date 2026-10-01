@@ -11,6 +11,7 @@ export interface ChatList {
 
 export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLeave: boolean; send: (message: ClientMessage) => boolean }) {
   const [open, setOpen] = useState(false);
+  const [confirming, setConfirming] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const active = chats.sessions.find((chat) => chat.id === chats.activeId);
   useEffect(() => {
@@ -28,6 +29,17 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
       window.removeEventListener('keydown', onKey);
     };
   }, [open]);
+  useEffect(() => {
+    if (!open) setConfirming(null);
+  }, [open]);
+  const ask = (key: string, message: ClientMessage): void => {
+    if (confirming !== key) {
+      setConfirming(key);
+      return;
+    }
+    setConfirming(null);
+    send(message);
+  };
   const now = Date.now();
   const blocked = 'Wait for the agent to finish, or press Stop, before switching chats.';
   return (
@@ -41,7 +53,7 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
         <ul className="chat-list" role="listbox" aria-label="Chats">
           {chats.sessions.length === 0 && <li className="muted chat-list-empty">No chats yet.</li>}
           {chats.sessions.map((chat) => (
-            <li key={chat.id} role="option" aria-selected={chat.id === chats.activeId}>
+            <li key={chat.id} role="option" aria-selected={chat.id === chats.activeId} className="chat-list-item">
               <button
                 className={`chat-list-row${chat.id === chats.activeId ? ' on' : ''}`}
                 disabled={chat.id !== chats.activeId && !canLeave}
@@ -56,8 +68,27 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
                   {relativeTime(chat.lastActivityAt, now)} · {modelLabel(chat.modelChoice, chats.models)} · {effortLabel(chat.effort)}
                 </span>
               </button>
+              <button
+                className={`chat-delete${confirming === chat.id ? ' confirm' : ''}`}
+                onClick={() => ask(chat.id, { type: 'session.delete', id: chat.id })}
+                title={confirming === chat.id ? 'Click again to delete this chat and stop its agent' : 'Delete this chat'}
+                aria-label={confirming === chat.id ? 'Confirm delete chat' : 'Delete chat'}
+              >
+                {confirming === chat.id ? 'Delete?' : <Icon name="close" size={14} />}
+              </button>
             </li>
           ))}
+          {chats.sessions.length > 0 && (
+            <li className="chat-list-footer">
+              <button
+                className={`chat-delete-all${confirming === 'all' ? ' confirm' : ''}`}
+                onClick={() => ask('all', { type: 'session.delete-all' })}
+                title="Delete every chat and stop the agent"
+              >
+                {confirming === 'all' ? 'Click again to delete all chats' : 'Delete all chats'}
+              </button>
+            </li>
+          )}
         </ul>
       )}
     </div>

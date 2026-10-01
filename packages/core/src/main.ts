@@ -196,6 +196,14 @@ try {
       case 'session.switch':
         await agent.switchSession(message.id);
         return;
+      case 'session.delete':
+        await agent.deleteSession(message.id);
+        broadcastSessions();
+        return;
+      case 'session.delete-all':
+        await agent.deleteAllSessions();
+        broadcastSessions();
+        return;
       case 'session.configure':
         await agent.configure(message.modelChoice, message.effort);
         broadcastSessions();
