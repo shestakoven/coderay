@@ -6,6 +6,7 @@ import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
 import { ChatSwitcher, type ChatList } from './ChatSwitcher';
 import { Icon } from '../layout/Icon';
+import { MarkdownText } from './MarkdownText';
 import { ModelControls } from './ModelControls';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
@@ -150,7 +151,12 @@ function Item({ item, chat, send, onFocusTargets }: {
   onFocusTargets: (paths: string[]) => void;
 }) {
   if (item.kind === 'message') {
-    return <div className={`msg ${item.role}`} title={item.recovered ? RECOVERED : undefined}>{item.text}{item.recovered && <span className="muted"> · {RECOVERED}</span>}</div>;
+    return (
+      <div className={`msg ${item.role}${item.role === 'assistant' ? ' rich' : ''}`} title={item.recovered ? RECOVERED : undefined}>
+        {item.role === 'assistant' ? <MarkdownText text={item.text} /> : item.text}
+        {item.recovered && <span className="muted"> · {RECOVERED}</span>}
+      </div>
+    );
   }
   if (item.kind === 'notice') return <div className="notice">{item.text}</div>;
   if (item.kind === 'prompt') {
