@@ -7,6 +7,8 @@ import { isModelChoice } from '../agent/tools';
 import { isRecord } from '../json';
 import { MAX_TERMINAL_INPUT, TERMINAL_ID } from '../terminal/terminal-service';
 
+const MAX_TITLE_LENGTH = 200;
+
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
 
 export function parseClientMessage(raw: string): ClientMessage | null {
@@ -19,7 +21,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images,
+    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -35,6 +37,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'map.regroup':
     case 'settings.get':
       return { type };
+    case 'session.rename':
+      return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH && typeof title === 'string' && title.trim() !== '' && title.length <= MAX_TITLE_LENGTH ? { type, id, title } : null;
+    case 'task.stop':
+      return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
     case 'session.delete':
       return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
     case 'session.switch':

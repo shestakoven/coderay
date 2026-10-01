@@ -41,9 +41,9 @@ describe('panelReducer focus', () => {
   });
 
   it('keeps tabs unchanged across focus', () => {
-    const start = state({ leftTab: 'files', rightTab: 'details' });
+    const start = state({ leftTab: 'files', rightTab: 'plan' });
     const s = panelReducer(panelReducer(start, { type: 'focus' }), { type: 'focus' });
-    expect([s.leftTab, s.rightTab]).toEqual(['files', 'details']);
+    expect([s.leftTab, s.rightTab]).toEqual(['files', 'plan']);
   });
 });
 
@@ -63,39 +63,39 @@ describe('panelReducer leaving focus', () => {
   });
 
   it('choosing a right tab in focus restores the others and shows right on that tab', () => {
-    const s = panelReducer(inFocus, { type: 'right-tab', tab: 'details' });
-    expect(s).toMatchObject({ focus: false, left: true, right: true, bottom: true, rightTab: 'details' });
+    const s = panelReducer(inFocus, { type: 'right-tab', tab: 'plan' });
+    expect(s).toMatchObject({ focus: false, left: true, right: true, bottom: true, rightTab: 'plan' });
   });
 
   it('a left tab outside focus changes nothing but the tab and left visibility', () => {
-    const s = panelReducer(state({ left: false, bottom: true }), { type: 'left-tab', tab: 'plan' });
-    expect(s).toMatchObject({ left: true, right: true, bottom: true, leftTab: 'plan', focus: false });
+    const s = panelReducer(state({ left: false, bottom: true }), { type: 'left-tab', tab: 'details' });
+    expect(s).toMatchObject({ left: true, right: true, bottom: true, leftTab: 'details', focus: false });
   });
 });
 
 describe('panelReducer reveal events', () => {
-  it('plan-shown opens the left panel on the plan tab', () => {
-    const s = panelReducer(state({ left: false, leftTab: 'files' }), { type: 'plan-shown' });
-    expect(s).toMatchObject({ left: true, leftTab: 'plan' });
+  it('plan-shown opens the right panel on the plan tab', () => {
+    const s = panelReducer(state({ right: false, rightTab: 'agent' }), { type: 'plan-shown' });
+    expect(s).toMatchObject({ right: true, rightTab: 'plan' });
   });
 
   it('plan-shown leaves focus and restores the other panels', () => {
     const s = panelReducer(panelReducer(state({ bottom: true }), { type: 'focus' }), { type: 'plan-shown' });
-    expect(s).toMatchObject({ focus: false, left: true, right: true, bottom: true, leftTab: 'plan' });
+    expect(s).toMatchObject({ focus: false, left: true, right: true, bottom: true, rightTab: 'plan' });
   });
 
-  it('node-selected opens the right panel on details', () => {
-    const s = panelReducer(state({ right: false, rightTab: 'agent' }), { type: 'node-selected' });
-    expect(s).toMatchObject({ right: true, rightTab: 'details' });
+  it('node-selected opens the left panel on details', () => {
+    const s = panelReducer(state({ left: false, leftTab: 'files' }), { type: 'node-selected' });
+    expect(s).toMatchObject({ left: true, leftTab: 'details' });
   });
 
   it('node-selected leaves focus', () => {
     const s = panelReducer(panelReducer(initialPanels, { type: 'focus' }), { type: 'node-selected' });
-    expect(s).toMatchObject({ focus: false, right: true, left: true, rightTab: 'details' });
+    expect(s).toMatchObject({ focus: false, right: true, left: true, leftTab: 'details' });
   });
 
   it('attention opens the right panel on agent', () => {
-    const s = panelReducer(state({ right: false, rightTab: 'details' }), { type: 'attention' });
+    const s = panelReducer(state({ right: false, rightTab: 'plan' }), { type: 'attention' });
     expect(s).toMatchObject({ right: true, rightTab: 'agent' });
   });
 
@@ -106,22 +106,22 @@ describe('panelReducer reveal events', () => {
 });
 
 describe('panelReducer selection-cleared', () => {
-  it('switches the details tab back to agent without touching visibility', () => {
-    const start = state({ rightTab: 'details', right: false, bottom: true });
-    expect(panelReducer(start, { type: 'selection-cleared' })).toEqual({ ...start, rightTab: 'agent' });
+  it('switches the details tab back to components without touching visibility', () => {
+    const start = state({ leftTab: 'details', left: false, bottom: true });
+    expect(panelReducer(start, { type: 'selection-cleared' })).toEqual({ ...start, leftTab: 'components' });
   });
 
-  it('does nothing on the agent tab', () => {
-    const start = state({ rightTab: 'agent', right: false });
+  it('does nothing on another left tab', () => {
+    const start = state({ leftTab: 'files', left: false });
     expect(panelReducer(start, { type: 'selection-cleared' })).toBe(start);
   });
 
   it('does not leave focus', () => {
-    const focused = panelReducer(state({ rightTab: 'details' }), { type: 'focus' });
+    const focused = panelReducer(state({ leftTab: 'details' }), { type: 'focus' });
     const s = panelReducer(focused, { type: 'selection-cleared' });
     expect(s.focus).toBe(true);
     expect(s.before).toEqual(focused.before);
-    expect(s.rightTab).toBe('agent');
+    expect(s.leftTab).toBe('components');
   });
 });
 

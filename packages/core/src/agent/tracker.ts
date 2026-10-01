@@ -92,6 +92,11 @@ export class TurnTracker {
     return [{ kind: 'turn', turn }, this.message(turn.id, null, 'user', text)];
   }
 
+  // Spike c27b: a message written into an open turn is absorbed at the next tool boundary, with no init or result of its own.
+  injectedMessage(text: string): Change[] {
+    return [this.message(this.running ?? this.openTurns[0]?.id ?? null, null, 'user', text)];
+  }
+
   notice(text: string): Change[] {
     return [this.message(this.running, null, 'notice', text)];
   }

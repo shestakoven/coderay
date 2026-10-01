@@ -2,33 +2,32 @@ import type { ReactNode } from 'react';
 import type { LeftTab } from './panel-state';
 
 const TABS: { key: LeftTab; label: string }[] = [
-  { key: 'plan', label: 'Plan' },
   { key: 'components', label: 'Components' },
   { key: 'files', label: 'Files' },
+  { key: 'details', label: 'Details' },
 ];
 
-export function LeftPanel({ tab, onTab, plan, components, files, hasPlan }: {
+export function LeftPanel({ hidden, tab, onTab, components, files, detailsRef }: {
+  hidden: boolean;
   tab: LeftTab;
   onTab: (tab: LeftTab) => void;
-  plan: ReactNode;
   components: ReactNode;
   files: ReactNode;
-  hasPlan: boolean;
+  detailsRef: (element: HTMLElement | null) => void;
 }) {
   return (
-    <aside className="left-panel" aria-label="Project panel">
+    <aside className="left-panel" aria-label="Project panel" hidden={hidden}>
       <div className="seg" role="tablist">
         {TABS.map(({ key, label }) => (
-          <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? 'on' : ''} onClick={() => onTab(key)}>
-            {label}
-            {key === 'plan' && hasPlan && <span className="seg-dot" aria-label="has a plan" />}
-          </button>
+          <button key={key} role="tab" aria-selected={tab === key} className={tab === key ? 'on' : ''} onClick={() => onTab(key)}>{label}</button>
         ))}
       </div>
       <div className="left-body">
-        <div hidden={tab !== 'plan'}>{hasPlan ? plan : <div className="empty muted">No plan yet. When the agent proposes one, it appears here and on the map.</div>}</div>
         <div hidden={tab !== 'components'} className="left-pane">{components}</div>
         <div hidden={tab !== 'files'} className="left-pane">{files}</div>
+        <div hidden={tab !== 'details'} className="left-pane details-slot" ref={detailsRef}>
+          <div className="empty muted">Select a component or file on the map to see its details and changes.</div>
+        </div>
       </div>
     </aside>
   );

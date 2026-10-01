@@ -14,7 +14,7 @@ async function openWatchdog(page: import('@playwright/test').Page) {
   core = await startCore('exec-mcp-write-out-of-plan');
   await page.goto(core.url);
   await sendMessage(page, 'Fix the greeting');
-  await expect(page.locator('.plan-chip')).toHaveClass(/approved/);
+  await expect(page.getByTestId('plan-panel')).toHaveClass(/approved/);
   const dialog = page.getByTestId('watchdog-dialog');
   await expect(dialog).toContainText('src/other.ts');
   return dialog;

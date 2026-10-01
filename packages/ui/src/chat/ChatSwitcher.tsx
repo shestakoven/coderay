@@ -12,6 +12,7 @@ export interface ChatList {
 export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLeave: boolean; send: (message: ClientMessage) => boolean }) {
   const [open, setOpen] = useState(false);
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [renaming, setRenaming] = useState<{ id: string; text: string } | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const active = chats.sessions.find((chat) => chat.id === chats.activeId);
   useEffect(() => {
@@ -30,7 +31,10 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
     };
   }, [open]);
   useEffect(() => {
-    if (!open) setConfirming(null);
+    if (!open) {
+      setConfirming(null);
+      setRenaming(null);
+    }
   }, [open]);
   const ask = (key: string, message: ClientMessage): void => {
     if (confirming !== key) {
@@ -39,6 +43,10 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
     }
     setConfirming(null);
     send(message);
+  };
+  const commitRename = (): void => {
+    if (renaming && renaming.text.trim() !== '') send({ type: 'session.rename', id: renaming.id, title: renaming.text });
+    setRenaming(null);
   };
   const now = Date.now();
   const blocked = 'Wait for the agent to finish, or press Stop, before switching chats.';
@@ -54,6 +62,21 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
           {chats.sessions.length === 0 && <li className="muted chat-list-empty">No chats yet.</li>}
           {chats.sessions.map((chat) => (
             <li key={chat.id} role="option" aria-selected={chat.id === chats.activeId} className="chat-list-item">
+              {renaming?.id === chat.id ? (
+                <input
+                  className="chat-rename"
+                  autoFocus
+                  value={renaming.text}
+                  maxLength={200}
+                  aria-label="Chat name"
+                  onChange={(event) => setRenaming({ id: chat.id, text: event.target.value })}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') commitRename();
+                    if (event.key === 'Escape') setRenaming(null);
+                  }}
+                  onBlur={commitRename}
+                />
+              ) : (
               <button
                 className={`chat-list-row${chat.id === chats.activeId ? ' on' : ''}`}
                 disabled={chat.id !== chats.activeId && !canLeave}
@@ -68,6 +91,8 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
                   {relativeTime(chat.lastActivityAt, now)} · {modelLabel(chat.modelChoice, chats.models)} · {effortLabel(chat.effort)}
                 </span>
               </button>
+              )}
+              <button className="chat-delete" onClick={() => setRenaming({ id: chat.id, text: chatTitle(chat) })} title="Rename this chat" aria-label="Rename chat"><Icon name="pencil" size={14} /></button>
               <button
                 className={`chat-delete${confirming === chat.id ? ' confirm' : ''}`}
                 onClick={() => ask(chat.id, { type: 'session.delete', id: chat.id })}

@@ -78,7 +78,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     holdMs: options.holdMs,
     hold: options.hold,
   });
-  const idecore = idecoreRoute({ secret, plans, map: options.map, search: options.search });
+  const idecore = idecoreRoute({ secret, plans, map: options.map, search: options.search, setTitle: (title) => session?.setTitle(title) ?? false });
   const url = (path: string) => `http://127.0.0.1:${options.port()}${path}`;
   const base = (id: string) => `${basename(projectDir(options.home, options.root))}-${id}`;
   return {

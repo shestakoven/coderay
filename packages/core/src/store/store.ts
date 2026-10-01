@@ -124,6 +124,7 @@ export interface Store {
   session(id: string): SessionRecord | null;
   listSessions(limit?: number): ChatSummary[];
   saveSession(session: SessionRecord): void;
+  setSessionTitle(id: string, title: string, manual: boolean): boolean;
   deleteSession(id: string): void;
   deleteAllSessions(): void;
   saveTurn(sessionId: string, turn: TurnView): void;
@@ -307,13 +308,22 @@ ALTER TABLE sessions ADD COLUMN model_choice TEXT;
 ALTER TABLE sessions ADD COLUMN effort TEXT;
 `;
 
+const SCHEMA_V5 = `
+ALTER TABLE sessions ADD COLUMN title TEXT;
+ALTER TABLE sessions ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0;
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5];
 
 const CHAT_TITLE_LENGTH = 60;
 const NEW_CHAT_TITLE = 'New chat';
 
-const chatTitle = (text: string | null): string => text?.replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd() || NEW_CHAT_TITLE;
+const IMAGE_PLACEHOLDER = /^\[\d+ images? attached\]$/gm;
+
+const chatTitle = (text: string | null): string => text?.replace(IMAGE_PLACEHOLDER, '').replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd() || NEW_CHAT_TITLE;
+
+const cleanTitle = (title: string): string => title.replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd();
 
 const toEffort = (value: unknown): EffortLevel | null => (EFFORT_LEVELS.includes(value as EffortLevel) ? (value as EffortLevel) : null);
 
@@ -645,10 +655,17 @@ export function openStore(dir: string): Store {
       return listSessions.all(limit).map((row) => {
         const session = toSession(row);
         return {
-          id: session.id, title: chatTitle(optText(row.first_text)), startedAt: session.startedAt, lastActivityAt: Number(row.last_activity_at),
+          id: session.id, title: optText(row.title) ?? chatTitle(optText(row.first_text)), startedAt: session.startedAt, lastActivityAt: Number(row.last_activity_at),
           status: session.status, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
         };
       });
+    },
+    setSessionTitle(id, title, manual) {
+      const clean = cleanTitle(title);
+      if (clean === '') return false;
+      const guard = manual ? '' : ' AND title IS NULL AND title_manual = 0';
+      const result = db.prepare(`UPDATE sessions SET title = ?, title_manual = ? WHERE id = ?${guard}`).run(clean, manual ? 1 : 0, id);
+      return Number(result.changes) > 0;
     },
     deleteSession(id) {
       deleteConversations(db, 'WHERE session_id = ?', [id]);

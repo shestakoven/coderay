@@ -22,15 +22,15 @@ describe('panelReducer bottom-tab', () => {
   });
 
   it('leaves the left and right panels and their tabs untouched', () => {
-    const before = state({ left: false, right: true, leftTab: 'files', rightTab: 'details' });
+    const before = state({ left: false, right: true, leftTab: 'files', rightTab: 'plan' });
     const next = panelReducer(before, { type: 'bottom-tab', tab: 'terminal' });
-    expect(next).toMatchObject({ left: false, right: true, leftTab: 'files', rightTab: 'details' });
+    expect(next).toMatchObject({ left: false, right: true, leftTab: 'files', rightTab: 'plan' });
   });
 
   it('does not change the other tabs when they differ from the defaults', () => {
-    const next = panelReducer(state({ leftTab: 'plan', rightTab: 'details' }), { type: 'bottom-tab', tab: 'terminal' });
-    expect(next.leftTab).toBe('plan');
-    expect(next.rightTab).toBe('details');
+    const next = panelReducer(state({ leftTab: 'details', rightTab: 'plan' }), { type: 'bottom-tab', tab: 'terminal' });
+    expect(next.leftTab).toBe('details');
+    expect(next.rightTab).toBe('plan');
   });
 
   it('leaves focus mode and restores the panels hidden by it, with the bottom open on the tab', () => {

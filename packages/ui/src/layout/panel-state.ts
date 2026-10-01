@@ -1,5 +1,5 @@
-export type LeftTab = 'plan' | 'components' | 'files';
-export type RightTab = 'agent' | 'details';
+export type LeftTab = 'components' | 'files' | 'details';
+export type RightTab = 'agent' | 'plan';
 export type BottomTab = 'timeline' | 'terminal';
 
 interface Visibility {
@@ -52,11 +52,11 @@ export function panelReducer(state: PanelState, action: PanelAction): PanelState
     case 'bottom-tab':
       return { ...leaveFocus(state), bottom: true, bottomTab: action.tab };
     case 'plan-shown':
-      return { ...leaveFocus(state), left: true, leftTab: 'plan' };
+      return { ...leaveFocus(state), right: true, rightTab: 'plan' };
     case 'node-selected':
-      return { ...leaveFocus(state), right: true, rightTab: 'details' };
+      return { ...leaveFocus(state), left: true, leftTab: 'details' };
     case 'selection-cleared':
-      return state.rightTab === 'details' ? { ...state, rightTab: 'agent' } : state;
+      return state.leftTab === 'details' ? { ...state, leftTab: 'components' } : state;
     case 'attention':
       return { ...leaveFocus(state), right: true, rightTab: 'agent' };
   }

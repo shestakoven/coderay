@@ -13,6 +13,8 @@ const PATHS = {
   'chevron-right': <path d="m9 18 6-6-6-6" />,
   send: <><path d="m5 12 7-7 7 7" /><path d="M12 19V5" /></>,
   paperclip: <path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48" />,
+  pencil: <><path d="M12 20h9" /><path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" /></>,
+  restart: <><path d="M21 12a9 9 0 1 1-3-6.7L21 8" /><path d="M21 3v5h-5" /></>,
   stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />,
   terminal: <><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></>,
   search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>,

@@ -183,6 +183,8 @@ export type SessionServerMessage =
 export type ChatClientMessage =
   | { type: 'chat.send'; text: string; images?: ChatImage[] }
   | { type: 'chat.stop' }
+  | { type: 'task.stop'; id: string }
+  | { type: 'session.rename'; id: string; title: string }
   | { type: 'session.restart' }
   | { type: 'session.new' }
   | { type: 'session.list' }

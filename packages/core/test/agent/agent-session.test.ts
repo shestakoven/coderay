@@ -180,10 +180,13 @@ describe('AgentSession', () => {
     expect([first?.type, texts(patchedItems)]).toEqual(['session.snapshot', ['hi', 'OK']]);
   });
 
-  it('refuses a message while a turn is open', async () => {
+  it('delivers a message sent while a turn is open into that turn, without opening another', async () => {
     const h = await harness('interrupt-bash');
     h.session.send('run it');
-    expect(() => h.session.send('again')).toThrow(SessionError);
+    h.session.send('again');
+    expect(texts(h.session.state().items)).toEqual(['run it', 'again']);
+    expect(h.session.state().turns).toHaveLength(1);
+    await waitFor(() => JSON.stringify(h.stdin()).includes('again'), 'the second message written to claude');
   });
 
   it('stop interrupts a running foreground tool call, which ends rejected and is no background task, and the turn ends error_during_execution', async () => {
@@ -702,7 +705,7 @@ describe('AgentSession with the gate', () => {
     expect([h.session.context('toolu_fx_silent'), h.session.lastMessage()]).toEqual([{ parentToolUseId: null, lastMessage: null }, null]);
   });
 
-  it('tells user-message listeners when send() delivers a message, and not when it is refused', async () => {
+  it('tells user-message listeners for every delivered message, including one sent mid-turn, and not for a refused one', async () => {
     const h = await harness('multi-turn');
     let messages = 0;
     const stop = h.session.onUserMessage(() => {
@@ -711,12 +714,12 @@ describe('AgentSession with the gate', () => {
     expect(() => h.session.send(' ')).toThrow(SessionError);
     expect(messages).toBe(0);
     h.session.send('hi');
-    expect(() => h.session.send('again')).toThrow(SessionError);
-    expect(messages).toBe(1);
-    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    h.session.send('again');
+    expect(messages).toBe(2);
+    await waitFor(() => closedTurns(h).length >= 1, 'turn closed');
     stop();
     h.session.send('more');
-    expect(messages).toBe(1);
+    expect(messages).toBe(2);
   });
 
   it('is idle when no turn is open, and tells listeners once when it becomes idle again', async () => {

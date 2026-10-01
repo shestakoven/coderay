@@ -181,6 +181,9 @@ try {
       case 'chat.stop':
         agent.stop();
         return;
+      case 'task.stop':
+        agent.stopTask(message.id);
+        return;
       case 'session.restart':
         await agent.restart();
         return;
@@ -198,6 +201,9 @@ try {
         return;
       case 'session.switch':
         await agent.switchSession(message.id);
+        return;
+      case 'session.rename':
+        agent.renameSession(message.id, message.title);
         return;
       case 'session.delete':
         await agent.deleteSession(message.id);
@@ -313,6 +319,7 @@ try {
     broadcastSessions();
   });
   agent.onTurnClosed(broadcastSessions);
+  agent.onTitleChanged(broadcastSessions);
   agent.onProcessExit(broadcastSessions);
   rt.gate.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
   rt.gate.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));

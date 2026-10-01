@@ -44,25 +44,9 @@ function ComponentDetails({ component, tabs }: { component: MapComponent; tabs: 
         <p className="muted">{component.source === 'folder' ? 'Folder component: no AI description yet.' : 'No description.'}</p>
       )}
       {component.stale && <p className="warn">Changed a lot since the last grouping.</p>}
-      {component.keyFiles.length > 0 && (
-        <>
-          <h3>Key files</h3>
-          <ul>
-            {component.keyFiles.map((path) => (
-              <li key={path}>{path}</li>
-            ))}
-          </ul>
-        </>
-      )}
-      <h3>Files</h3>
       <p className="muted">
         {component.source} · {component.globs.join(', ') || 'no globs'} · {component.files.length} files
       </p>
-      <ul>
-        {component.files.map((path) => (
-          <li key={path}>{path}</li>
-        ))}
-      </ul>
     </DetailsAside>
   );
 }
@@ -77,17 +61,6 @@ function FileDetails({ file, owner, tabs }: { file: MapFile; owner: MapComponent
         {file.manualAssignment ? ' (manual)' : ''}
         {file.parseError ? ' · ⚠ syntax errors' : ''}
       </p>
-      <ul>
-        {file.symbols.map((symbol) => (
-          <li key={`${symbol.name}:${symbol.startLine}`}>
-            <code>{symbol.kind}</code> {symbol.name}{' '}
-            <span className="muted">
-              L{symbol.startLine}–{symbol.endLine}
-              {symbol.exported ? '' : ' · private'}
-            </span>
-          </li>
-        ))}
-      </ul>
     </DetailsAside>
   );
 }

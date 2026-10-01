@@ -157,11 +157,7 @@ export class PlanService {
     const status = states.get(key) ?? 'pending';
     if (status === 'done') return { ok: false, error: `IDE: step "${key}" is already done.` };
     if (input.phase === 'start') {
-      // Starting the next step finishes the active one, so a hand-over takes one call.
-      if (gate.activeStep !== null && gate.activeStep !== key) {
-        const closed = this.step({ key: gate.activeStep, phase: 'done' });
-        if (!closed.ok) return closed;
-      }
+      if (gate.activeStep !== null && gate.activeStep !== key) return { ok: false, error: `IDE: step "${gate.activeStep}" is still active; mark it done first.` };
       if (status !== 'active') {
         this.setStep(gate.planId, key, 'active');
         this.emitStep({ planId: gate.planId, version: gate.version, key, phase: 'start' });

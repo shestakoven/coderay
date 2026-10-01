@@ -246,75 +246,6 @@ describe('PlanService', () => {
     });
   });
 
-  describe('starting a step while another is active', () => {
-    const three = { ...big, steps: [...big.steps, { key: 'c', title: 'Other', rationale: '', targets: [{ path: 'src/other.ts', op: 'modify' }] }] };
-    const approved = async (plan: { goal: string; steps: unknown[] }) => {
-      const { service } = await setup();
-      const events: unknown[] = [];
-      service.onStep((e) => events.push(e));
-      const call = service.propose(plan);
-      await waiting(service);
-      service.answer('plan-1', 1, { kind: 'approve' });
-      await call;
-      return { service, events };
-    };
-
-    it('finishes the active step and starts the next, emitting done then start', async () => {
-      const { service, events } = await approved(big);
-      service.step({ key: 'a', phase: 'start' });
-      events.length = 0;
-      expect(service.step({ key: 'b', phase: 'start' })).toEqual({ ok: true });
-      expect(service.stepStates()).toEqual({ 'plan-1': { a: 'done', b: 'active' } });
-      expect(events).toEqual([
-        { planId: 'plan-1', version: 1, key: 'a', phase: 'done' },
-        { planId: 'plan-1', version: 1, key: 'b', phase: 'start' },
-      ]);
-    });
-
-    it('keeps the plan open while a later step is pending and needs an explicit done for the last step', async () => {
-      const { service } = await approved(three);
-      service.step({ key: 'a', phase: 'start' });
-      service.step({ key: 'b', phase: 'start' });
-      expect([latest(service)?.status, service.gate().state]).toEqual(['approved', 'approved']);
-      service.step({ key: 'c', phase: 'start' });
-      expect([latest(service)?.status, service.gate().state, service.stepStates()]).toEqual(['approved', 'approved', { 'plan-1': { a: 'done', b: 'done', c: 'active' } }]);
-      service.step({ key: 'c', phase: 'done' });
-      expect([latest(service)?.status, service.gate()]).toEqual(['done', { state: 'done', planId: 'plan-1' }]);
-    });
-
-    it('does nothing when the already active step is started again', async () => {
-      const { service, events } = await approved(big);
-      service.step({ key: 'a', phase: 'start' });
-      events.length = 0;
-      expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: true });
-      expect(events).toEqual([]);
-      expect(service.stepStates()).toEqual({ 'plan-1': { a: 'active' } });
-    });
-
-    it('still refuses to start a step that is already done', async () => {
-      const { service, events } = await approved(three);
-      service.step({ key: 'a', phase: 'start' });
-      service.step({ key: 'b', phase: 'start' });
-      events.length = 0;
-      expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: false, error: 'IDE: step "a" is already done.' });
-      expect(events).toEqual([]);
-      expect(service.stepStates()).toEqual({ 'plan-1': { a: 'done', b: 'active' } });
-    });
-
-    it('hands over twice across three steps with every event in order', async () => {
-      const { service, events } = await approved(three);
-      for (const key of ['a', 'b', 'c']) service.step({ key, phase: 'start' });
-      expect(service.stepStates()).toEqual({ 'plan-1': { a: 'done', b: 'done', c: 'active' } });
-      expect(events).toEqual([
-        { planId: 'plan-1', version: 1, key: 'a', phase: 'start' },
-        { planId: 'plan-1', version: 1, key: 'a', phase: 'done' },
-        { planId: 'plan-1', version: 1, key: 'b', phase: 'start' },
-        { planId: 'plan-1', version: 1, key: 'b', phase: 'done' },
-        { planId: 'plan-1', version: 1, key: 'c', phase: 'start' },
-      ]);
-    });
-  });
-
   describe('resetStep', () => {
     it('puts a started step back to pending, bumps the stored cycle and emits reset', async () => {
       const { service, store } = await setup();
@@ -477,7 +408,8 @@ describe('PlanService', () => {
     expect(service.step({ key: 'zzz', phase: 'start' })).toEqual({ ok: false, error: 'IDE: plan plan-1 has no step "zzz". Its steps: a, b.' });
     expect(service.step({ key: 'b', phase: 'done' })).toEqual({ ok: false, error: 'IDE: step "b" is not active; start it first.' });
     expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: true });
-    expect(service.step({ key: 'b', phase: 'start' })).toEqual({ ok: true });
+    expect(service.step({ key: 'b', phase: 'start' })).toEqual({ ok: false, error: 'IDE: step "a" is still active; mark it done first.' });
+    expect(service.step({ key: 'a', phase: 'done' })).toEqual({ ok: true });
     expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: false, error: 'IDE: step "a" is already done.' });
     service.step({ key: 'b', phase: 'start' });
     service.step({ key: 'b', phase: 'done' });

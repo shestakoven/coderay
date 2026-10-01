@@ -8,6 +8,7 @@ import { ChatSwitcher, type ChatList } from './ChatSwitcher';
 import { Icon } from '../layout/Icon';
 import { MarkdownText } from './MarkdownText';
 import { UsageMeter } from './UsageMeter';
+import { BackgroundTasks } from './BackgroundTasks';
 import { ModelControls } from './ModelControls';
 import { addAttachments, imageFiles, type Attachment } from './attachments';
 import { WorkingIndicator } from './WorkingIndicator';
@@ -18,9 +19,9 @@ const RECOVERED = "recovered from claude's transcript";
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const START_WAIT_MS = 15000;
-const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
+const BUSY = 'The agent is working: it reads your message at its next step. Enter sends.';
 
-export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
+export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
@@ -31,6 +32,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
   onAnswerPrompt: (id: string, answer: GateAnswer) => void;
   onFocusTargets: (paths: string[]) => void;
   dialog: ReactNode;
+  planDock?: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -66,13 +68,13 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
   };
   const canSubmit = draft.trim() !== '' || attachments.length > 0;
   const submit = (): void => {
-    if (!sendable || !canSubmit) return;
+    if (!canSubmit) return;
     const images = attachments.map(({ mediaType, data }) => ({ mediaType, data }));
     if (send(images.length > 0 ? { type: 'chat.send', text: draft, images } : { type: 'chat.send', text: draft })) {
       setDraft('');
       setAttachments([]);
       setAttachProblem(null);
-      setSentAt(Date.now());
+      if (sendable) setSentAt(Date.now());
     }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
@@ -85,17 +87,19 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
     <section className="chat">
       <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
-        <span className="chat-status muted" title={chat.session?.model ?? undefined}>{chat.session ? (chat.session.status === 'refused' ? 'hook off' : chat.session.status) : 'no session yet'}</span>
+        {chat.session?.status !== 'running' && (
+          <span className={`chat-status ${chat.session?.status ?? 'none'}`} title={chat.session?.model ?? undefined}>
+            <i className="status-dot" />{chat.session ? (chat.session.status === 'refused' ? 'hook off' : chat.session.status) : 'no session yet'}
+          </span>
+        )}
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
-        {tasks.length > 0 && (
-          <span className="muted" title={tasks.map((task) => task.description).join('\n')}>⟳ {tasks.length} background</span>
-        )}
         <span className="spacer" />
-        <button onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'}>Restart</button>
+        <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>
       </header>
       {dialog}
+      {planDock}
       {chat.filter && (
         <div className="chat-filter" data-testid="chat-filter">
           <span>Filtered to {chat.filter.label}</span>
@@ -147,6 +151,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
           </div>
         )}
         {attachProblem && <div className="attach-problem">{attachProblem}</div>}
+        <div className="composer-box">
         <textarea
           rows={3}
           value={draft}
@@ -165,23 +170,23 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
             void attach(imageFiles(event.target.files ?? []));
             event.target.value = '';
           }} />
-          <button className="composer-action" onClick={() => fileInput.current?.click()} disabled={!sendable} title="Attach images" aria-label="Attach images">
+          <button className="composer-action" onClick={() => fileInput.current?.click()} title="Attach images" aria-label="Attach images">
             <Icon name="paperclip" size={18} />
           </button>
           <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
-          <UsageMeter usage={chat.usage} />
           <span className="spacer" />
-          {sendable ? (
-            <button className="composer-action send" onClick={submit} disabled={!canSubmit} title="Send (Enter)" aria-label="Send">
-              <Icon name="send" size={18} />
-            </button>
-          ) : (
+          {!sendable && (
             <button className="composer-action stop" onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title} aria-label={stop.label}>
               <Icon name="stop" size={18} />
               {stop.label !== 'Stop' && <span>{stop.label.slice('Stop'.length).trim()}</span>}
             </button>
           )}
+          <button className="composer-action send" onClick={submit} disabled={!canSubmit} title="Send (Enter)" aria-label="Send">
+            <Icon name="send" size={18} />
+          </button>
         </div>
+        </div>
+        <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} /><UsageMeter usage={chat.usage} /></div>
       </footer>
     </section>
   );

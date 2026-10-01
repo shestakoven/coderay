@@ -48,7 +48,6 @@ const HOOK_OFF_NOTICE =
 const GAP_NOTICE = "Calls made while the core was down may be missing; claude's transcript could not be read.";
 
 const SESSION_ERRORS = {
-  'turn-open': 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.',
   empty: 'Type a message first.',
   restarting: 'The session is restarting. Try again in a moment.',
   'prompt-gone': 'That question is no longer waiting for an answer.',
@@ -98,6 +97,7 @@ export class AgentSession {
   private readonly toolResultListeners = new Set<(info: ToolEndInfo) => void>();
   private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
   private readonly turnClosedListeners = new Set<() => void>();
+  private readonly titleListeners = new Set<() => void>();
   private readonly interruptListeners = new Set<() => void>();
   private readonly newSessionListeners = new Set<() => void>();
   private started = false;
@@ -298,6 +298,24 @@ export class AgentSession {
     return () => this.turnClosedListeners.delete(listener);
   }
 
+  onTitleChanged(listener: () => void): () => boolean {
+    this.titleListeners.add(listener);
+    return () => this.titleListeners.delete(listener);
+  }
+
+  // The agent names the active chat; a name the user typed always wins.
+  setTitle(title: string): boolean {
+    if (!this.session || !this.options.store.setSessionTitle(this.session.id, title, false)) return false;
+    notify(this.titleListeners);
+    return true;
+  }
+
+  renameSession(id: string, title: string): void {
+    if (!this.options.store.session(id)) throw new SessionError('no-chat');
+    if (!this.options.store.setSessionTitle(id, title, true)) throw new SessionError('empty');
+    notify(this.titleListeners);
+  }
+
   runningSubagents(): number {
     return this.openTasks('subagent');
   }
@@ -349,7 +367,7 @@ export class AgentSession {
     if (text.trim() === '' && images.length === 0) throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
-    if (this.tracker.hasOpenTurn()) throw new SessionError('turn-open');
+    const injected = this.tracker.hasOpenTurn();
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
     if (!this.process) throw new SessionError('no-gate');
@@ -363,7 +381,8 @@ export class AgentSession {
       this.notes.unshift(...notes);
       throw error;
     }
-    this.apply(this.tracker.userMessage(images.length > 0 ? [text, `[${images.length} image${images.length > 1 ? 's' : ''} attached]`].filter((part) => part !== '').join('\n') : text));
+    const shown = images.length > 0 ? [text, `[${images.length} image${images.length > 1 ? 's' : ''} attached]`].filter((part) => part !== '').join('\n') : text;
+    this.apply(injected ? this.tracker.injectedMessage(shown) : this.tracker.userMessage(shown));
     for (const note of notes) this.apply(this.tracker.notice(note));
   }
 
@@ -391,6 +410,12 @@ export class AgentSession {
     if (!this.process || !this.tracker.canInterrupt()) return false;
     this.process.write({ type: 'control_request', request_id: `interrupt-${randomUUID()}`, request: { subtype: 'interrupt' } });
     notify(this.interruptListeners);
+    return true;
+  }
+
+  stopTask(taskId: string): boolean {
+    if (!this.process) return false;
+    this.process.write({ type: 'control_request', request_id: `stop-task-${randomUUID()}`, request: { subtype: 'stop_task', task_id: taskId } });
     return true;
   }
 

@@ -10,8 +10,10 @@ describe('systemPrompt', () => {
     expect(prompt.split('\n').slice(-3)).toEqual(['Components of this project (id — name):', '- auth — Auth', '- billing — Billing']);
   });
 
-  it('says that starting the next step finishes the active one', () => {
-    expect(systemPrompt([])).toContain('starting the next step finishes the active one, so "done" is only needed for the last step');
+  it('tells the agent to mark every step done and never calls done optional', () => {
+    const prompt = systemPrompt([]);
+    expect(prompt).toContain('when it is finished, call it with "phase": "done"');
+    expect(prompt).not.toMatch(/only needed|optional/i);
   });
 
   it('lists at most 300 components and says how many more there are', () => {

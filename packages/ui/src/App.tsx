@@ -14,8 +14,9 @@ import { MapView } from './map/MapView';
 import { MapActivity } from './map/MapActivity';
 import { PlanOverlayContext, type PlanOverlay } from './plan/overlay';
 import { PlanPanel } from './plan/PlanPanel';
+import { PlanDock } from './plan/PlanDock';
 import { chimeKey, finishedWorking, playChime, playDone, type Activity } from './plan/chime';
-import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, planTitle, waitsForUser } from './plan/plan-state';
+import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, waitsForUser } from './plan/plan-state';
 import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
@@ -66,6 +67,7 @@ export function App() {
   const connection = useRef<Connection | null>(null);
   const [focus, setFocus] = useState<{ componentIds: string[]; nonce: number } | null>(null);
   const [anchored, setAnchored] = useState(false);
+  const [hideTests, setHideTests] = useState(true);
   const [tab, setTab] = useState<DetailsTab>('details');
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, undefined, () => loadPanels(storage()));
@@ -253,10 +255,6 @@ export function App() {
   const detailsSlot = useMemo(() => ({ element: detailsEl, onShown: onDetailsShown, onHidden: onDetailsHidden }), [detailsEl, onDetailsShown, onDetailsHidden]);
 
   const planKey = shown ? `${shown.id}@${shown.version}@${shown.status}` : '';
-  const planIdentity = shown ? `${shown.id}@${shown.version}` : '';
-  useEffect(() => {
-    if (planIdentity) dispatchPanels({ type: 'plan-shown' });
-  }, [planIdentity]);
   const waitingPlan = chimeKey(shown);
   useEffect(() => {
     if (waitingPlan) playChime();
@@ -354,11 +352,6 @@ export function App() {
             </span>
           )}
           <span className="topbar-spacer" />
-          {shown && (
-            <button className={`chip plan-chip ${shown.status}`} onClick={() => dispatchPanels({ type: 'plan-shown' })}>
-              {planTitle(shown)}
-            </button>
-          )}
           {settings && (
             <label className="chip mode" title={MODE_TITLE}>
               Out-of-plan writes{' '}
@@ -387,29 +380,19 @@ export function App() {
             onOpenProject={() => setOpenDialog(true)}
             badge={toReview}
           />
-          {panels.left && (
-            <LeftPanel
+          <LeftPanel
+              hidden={!panels.left}
               tab={panels.leftTab}
               onTab={(tab) => dispatchPanels({ type: 'left-tab', tab })}
-              hasPlan={shown !== null}
-              plan={shown && (
-                <PlanPanel
-                  key={planKey}
-                  plan={shown}
-                  snapshot={snapshot}
-                  open
-                  onAnswer={answerPlan}
-                  onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])}
-                />
-              )}
               components={snapshot ? <ComponentTree snapshot={snapshot} changes={changes} marks={marks} selected={state.selected} onSelectComponent={selectComponent} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
+              detailsRef={setDetailsEl}
               files={snapshot ? <FileTree snapshot={snapshot} changes={changes} selected={state.selected} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
             />
-          )}
           {panels.left && <Resizer orientation="vertical" label="Resize project panel" value={sizes.left} min={LIMITS.left.min} max={LIMITS.left.max} grow={1} onResize={(size) => resize('left', size)} onReset={() => resetSize('left')} />}
           <main className="map-area">
             <MapActivity progress={progress} status={snapshot?.status ?? null} />
             <div className="map-regroup">
+              {!showC4 && <button type="button" onClick={() => setHideTests((value) => !value)}>{hideTests ? 'Show test components' : 'Hide test components'}</button>}
               <button type="button" onClick={() => send({ type: 'map.regroup' })}>Regroup</button>
             </div>
             <PlanOverlayContext.Provider value={overlay}>
@@ -419,7 +402,7 @@ export function App() {
                 </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>
-                  <MapView state={state} dispatch={dispatch} />
+                  <MapView state={state} dispatch={dispatch} hideTests={hideTests} />
                 </ReactFlowProvider>
               )}
               {!showC4 && mapDetails}
@@ -429,7 +412,10 @@ export function App() {
           <aside className="right-panel" hidden={!showRight} aria-label="Agent and details">
             <div className="seg" role="tablist">
               <button role="tab" aria-selected={panels.rightTab === 'agent'} className={panels.rightTab === 'agent' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'agent' })}>Agent</button>
-              <button role="tab" aria-selected={panels.rightTab === 'details'} className={panels.rightTab === 'details' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'details' })}>Details</button>
+              <button role="tab" aria-selected={panels.rightTab === 'plan'} className={panels.rightTab === 'plan' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'plan' })}>
+                Plan
+                {shown !== null && <span className="seg-dot" aria-label="has a plan" />}
+              </button>
             </div>
             <div className="right-body" hidden={panels.rightTab !== 'agent'}>
               <ChatPanel
@@ -440,6 +426,9 @@ export function App() {
                 onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
                 prompts={pendingPrompts(plans.prompts)}
                 dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
+                planDock={shown && waitsForUser(shown) && (
+                  <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} />
+                )}
                 promptAnchored={anchored}
                 onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
                 onFocusTargets={(paths) => {
@@ -448,8 +437,19 @@ export function App() {
                 }}
               />
             </div>
-            <div className="right-body details-slot" hidden={panels.rightTab !== 'details'} ref={setDetailsEl}>
-              <div className="empty muted">Select a component or file on the map to see its details and changes.</div>
+            <div className="right-body" hidden={panels.rightTab !== 'plan'}>
+              {shown && !waitsForUser(shown) ? (
+                <PlanPanel
+                  key={planKey}
+                  plan={shown}
+                  snapshot={snapshot}
+                  open
+                  onAnswer={answerPlan}
+                  onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])}
+                />
+              ) : (
+                <div className="empty muted">{shown ? 'The plan is waiting for your answer above the chat.' : 'No plan yet. When the agent proposes one, it appears above the chat and on the map.'}</div>
+              )}
             </div>
           </aside>
         </div>

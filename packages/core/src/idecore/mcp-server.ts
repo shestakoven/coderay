@@ -22,7 +22,7 @@ const PROPOSE_DESCRIPTION = [
   'To change an approved plan, call it again with the whole plan and keep the active and done steps.',
 ].join(' ');
 
-const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time; starting the next step finishes the active one, so "done" is only needed for the last step.';
+const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time.';
 
 const target = z.object({ componentId: z.string().optional(), path: z.string().optional(), op: z.enum(['modify', 'create', 'delete']) });
 const proposeInput = {
@@ -30,6 +30,9 @@ const proposeInput = {
   steps: z.array(z.object({ key: z.string(), title: z.string(), rationale: z.string(), targets: z.array(target) })),
 };
 const stepInput = { key: z.string(), phase: z.enum(['start', 'done']) };
+
+const TITLE_DESCRIPTION = 'Name this chat once, right after your first reply: 2 to 6 words describing the task, in the language the user writes in, no quotes. Returns {"ok": false} when the chat already has a name; that is fine, do not retry.';
+const titleInput = { title: z.string().max(200) };
 
 const MAP_OVERVIEW_DESCRIPTION = 'Read-only: the IDE project map. Returns every component with id, name, summary, file count and the components it depends on.';
 const MAP_COMPONENT_DESCRIPTION = 'Read-only: one component of the IDE project map by id: description, key files, all files with their exported symbols.';
@@ -53,6 +56,7 @@ export interface IdecoreRouteOptions {
   plans: PlanService;
   map?: () => MapSnapshot | null;
   search?: (query: string, limit: number) => Promise<SearchOutcome>;
+  setTitle?: (title: string) => boolean;
 }
 
 export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
@@ -69,6 +73,10 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
       const outcome = options.plans.step(input);
       return outcome.ok ? result({ ok: true }) : failure(outcome.error);
     });
+    const { setTitle } = options;
+    if (setTitle) {
+      server.registerTool('set_chat_title', { description: TITLE_DESCRIPTION, inputSchema: titleInput }, ({ title }) => result({ ok: setTitle(title) }));
+    }
     const { map } = options;
     if (map) {
       server.registerTool('map_overview', { description: MAP_OVERVIEW_DESCRIPTION }, () => {
