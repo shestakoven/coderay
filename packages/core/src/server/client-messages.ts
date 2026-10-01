@@ -1,6 +1,6 @@
 import {
-  EFFORT_LEVELS,
-  type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
+  EFFORT_LEVELS, IMAGE_MEDIA_TYPES, MAX_CHAT_IMAGES,
+  type ChatImage, type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
   type WatchdogAnswer,
 } from '@ide/protocol';
 import { isModelChoice } from '../agent/tools';
@@ -19,11 +19,13 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data,
+    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images,
   } = value;
   switch (type) {
     case 'chat.send':
-      return typeof text === 'string' ? { type, text } : null;
+      if (typeof text !== 'string') return null;
+      if (images === undefined) return { type, text };
+      return isImageList(images) ? { type, text, images } : null;
     case 'chat.stop':
     case 'session.restart':
     case 'session.new':
@@ -124,6 +126,10 @@ function parsePlanAnswer(value: unknown): PlanAnswer | null {
 const MAX_CONFIRM_FILES = 5000;
 const MAX_PATH_LENGTH = 4096;
 const MAX_ID_LENGTH = 100;
+
+const isImageList = (value: unknown): value is ChatImage[] =>
+  Array.isArray(value) && value.length > 0 && value.length <= MAX_CHAT_IMAGES && value.every((item) =>
+    isRecord(item) && IMAGE_MEDIA_TYPES.includes(item.mediaType as ChatImage['mediaType']) && typeof item.data === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(item.data));
 
 const isEffort = (value: unknown): value is EffortLevel => EFFORT_LEVELS.includes(value as EffortLevel);
 

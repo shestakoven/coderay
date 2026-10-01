@@ -3,7 +3,7 @@ import { request } from 'node:http';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import WebSocket from 'ws';
-import { EMPTY_USAGE, type ClientMessage, type MapSnapshot, type ServerMessage } from '@ide/protocol';
+import { EMPTY_USAGE, MAX_CLIENT_FRAME_BYTES, type ClientMessage, type MapSnapshot, type ServerMessage } from '@ide/protocol';
 import { startServer, type RunningServer } from '../../src/server/server';
 import { mapStatus, tempDir, waitFor } from '../helpers';
 
@@ -181,13 +181,13 @@ describe('server', () => {
     }
   });
 
-  it('closes a client that sends a frame larger than 64 KiB', async () => {
+  it('closes a client that sends a frame larger than the frame limit', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
     try {
       const { socket } = await connect({});
       const closeCode = new Promise<number>((resolve) => socket.once('close', resolve));
 
-      socket.send('x'.repeat(64 * 1024 + 1));
+      socket.send('x'.repeat(MAX_CLIENT_FRAME_BYTES + 1));
 
       expect(await closeCode).toBe(1009);
     } finally {

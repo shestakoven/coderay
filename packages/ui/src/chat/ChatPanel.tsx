@@ -9,6 +9,7 @@ import { Icon } from '../layout/Icon';
 import { MarkdownText } from './MarkdownText';
 import { UsageMeter } from './UsageMeter';
 import { ModelControls } from './ModelControls';
+import { addAttachments, imageFiles, type Attachment } from './attachments';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
 
@@ -33,6 +34,9 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
   dialog: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [attachProblem, setAttachProblem] = useState<string | null>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const groups = turnGroups(chat);
@@ -55,10 +59,20 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
     if (sentAt !== null && (chat.error !== null || Object.values(chat.turns).some((turn) => turn.closedAt === null))) setSentAt(null);
   }, [sentAt, chat.error, chat.turns]);
 
+  const attach = async (files: File[]): Promise<void> => {
+    if (files.length === 0) return;
+    const result = await addAttachments(attachments, files);
+    setAttachments(result.attachments);
+    setAttachProblem(result.problem);
+  };
+  const canSubmit = draft.trim() !== '' || attachments.length > 0;
   const submit = (): void => {
-    if (!sendable || draft.trim() === '') return;
-    if (send({ type: 'chat.send', text: draft })) {
+    if (!sendable || !canSubmit) return;
+    const images = attachments.map(({ mediaType, data }) => ({ mediaType, data }));
+    if (send(images.length > 0 ? { type: 'chat.send', text: draft, images } : { type: 'chat.send', text: draft })) {
       setDraft('');
+      setAttachments([]);
+      setAttachProblem(null);
       setSentAt(Date.now());
     }
   };
@@ -118,20 +132,51 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
       {chat.error && (
         <button className="chat-error" onClick={onDismissError}>{chat.error} ✕</button>
       )}
-      <footer className="composer">
+      <footer
+        className="composer"
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={(event) => {
+          event.preventDefault();
+          void attach(imageFiles(event.dataTransfer.files));
+        }}
+      >
+        {attachments.length > 0 && (
+          <div className="attachments">
+            {attachments.map((item) => (
+              <div key={item.id} className="attachment" title={item.name}>
+                <img src={`data:${item.mediaType};base64,${item.data}`} alt={item.name} />
+                <button onClick={() => setAttachments(attachments.filter((other) => other.id !== item.id))} aria-label={`Remove ${item.name}`}>✕</button>
+              </div>
+            ))}
+          </div>
+        )}
+        {attachProblem && <div className="attach-problem">{attachProblem}</div>}
         <textarea
           rows={3}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           onKeyDown={onKeyDown}
+          onPaste={(event) => {
+            const files = imageFiles(event.clipboardData.files);
+            if (files.length === 0) return;
+            event.preventDefault();
+            void attach(files);
+          }}
           placeholder={sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
         />
         <div className="composer-actions">
+          <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => {
+            void attach(imageFiles(event.target.files ?? []));
+            event.target.value = '';
+          }} />
+          <button className="composer-action" onClick={() => fileInput.current?.click()} title="Attach images" aria-label="Attach images">
+            <Icon name="paperclip" size={18} />
+          </button>
           <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
           <UsageMeter usage={chat.usage} />
           <span className="spacer" />
           {sendable ? (
-            <button className="composer-action send" onClick={submit} disabled={draft.trim() === ''} title="Send (Enter)" aria-label="Send">
+            <button className="composer-action send" onClick={submit} disabled={!canSubmit} title="Send (Enter)" aria-label="Send">
               <Icon name="send" size={18} />
             </button>
           ) : (

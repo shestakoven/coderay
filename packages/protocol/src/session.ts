@@ -1,6 +1,13 @@
 import type { ToolDecision } from './plans';
 
-export const MAX_CLIENT_FRAME_BYTES = 64 * 1024;
+export const MAX_CLIENT_FRAME_BYTES = 8 * 1024 * 1024;
+export const MAX_CHAT_IMAGES = 4;
+export const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
+
+export interface ChatImage {
+  mediaType: (typeof IMAGE_MEDIA_TYPES)[number];
+  data: string;
+}
 
 export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended' | 'refused';
 
@@ -174,7 +181,7 @@ export type SessionServerMessage =
   | { type: 'error'; message: string };
 
 export type ChatClientMessage =
-  | { type: 'chat.send'; text: string }
+  | { type: 'chat.send'; text: string; images?: ChatImage[] }
   | { type: 'chat.stop' }
   | { type: 'session.restart' }
   | { type: 'session.new' }

@@ -120,6 +120,47 @@ describe('AgentSession', () => {
     expect(closedTurns(h)).toMatchObject([{ kind: 'user', resultSubtype: 'success' }]);
   });
 
+  it('writes images as base64 blocks before the text block of one user message', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('what is this?', { images: [{ mediaType: 'image/png', data: 'AAEC' }, { mediaType: 'image/webp', data: 'Zm9v' }] });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.stdin()).toEqual([{
+      type: 'user',
+      message: {
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAEC' } },
+          { type: 'image', source: { type: 'base64', media_type: 'image/webp', data: 'Zm9v' } },
+          { type: 'text', text: 'what is this?' },
+        ],
+      },
+    }]);
+  });
+
+  it('allows a message of images only and writes no text block', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('', { images: [{ mediaType: 'image/jpeg', data: 'AAEC' }] });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.stdin()).toEqual([{
+      type: 'user',
+      message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAEC' } }] },
+    }]);
+  });
+
+  it('shows the image count in the user turn', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi', { images: [{ mediaType: 'image/png', data: 'AAEC' }, { mediaType: 'image/png', data: 'AAEC' }] });
+    expect(texts(h.session.state().items)[0]).toBe('hi\n[2 images attached]');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+  });
+
+  it('refuses a blank message without images as empty and an empty image list too', async () => {
+    const h = await harness('multi-turn');
+    expect(() => h.session.send('  ')).toThrow(new SessionError('empty'));
+    expect(() => h.session.send('', { images: [] })).toThrow(new SessionError('empty'));
+    expect(h.stdin()).toEqual([]);
+  });
+
   it("keeps the model, CLI version, permission mode and MCP server statuses from claude's init", async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
@@ -774,6 +815,19 @@ describe('AgentSession waiting for the session-start hook', () => {
     expect((await h.ping()).status).toBe(204);
     await waitFor(() => userMessages(h).length === 1, 'message delivered');
     expect(userMessages(h)[0]).toMatchObject({ message: { content: 'hi' } });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+  });
+
+  it('delivers images queued before the hook reported, in the same message', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 5000);
+    h.session.send('look', { images: [{ mediaType: 'image/gif', data: 'R0lG' }] });
+    await waitFor(() => h.argvs().length === 1, 'claude started');
+    expect(userMessages(h)).toEqual([]);
+    await h.ping();
+    await waitFor(() => userMessages(h).length === 1, 'message delivered');
+    expect(userMessages(h)[0]).toMatchObject({
+      message: { content: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'R0lG' } }, { type: 'text', text: 'look' }] },
+    });
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
   });
 

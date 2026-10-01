@@ -10,6 +10,56 @@ describe('parseClientMessage', () => {
     expect(parseClientMessage('{"type":"chat.send","text":1}')).toBeNull();
   });
 
+  describe('chat.send with images', () => {
+    const png = { mediaType: 'image/png', data: 'iVBORw0KGgo=' };
+    const send = (fields: object) => parseClientMessage(JSON.stringify({ type: 'chat.send', text: 'look', ...fields }));
+
+    it('keeps valid images next to the text', () => {
+      const jpeg = { mediaType: 'image/jpeg', data: 'AAEC' };
+      expect(send({ images: [png, jpeg] })).toEqual({ type: 'chat.send', text: 'look', images: [png, jpeg] });
+    });
+
+    it('parses a message without images as text only', () => {
+      expect(send({})).toStrictEqual({ type: 'chat.send', text: 'look' });
+    });
+
+    it('rejects an empty image list', () => {
+      expect(send({ images: [] })).toBeNull();
+    });
+
+    it('accepts exactly four images', () => {
+      expect(send({ images: [png, png, png, png] })).toMatchObject({ images: [png, png, png, png] });
+    });
+
+    it('rejects five images', () => {
+      expect(send({ images: [png, png, png, png, png] })).toBeNull();
+    });
+
+    it.each(['image/svg+xml', 'image/bmp', 'text/plain', ''])('rejects the media type "%s"', (mediaType) => {
+      expect(send({ images: [{ mediaType, data: 'AAEC' }] })).toBeNull();
+    });
+
+    it('rejects an image without a media type', () => {
+      expect(send({ images: [{ data: 'AAEC' }] })).toBeNull();
+    });
+
+    it.each(['not base64!', 'AA EC', 'data:image/png;base64,AAEC', '', 'AAEC===', '=AAEC'])('rejects the data "%s"', (data) => {
+      expect(send({ images: [{ mediaType: 'image/png', data }] })).toBeNull();
+    });
+
+    it('rejects non-string data', () => {
+      expect(send({ images: [{ mediaType: 'image/png', data: 12 }] })).toBeNull();
+    });
+
+    it('rejects one bad image among valid ones', () => {
+      expect(send({ images: [png, { mediaType: 'image/png', data: '***' }] })).toBeNull();
+    });
+
+    it.each([['"x"'], ['{"0":{}}'], ['5'], ['null'], ['["x"]']])('rejects images that are not a list of image objects (%s)', (images) => {
+      expect(parseClientMessage(`{"type":"chat.send","text":"look","images":${images}}`)).toBeNull();
+    });
+  });
+
   it('parses stop, restart and new-session requests', () => {
     expect(['chat.stop', 'session.restart', 'session.new'].map((type) => parseClientMessage(JSON.stringify({ type }))))
       .toEqual([{ type: 'chat.stop' }, { type: 'session.restart' }, { type: 'session.new' }]);

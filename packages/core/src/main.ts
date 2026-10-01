@@ -175,7 +175,7 @@ try {
   const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
-        agent.send(message.text);
+        agent.send(message.text, { images: message.images });
         broadcastSessions();
         return;
       case 'chat.stop':

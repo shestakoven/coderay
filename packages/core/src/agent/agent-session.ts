@@ -3,7 +3,7 @@ import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
   EFFORT_LEVELS, EMPTY_USAGE,
-  type ChatItem, type ChatSummary, type EffortLevel, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
+  type ChatImage, type ChatItem, type ChatSummary, type EffortLevel, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
@@ -117,7 +117,7 @@ export class AgentSession {
   private idle = true;
   private hookReady = true;
   private refused = false;
-  private pendingSends: string[] = [];
+  private pendingSends: object[] = [];
   private notes: string[] = [];
   private crashed = false;
 
@@ -344,8 +344,9 @@ export class AgentSession {
     return message?.kind === 'message' ? message.text : null;
   }
 
-  send(text: string, options: { fromUser?: boolean } = {}): void {
-    if (text.trim() === '') throw new SessionError('empty');
+  send(text: string, options: { fromUser?: boolean; images?: ChatImage[] } = {}): void {
+    const images = options.images ?? [];
+    if (text.trim() === '' && images.length === 0) throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
     if (this.tracker.hasOpenTurn()) throw new SessionError('turn-open');
@@ -354,15 +355,15 @@ export class AgentSession {
     if (!this.process) throw new SessionError('no-gate');
     if (options.fromUser !== false) notify(this.userMessageListeners);
     const notes = this.notes.splice(0);
-    const payload = [...notes, text].join('\n\n');
+    const message = userMessage([...notes, text].filter((part) => part !== '').join('\n\n'), images);
     try {
-      if (this.hookReady) this.process.write(userMessage(payload));
-      else this.pendingSends.push(payload);
+      if (this.hookReady) this.process.write(message);
+      else this.pendingSends.push(message);
     } catch (error) {
       this.notes.unshift(...notes);
       throw error;
     }
-    this.apply(this.tracker.userMessage(text));
+    this.apply(this.tracker.userMessage(images.length > 0 ? [text, `[${images.length} image${images.length > 1 ? 's' : ''} attached]`].filter((part) => part !== '').join('\n') : text));
     for (const note of notes) this.apply(this.tracker.notice(note));
   }
 
@@ -381,8 +382,8 @@ export class AgentSession {
     if (this.refused) throw new SessionError('hook-off');
     if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
     if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
-    if (this.hookReady) this.process.write(userMessage(text));
-    else this.pendingSends.push(text);
+    if (this.hookReady) this.process.write(userMessage(text, []));
+    else this.pendingSends.push(userMessage(text, []));
     this.apply(this.tracker.notice('IDE note sent to the agent'));
   }
 
@@ -485,7 +486,7 @@ export class AgentSession {
     if (this.process !== child) return;
     if (reported) {
       this.hookReady = true;
-      for (const text of this.pendingSends.splice(0)) child.write(userMessage(text));
+      for (const message of this.pendingSends.splice(0)) child.write(message);
       return;
     }
     this.pendingSends = [];
@@ -789,8 +790,10 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
   }
 }
 
-function userMessage(text: string): object {
-  return { type: 'user', message: { role: 'user', content: text } };
+function userMessage(text: string, images: ChatImage[]): object {
+  if (images.length === 0) return { type: 'user', message: { role: 'user', content: text } };
+  const blocks = images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }));
+  return { type: 'user', message: { role: 'user', content: text === '' ? blocks : [...blocks, { type: 'text', text }] } };
 }
 
 function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {
