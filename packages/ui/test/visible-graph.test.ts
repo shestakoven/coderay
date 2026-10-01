@@ -25,6 +25,15 @@ describe('visibleGraph', () => {
     ]);
   });
 
+  it('drops edges whose either end is a test file', () => {
+    const snapshot = demoSnapshot();
+    snapshot.files.push({ ...snapshot.files[0]!, path: 'src/api/a.test.ts' });
+    snapshot.components[0] = { ...snapshot.components[0]!, files: [...snapshot.components[0]!.files, 'src/api/a.test.ts'] };
+    snapshot.fileEdges.push({ from: 'src/api/a.test.ts', to: 'src/db/c.ts', kind: 'import' }, { from: 'src/db/c.ts', to: 'test/helpers.ts', kind: 'import' });
+    const graph = visibleGraph(snapshot, new Set());
+    expect(graph.edges).toEqual([{ id: 'folder:src/api->folder:src/db', from: 'folder:src/api', to: 'folder:src/db', weight: 2 }]);
+  });
+
   it('carries component summaries and staleness onto component nodes', () => {
     const snapshot = demoSnapshot();
     snapshot.components[0] = { ...snapshot.components[0]!, summary: 'Serves the HTTP API', stale: true };

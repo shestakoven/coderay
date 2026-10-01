@@ -24,6 +24,38 @@ describe('layoutGraph', () => {
     expect(edges.map((e) => `${e.source}->${e.target}`).sort()).toEqual(graph.edges.map((e) => `${e.from}->${e.to}`).sort());
   });
 
+  it('merges opposite edges into one with arrows on both ends and summed weight', async () => {
+    const graph = {
+      nodes: [
+        { id: 'a', kind: 'component' as const, label: 'a' },
+        { id: 'b', kind: 'component' as const, label: 'b' },
+        { id: 'c', kind: 'component' as const, label: 'c' },
+      ],
+      edges: [
+        { id: 'a->b', from: 'a', to: 'b', weight: 2 },
+        { id: 'b->a', from: 'b', to: 'a', weight: 3 },
+        { id: 'a->c', from: 'a', to: 'c', weight: 1 },
+      ],
+    };
+    const { edges } = await layoutGraph(graph, new Set(), elk);
+    expect(edges.map((e) => [e.source, e.target, e.data?.weight, !!e.markerStart, !!e.markerEnd])).toEqual([
+      ['a', 'b', 5, true, true],
+      ['a', 'c', 1, false, true],
+    ]);
+  });
+
+  it('places dependencies left of their dependents', async () => {
+    const graph = {
+      nodes: [
+        { id: 'app', kind: 'component' as const, label: 'app' },
+        { id: 'types', kind: 'component' as const, label: 'types' },
+      ],
+      edges: [{ id: 'app->types', from: 'app', to: 'types', weight: 1 }],
+    };
+    const { nodes } = await layoutGraph(graph, new Set(), elk);
+    expect(nodes.find((n) => n.id === 'types')!.position.x).toBeLessThan(nodes.find((n) => n.id === 'app')!.position.x);
+  });
+
   it('sizes an expanded component to contain its files', async () => {
     const { nodes } = await layoutGraph(visibleGraph(demoSnapshot(), expanded), expanded, elk);
     const container = nodes.find((n) => n.id === 'folder:src/api')!;

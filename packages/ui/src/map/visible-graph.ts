@@ -26,6 +26,8 @@ export interface VisibleGraph {
 
 const fileName = (path: string) => path.slice(path.lastIndexOf('/') + 1);
 
+const isTestFile = (path: string) => /(^|\/)(test|tests|__tests__)\/|\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
+
 export const graphSignature = (graph: VisibleGraph): string => JSON.stringify(graph);
 
 export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string>, ghosts: { path: string; componentId: string }[] = []): VisibleGraph {
@@ -64,7 +66,7 @@ export function visibleGraph(snapshot: MapSnapshot, expanded: ReadonlySet<string
   for (const edge of snapshot.fileEdges) {
     const from = visibleOf.get(edge.from);
     const to = visibleOf.get(edge.to);
-    if (!from || !to || from === to) continue;
+    if (!from || !to || from === to || isTestFile(edge.from) || isTestFile(edge.to)) continue;
     const id = `${from}->${to}`;
     const existing = weights.get(id);
     weights.set(id, { id, from, to, weight: (existing?.weight ?? 0) + 1 });

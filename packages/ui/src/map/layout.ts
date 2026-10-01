@@ -1,7 +1,7 @@
-import type { Node } from '@xyflow/react';
+import { MarkerType, type Node } from '@xyflow/react';
 import type { MapEdge } from './edge-focus';
 import type { ELK, ElkNode } from 'elkjs/lib/elk-api.js';
-import type { VisibleGraph, VisibleNode } from './visible-graph';
+import type { VisibleEdge, VisibleGraph, VisibleNode } from './visible-graph';
 
 export type MapNodeData = {
   label: string;
@@ -78,7 +78,7 @@ export async function layoutGraph(
     id: 'root',
     layoutOptions: ROOT_OPTIONS,
     children: graph.nodes.filter((n) => !n.parentId).map(toElk),
-    edges: graph.edges.map((e) => ({ id: e.id, sources: [e.from], targets: [e.to] })),
+    edges: graph.edges.map((e) => ({ id: e.id, sources: [e.to], targets: [e.from] })),
   });
 
   const byId = new Map(graph.nodes.map((n) => [n.id, n]));
@@ -110,11 +110,26 @@ export async function layoutGraph(
 
   return {
     nodes,
-    edges: graph.edges.map((e) => ({
+    edges: mergeOpposite(graph.edges),
+  };
+}
+
+const ARROW = { type: MarkerType.ArrowClosed, width: 12, height: 12 };
+
+function mergeOpposite(edges: VisibleEdge[]): MapEdge[] {
+  const byId = new Map(edges.map((e) => [e.id, e]));
+  const merged: MapEdge[] = [];
+  for (const e of edges) {
+    const back = byId.get(`${e.to}->${e.from}`);
+    if (back && e.from > e.to) continue;
+    merged.push({
       id: e.id,
       source: e.from,
       target: e.to,
-      data: { weight: e.weight },
-    })),
-  };
+      data: { weight: e.weight + (back?.weight ?? 0) },
+      markerEnd: ARROW,
+      ...(back ? { markerStart: ARROW } : {}),
+    });
+  }
+  return merged;
 }
