@@ -482,7 +482,7 @@ export class AgentSession {
     const from = this.session ?? this.previous;
     const session: SessionRecord = {
       id: randomUUID(), claudeSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
-      modelChoice: from?.modelChoice ?? null, effort: from?.effort ?? null, cliVersion: null,
+      modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium', cliVersion: null,
       pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(),
     };
     this.persist(() => this.options.store.saveSession(session));

@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChatSummary, ClientMessage } from '@ide/protocol';
+import type { ChatSummary, ClientMessage, ModelInfo } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
 import { chatTitle, effortLabel, modelLabel, relativeTime } from './chats';
 
 export interface ChatList {
   activeId: string | null;
   sessions: ChatSummary[];
+  models: ModelInfo[];
 }
 
 export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLeave: boolean; send: (message: ClientMessage) => boolean }) {
@@ -52,7 +53,7 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
               >
                 <span className="chat-list-title">{chatTitle(chat)}</span>
                 <span className="chat-list-meta muted">
-                  {relativeTime(chat.lastActivityAt, now)} · {modelLabel(chat.modelChoice)} · {effortLabel(chat.effort)}
+                  {relativeTime(chat.lastActivityAt, now)} · {modelLabel(chat.modelChoice, chats.models)} · {effortLabel(chat.effort)}
                 </span>
               </button>
             </li>

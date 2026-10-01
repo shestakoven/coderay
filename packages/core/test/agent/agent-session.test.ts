@@ -102,6 +102,7 @@ describe('AgentSession', () => {
     expect(argv).toEqual([
       '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
       '--session-id', session?.claudeSessionId,
+      '--model', 'sonnet', '--effort', 'medium',
       '--mcp-config', join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
       '--strict-mcp-config',
       '--disallowedTools', 'SendMessage,CronCreate,CronDelete,CronList,ScheduleWakeup,RemoteTrigger,Workflow,EnterWorktree,ExitWorktree,DesignSync,PushNotification',

@@ -8,6 +8,11 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
+export interface ModelInfo {
+  value: string;
+  name: string;
+}
+
 export interface ChatSummary {
   id: string;
   title: string;
@@ -147,6 +152,7 @@ export type SessionServerMessage =
   | { type: 'session.snapshot'; state: SessionState }
   | { type: 'session.patch'; patch: SessionPatch }
   | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[] }
+  | { type: 'models.snapshot'; models: ModelInfo[] }
   | { type: 'error'; message: string };
 
 export type ChatClientMessage =
@@ -155,6 +161,7 @@ export type ChatClientMessage =
   | { type: 'session.restart' }
   | { type: 'session.new' }
   | { type: 'session.list' }
+  | { type: 'models.list' }
   | { type: 'session.switch'; id: string }
   | { type: 'session.configure'; modelChoice: string | null; effort: EffortLevel | null }
   | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer };

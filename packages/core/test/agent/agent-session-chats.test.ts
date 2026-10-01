@@ -96,11 +96,11 @@ function seededStore(): { home: string; root: string; store: Store } {
 }
 
 describe('claude flags for the model and effort', () => {
-  it('starts claude with neither --model nor --effort when none is chosen', async () => {
+  it('starts claude with an explicit sonnet and medium when none is chosen', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
-    expect([argv?.includes('--model'), argv?.includes('--effort')]).toEqual([false, false]);
+    expect([flag(argv, '--model'), flag(argv, '--effort')]).toEqual(['sonnet', 'medium']);
   });
 
   it('starts claude with --model and --effort after both were chosen on a chat that has not started yet', async () => {
@@ -160,8 +160,8 @@ describe('AgentSession.configure', () => {
     await expect(h.session.configure('opus', 'high')).rejects.toMatchObject({
       code: 'busy-configure', message: 'Wait for the agent to finish or press Stop before changing the model.',
     });
-    expect([current(h).modelChoice, current(h).effort, current(h).status, h.argvs().length]).toEqual([null, null, 'running', 1]);
-    expect(h.store.session(current(h).id)).toMatchObject({ modelChoice: null, effort: null });
+    expect([current(h).modelChoice, current(h).effort, current(h).status, h.argvs().length]).toEqual(['sonnet', 'medium', 'running', 1]);
+    expect(h.store.session(current(h).id)).toMatchObject({ modelChoice: 'sonnet', effort: 'medium' });
   });
 
   it('is refused while a background task still runs after the turn closed', async () => {
@@ -169,7 +169,7 @@ describe('AgentSession.configure', () => {
     h.session.send('start a shell');
     await waitFor(() => closedTurns(h).length === 1 && h.session.runningShell(), 'turn closed with the shell running');
     await expect(h.session.configure('opus', null)).rejects.toMatchObject({ code: 'busy-configure' });
-    expect([current(h).modelChoice, current(h).status, h.argvs().length]).toEqual([null, 'running', 1]);
+    expect([current(h).modelChoice, current(h).status, h.argvs().length]).toEqual(['sonnet', 'running', 1]);
   });
 
   it('stops a running claude and starts it again with --resume and the new model and effort on the next message', async () => {
@@ -238,10 +238,10 @@ describe('AgentSession.configure', () => {
     const h = await harness('multi-turn');
     await ask(h, 'hi');
     h.broadcasts.length = 0;
-    await h.session.configure('sonnet', 'medium');
+    await h.session.configure('opus', 'high');
     const views = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.session ? [message.patch.session] : []));
-    expect(views.at(-1)).toMatchObject({ id: current(h).id, modelChoice: 'sonnet', effort: 'medium' });
-    expect(h.session.state().session).toMatchObject({ modelChoice: 'sonnet', effort: 'medium' });
+    expect(views.at(-1)).toMatchObject({ id: current(h).id, modelChoice: 'opus', effort: 'high' });
+    expect(h.session.state().session).toMatchObject({ modelChoice: 'opus', effort: 'high' });
   });
 
   it('keeps the chosen model apart from the model claude reports', async () => {
@@ -297,7 +297,7 @@ describe('a new chat inherits the model and effort', () => {
     await h.session.newSession();
     h.session.send('third');
     await waitFor(() => current(h).modelChoice === 'haiku', 'third chat created');
-    expect([a.modelChoice, current(h).modelChoice, current(h).effort]).toEqual([null, 'haiku', 'low']);
+    expect([a.modelChoice, current(h).modelChoice, current(h).effort]).toEqual(['sonnet', 'haiku', 'low']);
   });
 });
 

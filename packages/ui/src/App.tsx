@@ -14,6 +14,7 @@ import { MapView } from './map/MapView';
 import { MapActivity } from './map/MapActivity';
 import { PlanOverlayContext, type PlanOverlay } from './plan/overlay';
 import { PlanPanel } from './plan/PlanPanel';
+import { chimeKey, playChime } from './plan/chime';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, planTitle, waitsForUser } from './plan/plan-state';
 import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
@@ -72,7 +73,7 @@ export function App() {
   const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
-  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [] });
+  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
   const openProject = useOpenProject();
@@ -147,7 +148,10 @@ export function App() {
           hub.closed(message.id);
           break;
         case 'sessions.snapshot':
-          setChats({ activeId: message.activeId, sessions: message.sessions });
+          setChats((previous) => ({ ...previous, activeId: message.activeId, sessions: message.sessions }));
+          break;
+        case 'models.snapshot':
+          setChats((previous) => ({ ...previous, models: message.models }));
           break;
         case 'project.info':
           if (knownRoot.current !== null && knownRoot.current !== message.info.root) location.reload();
@@ -167,6 +171,7 @@ export function App() {
       }
     }, (next) => {
       setStatus(next);
+      if (next === 'open') connection.current?.send({ type: 'models.list' });
       if (!switching.current.requested) return;
       if (next === 'closed') switching.current.dropped = true;
       else if (next === 'open' && switching.current.dropped) location.reload();
@@ -250,6 +255,10 @@ export function App() {
   useEffect(() => {
     if (planIdentity) dispatchPanels({ type: 'plan-shown' });
   }, [planIdentity]);
+  const waitingPlan = chimeKey(shown);
+  useEffect(() => {
+    if (waitingPlan) playChime();
+  }, [waitingPlan]);
   const prompt = pendingPrompts(plans.prompts)[0] ?? null;
   const answerPlan = (answer: PlanAnswer) => {
     if (shown) send({ type: 'plan.answer', planId: shown.id, version: shown.version, answer });

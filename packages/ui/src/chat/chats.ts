@@ -1,33 +1,29 @@
-import { EFFORT_LEVELS, type ChatSummary, type ClientMessage, type EffortLevel, type SessionView } from '@ide/protocol';
+import { EFFORT_LEVELS, type ChatSummary, type ClientMessage, type EffortLevel, type ModelInfo, type SessionView } from '@ide/protocol';
 
 export interface Choice<T> {
   value: T | null;
   label: string;
 }
 
-const KNOWN_MODELS: Choice<string>[] = [
-  { value: 'fable', label: 'Fable' },
-  { value: 'opus', label: 'Opus' },
-  { value: 'sonnet', label: 'Sonnet' },
-  { value: 'haiku', label: 'Haiku' },
+const FALLBACK_MODELS: Choice<string>[] = [
+  { value: 'fable', label: 'Fable 5.1' },
+  { value: 'opus', label: 'Opus 5.5' },
+  { value: 'sonnet', label: 'Sonnet 5.5' },
+  { value: 'haiku', label: 'Haiku 4.5' },
 ];
 
-export const DEFAULT_MODEL_LABEL = 'Default model';
-export const DEFAULT_EFFORT_LABEL = 'Default effort';
+const catalog = (models: ModelInfo[]): Choice<string>[] => (models.length === 0 ? FALLBACK_MODELS : models.map((model) => ({ value: model.value, label: model.name })));
 
-export function modelOptions(current: string | null): Choice<string>[] {
-  const known = KNOWN_MODELS.some((option) => option.value === current);
-  return [{ value: null, label: DEFAULT_MODEL_LABEL }, ...KNOWN_MODELS, ...(current && !known ? [{ value: current, label: current }] : [])];
+export function modelOptions(current: string | null, models: ModelInfo[] = []): Choice<string>[] {
+  const options = catalog(models);
+  return [...options, ...(current && !options.some((option) => option.value === current) ? [{ value: current, label: current }] : [])];
 }
 
-export const effortOptions: Choice<EffortLevel>[] = [
-  { value: null, label: DEFAULT_EFFORT_LABEL },
-  ...EFFORT_LEVELS.map((level) => ({ value: level, label: level })),
-];
+export const effortOptions: Choice<EffortLevel>[] = EFFORT_LEVELS.map((level) => ({ value: level, label: level }));
 
-export const modelLabel = (choice: string | null): string => modelOptions(choice).find((option) => option.value === choice)?.label ?? DEFAULT_MODEL_LABEL;
+export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalog(models).find((option) => option.value === choice)?.label ?? choice ?? '—';
 
-export const effortLabel = (effort: EffortLevel | null): string => (effort === null ? DEFAULT_EFFORT_LABEL : effort);
+export const effortLabel = (effort: EffortLevel | null): string => effort ?? '—';
 
 export const chatTitle = (chat: Pick<ChatSummary, 'title'>): string => (chat.title.trim() === '' ? 'New chat' : chat.title);
 

@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react';
-import type { ClientMessage, SessionView } from '@ide/protocol';
+import type { ClientMessage, ModelInfo, SessionView } from '@ide/protocol';
 import { configureMessage, effortOptions, isEffort, modelOptions } from './chats';
 
 const RESTART_WAIT_MS = 1500;
 
-export function ModelControls({ current, enabled, send }: { current: Pick<SessionView, 'modelChoice' | 'effort'>; enabled: boolean; send: (message: ClientMessage) => boolean }) {
+export function ModelControls({ current, models, enabled, send }: { current: Pick<SessionView, 'modelChoice' | 'effort'>; models: ModelInfo[]; enabled: boolean; send: (message: ClientMessage) => boolean }) {
   const [sentAt, setSentAt] = useState<number | null>(null);
   const settled = `${current.modelChoice ?? ''}|${current.effort ?? ''}`;
   useEffect(() => {
@@ -24,18 +24,20 @@ export function ModelControls({ current, enabled, send }: { current: Pick<Sessio
         title={title}
         disabled={disabled}
         value={current.modelChoice ?? ''}
-        onChange={(event) => apply({ modelChoice: event.target.value === '' ? null : event.target.value })}
+        onChange={(event) => apply({ modelChoice: event.target.value })}
       >
-        {modelOptions(current.modelChoice).map((option) => <option key={option.value ?? 'default'} value={option.value ?? ''}>{option.label}</option>)}
+        {current.modelChoice === null && <option value="" disabled>Select model</option>}
+        {modelOptions(current.modelChoice, models).map((option) => <option key={option.value} value={option.value ?? ''}>{option.label}</option>)}
       </select>
       <select
         aria-label="Effort"
         title={title}
         disabled={disabled}
         value={current.effort ?? ''}
-        onChange={(event) => apply({ effort: event.target.value !== '' && isEffort(event.target.value) ? event.target.value : null })}
+        onChange={(event) => { if (isEffort(event.target.value)) apply({ effort: event.target.value }); }}
       >
-        {effortOptions.map((option) => <option key={option.value ?? 'default'} value={option.value ?? ''}>{option.label}</option>)}
+        {current.effort === null && <option value="" disabled>Select effort</option>}
+        {effortOptions.map((option) => <option key={option.value} value={option.value ?? ''}>{option.label}</option>)}
       </select>
     </span>
   );

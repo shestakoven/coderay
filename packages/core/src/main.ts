@@ -4,7 +4,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
+import type { ClientMessage, MapSnapshot, ModelInfo, ServerMessage } from '@ide/protocol';
 import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
@@ -19,6 +19,7 @@ import { IdentifierClassifier } from './c4/classify';
 import { watchDeploy } from './c4/deploy';
 import { buildC4 } from './c4/model';
 import { McpRegistry } from './mcp/registry';
+import { fetchModels } from './models/catalog';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
@@ -162,6 +163,15 @@ try {
         agent.send(message.text);
         broadcastSessions();
         return;
+  let modelList: Promise<ModelInfo[]> | undefined;
+  const modelCatalog = (): Promise<ModelInfo[]> => {
+    modelList ??= fetchModels({ command: values.claude, args: [] }, root).then((list) => {
+      if (list.length === 0) modelList = undefined;
+      return list;
+    });
+    return modelList;
+  };
+
       case 'chat.stop':
         agent.stop();
         return;
@@ -180,6 +190,9 @@ try {
       case 'session.configure':
         await agent.configure(message.modelChoice, message.effort);
         broadcastSessions();
+      case 'models.list':
+        reply({ type: 'models.snapshot', models: await modelCatalog() });
+        return;
         return;
       case 'prompt.answer':
         agent.answerPrompt(message.requestId, message.answer);

@@ -28,6 +28,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'session.restart':
     case 'session.new':
     case 'session.list':
+    case 'models.list':
     case 'settings.get':
       return { type };
     case 'session.switch':

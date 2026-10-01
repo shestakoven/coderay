@@ -126,7 +126,7 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pl
           placeholder={sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
         />
         <div className="composer-actions">
-          <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} enabled={sendable} send={send} />
+          <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
           <span className="spacer" />
           {sendable ? (
             <button className="composer-action send" onClick={submit} disabled={draft.trim() === ''} title="Send (Enter)" aria-label="Send">

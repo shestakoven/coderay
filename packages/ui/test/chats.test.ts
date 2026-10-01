@@ -6,13 +6,12 @@ import {
 const values = (current: string | null) => modelOptions(current).map((option) => option.value);
 
 describe('modelOptions', () => {
-  it('lists the default first and then the known aliases in order', () => {
+  it('lists the known aliases in order, with their versions', () => {
     expect(modelOptions(null)).toEqual([
-      { value: null, label: 'Default model' },
-      { value: 'fable', label: 'Fable' },
-      { value: 'opus', label: 'Opus' },
-      { value: 'sonnet', label: 'Sonnet' },
-      { value: 'haiku', label: 'Haiku' },
+      { value: 'fable', label: 'Fable 5.1' },
+      { value: 'opus', label: 'Opus 5.5' },
+      { value: 'sonnet', label: 'Sonnet 5.5' },
+      { value: 'haiku', label: 'Haiku 4.5' },
     ]);
   });
 
@@ -20,37 +19,59 @@ describe('modelOptions', () => {
     const options = modelOptions('claude-opus-5-5');
     expect(options.at(-1)).toEqual({ value: 'claude-opus-5-5', label: 'claude-opus-5-5' });
     expect(options.filter((option) => option.value === 'claude-opus-5-5')).toHaveLength(1);
-    expect(values('claude-opus-5-5')).toEqual([null, 'fable', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5']);
+    expect(values('claude-opus-5-5')).toEqual(['fable', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5']);
   });
 
   it('does not duplicate a known alias that is the current choice', () => {
-    expect(values('sonnet')).toEqual([null, 'fable', 'opus', 'sonnet', 'haiku']);
+    expect(values('sonnet')).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
   });
 
   it('does not append an empty id', () => {
-    expect(values('')).toEqual([null, 'fable', 'opus', 'sonnet', 'haiku']);
+    expect(values('')).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
+  });
+});
+
+describe('models from the core', () => {
+  const models = [
+    { value: 'sonnet', name: 'Sonnet 5.5' },
+    { value: 'claude-opus-4-6', name: 'Opus 4.6' },
+  ];
+
+  it('replaces the built-in list, old models included', () => {
+    expect(modelOptions('sonnet', models)).toEqual([
+      { value: 'sonnet', label: 'Sonnet 5.5' },
+      { value: 'claude-opus-4-6', label: 'Opus 4.6' },
+    ]);
+  });
+
+  it('still appends a current id the core did not list, once', () => {
+    expect(modelOptions('claude-gone', models).map((option) => option.value)).toEqual(['sonnet', 'claude-opus-4-6', 'claude-gone']);
+  });
+
+  it('labels by the core name, and an id it does not know by the id itself', () => {
+    expect([modelLabel('claude-opus-4-6', models), modelLabel('opus', models)]).toEqual(['Opus 4.6', 'opus']);
   });
 });
 
 describe('effortOptions', () => {
-  it('lists the default first and then every effort level in protocol order', () => {
+  it('lists every effort level in protocol order', () => {
     expect(effortOptions.map((option) => [option.value, option.label])).toEqual([
-      [null, 'Default effort'], ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max'],
+      ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max'],
     ]);
   });
 });
 
 describe('modelLabel and effortLabel', () => {
-  it('labels no choice as the default model and a known alias by its name', () => {
-    expect([modelLabel(null), modelLabel('opus'), modelLabel('haiku')]).toEqual(['Default model', 'Opus', 'Haiku']);
+  it('labels no choice as a dash and a known alias by its name', () => {
+    expect([modelLabel(null), modelLabel('opus'), modelLabel('haiku')]).toEqual(['—', 'Opus 5.5', 'Haiku 4.5']);
   });
 
   it('labels an unknown id by the id itself', () => {
     expect(modelLabel('claude-haiku-4-5-20251001')).toBe('claude-haiku-4-5-20251001');
   });
 
-  it('labels no effort as the default effort and a level by its name', () => {
-    expect([effortLabel(null), effortLabel('xhigh')]).toEqual(['Default effort', 'xhigh']);
+  it('labels no effort as a dash and a level by its name', () => {
+    expect([effortLabel(null), effortLabel('xhigh')]).toEqual(['—', 'xhigh']);
   });
 });
 
