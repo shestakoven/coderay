@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
@@ -24,6 +24,7 @@ import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
 import { listDirectories } from './project/browse';
 import { RecentProjects } from './project/recent';
+import { takeLaunchToken } from './project/token';
 import { successorArgs, validateProjectPath } from './project/switch';
 import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
@@ -37,6 +38,7 @@ const { values } = parseArgs({
     ui: { type: 'string' },
     'allow-origin': { type: 'string', multiple: true, default: [] },
     'ide-home': { type: 'string' },
+    'token-stdin': { type: 'boolean', default: false },
     claude: { type: 'string', default: 'claude' },
   },
 });
@@ -65,7 +67,7 @@ if (!lock.acquired) {
   console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
   process.exit(1);
 }
-const token = process.env.IDE_CORE_TOKEN || randomBytes(24).toString('base64url');
+const token = values['token-stdin'] ? readFileSync(0, 'utf8').trim() || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
 const recent = new RecentProjects(home);
 recent.add(root);
 
@@ -146,7 +148,7 @@ try {
   };
 
   let closing: Promise<void> | undefined;
-  let afterClose: (() => void) | undefined;
+  let afterClose: (() => Promise<void>) | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
   let deployWatch: { close(): Promise<void> } | undefined;
@@ -204,12 +206,13 @@ try {
         if (error !== null || 'error' in target) return;
         recent.add(target.root);
         const args = successorArgs(process.argv.slice(2), target.root, running.port);
-        afterClose = () => {
-          spawn(process.execPath, [...process.execArgv, process.argv[1] ?? '', ...args], {
+        afterClose = async () => {
+          const child = spawn(process.execPath, [...process.execArgv, process.argv[1] ?? '', ...args, '--token-stdin'], {
             detached: true,
-            stdio: 'inherit',
-            env: { ...process.env, IDE_CORE_TOKEN: token },
-          }).unref();
+            stdio: ['pipe', 'inherit', 'inherit'],
+          });
+          await new Promise<void>((resolve) => child.stdin.end(token, () => resolve()));
+          child.unref();
         };
         closing ??= shutdown();
         return;
@@ -284,7 +287,7 @@ try {
     await running.close();
     store.close();
     lock.release();
-    afterClose?.();
+    await afterClose?.();
     process.exit(0);
   };
   let firstInterrupt = 0;

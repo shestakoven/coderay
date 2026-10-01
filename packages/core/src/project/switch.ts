@@ -13,7 +13,7 @@ export function successorArgs(argv: string[], newRoot: string, port: number): st
       skipValue = true;
       continue;
     }
-    if (arg.startsWith('--project=') || arg.startsWith('--port=')) continue;
+    if (arg.startsWith('--project=') || arg.startsWith('--port=') || arg === '--token-stdin') continue;
     kept.push(arg);
   }
   return [...kept, '--project', newRoot, '--port', String(port)];
