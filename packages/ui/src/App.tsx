@@ -1,6 +1,7 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, ProjectInfo, SettingsView } from '@ide/protocol';
+import { ErrorBoundary } from './layout/ErrorBoundary';
 import { ChatPanel } from './chat/ChatPanel';
 import { canSend, chatReducer, initialChatState } from './chat/chat-state';
 import { dialogEvent, eventFilePaths } from './history/dialog-state';
@@ -418,24 +419,26 @@ export function App() {
               </button>
             </div>
             <div className="right-body" hidden={panels.rightTab !== 'agent'}>
-              <ChatPanel
-                chat={chat}
-                chats={chats}
-                send={send}
-                onClearFilter={() => dispatchChat({ type: 'filter', filter: null })}
-                onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
-                prompts={pendingPrompts(plans.prompts)}
-                dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
-                planDock={shown && waitsForUser(shown) && (
-                  <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} />
-                )}
-                promptAnchored={anchored}
-                onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
-                onFocusTargets={(paths) => {
-                  const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
-                  if (owners.size > 0) focusComponents([...owners]);
-                }}
-              />
+              <ErrorBoundary label="The chat">
+                <ChatPanel
+                  chat={chat}
+                  chats={chats}
+                  send={send}
+                  onClearFilter={() => dispatchChat({ type: 'filter', filter: null })}
+                  onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
+                  prompts={pendingPrompts(plans.prompts)}
+                  dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
+                  planDock={shown && waitsForUser(shown) && (
+                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} />
+                  )}
+                  promptAnchored={anchored}
+                  onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
+                  onFocusTargets={(paths) => {
+                    const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
+                    if (owners.size > 0) focusComponents([...owners]);
+                  }}
+                />
+              </ErrorBoundary>
             </div>
             <div className="right-body" hidden={panels.rightTab !== 'plan'}>
               {shown && !waitsForUser(shown) ? (

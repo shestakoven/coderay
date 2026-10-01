@@ -117,6 +117,14 @@ try {
   await agent.start();
   try {
     await rt.start();
+    // The dev shell reloads the core on every code edit, which kills the agent that made the edit.
+    if (process.env.IDE_AUTO_RESUME === '1' && agent.startedFromCrash()) {
+      try {
+        agent.send('[IDE] The IDE core restarted to load new code and your process ended with it. Continue where you stopped.', { fromUser: false });
+      } catch (error) {
+        agent.notice(`The agent could not be resumed after the reload (${(error as Error).message}).`);
+      }
+    }
   } catch (error) {
     agent.notice(`The IDE could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
   }

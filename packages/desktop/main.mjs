@@ -66,6 +66,7 @@ app.on('window-all-closed', () => app.quit());
 app.whenReady().then(async () => {
   run('node', ['--watch', '--import', 'tsx', 'packages/core/src/main.ts', '--project', project, '--port', String(CORE_PORT), '--allow-origin', UI_ORIGIN], repo, {
     IDE_CORE_TOKEN: token,
+    IDE_AUTO_RESUME: '1',
   });
   run('./node_modules/.bin/vite', ['--port', String(UI_PORT)], resolve(repo, 'packages/ui'), { IDE_CORE_PORT: String(CORE_PORT) });
   await Promise.all([waitForPort(CORE_PORT), waitForPort(UI_PORT)]);
@@ -73,7 +74,16 @@ app.whenReady().then(async () => {
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
+    // Like PyCharm: the traffic lights sit inside the app's own top bar instead of a separate title bar.
+    titleBarStyle: 'hidden',
+    trafficLightPosition: { x: 14, y: 12 },
     webPreferences: { contextIsolation: true, nodeIntegration: false },
+  });
+  win.webContents.on('dom-ready', () => {
+    win.webContents.insertCSS(`
+      header.topbar { padding-left: 84px; -webkit-app-region: drag; }
+      header.topbar :is(button, select, input, label, a) { -webkit-app-region: no-drag; }
+    `);
   });
   const external = (url) => {
     if (/^https?:/.test(url)) shell.openExternal(url);

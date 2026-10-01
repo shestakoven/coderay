@@ -602,3 +602,6 @@ body.resizing .resizer { pointer-events: auto; }
 .right-panel .chat-header .chat-switcher { gap: 0; }
 .right-panel .chat-switcher-button { flex: 0 1 auto; width: auto; font-size: 13px; }
 .right-panel .chat-new { width: 28px; height: 28px; padding: 0; }
+
+.error-boundary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 12px; padding: 12px; border: 1px solid var(--error); border-radius: var(--r-1); }
+.error-boundary code { color: var(--error); white-space: pre-wrap; }
