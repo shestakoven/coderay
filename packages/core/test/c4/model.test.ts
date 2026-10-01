@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { stringify } from 'yaml';
 import type { C4Container, C4Link, C4Model, ExternalKind, MapComponent } from '@ide/protocol';
 import type { Classification, Classify, Identifier } from '../../src/c4/classify';
-import { buildC4 } from '../../src/c4/model';
+import { buildC4, isNetworkCall } from '../../src/c4/model';
 import type { IndexedFile } from '../../src/model';
 import { indexed, tempDir, writeTree } from '../helpers';
 
@@ -658,6 +658,94 @@ describe('buildC4: links from URL literals', () => {
     const p = await api({ 'backend/app/hosts.py': literals.map((url, i) => `URL_${i} = "${url}"`).join('\n') });
     build(p, { imports: [[MAIN, 'backend/app/hosts.py']], classify: asked.classify });
     expect(asked.hosts()).toEqual(['api.openai.com']);
+  });
+});
+
+describe('buildC4: URL literals that are reference links, not calls', () => {
+  const UI = 'frontend/src/settings.ts';
+  const ui = (source: string) =>
+    project(compose({ 'frontend-dev': { image: 'node:20-alpine', volumes: ['./frontend:/app'], command: 'npm run dev' } }), { [UI]: source });
+  const hostsOf = async (source: string, table: Record<string, Classification | null> = {}) => {
+    const asked = names(table);
+    const result = build(await ui(source), { classify: asked.classify });
+    return { asked, model: result.model };
+  };
+
+  it('asks about no host for a settings form whose URLs are link fields', async () => {
+    const { asked } = await hostsOf(
+      ["const form = { urlLink: 'https://openai.com/' };", "const OPENROUTER_API_KEY_LINK = 'https://openrouter.ai/keys';"].join('\n'),
+    );
+    expect(asked.hosts()).toEqual([]);
+  });
+
+  it('draws no edge from a ui container to the system behind a reference link', async () => {
+    const { model } = await hostsOf("const OPENAI_DOCS_URL = 'https://openai.com/docs';\n", { 'openai.com': system('OpenAI', 'ai') });
+    expect(targetsOf(model, 'frontend-dev')).toEqual([]);
+  });
+
+  it('still asks about the same host when a fetch call uses it', async () => {
+    const { asked } = await hostsOf("const r = await fetch('https://openai.com/v1/models');\n");
+    expect(asked.hosts()).toEqual(['openai.com']);
+  });
+
+  it('still asks about the same host when an httpx call uses it', async () => {
+    const asked = names({});
+    const p = await api({ 'backend/app/llm.py': 'r = httpx.post("https://openai.com/v1/chat")\n' });
+    build(p, { imports: [[MAIN, 'backend/app/llm.py']], classify: asked.classify });
+    expect(asked.hosts()).toEqual(['openai.com']);
+  });
+
+  it('keeps a call whose line also carries a reference word', async () => {
+    const { asked } = await hostsOf("const docsClient = await fetch('https://api.readme.io/v1');\n");
+    expect(asked.hosts()).toEqual(['api.readme.io']);
+  });
+
+  it('keeps a neutral constant as a call', async () => {
+    const { asked } = await hostsOf("const BASE = 'https://graph.microsoft.com/v1.0';\n");
+    expect(asked.hosts()).toEqual(['graph.microsoft.com']);
+  });
+
+  it('keeps the call when a link and a call share a file', async () => {
+    const { asked } = await hostsOf(["const helpLink = 'https://openai.com/help';", "const r = fetch('https://api.stripe.com/v1');"].join('\n'));
+    expect(asked.hosts()).toEqual(['api.stripe.com']);
+  });
+});
+
+describe('isNetworkCall', () => {
+  const at = (line: string) => isNetworkCall(line, line.indexOf('https://'));
+
+  it.each([
+    ["fetch('https://a.io/x')", true],
+    ["const r = await axios.get('https://a.io/x')", true],
+    ['r = requests.get("https://a.io/x")', true],
+    ['r = httpx.post("https://a.io/x")', true],
+    ['client.get(\n"https://a.io/x")', true],
+    ['base_url = "https://a.io"', true],
+    ['sentry_dsn = "https://a.io/1"', true],
+    ['BASE = "https://graph.microsoft.com/v1"', true],
+    ['IMAGE_API_URL = "https://a.io/img"', true],
+    ['docsClient = httpx.get("https://a.io")', true],
+    ['const x = new URL("https://a.io")', true],
+    ["urlLink: 'https://a.io/'", false],
+    ["const OPENROUTER_API_KEY_LINK = 'https://a.io/keys'", false],
+    ['<a href="https://a.io/x">', false],
+    ["const docsUrl = 'https://a.io'", false],
+    ["HOMEPAGE = 'https://a.io'", false],
+    ["website_url = 'https://a.io'", false],
+    ["privacyPolicy: 'https://a.io/privacy'", false],
+    ["logo = 'https://a.io/l.png'", false],
+    ["avatar_url = 'https://a.io/a.png'", false],
+  ])('classifies %j as call=%s', (line, expected) => {
+    expect(at(line)).toBe(expected);
+  });
+
+  it('does not take a reference word inside another word for a link', () => {
+    expect(at("const blinker = 'https://a.io'")).toBe(true);
+  });
+
+  it('judges each literal by its own line only', () => {
+    const text = "const docsLink = 'https://a.io';\nconst BASE = 'https://b.io';";
+    expect(isNetworkCall(text, text.indexOf('https://b.io'))).toBe(true);
   });
 });
 

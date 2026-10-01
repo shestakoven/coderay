@@ -17,6 +17,31 @@ import { readDeploy, type ServiceDef } from './deploy';
 
 // Literal URL hosts are names like package names; file contents never leave this process.
 const URL_LITERAL = /['"`]https?:\/\/(?:[^\s'"`@/]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi;
+// A URL on a line that reaches for the network is a call; one named like a link for a person (docs, homepage,
+// href) is a reference. Anything else stays a call: a bare API_BASE constant is how most clients are configured.
+const NETWORK_CONTEXT = new RegExp(
+  [
+    String.raw`\b(?:fetch|axios|requests?|httpx|aiohttp|urllib3?|urlopen|got|ky|superagent|XMLHttpRequest|WebSocket|EventSource|sendBeacon|curl|wget)\b`,
+    String.raw`\bnew\s+URL\b`,
+    String.raw`\.(?:get|post|put|patch|delete|head|options|request|stream|connect|dial)\s*\(\s*$`,
+    String.raw`\b(?:base_?url|api_?(?:url|base|host|endpoint)|endpoint|dsn|server_?url|webhook_?url)\b`,
+  ].join('|'),
+  'i',
+);
+const REFERENCE_WORDS = ['link', 'href', 'docs', 'doc', 'documentation', 'homepage', 'website', 'help', 'terms', 'privacy', 'license', 'readme', 'logo', 'icon', 'avatar'];
+const REFERENCE_CONTEXT = new RegExp(
+  REFERENCE_WORDS.flatMap((w) => {
+    const cap = w[0]!.toUpperCase() + w.slice(1);
+    return [`(?<![A-Za-z])${w}(?![a-z])`, `${cap}(?![a-z])`, `(?<![A-Z])${w.toUpperCase()}(?![A-Z])`];
+  }).join('|'),
+);
+
+export function isNetworkCall(text: string, index: number): boolean {
+  const line = text.slice(text.lastIndexOf('\n', index - 1) + 1, index);
+  if (NETWORK_CONTEXT.test(line)) return true;
+  return !REFERENCE_CONTEXT.test(line);
+}
+
 const literalHosts = new Map<string, { hash: string; hosts: string[] }>();
 
 function hostsIn(root: string, file: IndexedFile): string[] {
@@ -24,7 +49,8 @@ function hostsIn(root: string, file: IndexedFile): string[] {
   if (cached?.hash === file.contentHash) return cached.hosts;
   let hosts: string[] = [];
   try {
-    hosts = [...new Set([...readFileSync(join(root, file.path), 'utf8').matchAll(URL_LITERAL)].map((m) => m[1]!.toLowerCase()))];
+    const text = readFileSync(join(root, file.path), 'utf8');
+    hosts = [...new Set([...text.matchAll(URL_LITERAL)].filter((m) => isNetworkCall(text, m.index)).map((m) => m[1]!.toLowerCase()))];
   } catch {
     hosts = [];
   }
