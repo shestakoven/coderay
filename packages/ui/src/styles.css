@@ -427,3 +427,15 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-switcher-button { gap: 4px; }
 .chat-new { display: grid; place-items: center; padding: 4px 6px; }
 .tree-row { min-height: 28px; }
+
+/* Map activity */
+.map-activity { position: absolute; z-index: 7; top: 12px; left: 50%; transform: translateX(-50%); width: min(520px, calc(100% - 24px)); display: flex; flex-direction: column; gap: 10px; padding: 10px 14px; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45); }
+.map-activity-head { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; }
+.map-activity-label { font-weight: 600; }
+.map-activity-time { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 11.5px; }
+.map-activity-detail { margin-top: 6px; color: var(--muted); font-size: 12px; }
+.progress { position: relative; height: 4px; overflow: hidden; border-radius: 2px; background: var(--raised); }
+.progress > i { display: block; height: 100%; background: var(--accent); transition: width 0.2s ease-out; }
+.progress.indeterminate > i { position: absolute; width: 35%; animation: progress-slide 1.4s ease-in-out infinite; }
+@keyframes progress-slide { from { left: -35%; } to { left: 100%; } }
+@media (prefers-reduced-motion: reduce) { .progress.indeterminate > i { animation: none; left: 0; width: 100%; opacity: 0.5; } }

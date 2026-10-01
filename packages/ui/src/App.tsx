@@ -11,6 +11,7 @@ import { Timeline } from './history/Timeline';
 import { DetailsPanel, type DetailsTab } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
 import { MapView } from './map/MapView';
+import { MapActivity } from './map/MapActivity';
 import { PlanOverlayContext, type PlanOverlay } from './plan/overlay';
 import { PlanPanel } from './plan/PlanPanel';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, planTitle, waitsForUser } from './plan/plan-state';
@@ -339,6 +340,7 @@ export function App() {
             />
           )}
           <main className="map-area">
+            <MapActivity progress={progress} status={snapshot?.status ?? null} />
             <PlanOverlayContext.Provider value={overlay}>
               {showC4 && snapshot && c4 ? (
                 <ReactFlowProvider>
