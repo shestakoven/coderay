@@ -2,7 +2,7 @@ import type { ToolDecision } from './plans';
 
 export const MAX_CLIENT_FRAME_BYTES = 64 * 1024;
 
-export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended';
+export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended' | 'refused';
 
 export interface SessionView {
   id: string;
@@ -39,6 +39,7 @@ export interface MessageItem extends ItemBase {
   role: 'user' | 'assistant';
   text: string;
   ts: number;
+  recovered?: boolean;
 }
 
 export interface NoticeItem extends ItemBase {
@@ -56,6 +57,7 @@ export interface ToolItem extends ItemBase {
   endedAt: number | null;
   decision: ToolDecision | null;
   targets: string[];
+  recovered?: boolean;
 }
 
 export interface AskOption {

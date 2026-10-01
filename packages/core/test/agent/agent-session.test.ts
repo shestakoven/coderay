@@ -1,15 +1,19 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem, SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
+import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
+import { aliveRoute, Canary } from '../../src/gate/canary';
+import { UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
+import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
@@ -24,12 +28,13 @@ interface Harness {
   stdin: () => { type: string; [key: string]: unknown }[];
 }
 
-async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}): Promise<Harness> {
+async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}, fakeEnv: Record<string, string> = {}): Promise<Harness> {
   const home = overrides.home ?? tempDir('ide-home-');
   const root = overrides.root ?? tempDir('ide-root-');
   const store = overrides.store ?? openStore(projectDir(home, root));
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
-  const session = new AgentSession({ root, home, store, claude: fakeClaude(scenario, recordFile), ...overrides });
+  const claude = fakeClaude(scenario, recordFile);
+  const session = new AgentSession({ root, home, store, claude: { ...claude, env: { ...claude.env, ...fakeEnv } }, ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(async () => {
@@ -148,6 +153,31 @@ describe('AgentSession', () => {
     expect(texts(h.session.state().items)).toEqual(['run it', 'Bash:rejected']);
     expect(closedTurns(h)[0]?.resultSubtype).toBe('error_during_execution');
     expect(h.session.state().tasks).toEqual([]);
+  });
+
+  it('tells interrupt listeners once when stop or interrupt sends the interrupt, and not when it does not', async () => {
+    const h = await harness('interrupt-bash');
+    const heard = vi.fn();
+    h.session.onInterrupt(heard);
+    expect(h.session.interrupt()).toBe(false);
+    h.session.send('run it');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'tool call started');
+    expect(h.session.interrupt()).toBe(true);
+    expect(heard).toHaveBeenCalledTimes(1);
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    h.session.send('again');
+    await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
+    expect(h.session.stop()).toBe(false);
+    expect(heard).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports whether its process is alive', async () => {
+    const h = await harness('multi-turn');
+    expect(h.session.processAlive()).toBe(false);
+    h.session.send('hi');
+    expect(h.session.processAlive()).toBe(true);
+    await h.session.close();
+    expect(h.session.processAlive()).toBe(false);
   });
 
   it('answers the next message after a stop', async () => {
@@ -453,7 +483,7 @@ describe('AgentSession', () => {
     h.session.onMessage((message) => {
       if (armed && message.type === 'session.patch') throw new Error('boom');
     });
-    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onToolResult((info) => ended.push(info.toolUseId));
     h.session.onIdle(() => {
       idles += 1;
     });
@@ -538,6 +568,15 @@ describe('AgentSession with the gate', () => {
     expect(texts(items)[0]).toContain(runDir(home));
   });
 
+  it('still shows an AskUserQuestion prompt and answers it when the IDE hook is active (spike c39)', async () => {
+    const h = await gatedHarness('ask-user-question');
+    h.session.send('ask me');
+    const prompt = await pendingPrompt(h);
+    h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S' } });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect([prompt, controlResponse(h)?.response]).toMatchObject([{ body: { tool: 'AskUserQuestion' } },{ subtype: 'success', request_id: 'req_fx_ask' }]);
+  });
+
   it('removes the gate files of the session when claude exits', async () => {
     const h = await gatedHarness('multi-turn');
     h.session.send('hi');
@@ -599,8 +638,43 @@ describe('AgentSession with the gate', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect([h.session.context('toolu_fx_tests'), h.session.context('toolu_later')]).toEqual([
       { parentToolUseId: null, lastMessage: 'Running the tests first.' },
-      { parentToolUseId: null, lastMessage: 'Tests pass.' },
+      { parentToolUseId: null, lastMessage: null },
     ]);
+  });
+
+  it("returns the open turn's latest assistant text as lastMessage, and null once the turn is closed", async () => {
+    const h = await harness('text-then-wait');
+    h.session.send('look');
+    await waitFor(() => h.session.lastMessage() === 'Looking at it.', 'message of the open turn');
+    h.session.stop();
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.session.lastMessage()).toBeNull();
+  });
+
+  it('reports null as the reason of a call in a turn where the agent wrote nothing, although an earlier turn has a message', async () => {
+    const h = await harness('silent-tool-turn');
+    h.session.send('one');
+    await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
+    h.session.send('two');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'tool row');
+    expect([h.session.context('toolu_fx_silent'), h.session.lastMessage()]).toEqual([{ parentToolUseId: null, lastMessage: null }, null]);
+  });
+
+  it('tells user-message listeners when send() delivers a message, and not when it is refused', async () => {
+    const h = await harness('multi-turn');
+    let messages = 0;
+    const stop = h.session.onUserMessage(() => {
+      messages += 1;
+    });
+    expect(() => h.session.send(' ')).toThrow(SessionError);
+    expect(messages).toBe(0);
+    h.session.send('hi');
+    expect(() => h.session.send('again')).toThrow(SessionError);
+    expect(messages).toBe(1);
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    stop();
+    h.session.send('more');
+    expect(messages).toBe(1);
   });
 
   it('is idle when no turn is open, and tells listeners once when it becomes idle again', async () => {
@@ -631,7 +705,7 @@ describe('AgentSession with the gate', () => {
     const h = await harness('crash-mid-turn');
     const ended: string[] = [];
     let exits = 0;
-    h.session.onToolEnd((toolUseId) => ended.push(toolUseId));
+    h.session.onToolResult((info) => ended.push(info.toolUseId));
     h.session.onProcessExit(() => {
       exits += 1;
     });
@@ -640,13 +714,13 @@ describe('AgentSession with the gate', () => {
     expect(ended).toEqual(['toolu_fx_crash']);
   });
 
-  it('still ends the session and tells the other listeners when a tool-end, idle or exit listener throws', async () => {
+  it('still ends the session and tells the other listeners when a tool-result, idle or exit listener throws', async () => {
     const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     onTestFinished(() => errors.mockRestore());
     const h = await harness('crash-mid-turn');
     let exits = 0;
-    h.session.onToolEnd(() => {
-      throw new Error('tool-end listener');
+    h.session.onToolResult(() => {
+      throw new Error('tool-result listener');
     });
     h.session.onIdle(() => {
       throw new Error('idle listener');
@@ -663,4 +737,450 @@ describe('AgentSession with the gate', () => {
       1, 'crashed', 'claude stopped unexpectedly (exit code 1): fatal: simulated crash',
     ]);
   });
+});
+
+const SECRET = 'canary-secret';
+
+async function canaryHarness(scenario: string, hooks: 'on' | 'off', canaryMs: number) {
+  const home = tempDir('ide-home-');
+  const root = tempDir('ide-root-');
+  const canary = new Canary();
+  const server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: [aliveRoute({ secret: SECRET, canary })] });
+  onTestFinished(() => server.close());
+  const gate: SessionGate = {
+    write: (sessionId) => ({
+      settingsPath: writeGateFiles(runDir(home), gateBase(home, root, sessionId), { url: `http://127.0.0.1:${server.port}/hook`, secret: SECRET, sessionId }).settingsPath,
+    }),
+    remove: (sessionId) => removeGateFiles(runDir(home), gateBase(home, root, sessionId)),
+    systemPrompt: () => systemPrompt(COMPONENTS),
+    canary,
+  };
+  const h = await harness(scenario, { home, root, gate, canaryMs }, { FAKE_CLAUDE_HOOKS: hooks });
+  const ping = () => fetch(`http://127.0.0.1:${server.port}/hook/alive`, {
+    method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ sessionId: h.session.sessionId() }),
+  });
+  return { ...h, ping };
+}
+
+describe('AgentSession waiting for the session-start hook', () => {
+  const userMessages = (h: Harness) => h.stdin().filter((message) => message.type === 'user');
+
+  it('holds the first message until the session-start hook has reported', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 5000);
+    h.session.send('hi');
+    await waitFor(() => h.argvs().length === 1, 'claude started');
+    expect([userMessages(h).length, h.session.state().session?.status]).toEqual([0, 'running']);
+    expect((await h.ping()).status).toBe(204);
+    await waitFor(() => userMessages(h).length === 1, 'message delivered');
+    expect(userMessages(h)[0]).toMatchObject({ message: { content: 'hi' } });
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+  });
+
+  it('delivers the message at once when the real hook of the fake claude reports', async () => {
+    const h = await canaryHarness('multi-turn', 'on', 5000);
+    h.session.send('hi');
+    await waitFor(() => userMessages(h).length === 1, 'message delivered');
+  });
+
+  it('refuses the session when the hook never reports, and writes nothing to claude', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 200);
+    h.session.send('hi');
+    await waitFor(() => h.session.state().session?.status === 'refused', 'session refused');
+    expect(texts(h.session.state().items).some((text) => text.includes('hook did not start'))).toBe(true);
+    expect(() => h.session.send('again')).toThrow(new SessionError('hook-off'));
+    expect(userMessages(h)).toEqual([]);
+  });
+
+  it('starts again after restart, when the hook reports', async () => {
+    const h = await canaryHarness('multi-turn', 'off', 5000);
+    h.session.send('hi');
+    await waitFor(() => h.session.state().session?.status === 'refused', 'session refused', 30_000);
+    await h.session.restart();
+    h.session.send('again');
+    await waitFor(() => h.argvs().length === 2, 'claude started again', 30_000);
+    await h.ping();
+    await waitFor(() => userMessages(h).length === 1, 'message delivered', 30_000);
+    expect(h.session.state().session?.status).toBe('running');
+    expect(userMessages(h)[0]).toMatchObject({ message: { content: 'again' } });
+  }, 60_000);
+});
+
+describe('AgentSession feeds for the watchdog', () => {
+  const S = '$SESSION';
+  const line = (o: object) => JSON.stringify(o);
+  const backgroundShell = (kind = 'shell') => {
+    const file = join(tempDir('ide-scenario-'), 'background-shell.jsonl');
+    writeFileSync(file, [
+      line({ fake: 'await-user' }),
+      line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+      line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: kind === 'monitor' ? 'Monitor' : 'Bash', input: { command: 'sleep 5', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
+      line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 5', is_backgrounded: true, task_type: kind === 'monitor' ? 'monitor' : 'local_bash', session_id: S }),
+      line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),
+      line({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: S }),
+      line({ fake: 'sleep', ms: 20 }),
+      line({ type: 'system', subtype: 'task_updated', task_id: 'task_sh', patch: { status: 'completed' }, session_id: S }),
+      line({ fake: 'await-user' }),
+    ].join('\n'));
+    return { FAKE_CLAUDE_SCENARIO: file };
+  };
+
+  it('reports every tool result with monotonic stamps, its status and its parent', async () => {
+    const h = await harness('async-subagent');
+    const ended: ToolEndInfo[] = [];
+    h.session.onToolResult((info) => ended.push(info));
+    const before = performance.now();
+    h.session.send('start a subagent');
+    await waitFor(() => ended.length === 2, 'both tool results');
+    const after = performance.now();
+    expect(ended.map((e) => [e.toolUseId, e.tool, e.parentToolUseId, e.status])).toEqual([
+      ['toolu_fx_agent', 'Agent', null, 'ok'],
+      ['toolu_fx_sub_write', 'Write', 'toolu_fx_agent', 'ok'],
+    ]);
+    for (const e of ended) {
+      expect(e.toolUseAt).toBeGreaterThanOrEqual(before);
+      expect(e.endedAt).toBeGreaterThanOrEqual(e.toolUseAt);
+      expect(e.endedAt).toBeLessThanOrEqual(after);
+    }
+  });
+
+  it('keeps the stored times of a tool call as dates', async () => {
+    const h = await harness('async-subagent');
+    h.session.send('start a subagent');
+    await waitFor(() => h.store.history(h.session.sessionId() as string).toolEvents.some((t) => t.toolUseId === 'toolu_fx_sub_write' && t.endedAt !== null), 'stored');
+    const stored = h.store.history(h.session.sessionId() as string).toolEvents;
+    for (const t of stored) expect(Math.abs((t.toolUseAt as number) - Date.now())).toBeLessThan(60_000);
+  });
+
+  it('reports a call cut short by a crash as unfinished', async () => {
+    const h = await harness('crash-mid-turn');
+    const ended: ToolEndInfo[] = [];
+    h.session.onToolResult((info) => ended.push(info));
+    h.session.send('go');
+    await waitFor(() => ended.length === 1, 'tool result');
+    expect(ended[0]).toMatchObject({ toolUseId: 'toolu_fx_crash', status: 'unfinished' });
+  });
+
+  it('tells when a background task ends, once, with the tool call that started it, and counts running subagents', async () => {
+    const h = await harness('async-subagent');
+    const taskEnds: string[] = [];
+    const running: number[] = [];
+    h.session.onTaskEnd((toolUseId) => taskEnds.push(toolUseId));
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) running.push(h.session.runningSubagents());
+    });
+    h.session.send('start a subagent');
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect([taskEnds, running, h.session.runningSubagents()]).toEqual([['toolu_fx_agent'], [1, 0], 0]);
+  });
+
+  it('names the running subagents by their description', async () => {
+    const h = await harness('async-subagent');
+    const names: string[][] = [];
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) names.push(h.session.runningSubagentNames());
+    });
+    h.session.send('start a subagent');
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect(names).toEqual([['Create sub.txt with hello'], []]);
+    expect(h.session.runningSubagents()).toBe(0);
+  });
+
+  it('tells when a turn closes, once per turn, and whether a turn is open', async () => {
+    const h = await harness('async-subagent');
+    const closed: boolean[] = [];
+    h.session.onTurnClosed(() => closed.push(h.session.hasOpenTurn()));
+    h.session.onTurnClosed(() => {
+      throw new Error('listener failure');
+    });
+    const opened = h.session.hasOpenTurn();
+    h.session.send('start a subagent');
+    const during = h.session.hasOpenTurn();
+    await waitFor(() => closedTurns(h).length === 2, 'agent-initiated turn closed');
+    expect([opened, during, closed.length, h.session.hasOpenTurn()]).toEqual([false, true, 2, false]);
+    expect(closed).toEqual([false, false]);
+  });
+
+  it('tells once when an interrupted turn ends with its result, and not when a crash closes the turn', async () => {
+    const interrupted = await harness('interrupt-bash');
+    const closed: string[] = [];
+    interrupted.session.onTurnClosed(() => closed.push('interrupted'));
+    interrupted.session.send('run it');
+    await waitFor(() => interrupted.session.state().items.some((item) => item.kind === 'tool'), 'tool call started');
+    interrupted.session.stop();
+    await waitFor(() => closedTurns(interrupted).length === 1, 'turn closed');
+    const crashed = await harness('crash-mid-turn');
+    crashed.session.onTurnClosed(() => closed.push('crashed'));
+    crashed.session.send('go');
+    await waitFor(() => crashed.session.state().session?.status === 'crashed', 'session crashed');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect([closed, crashed.session.state().turns[0]?.resultSubtype]).toEqual([['interrupted'], 'crashed']);
+  });
+
+  it('counts running background shell calls', async () => {
+    const h = await harness('async-subagent', {}, backgroundShell());
+    const shell: boolean[] = [];
+    const taskEnds: string[] = [];
+    h.session.onTaskEnd((toolUseId) => taskEnds.push(toolUseId));
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) shell.push(h.session.runningShell());
+    });
+    h.session.send('start a shell');
+    await waitFor(() => taskEnds.length === 1, 'shell task ended');
+    expect([shell, taskEnds, h.session.runningShell(), h.session.runningSubagents()]).toEqual([[true, false], ['toolu_sh'], false, 0]);
+  });
+
+  it('counts a running Monitor as a shell too', async () => {
+    const h = await harness('async-subagent', {}, backgroundShell('monitor'));
+    const shell: boolean[] = [];
+    h.session.onMessage((message) => {
+      if (message.type === 'session.patch' && message.patch.tasks) shell.push(h.session.runningShell());
+    });
+    h.session.send('start a monitor');
+    await waitFor(() => shell.length === 2, 'monitor task ended');
+    expect([shell, h.session.runningShell()]).toEqual([[true, false], false]);
+  });
+
+  it('stops telling a listener that unsubscribed, and tells the others when one throws', async () => {
+    const h = await harness('async-subagent');
+    const seen: string[] = [];
+    const off = h.session.onToolResult(() => seen.push('off'));
+    h.session.onToolResult(() => {
+      throw new Error('listener boom');
+    });
+    h.session.onToolResult((info) => seen.push(info.toolUseId));
+    off();
+    h.session.send('start a subagent');
+    await waitFor(() => seen.length === 2, 'results delivered');
+    expect(seen).toEqual(['toolu_fx_agent', 'toolu_fx_sub_write']);
+  });
+});
+
+describe('AgentSession notes from the watchdog', () => {
+  const userWrites = (h: Harness) => h.stdin().filter((message) => message.type === 'user');
+
+  it('prepends a queued note to the next user message and shows it as a notice, with the message text unchanged', async () => {
+    const h = await harness('multi-turn');
+    h.session.queueNote('[IDE] The user kept a.ts.');
+    h.session.send('continue please');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[IDE] The user kept a.ts.\n\ncontinue please' } }]);
+    const items = h.session.state().items;
+    expect(items.find((item) => item.kind === 'message' && item.role === 'user')).toMatchObject({ text: 'continue please' });
+    expect(items.find((item) => item.kind === 'notice')).toMatchObject({ text: '[IDE] The user kept a.ts.' });
+    h.session.send('and once more');
+    await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
+    expect(userWrites(h)[1]).toMatchObject({ message: { content: 'and once more' } });
+  });
+
+  it('keeps the queued notes when writing the message to claude fails', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    h.session.queueNote('[IDE] note');
+    const child = (h.session as unknown as { process: { write: (m: object) => void } }).process;
+    const write = child.write.bind(child);
+    child.write = () => { throw new Error('pipe closed'); };
+    expect(() => h.session.send('again')).toThrow('pipe closed');
+    child.write = write;
+    h.session.send('again');
+    await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
+    expect(userWrites(h)[1]).toMatchObject({ message: { content: '[IDE] note\n\nagain' } });
+  });
+
+  it('writes an absorbed note into the open turn without opening a turn of its own', async () => {
+    const h = await harness('interrupt-bash');
+    h.session.send('run it');
+    await waitFor(() => userWrites(h).length === 1, 'first message delivered');
+    const turnsBefore = h.session.state().turns.length;
+    h.session.sendAbsorbed('[IDE] note');
+    await waitFor(() => userWrites(h).length === 2, 'note delivered');
+    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[IDE] note' } });
+    const state = h.session.state();
+    expect(state.turns).toHaveLength(turnsBefore);
+    expect(state.items.filter((item) => item.kind === 'message' && item.role === 'user')).toHaveLength(1);
+    expect(state.items.find((item) => item.kind === 'notice')).toMatchObject({ text: 'IDE note sent to the agent' });
+  });
+
+  it('refuses an absorbed note when there is no process or no open turn', async () => {
+    const h = await harness('multi-turn');
+    expect(() => h.session.sendAbsorbed('[IDE] note')).toThrow(SessionError);
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(() => h.session.sendAbsorbed('[IDE] note')).toThrow(SessionError);
+    expect(userWrites(h)).toHaveLength(1);
+  });
+
+  it('holds an absorbed note behind the session-start hook like the first message', async () => {
+    const h = await canaryHarness('interrupt-bash', 'off', 5000);
+    h.session.send('run it');
+    await waitFor(() => h.argvs().length === 1, 'claude started');
+    h.session.sendAbsorbed('[IDE] note');
+    expect(userWrites(h)).toEqual([]);
+    await h.ping();
+    await waitFor(() => userWrites(h).length === 2, 'both delivered');
+    expect(userWrites(h).map((m) => (m.message as { content: string }).content)).toEqual(['run it', '[IDE] note']);
+  });
+});
+
+describe('AgentSession after a core crash', () => {
+  const T = (iso: string): number => Date.parse(iso);
+
+  function crashedSession(o: { status?: 'running' | 'stopped'; transcript?: string | null; unparsable?: boolean; body?: (id: string, root: string) => string; storedTool?: 'running' | 'unfinished' } = {}) {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const transcriptsDir = tempDir('ide-transcripts-');
+    const claudeSessionId = randomUUID();
+    const store = openStore(projectDir(home, root));
+    store.saveSession({
+      id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, cliVersion: null,
+      pid: null, launchId: null, conversationStarted: true, startedAt: 1,
+    });
+    store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
+    store.saveMessage('session-1', { id: 'm1', seq: 1, turnId: 'turn-1', parentToolUseId: null, role: 'assistant', text: 'I will write the config.', ts: T('2026-09-30T12:00:02.000Z') });
+    store.saveToolEvent('session-1', {
+      toolUseId: 'toolu_gap_a', seq: 2, turnId: 'turn-1', parentToolUseId: null, tool: 'Write', input: { file_path: join(root, 'config.json') },
+      status: 'ok', toolUseAt: T('2026-09-30T12:00:03.000Z'), endedAt: T('2026-09-30T12:00:04.000Z'),
+    });
+    if (o.storedTool) {
+      store.saveToolEvent('session-1', {
+        toolUseId: 'toolu_open', seq: 3, turnId: 'turn-1', parentToolUseId: null, tool: 'Bash', input: { command: 'npm test' },
+        status: o.storedTool, toolUseAt: T('2026-09-30T12:00:05.000Z'), endedAt: o.storedTool === 'running' ? null : T('2026-09-30T12:00:05.500Z'),
+      });
+    }
+    if (o.transcript !== null) {
+      const dir = join(transcriptsDir, realpathSync(root).replace(/[^A-Za-z0-9]/g, '-'));
+      mkdirSync(dir, { recursive: true });
+      const body = o.body ? o.body(claudeSessionId, root) : o.unparsable
+        ? 'torn\nalso torn\n'
+        : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', claudeSessionId).replaceAll('$CWD', root);
+      writeFileSync(join(dir, `${claudeSessionId}.jsonl`), body);
+    }
+    store.close();
+    return { home, root, transcriptsDir, claudeSessionId };
+  }
+
+  const GAP = [
+    'I will write the config.', 'Write:ok', 'Now the tests.', 'Bash:ok', 'Write:error', 'The report could not be written.', 'Read:unfinished',
+  ];
+
+  it('reports that it started from a crash only when the last session was running', async () => {
+    const crashed = crashedSession({ transcript: null });
+    const a = await harness('multi-turn', { home: crashed.home, root: crashed.root, transcriptsDir: crashed.transcriptsDir });
+    expect(a.session.startedFromCrash()).toBe(true);
+    const clean = crashedSession({ status: 'stopped', transcript: null });
+    const b = await harness('multi-turn', { home: clean.home, root: clean.root, transcriptsDir: clean.transcriptsDir });
+    expect(b.session.startedFromCrash()).toBe(false);
+    const fresh = await harness('multi-turn');
+    expect(fresh.session.startedFromCrash()).toBe(false);
+  });
+
+  it('adds the calls made in the gap after the last stored row, marked recovered, without duplicating a stored call', async () => {
+    const c = crashedSession();
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    const items = h.session.state().items;
+    expect(texts(items)).toEqual(GAP);
+    expect(items.map((item) => item.kind !== 'notice' && item.kind !== 'prompt' && item.recovered === true)).toEqual([false, false, true, true, true, true, true]);
+    expect(items.map((item) => item.seq)).toEqual([1, 2, 3, 4, 5, 6, 7]);
+    expect(items.filter((item) => item.kind === 'tool').map((item) => item.id)).toEqual(['toolu_gap_a', 'toolu_gap_b', 'toolu_gap_c', 'toolu_gap_d']);
+  });
+
+  it('adds them once: a second start of the same store adds nothing', async () => {
+    const c = crashedSession();
+    const first = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    await first.session.close();
+    const reopened = openStore(projectDir(c.home, c.root));
+    reopened.saveSession({ ...reopened.latestSession()!, status: 'running' });
+    reopened.close();
+    const second = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(second.session.startedFromCrash()).toBe(true);
+    expect(texts(second.session.state().items)).toEqual(GAP);
+  });
+
+  it('adds nothing after a clean stop', async () => {
+    const c = crashedSession({ status: 'stopped' });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(texts(h.session.state().items)).toEqual(['I will write the config.', 'Write:ok']);
+  });
+
+  it('adds one notice when the transcript is missing', async () => {
+    const c = crashedSession({ transcript: null });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(texts(h.session.state().items)).toEqual([
+      'I will write the config.', 'Write:ok', "Calls made while the core was down may be missing; claude's transcript could not be read.",
+    ]);
+  });
+
+  it('adds one notice when the transcript cannot be parsed', async () => {
+    const c = crashedSession({ unparsable: true });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(h.session.state().items.filter((item) => item.kind === 'notice')).toHaveLength(1);
+    expect(texts(h.session.state().items)).toHaveLength(3);
+  });
+
+  describe('unclean-stop marker and transcript merging', () => {
+  const assistant = (uuid: string, at: string, block: object): string =>
+    JSON.stringify({ type: 'assistant', uuid, timestamp: at, message: { role: 'assistant', content: [block] } });
+  const result = (uuid: string, at: string, id: string, isError = false): string =>
+    JSON.stringify({ type: 'user', uuid, timestamp: at, message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, content: 'x', is_error: isError }] } });
+
+  it('keeps reporting a crash until the recovery cleared the marker', async () => {
+    const c = crashedSession({ transcript: null });
+    const first = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(first.session.startedFromCrash()).toBe(true);
+    await first.session.close();
+    const second = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(second.session.state().session?.status).toBe('crashed');
+    expect(second.session.startedFromCrash()).toBe(true);
+    await second.session.close();
+    const store = openStore(projectDir(c.home, c.root));
+    store.setMeta(UNCLEAN_STOP_KEY, '');
+    store.close();
+    const third = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(third.session.startedFromCrash()).toBe(false);
+  });
+
+  it('never sets the marker after a clean stop', async () => {
+    const c = crashedSession({ status: 'stopped', transcript: null });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(h.session.startedFromCrash()).toBe(false);
+    expect(h.store.meta(UNCLEAN_STOP_KEY)).toBeNull();
+  });
+
+  it('does not drop a legitimately repeated short text', async () => {
+    const c = crashedSession({
+      body: () => [
+        assistant('x1', '2026-09-30T12:00:02.000Z', { type: 'text', text: 'I will write the config.' }),
+        assistant('x2', '2026-09-30T12:00:06.000Z', { type: 'text', text: 'I will write the config.' }),
+      ].join('\n'),
+    });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    expect(texts(h.session.state().items)).toEqual(['I will write the config.', 'Write:ok', 'I will write the config.']);
+  });
+
+  it('leaves a stored finished call as it is when the transcript shows it again a moment later', async () => {
+    const c = crashedSession({
+      body: () => [
+        assistant('z1', '2026-09-30T12:00:06.000Z', { type: 'tool_use', id: 'toolu_gap_a', name: 'Write', input: {} }),
+        result('z2', '2026-09-30T12:00:07.000Z', 'toolu_gap_a', true),
+      ].join('\n'),
+    });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    const tools = h.session.state().items.filter((item) => item.kind === 'tool');
+    expect(tools.map((t) => [t.id, t.status, t.seq, t.recovered])).toEqual([['toolu_gap_a', 'ok', 2, undefined]]);
+  });
+
+  it.each(['running', 'unfinished'] as const)('updates a stored %s call whose result arrived in the gap, without a second row', async (storedTool) => {
+    const c = crashedSession({
+      storedTool,
+      body: () => [
+        assistant('y1', '2026-09-30T12:00:05.000Z', { type: 'tool_use', id: 'toolu_open', name: 'Bash', input: { command: 'npm test' } }),
+        result('y2', '2026-09-30T12:00:08.000Z', 'toolu_open', true),
+      ].join('\n'),
+    });
+    const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
+    const tools = h.session.state().items.filter((item) => item.kind === 'tool');
+    expect(tools.map((t) => [t.id, t.status, t.seq])).toEqual([['toolu_gap_a', 'ok', 2], ['toolu_open', 'error', 3]]);
+    expect(tools[1]).toMatchObject({ endedAt: Date.parse('2026-09-30T12:00:08.000Z') });
+  });
+});
 });

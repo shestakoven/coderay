@@ -1,4 +1,5 @@
 import { posix } from 'node:path';
+import { globMatches } from '../gate/scope';
 import { accepts, type EmbeddingRule } from './embedding-check';
 import type { AiComponent } from './map-file';
 import { isTestPath, testSubject } from './test-files';
@@ -131,7 +132,7 @@ const GLOB_META = /[*?[\]{}!]/;
 function ownsPath(path: string, glob: string): boolean {
   if (glob === '**') return true;
   if (glob.endsWith('/**') && !GLOB_META.test(glob.slice(0, -3))) return path.startsWith(glob.slice(0, -2));
-  return posix.matchesGlob(path, glob);
+  return globMatches(path, glob);
 }
 
 function membersOf(owner: ReadonlyMap<string, string>, ids: ReadonlySet<string>): Pick<AiComponent, 'id' | 'files'>[] {

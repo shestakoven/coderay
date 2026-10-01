@@ -1,4 +1,4 @@
-import { BodyError, isAgentRequest, readJsonBody } from '../server/agent-http';
+import { BodyError, isAgentRequest, readJsonBody, requireSecret } from '../server/agent-http';
 import type { HttpRoute } from '../server/server';
 import type { HookAnswer, HookGate } from './hook-gate';
 
@@ -6,6 +6,7 @@ const MAX_HOOK_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_FAILED: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' };
 
 export function hookRoute(options: { secret: string; gate: HookGate }): HttpRoute {
+  requireSecret(options.secret);
   return {
     path: '/hook',
     handle(req, res) {

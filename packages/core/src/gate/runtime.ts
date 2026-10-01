@@ -3,6 +3,7 @@ import { basename } from 'node:path';
 import type { McpEntry, Policy } from '@ide/protocol';
 import type { AgentSession, SessionGate } from '../agent/agent-session';
 import { systemPrompt } from '../agent/system-prompt';
+import { requireSecret } from '../server/agent-http';
 import { removeGateFiles, writeGateFiles } from '../hook/gate-files';
 import { projectDir, runDir } from '../home';
 import { idecoreRoute } from '../idecore/mcp-server';
@@ -11,7 +12,9 @@ import type { ComponentRef } from '../plans/plan-input';
 import { PlanService } from '../plans/plan-service';
 import type { HttpRoute } from '../server/server';
 import type { Store } from '../store/store';
+import { aliveRoute, Canary } from './canary';
 import { HookGate } from './hook-gate';
+import type { Hold } from './hold';
 import { hookRoute } from './hook-route';
 
 export const IDECORE_TIMEOUT_MS = 3_600_000;
@@ -27,6 +30,7 @@ export interface GateRuntimeOptions {
   userHome?: string;
   tempRoots?: string[];
   holdMs?: number;
+  hold?: Hold;
   planDeadlineMs?: number;
   hookDeadlineMs?: number;
 }
@@ -34,6 +38,7 @@ export interface GateRuntimeOptions {
 export interface GateRuntime {
   plans: PlanService;
   gate: HookGate;
+  canary: Canary;
   routes: HttpRoute[];
   mcpEntry(): McpEntry;
   sessionGate: SessionGate;
@@ -43,6 +48,8 @@ export interface GateRuntime {
 
 export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
   const secret = options.secret ?? randomBytes(24).toString('base64url');
+  requireSecret(secret);
+  const canary = new Canary();
   let session: AgentSession | null = null;
   const sessionId = () => session?.sessionId() ?? null;
   const plans = new PlanService({
@@ -66,6 +73,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     home: options.userHome,
     tempRoots: options.tempRoots,
     holdMs: options.holdMs,
+    hold: options.hold,
   });
   const idecore = idecoreRoute({ secret, plans });
   const url = (path: string) => `http://127.0.0.1:${options.port()}${path}`;
@@ -73,17 +81,21 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
   return {
     plans,
     gate,
-    routes: [idecore, hookRoute({ secret, gate })],
+    canary,
+    routes: [idecore, hookRoute({ secret, gate }), aliveRoute({ secret, canary })],
     mcpEntry: () => ({ type: 'http', url: url('/mcp'), headers: { Authorization: `Bearer ${secret}` }, timeout: IDECORE_TIMEOUT_MS }),
     sessionGate: {
-      write: (id) => ({ settingsPath: writeGateFiles(runDir(options.home), base(id), { url: url('/hook'), secret, deadlineMs: options.hookDeadlineMs }).settingsPath }),
+      write: (id) => ({ settingsPath: writeGateFiles(runDir(options.home), base(id), { url: url('/hook'), secret, sessionId: id, deadlineMs: options.hookDeadlineMs }).settingsPath }),
       remove: (id) => removeGateFiles(runDir(options.home), base(id)),
       systemPrompt: () => systemPrompt(options.components()),
+      canary,
     },
     attach(agent) {
       session = agent;
       gate.onDecision((record) => agent.recordDecision(record));
-      agent.onToolEnd((toolUseId) => gate.dropForTool(toolUseId));
+      agent.onUserMessage(() => plans.userMessage());
+      // An ok result means the call ran without the hook's answer: a fail-open, which is not a denial.
+      agent.onToolResult((info) => gate.dropForTool(info.toolUseId, { record: info.status !== 'ok' }));
       agent.onProcessExit(() => plans.withdrawPending("The agent's process ended while the plan waited for an answer."));
       agent.onProcessExit(() => gate.dropAll());
     },

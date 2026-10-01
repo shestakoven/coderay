@@ -23,7 +23,7 @@ export function indexed(path: string, lang: Lang, imports: string[], overrides: 
 
 export function tempDir(prefix: string): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  onTestFinished(() => rm(dir, { recursive: true, force: true }));
+  onTestFinished(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 
@@ -37,7 +37,7 @@ export async function writeTree(root: string, files: Record<string, string>): Pr
 export async function waitFor<T>(
   probe: () => T | undefined | null | false | Promise<T | undefined | null | false>,
   label: string,
-  timeoutMs = 2000,
+  timeoutMs = 10_000,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {

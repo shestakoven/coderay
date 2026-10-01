@@ -4,6 +4,8 @@ import { basename, join } from 'node:path';
 import type {
   ChatItem, McpServerState, PromptAnswer, PromptBody, SessionPatch, SessionServerMessage, SessionState, SessionView, TaskView, TurnView,
 } from '@ide/protocol';
+import { CANARY_MS } from '../gate/canary';
+import { defaultTranscriptsDir, largest, recoverTranscript, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
@@ -11,7 +13,7 @@ import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, typ
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { parseStreamLine, type StreamEvent } from './stream';
 import { DISALLOWED_TOOLS, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
-import { TurnTracker, type Change } from './tracker';
+import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
 export type McpServers = Record<string, object>;
 
@@ -19,6 +21,7 @@ export interface SessionGate {
   write(sessionId: string): { settingsPath: string };
   remove(sessionId: string): void;
   systemPrompt(): string;
+  canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
 }
 
 export interface AgentSessionOptions {
@@ -29,7 +32,14 @@ export interface AgentSessionOptions {
   mcpServers?: () => McpServers;
   killGraceMs?: number;
   gate?: SessionGate;
+  canaryMs?: number;
+  transcriptsDir?: string;
 }
+
+const HOOK_OFF_NOTICE =
+  "The IDE's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
+
+const GAP_NOTICE = "Calls made while the core was down may be missing; claude's transcript could not be read.";
 
 const SESSION_ERRORS = {
   'turn-open': 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.',
@@ -38,6 +48,8 @@ const SESSION_ERRORS = {
   'prompt-gone': 'That question is no longer waiting for an answer.',
   'bad-answer': 'That answer does not fit the question.',
   'no-gate': 'The IDE could not prepare the hook settings for claude, so the agent was not started.',
+  'hook-off': HOOK_OFF_NOTICE,
+  'no-turn': 'The agent has no open turn to add a note to.',
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -71,7 +83,13 @@ export class AgentSession {
   private readonly decisions = new Map<string, ToolDecisionRecord>();
   private readonly idleListeners = new Set<() => void>();
   private readonly exitListeners = new Set<() => void>();
-  private readonly toolEndListeners = new Set<(toolUseId: string) => void>();
+  private readonly userMessageListeners = new Set<() => void>();
+  private readonly toolResultListeners = new Set<(info: ToolEndInfo) => void>();
+  private readonly taskEndListeners = new Set<(toolUseId: string) => void>();
+  private readonly turnClosedListeners = new Set<() => void>();
+  private readonly interruptListeners = new Set<() => void>();
+  private readonly newSessionListeners = new Set<() => void>();
+  private started = false;
   private session: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
@@ -84,6 +102,11 @@ export class AgentSession {
   private terminating = false;
   private versionChecked = false;
   private idle = true;
+  private hookReady = true;
+  private refused = false;
+  private pendingSends: string[] = [];
+  private notes: string[] = [];
+  private crashed = false;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -94,17 +117,96 @@ export class AgentSession {
     return () => this.listeners.delete(listener);
   }
 
+  hasStarted(): boolean {
+    return this.started;
+  }
+
+  onNewSession(listener: () => void): () => boolean {
+    this.newSessionListeners.add(listener);
+    return () => this.newSessionListeners.delete(listener);
+  }
+
+  toolStamp(toolUseId: string): { planId: string; planVersion: number; stepKey: string | null } | null {
+    const decision = this.decisions.get(toolUseId);
+    if (!decision || decision.planId === null || decision.planVersion === null) return null;
+    return { planId: decision.planId, planVersion: decision.planVersion, stepKey: decision.stepKey };
+  }
+
   async start(): Promise<void> {
+    try {
+      await this.loadLatest();
+    } finally {
+      this.started = true;
+    }
+  }
+
+  private async loadLatest(): Promise<void> {
     const latest = this.options.store.latestSession();
     if (!latest || latest.status === 'ended') return;
+    if (latest.status === 'running') this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    this.crashed = this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
     if (latest.status === 'running') {
       await stopStale(latest, this.options.killGraceMs ?? KILL_GRACE_MS);
       rmSync(this.configPath(latest.id), { force: true });
       this.options.gate?.remove(latest.id);
     }
+    const gap = latest.status === 'running' ? await this.recoverChat(latest) : null;
     this.load(latest);
     this.apply(this.tracker.processExited());
+    for (const id of gap?.ids ?? []) {
+      const item = this.items.get(id);
+      if (item?.kind === 'message' || item?.kind === 'tool') this.items.set(id, { ...item, recovered: true });
+    }
+    if (gap?.unreadable) this.apply(this.tracker.notice(GAP_NOTICE));
     if (latest.status === 'running') this.update({ status: 'crashed', pid: null, launchId: null });
+  }
+
+  startedFromCrash(): boolean {
+    return this.crashed;
+  }
+
+  private async recoverChat(session: SessionRecord): Promise<{ ids: string[]; unreadable: boolean }> {
+    const { store } = this.options;
+    try {
+      const history = store.history(session.id);
+      const since = largest([
+        ...history.messages.map((m) => m.ts),
+        ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
+      ]);
+      const recovered = await recoverTranscript({
+        claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.options.transcriptsDir ?? defaultTranscriptsDir(),
+      });
+      if (recovered.unreadable) return { ids: [], unreadable: true };
+      const messageIds = new Set(history.messages.map((m) => m.id));
+      const storedTools = new Map(history.toolEvents.map((t) => [t.toolUseId, t]));
+      let seq = largest([...history.messages.map((m) => m.seq), ...history.toolEvents.map((t) => t.seq), ...history.prompts.map((p) => p.seq)]);
+      const ids: string[] = [];
+      for (const item of recovered.items) {
+        if (item.kind === 'message') {
+          if (messageIds.has(item.id)) continue;
+          seq += 1;
+          store.saveMessage(session.id, { id: item.id, seq, turnId: null, parentToolUseId: null, role: 'assistant', text: item.text, ts: item.ts });
+          ids.push(item.id);
+          continue;
+        }
+        const stored = storedTools.get(item.toolUseId);
+        if (stored) {
+          const open = stored.status === 'running' || stored.status === 'unfinished';
+          if (open && (item.status === 'ok' || item.status === 'error')) store.saveToolEvent(session.id, { ...stored, status: item.status, endedAt: item.endedAt });
+          continue;
+        }
+        seq += 1;
+        store.saveToolEvent(session.id, {
+          toolUseId: item.toolUseId, seq, turnId: null, parentToolUseId: null, tool: item.tool, input: item.input,
+          status: item.status, toolUseAt: item.toolUseAt, endedAt: item.endedAt,
+        });
+        ids.push(item.toolUseId);
+      }
+      return { ids, unreadable: false };
+    } catch (error) {
+      console.error('agent: could not recover the chat from claude\'s transcript', error);
+      return { ids: [], unreadable: true };
+    }
   }
 
   state(): SessionState {
@@ -135,9 +237,59 @@ export class AgentSession {
     return () => this.exitListeners.delete(listener);
   }
 
-  onToolEnd(listener: (toolUseId: string) => void): () => void {
-    this.toolEndListeners.add(listener);
-    return () => this.toolEndListeners.delete(listener);
+  onToolResult(listener: (info: ToolEndInfo) => void): () => void {
+    this.toolResultListeners.add(listener);
+    return () => this.toolResultListeners.delete(listener);
+  }
+
+  onTaskEnd(listener: (toolUseId: string) => void): () => void {
+    this.taskEndListeners.add(listener);
+    return () => this.taskEndListeners.delete(listener);
+  }
+
+  hasOpenTurn(): boolean {
+    return this.tracker.hasOpenTurn();
+  }
+
+  processAlive(): boolean {
+    return this.process !== null;
+  }
+
+  onInterrupt(listener: () => void): () => boolean {
+    this.interruptListeners.add(listener);
+    return () => this.interruptListeners.delete(listener);
+  }
+
+  hasLiveTask(toolUseId: string): boolean {
+    return [...this.tasks.values()].some((task) => task.toolUseId === toolUseId && task.endedAt === null);
+  }
+
+  toolInfo(toolUseId: string): { tool: string; summary: string; stepKey: string | null } | undefined {
+    const item = this.items.get(toolUseId);
+    if (item?.kind !== 'tool') return undefined;
+    return { tool: item.tool, summary: item.summary, stepKey: this.decisions.get(toolUseId)?.stepKey ?? null };
+  }
+
+  onTurnClosed(listener: () => void): () => boolean {
+    this.turnClosedListeners.add(listener);
+    return () => this.turnClosedListeners.delete(listener);
+  }
+
+  runningSubagents(): number {
+    return this.openTasks('subagent');
+  }
+
+  runningSubagentNames(): string[] {
+    return [...this.tasks.values()].filter((task) => task.kind === 'subagent' && task.endedAt === null).map((task) => task.description);
+  }
+
+  runningShell(): boolean {
+    return this.openTasks('shell') + this.openTasks('monitor') > 0;
+  }
+
+  onUserMessage(listener: () => void): () => void {
+    this.userMessageListeners.add(listener);
+    return () => this.userMessageListeners.delete(listener);
   }
 
   recordDecision(record: ToolDecisionRecord): void {
@@ -152,30 +304,74 @@ export class AgentSession {
     this.emit({ type: 'session.patch', patch: { items: [updated] } });
   }
 
-  context(toolUseId: string): { parentToolUseId: string | null; lastMessage: string | null } {
-    const items = [...this.items.values()].sort((a, b) => a.seq - b.seq);
-    const tool = this.items.get(toolUseId);
-    const parentToolUseId = tool?.kind === 'tool' ? tool.parentToolUseId : null;
-    const before = tool ? items.filter((item) => item.seq < tool.seq && item.parentToolUseId === parentToolUseId) : items;
-    const message = before.findLast((item) => item.kind === 'message' && item.role === 'assistant');
-    return { parentToolUseId, lastMessage: message?.kind === 'message' ? message.text : null };
+  lastMessage(): string | null {
+    const open = new Set([...this.turns.values()].filter((turn) => turn.closedAt === null).map((turn) => turn.id));
+    return this.assistantText([...this.items.values()].filter((item) => item.turnId !== null && open.has(item.turnId)));
   }
 
-  send(text: string): void {
+  context(toolUseId: string): { parentToolUseId: string | null; lastMessage: string | null } {
+    const tool = this.items.get(toolUseId);
+    if (tool?.kind !== 'tool') return { parentToolUseId: null, lastMessage: this.lastMessage() };
+    const before = [...this.items.values()].filter((item) => item.seq < tool.seq && item.turnId === tool.turnId && item.parentToolUseId === tool.parentToolUseId);
+    return { parentToolUseId: tool.parentToolUseId, lastMessage: this.assistantText(before) };
+  }
+
+  private assistantText(items: ChatItem[]): string | null {
+    const message = items.sort((a, b) => a.seq - b.seq).findLast((item) => item.kind === 'message' && item.role === 'assistant');
+    return message?.kind === 'message' ? message.text : null;
+  }
+
+  send(text: string, options: { fromUser?: boolean } = {}): void {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
+    if (this.refused) throw new SessionError('hook-off');
     if (this.tracker.hasOpenTurn()) throw new SessionError('turn-open');
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
     if (!this.process) throw new SessionError('no-gate');
-    this.process?.write({ type: 'user', message: { role: 'user', content: text } });
+    if (options.fromUser !== false) notify(this.userMessageListeners);
+    const notes = this.notes.splice(0);
+    const payload = [...notes, text].join('\n\n');
+    try {
+      if (this.hookReady) this.process.write(userMessage(payload));
+      else this.pendingSends.push(payload);
+    } catch (error) {
+      this.notes.unshift(...notes);
+      throw error;
+    }
     this.apply(this.tracker.userMessage(text));
+    for (const note of notes) this.apply(this.tracker.notice(note));
+  }
+
+  notice(text: string): void {
+    this.apply(this.tracker.notice(text));
+  }
+
+  queueNote(text: string): void {
+    if (text.trim() === '') throw new SessionError('empty');
+    this.notes.push(text);
+  }
+
+  sendAbsorbed(text: string): void {
+    if (text.trim() === '') throw new SessionError('empty');
+    if (this.terminating) throw new SessionError('restarting');
+    if (this.refused) throw new SessionError('hook-off');
+    if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
+    if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
+    if (this.hookReady) this.process.write(userMessage(text));
+    else this.pendingSends.push(text);
+    this.apply(this.tracker.notice('IDE note sent to the agent'));
   }
 
   stop(): boolean {
     if (!this.process || !this.tracker.canInterrupt()) return false;
     this.process.write({ type: 'control_request', request_id: `interrupt-${randomUUID()}`, request: { subtype: 'interrupt' } });
+    notify(this.interruptListeners);
     return true;
+  }
+
+  interrupt(): boolean {
+    return this.stop();
   }
 
   answerPrompt(requestId: string, answer: PromptAnswer): void {
@@ -193,15 +389,39 @@ export class AgentSession {
 
   async restart(): Promise<void> {
     await this.terminate('restart');
+    this.clearRefusal();
   }
 
   async newSession(): Promise<void> {
     await this.terminate('new');
+    this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
+    this.notes = [];
+    notify(this.newSessionListeners);
     this.reset(null);
   }
 
   async close(): Promise<void> {
+    await this.terminate('close');
+  }
+
+  private clearRefusal(): void {
+    if (!this.refused) return;
+    this.refused = false;
+    if (this.session?.status === 'refused') this.update({ status: 'stopped' });
+  }
+
+  private async awaitCanary(child: ClaudeProcess, sessionId: string, canary: NonNullable<SessionGate['canary']>): Promise<void> {
+    const reported = await canary.wait(sessionId, this.options.canaryMs ?? CANARY_MS);
+    if (this.process !== child) return;
+    if (reported) {
+      this.hookReady = true;
+      for (const text of this.pendingSends.splice(0)) child.write(userMessage(text));
+      return;
+    }
+    this.pendingSends = [];
+    this.refused = true;
+    this.apply(this.tracker.notice(HOOK_OFF_NOTICE));
     await this.terminate('close');
   }
 
@@ -278,6 +498,13 @@ export class AgentSession {
     this.exitReason = null;
     this.versionChecked = false;
     this.update({ status: 'running', pid: child.pid ?? null, launchId: session.claudeSessionId });
+    const canary = this.options.gate?.canary;
+    this.hookReady = canary === undefined;
+    this.pendingSends = [];
+    if (canary) {
+      canary.expect(session.id);
+      void this.awaitCanary(child, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
+    }
     void child.exited.then((exit) => this.onExit(child, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 
@@ -337,7 +564,8 @@ export class AgentSession {
     const reason = this.exitReason;
     this.apply(this.tracker.processExited());
     if (reason === null) this.apply(this.tracker.notice(crashNotice(exit)));
-    this.update({ status: reason === null ? 'crashed' : reason === 'new' ? 'ended' : 'stopped', pid: null, launchId: null });
+    const status = reason === null ? 'crashed' : reason === 'new' ? 'ended' : this.refused ? 'refused' : 'stopped';
+    this.update({ status, pid: null, launchId: null });
     notify(this.exitListeners);
   }
 
@@ -363,9 +591,13 @@ export class AgentSession {
     const store = this.options.store;
     const patch: SessionPatch = {};
     const ended: string[] = [];
+    const endedTasks: string[] = [];
+    let turnClosed = false;
     for (const change of changes) {
       if (change.kind === 'turn') {
         this.persist(() => store.saveTurn(session.id, change.turn));
+        const before = this.turns.get(change.turn.id);
+        if (change.turn.closedAt !== null && change.turn.resultSubtype !== 'crashed' && (before === undefined || before.closedAt === null)) turnClosed = true;
         this.turns.set(change.turn.id, change.turn);
         (patch.turns ??= []).push(change.turn);
       } else if (change.kind === 'message') {
@@ -381,6 +613,7 @@ export class AgentSession {
         if (change.tool.endedAt !== null) ended.push(change.tool.toolUseId);
       } else if (change.kind === 'task') {
         this.persist(() => store.saveTask(session.id, change.task));
+        if (change.task.endedAt !== null && change.task.toolUseId !== null && this.tasks.get(change.task.id)?.endedAt === null) endedTasks.push(change.task.toolUseId);
         this.tasks.set(change.task.id, change.task);
         (patch.tasks ??= []).push(change.task);
       } else if (change.kind === 'prompt') {
@@ -408,8 +641,17 @@ export class AgentSession {
       }
     }
     this.emit({ type: 'session.patch', patch });
-    for (const toolUseId of ended) notify(this.toolEndListeners, toolUseId);
+    for (const toolUseId of ended) {
+      const info = this.tracker.endInfo(toolUseId);
+      if (info) notify(this.toolResultListeners, info);
+    }
+    for (const toolUseId of endedTasks) notify(this.taskEndListeners, toolUseId);
+    if (turnClosed) notify(this.turnClosedListeners);
     this.checkIdle();
+  }
+
+  private openTasks(kind: TaskView['kind']): number {
+    return [...this.tasks.values()].filter((task) => task.kind === kind && task.endedAt === null).length;
   }
 
   private checkIdle(): void {
@@ -443,6 +685,10 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
       console.error('agent: a session listener threw', error);
     }
   }
+}
+
+function userMessage(text: string): object {
+  return { type: 'user', message: { role: 'user', content: text } };
 }
 
 function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {

@@ -218,4 +218,67 @@ describe('TurnTracker', () => {
   it('continues sequence numbers after restored history', () => {
     expect(fold(tracker({ nextSeq: 41 }).userMessage('next')).messages[0]?.seq).toBe(41);
   });
+
+  describe('monotonic tool stamps', () => {
+    const stamped = () => {
+      let mono = 100;
+      return { t: tracker({ mono: () => (mono += 10) }), tick: (value: number) => { mono = value; } };
+    };
+
+    it('reports a finished call with the monotonic stamps of its tool_use and its result, and keeps the stored dates', () => {
+      const { t, tick } = stamped();
+      run(t, ['go', init]);
+      tick(500);
+      const { tools } = run(t, [toolUse('a', 'Write', 'p1')]);
+      tick(900);
+      const done = run(t, [toolResult('a')]);
+      expect(t.endInfo('a')).toEqual({ toolUseId: 'a', tool: 'Write', parentToolUseId: 'p1', status: 'ok', toolUseAt: 510, endedAt: 910 });
+      expect(tools.map((tool) => [tool.toolUseAt, tool.endedAt])).toEqual([[1000, null]]);
+      expect(done.tools.map((tool) => [tool.toolUseAt, tool.endedAt])).toEqual([[1000, 1000]]);
+    });
+
+    it('hands a finished call over once', () => {
+      const { t } = stamped();
+      run(t, ['go', init, toolUse('a'), toolResult('a')]);
+      expect(t.endInfo('a')).not.toBeNull();
+      expect(t.endInfo('a')).toBeNull();
+    });
+
+    it.each([
+      ['an error', toolResult('a', 'boom', true), 'error'],
+      ['a rejection', toolResult('a', "The user doesn't want to proceed with this tool use. The tool use was rejected"), 'rejected'],
+    ] as const)('reports %s with its status', (_name, event, status) => {
+      const { t } = stamped();
+      run(t, ['go', init, toolUse('a'), event]);
+      expect(t.endInfo('a')?.status).toBe(status);
+    });
+
+    it('reports a call closed with its turn as unfinished, and one closed by a crash', () => {
+      const { t } = stamped();
+      run(t, ['go', init, toolUse('a'), toolUse('b'), result()]);
+      expect([t.endInfo('a')?.status, t.endInfo('b')?.status]).toEqual(['unfinished', 'unfinished']);
+      run(t, ['again', init, toolUse('c')]);
+      t.processExited();
+      expect(t.endInfo('c')?.status).toBe('unfinished');
+    });
+
+    it('reports a subagent call closed by its task ending', () => {
+      const { t } = stamped();
+      run(t, ['go', init, toolUse('agent', 'Agent'), taskStarted('task1', 'agent'), toolResult('agent'), result(), toolUse('inner', 'Bash', 'agent'),
+        { type: 'task_updated', taskId: 'task1', status: 'killed' }]);
+      expect(t.endInfo('inner')).toMatchObject({ status: 'unfinished', parentToolUseId: 'agent' });
+    });
+
+    it('knows nothing of a call that never ended, and stamps a restored call by its end alone', () => {
+      const { t } = stamped();
+      run(t, ['go', init, toolUse('a')]);
+      expect(t.endInfo('a')).toBeNull();
+      const restored = tracker({
+        mono: () => 777,
+        open: { turns: [], tasks: [], prompts: [], tools: [{ toolUseId: 'r', seq: 1, turnId: null, parentToolUseId: null, tool: 'Bash', input: {}, status: 'running', toolUseAt: 1, endedAt: null }] },
+      });
+      restored.processExited();
+      expect(restored.endInfo('r')).toMatchObject({ toolUseAt: 777, endedAt: 777 });
+    });
+  });
 });

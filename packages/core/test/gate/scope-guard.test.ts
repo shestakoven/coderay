@@ -5,7 +5,7 @@ import { decide, type ClassifiedTarget, type PlanGate, type TargetKind } from '.
 import { toolClass } from '../../src/gate/tools';
 
 function target(kind: TargetKind, rel: string | null, extra: Partial<ClassifiedTarget> = {}): ClassifiedTarget {
-  return { raw: rel ?? 'x', kind, rel, abs: rel ? `/p/${rel}` : '/elsewhere/x', dir: false, mkdir: false, exists: true, guarded: false, why: kind, ...extra };
+  return { raw: rel ?? 'x', kind, rel, abs: rel ? `/p/${rel}` : '/elsewhere/x', dir: false, mkdir: false, deleting: false, exists: true, guarded: false, why: kind, ...extra };
 }
 
 const approved = (activeStep: string | null = 'edit'): PlanGate => ({
@@ -80,6 +80,33 @@ describe('decide', () => {
     expect([decision.outcome, decision.outOfScope.map((t) => t.rel)]).toEqual(['deny', ['packages']]);
   });
 
+  it('a modify target does not allow rm: mode A denies, mode B asks; a delete target allows it', () => {
+    const scope = { paths: ['src/app.ts', 'src/old.ts'], globs: [], deletes: { paths: ['src/old.ts'], globs: [] } };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit' };
+    const removal = (rel: string) => target('enforced', rel, { deleting: true });
+    expect(['A', 'B'].map((mode) => run('Bash', [removal('src/app.ts')], gate, mode as ControlMode).outcome)).toEqual(['deny', 'ask']);
+    expect(run('Bash', [removal('src/old.ts')], gate).outcome).toBe('allow');
+  });
+
+  it('mv a b needs a delete for a and a write for b', () => {
+    const scope = { paths: ['src/a.ts', 'src/b.ts'], globs: [], deletes: { paths: ['src/a.ts'], globs: [] } };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit' };
+    const move = (from: string, to: string) => [target('enforced', from, { deleting: true }), target('enforced', to)];
+    expect(run('Bash', move('src/a.ts', 'src/b.ts'), gate).outcome).toBe('allow');
+    expect(run('Bash', move('src/b.ts', 'src/a.ts'), gate).outcome).toBe('ask');
+  });
+
+  it('a Write to an existing path is never a delete', () => {
+    const scope = { paths: ['src/app.ts'], globs: [], deletes: { paths: [], globs: [] } };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit' };
+    expect(run('Write', [target('enforced', 'src/app.ts')], gate).outcome).toBe('allow');
+  });
+
+  it('an old scope without deletes still allows the delete', () => {
+    const removal = target('enforced', 'src/app.ts', { deleting: true });
+    expect(run('Bash', [removal]).outcome).toBe('allow');
+  });
+
   it('counts a git work-tree rewrite in scope only when the whole tree is', () => {
     expect(run('Bash', [target('all-tracked', null)]).outcome).toBe('ask');
     const whole: PlanGate = { state: 'approved', planId: 'plan-1', version: 2, scope: { paths: [], globs: ['**'] }, activeStep: 'edit' };
@@ -88,6 +115,14 @@ describe('decide', () => {
 
   it('follows the control mode for an unknown tool even without a plan', () => {
     expect(['A', 'B', 'C'].map((mode) => run('BrandNewTool', [], { state: 'none' }, mode as ControlMode).outcome)).toEqual(['deny', 'ask', 'flag']);
+  });
+
+  it('says no component owns the directory for a new file in a directory the map does not own', () => {
+    const fresh = target('enforced', 'src/notes.md', { exists: false, unowned: true });
+    for (const mode of ['A', 'B'] as const) {
+      expect(run('Write', [fresh], approved(), mode).reason).toContain('no component owns this directory; name the file in a step, or expand the plan');
+    }
+    expect(run('Write', [target('enforced', 'src/notes.md', { exists: false })]).reason).not.toContain('no component owns');
   });
 
   it('lists at most five targets in a reason', () => {

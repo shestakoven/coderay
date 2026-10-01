@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Policy } from '@ide/protocol';
@@ -168,6 +168,18 @@ describe('classifyPaths', () => {
       [join(home, '.claude/plans'), 'temp', 'allowed outside the project'],
       [join(home, '.claude/projects/-work-app/memory/m.md'), 'temp', 'allowed outside the project'],
       [join(home, '.claude/settings.json'), 'outside', 'outside the project'],
+    ]);
+  });
+
+  it('matches the default plans directory of a symlinked home by the real path of the target', async () => {
+    const root = await project();
+    const realHome = realpathSync(tempDir('ide-real-home-'));
+    const linkHome = join(tempDir('ide-link-home-'), 'home');
+    symlinkSync(realHome, linkHome);
+    mkdirSync(join(realHome, '.claude/plans'), { recursive: true });
+    expect(await classes(root, [join(realHome, '.claude/plans/p.md'), join(realHome, '.claude/settings.json')], { home: linkHome })).toEqual([
+      [join(realHome, '.claude/plans/p.md'), 'temp', 'allowed outside the project'],
+      [join(realHome, '.claude/settings.json'), 'outside', 'outside the project'],
     ]);
   });
 

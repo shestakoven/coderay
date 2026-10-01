@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { execFileSync, spawn } from 'node:child_process';
-import { appendFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
@@ -33,11 +34,15 @@ const answers = [];
 const openToolUses = new Set();
 const foregroundTasks = new Map();
 const backgroundAgents = new Map();
+const backgroundShells = new Map();
 let pendingRequest = null;
 let running = null;
 let keepRunning = false;
 let interrupt = null;
 let inTurn = false;
+let lastAnswer = 'allow';
+let ignoringSigterm = false;
+let reapHooked = false;
 let wake = () => {};
 
 record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null });
@@ -53,6 +58,7 @@ createInterface({ input: process.stdin })
         interrupt = message.request_id;
         running?.kill();
       } else {
+        killAgents();
         emit(interruptAnswer(message.request_id));
       }
     } else if (message.type === 'control_request') {
@@ -60,9 +66,35 @@ createInterface({ input: process.stdin })
     }
     wake();
   })
-  .on('close', () => {
-    if (!keepRunning) process.exit(0);
+  .on('close', async () => {
+    if (keepRunning) return;
+    await reapShells();
+    process.exit(0);
   });
+
+// Real claude does not orphan its background tasks; interrupts never call this (c6, c7).
+async function reapShells() {
+  const live = [...backgroundShells.values()].filter((shell) => !shell.exited);
+  const signalGroups = (signal) => {
+    for (const shell of live) {
+      try {
+        process.kill(-shell.pid, signal);
+      } catch {}
+    }
+  };
+  signalGroups('SIGTERM');
+  await new Promise((resolve) => {
+    const timer = setTimeout(resolve, 300);
+    const check = setInterval(() => {
+      if (live.every((shell) => shell.exited)) {
+        clearTimeout(timer);
+        resolve();
+      }
+    }, 20);
+    setTimeout(() => clearInterval(check), 400).unref();
+  });
+  signalGroups('SIGKILL');
+}
 
 function waitUntil(ready, ms) {
   return new Promise((resolve) => {
@@ -96,12 +128,16 @@ function track(event) {
   if (event.type === 'control_request') pendingRequest = event.request_id;
 }
 
-function abortTurn(from) {
+function killAgents() {
   for (const task of backgroundAgents.values()) {
     emit({ type: 'system', subtype: 'task_updated', task_id: task.task_id, patch: { status: 'killed' }, session_id: sessionId });
     emit({ type: 'system', subtype: 'task_notification', task_id: task.task_id, tool_use_id: task.tool_use_id, status: 'stopped', summary: task.description, session_id: sessionId });
   }
   backgroundAgents.clear();
+}
+
+function abortTurn(from) {
+  killAgents();
   if (pendingRequest !== null) emit({ type: 'control_cancel_request', request_id: pendingRequest });
   pendingRequest = null;
   emit(interruptAnswer(interrupt));
@@ -121,14 +157,14 @@ function abortTurn(from) {
   return next === -1 ? steps.length : next;
 }
 
-function finishTool(id, content, isError) {
-  const result = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content }] }, parent_tool_use_id: null, session_id: sessionId };
+function finishTool(id, content, isError, parent = null) {
+  const result = { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: id, is_error: isError, content }] }, parent_tool_use_id: parent, session_id: sessionId };
   emit(result);
   track(result);
 }
 
-function startTool(id, name, input) {
-  const use = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }, parent_tool_use_id: null, session_id: sessionId };
+function startTool(id, name, input, parent = null) {
+  const use = { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id, name, input }] }, parent_tool_use_id: parent, session_id: sessionId };
   emit(use);
   track(use);
 }
@@ -158,12 +194,12 @@ function runHook(hook, payload) {
   });
 }
 
-async function runHooks(name, input, id) {
+async function runHooks(name, input, id, cwd = process.cwd()) {
   const hooks = (settings?.hooks?.PreToolUse ?? [])
     .filter((entry) => entry.matcher === '*' || new RegExp(`^(?:${entry.matcher})$`).test(name))
     .flatMap((entry) => entry.hooks ?? []);
   const payload = JSON.stringify({
-    session_id: sessionId, transcript_path: '', cwd: process.cwd(), prompt_id: '', permission_mode: 'bypassPermissions',
+    session_id: sessionId, transcript_path: '', cwd, prompt_id: '', permission_mode: 'bypassPermissions',
     hook_event_name: 'PreToolUse', tool_name: name, tool_input: input, tool_use_id: id,
   });
   for (const hook of hooks) {
@@ -173,22 +209,106 @@ async function runHooks(name, input, id) {
   return { allowed: true, reason: '', exit: 0 };
 }
 
-function perform(step) {
+function perform(step, cwd = process.cwd()) {
   const input = step.input;
   if (step.name === 'Write') writeFileSync(input.file_path, input.content);
-  else if (step.name === 'Edit') writeFileSync(input.file_path, readFileSync(input.file_path, 'utf8').replace(input.old_string, input.new_string));
-  else if (step.name === 'Bash') execFileSync('/bin/sh', ['-c', input.command], { cwd: process.cwd(), stdio: 'ignore' });
+  else if (step.name === 'Edit') writeFileSync(input.file_path, readFileSync(input.file_path, 'utf8').replace(input.old_string, () => input.new_string));
+  else if (step.name === 'Bash') execFileSync('/bin/sh', ['-c', input.command], { cwd, stdio: 'ignore' });
+}
+
+function spawnBackground(step, cwd = process.cwd()) {
+  const child = spawn('/bin/sh', ['-c', step.input.command], { cwd, detached: true, stdio: 'ignore' });
+  const shell = { taskId: `task_bg_${step.id}`, pid: child.pid, exited: false, onExit: [] };
+  child.on('exit', () => {
+    shell.exited = true;
+    for (const fire of shell.onExit) fire();
+  });
+  child.unref();
+  backgroundShells.set(step.id, shell);
+  if (!reapHooked) {
+    reapHooked = true;
+    for (const signal of ['SIGTERM', 'SIGINT']) {
+      process.on(signal, async () => {
+        await reapShells();
+        if (!ignoringSigterm) process.exit(signal === 'SIGTERM' ? 143 : 130);
+      });
+    }
+  }
+  record({ background: { id: step.id, pid: child.pid } });
+  emit({ type: 'system', subtype: 'task_started', task_id: shell.taskId, tool_use_id: step.id, description: step.input.description ?? step.input.command, is_backgrounded: true, task_type: 'local_bash', session_id: sessionId });
+}
+
+function endShellTask(step) {
+  const shell = backgroundShells.get(step.after ?? step.toolUseId);
+  const taskId = shell?.taskId ?? `task_bg_${step.toolUseId}`;
+  const status = step.status ?? 'completed';
+  const fire = () => {
+    emit({ type: 'system', subtype: 'task_updated', task_id: taskId, patch: { status }, session_id: sessionId });
+    emit({ type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: step.toolUseId, status, output_file: '', summary: '', session_id: sessionId });
+  };
+  if (!shell || shell.exited) fire();
+  else shell.onExit.push(fire);
 }
 
 async function runTool(step) {
+  const parent = step.parent ?? null;
+  const cwd = step.cwd ? join(process.cwd(), step.cwd) : process.cwd();
   // "streamed": false stands for a tool_use still in claude's output buffer when its hook runs.
-  if (step.streamed !== false) startTool(step.id, step.name, step.input);
-  const verdict = await runHooks(step.name, step.input, step.id);
-  record({ hook: { id: step.id, tool: step.name, ...verdict } });
+  if (step.streamed !== false) startTool(step.id, step.name, step.input, parent);
+  let verdict = { allowed: true, reason: '', exit: 0 };
+  if (!step.skipHook) {
+    verdict = await runHooks(step.name, step.input, step.id, cwd);
+    record({ hook: { id: step.id, tool: step.name, ...verdict } });
+  }
   if (interrupt !== null) return;
-  if (!verdict.allowed) return finishTool(step.id, `PreToolUse:${step.name} hook error: ${verdict.reason}`, true);
-  if (step.apply) perform(step);
-  finishTool(step.id, step.result ?? 'ok', false);
+  if (!verdict.allowed) return finishTool(step.id, `PreToolUse:${step.name} hook error: ${verdict.reason}`, true, parent);
+  if (step.background && step.name === 'Bash') spawnBackground(step, cwd);
+  else if (step.apply) perform(step, cwd);
+  finishTool(step.id, step.result ?? 'ok', false, parent);
+}
+
+async function runMcpWrite(step) {
+  const parent = step.parent ?? null;
+  const name = `mcp__${step.server}__${step.tool}`;
+  const input = { files: step.files.map((file) => file.path) };
+  startTool(step.id, name, input, parent);
+  let verdict = { allowed: true, reason: '', exit: 0 };
+  if (!step.skipHook) {
+    verdict = await runHooks(name, input, step.id);
+    record({ hook: { id: step.id, tool: name, ...verdict } });
+  }
+  if (interrupt !== null) return;
+  if (!verdict.allowed) return finishTool(step.id, `PreToolUse:${name} hook error: ${verdict.reason}`, true, parent);
+  // "awaitStart": the writes wait until the test creates the file named by FAKE_CLAUDE_START, so the core has seen the tool_use before any file changes.
+  while (step.awaitStart && !existsSync(process.env.FAKE_CLAUDE_START) && interrupt === null) await new Promise((resolve) => setTimeout(resolve, 20));
+  if (interrupt !== null) return;
+  const honorCancel = step.honorCancel !== false;
+  const written = [];
+  let done = false;
+  const writeAll = async () => {
+    for (const [at, file] of step.files.entries()) {
+      if (honorCancel && interrupt !== null) break;
+      const abs = join(process.cwd(), file.path);
+      mkdirSync(dirname(abs), { recursive: true });
+      writeFileSync(abs, file.content);
+      written.push(file.path);
+      if (step.perFileMs && at < step.files.length - 1) {
+        if (honorCancel) await waitUntil(() => interrupt !== null, step.perFileMs);
+        else await new Promise((resolve) => setTimeout(resolve, step.perFileMs));
+      }
+    }
+    done = true;
+    record({ mcpWrite: { id: step.id, tool: name, written } });
+    wake();
+  };
+  const writing = writeAll();
+  if (honorCancel) await writing;
+  else await waitUntil(() => done || interrupt !== null);
+  if (interrupt !== null) return;
+  // "awaitRelease": the tool result waits until the test creates the file named by FAKE_CLAUDE_RELEASE, so the test decides when the writes have been seen.
+  while (step.awaitRelease && !existsSync(process.env.FAKE_CLAUDE_RELEASE) && interrupt === null) await new Promise((resolve) => setTimeout(resolve, 20));
+  if (interrupt !== null) return;
+  finishTool(step.id, 'ok', false, parent);
 }
 
 // One connection for the whole process, as the CLI keeps: closing it right after an abort would drop the notifications/cancelled the abort sends (c19).
@@ -229,6 +349,16 @@ async function callIdecore(step) {
   finishTool(step.id, text, isError);
 }
 
+async function runSessionStartHooks() {
+  if (process.env.FAKE_CLAUDE_HOOKS === 'off') return;
+  const payload = JSON.stringify({ hook_event_name: 'SessionStart', source: 'startup', session_id: sessionId });
+  for (const entry of settings?.hooks?.SessionStart ?? []) {
+    for (const hook of entry.hooks ?? []) await runHook(hook, payload);
+  }
+}
+
+await runSessionStartHooks();
+
 let index = 0;
 while (index < steps.length) {
   const step = steps[index];
@@ -241,12 +371,19 @@ while (index < steps.length) {
   } else if (step.fake === 'sleep') {
     await waitUntil(() => interrupt !== null, step.ms);
   } else if (step.fake === 'await-control-response') {
-    await waitUntil(() => answers.length > 0 || interrupt !== null);
-    if (answers.shift()) pendingRequest = null;
+    const matching = () => answers.findIndex((answer) => step.request === undefined || answer.response?.request_id === step.request);
+    await waitUntil(() => matching() !== -1 || interrupt !== null);
+    const at = matching();
+    if (at !== -1) {
+      const [answer] = answers.splice(at, 1);
+      if (answer.response?.request_id === pendingRequest) pendingRequest = null;
+      lastAnswer = answer.response?.response?.behavior === 'deny' ? 'deny' : 'allow';
+    }
   } else if (step.fake === 'spawn-sleeper') {
     const sleeper = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });
     record({ sleeperPid: sleeper.pid });
   } else if (step.fake === 'ignore-sigterm') {
+    ignoringSigterm = true;
     process.on('SIGTERM', () => record({ ignoredSignal: 'SIGTERM' }));
   } else if (step.fake === 'ignore-stdin-close') {
     keepRunning = true;
@@ -255,6 +392,7 @@ while (index < steps.length) {
     process.stderr.write(`${step.text}\n`);
   } else if (step.fake === 'exit') {
     await new Promise((resolve) => process.stderr.write('', () => process.stdout.write('', resolve)));
+    await reapShells();
     process.exit(step.code);
   } else if (step.fake === 'hang') {
     await new Promise(() => setInterval(() => {}, 60_000));
@@ -262,9 +400,18 @@ while (index < steps.length) {
     await runTool(step);
   } else if (step.fake === 'mcp') {
     await callIdecore(step);
+  } else if (step.fake === 'mcp-write') {
+    await runMcpWrite(step);
+  } else if (step.fake === 'task-end') {
+    endShellTask(step);
+  } else if (step.when !== undefined && step.when !== lastAnswer) {
+    continue;
   } else {
-    emit(step);
-    track(step);
+    if (step.type === 'result') inTurn = false;
+    if (step.type === 'system' && step.subtype === 'init') inTurn = true;
+    const { when, ...event } = step;
+    emit(event);
+    track(event);
   }
   if (interrupt !== null) index = abortTurn(index);
 }

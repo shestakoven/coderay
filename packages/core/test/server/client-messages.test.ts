@@ -94,4 +94,54 @@ describe('parseClientMessage', () => {
     ];
     expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual([null, null]);
   });
+
+  it('parses the six history messages', () => {
+    const messages = [
+      { type: 'watchdog.answer', eventId: 'e', answer: { kind: 'files', files: { 'a.ts': 'revert', 'b.ts': 'mine' } } },
+      { type: 'watchdog.answer', eventId: 'e', answer: { kind: 'all', answer: 'expand-plan' } },
+      { type: 'watchdog.answer', eventId: 'e', answer: { kind: 'all', answer: 'keep' } },
+      { type: 'watchdog.stop-agent', eventId: 'e' },
+      { type: 'history.diff', requestId: 'r', path: 'a.ts', before: 'h1', after: null },
+      { type: 'revert.undo', requestId: 'r', revertId: 'v' },
+      { type: 'step.rollback-preview', requestId: 'r', planId: 'p', stepKey: 'k' },
+      { type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 'k', confirm: ['a.ts'] },
+    ];
+    expect(messages.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual(messages);
+  });
+
+  it('rejects malformed watchdog answers', () => {
+    const answers = [
+      { kind: 'all', answer: 'burn' },
+      { kind: 'all', answer: 'mine-please' },
+      { kind: 'files', files: { 'a.ts': 'expand-plan' } },
+      { kind: 'files', files: { 'a.ts': 3 } },
+      { kind: 'files', files: 'a.ts' },
+      { kind: 'some' },
+      'keep',
+    ];
+    for (const answer of answers) expect(parseClientMessage(JSON.stringify({ type: 'watchdog.answer', eventId: 'e', answer }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: 'watchdog.answer', answer: { kind: 'all', answer: 'keep' } }))).toBeNull();
+    expect(parseClientMessage(JSON.stringify({ type: 'watchdog.stop-agent' }))).toBeNull();
+  });
+
+  it('rejects malformed history requests', () => {
+    const bad = [
+      { type: 'history.diff', requestId: 'r', path: 'a.ts', before: 1, after: null },
+      { type: 'history.diff', requestId: 'r', path: 'a.ts', before: null },
+      { type: 'history.diff', requestId: 'r', before: null, after: null },
+      { type: 'history.diff', path: 'a.ts', before: null, after: null },
+      { type: 'revert.undo', requestId: 'r' },
+      { type: 'step.rollback-preview', requestId: 'r', planId: 'p' },
+      { type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 'k' },
+      { type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 'k', confirm: ['a.ts', 2] },
+      { type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 'k', confirm: 'a.ts' },
+    ];
+    expect(bad.map((message) => parseClientMessage(JSON.stringify(message)))).toEqual(bad.map(() => null));
+  });
+
+  it('caps the rollback confirmation list at 5,000 files', () => {
+    const rollback = (count: number) => ({ type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 'k', confirm: Array.from({ length: count }, (_, i) => `f${i}`) });
+    expect(parseClientMessage(JSON.stringify(rollback(5000)))).not.toBeNull();
+    expect(parseClientMessage(JSON.stringify(rollback(5001)))).toBeNull();
+  });
 });

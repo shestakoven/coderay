@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { GatePromptView, GateTarget } from '@ide/protocol';
-import { mapAnchor, prefixed, promptHint, promptTarget } from '../src/plan/prompt-text';
+import { agentReason, mapAnchor, prefixed, promptHint, promptTarget } from '../src/plan/prompt-text';
 
 const prompt = (targets: GateTarget[], tool = 'Edit'): GatePromptView => ({
   id: 'g1', toolUseId: 't1', parentToolUseId: null, tool, summary: 'src/x.ts', preview: { kind: 'input', text: '{}', truncated: false },
   reason: null, targets, canExpand: true, planId: 'p', mode: 'B', status: 'pending', answer: null, ts: 1,
 });
-const target = (path: string, overrides: Partial<GateTarget> = {}): GateTarget => ({ path, kind: 'enforced', inScope: false, componentId: 'app', ...overrides });
+const target = (path: string, overrides: Partial<GateTarget> = {}): GateTarget => ({ path, kind: 'enforced', inScope: false, deleting: false, componentId: 'app', ...overrides });
 
 describe('prompt text', () => {
   it('names the first target outside the plan', () => {
@@ -25,6 +25,11 @@ describe('prompt text', () => {
       '$OUT cannot be known before the call runs. The call waits for your answer.',
       'The IDE does not know the tool BrandNewTool. The call waits for your answer.',
     ]);
+  });
+
+  it('says the agent wrote nothing when the reason is null', () => {
+    expect([agentReason({ ...prompt([]), reason: null }), agentReason({ ...prompt([]), reason: 'Fixing it.' })])
+      .toEqual(['The agent wrote nothing before this call.', 'Fixing it.']);
   });
 
   it('prefixes lines, cuts long text and ignores a final newline', () => {

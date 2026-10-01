@@ -1,18 +1,40 @@
+import type { ReactNode } from 'react';
 import type { MapComponent, MapFile } from '@ide/protocol';
 import type { MapState } from './map-state';
 
-export function DetailsPanel({ state }: { state: MapState }) {
+export type DetailsTab = 'details' | 'changes';
+
+export function DetailsPanel({ state, tab, onTab, changes }: { state: MapState; tab: DetailsTab; onTab: (tab: DetailsTab) => void; changes: (nodeId: string) => ReactNode }) {
   const { snapshot, selected } = state;
   const component = snapshot?.components.find((c) => c.id === selected);
   const file = snapshot?.files.find((f) => f.path === selected);
-  if (component) return <ComponentDetails component={component} />;
-  if (file) return <FileDetails file={file} owner={snapshot?.components.find((c) => c.id === file.componentId)} />;
-  return null;
+  if (!component && !file) return null;
+  if (tab === 'changes' && selected) {
+    return (
+      <aside className="details">
+        <Tabs tab={tab} onTab={onTab} />
+        {changes(selected)}
+      </aside>
+    );
+  }
+  const tabs = <Tabs tab={tab} onTab={onTab} />;
+  if (component) return <ComponentDetails component={component} tabs={tabs} />;
+  return file ? <FileDetails file={file} owner={snapshot?.components.find((c) => c.id === file.componentId)} tabs={tabs} /> : null;
 }
 
-function ComponentDetails({ component }: { component: MapComponent }) {
+function Tabs({ tab, onTab }: { tab: DetailsTab; onTab: (tab: DetailsTab) => void }) {
+  return (
+    <div className="tabs" role="tablist">
+      <button role="tab" aria-selected={tab === 'details'} className={tab === 'details' ? 'on' : ''} onClick={() => onTab('details')}>Details</button>
+      <button role="tab" aria-selected={tab === 'changes'} className={tab === 'changes' ? 'on' : ''} onClick={() => onTab('changes')}>Changes</button>
+    </div>
+  );
+}
+
+function ComponentDetails({ component, tabs }: { component: MapComponent; tabs: ReactNode }) {
   return (
     <aside className="details">
+      {tabs}
       <h2>{component.name}</h2>
       {component.summary && <p className="summary">{component.summary}</p>}
       {component.description ? (
@@ -44,9 +66,10 @@ function ComponentDetails({ component }: { component: MapComponent }) {
   );
 }
 
-function FileDetails({ file, owner }: { file: MapFile; owner: MapComponent | undefined }) {
+function FileDetails({ file, owner, tabs }: { file: MapFile; owner: MapComponent | undefined; tabs: ReactNode }) {
   return (
     <aside className="details">
+      {tabs}
       <h2>{file.path}</h2>
       <p className="muted">
         {file.lang} · {owner ? owner.name : 'unassigned'}

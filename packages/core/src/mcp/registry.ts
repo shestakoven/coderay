@@ -1,6 +1,7 @@
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import type { FileHashes, McpEntry, McpLevel, McpServerView, McpSettingsView } from '@ide/protocol';
+import { blobHash, type ExpectWrite } from '../history/ide-writes';
 import { isRecord } from '../json';
 import {
   entryHash,
@@ -39,6 +40,7 @@ export interface McpRegistryOptions {
   env?: NodeJS.ProcessEnv;
   builtins?: () => Record<string, McpEntry>;
   now?: () => number;
+  expectWrite?: ExpectWrite;
 }
 
 const PRIVATE_FILE_MODE = 0o600;
@@ -189,6 +191,7 @@ export class McpRegistry {
   private write(level: McpLevel, file: RawMcpFile): void {
     if (level === 'project') {
       this.assertNotLinked();
+      this.options.expectWrite?.('.ide/mcp.json', blobHash(`${JSON.stringify(file, null, 2)}\n`));
       writeRawMcp(this.projectPath, file);
       return;
     }

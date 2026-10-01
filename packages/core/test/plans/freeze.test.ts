@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { PlanStep, PlanTarget, Policy } from '@ide/protocol';
-import { freezeScope, reviewPlan } from '../../src/plans/freeze';
+import { freezeScope, ownerIndex, reviewPlan } from '../../src/plans/freeze';
 import { parsePlanInput, type ComponentRef } from '../../src/plans/plan-input';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { tempDir, writeTree } from '../helpers';
@@ -37,7 +37,25 @@ describe('freezeScope', () => {
     expect(freezeScope(steps(
       [{ componentId: 'lib', op: 'modify' }],
       [{ path: 'src/app.ts', op: 'modify' }, { path: 'app/[id]', op: 'modify' }, { path: 'src/app.ts', op: 'modify' }],
-    ), root, components)).toEqual({ paths: ['src/app.ts', 'src/lib/util.ts'], globs: ['app/[[]id[]]/**', 'src/lib/**'] });
+    ), root, components)).toMatchObject({ paths: ['src/app.ts', 'src/lib/util.ts'], globs: ['app/[[]id[]]/**', 'src/lib/**'] });
+  });
+});
+
+describe('freezeScope deletes', () => {
+  it('collects delete targets: a path, a directory as dir/**, a component as its files and globs', async () => {
+    const root = await project();
+    expect(freezeScope(steps(
+      [{ path: 'src/app.ts', op: 'delete' }, { path: 'src/other.ts', op: 'modify' }],
+      [{ path: 'src/ui', op: 'delete' }, { componentId: 'lib', op: 'delete' }],
+    ), root, components)).toMatchObject({
+      paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'],
+      deletes: { paths: ['src/app.ts', 'src/lib/util.ts'], globs: ['src/lib/**', 'src/ui/**'] },
+    });
+  });
+
+  it('gives empty deletes to a plan without delete targets', async () => {
+    const root = await project();
+    expect(freezeScope(steps([{ path: 'src/app.ts', op: 'modify' }]), root, components).deletes).toEqual({ paths: [], globs: [] });
   });
 });
 
@@ -132,5 +150,48 @@ describe('reviewPlan', () => {
       expect(result.owners).toEqual({ 'SRC/APP.TS': null, 'src/lib/util.ts': 'lib' });
       expect(result.review.notes).toEqual(expect.arrayContaining(['the map cannot place the new file SRC/APP.TS in a component']));
     }
+  });
+});
+
+describe('overlapping component globs', () => {
+  const nested: ComponentRef[] = [
+    { id: 'a', name: 'A', files: [], globs: ['src/**'] },
+    { id: 'b', name: 'B', files: [], globs: ['src/x/**'] },
+  ];
+  const tie: ComponentRef[] = [
+    { id: 'a', name: 'A', files: [], globs: ['src/x/**'] },
+    { id: 'b', name: 'B', files: [], globs: ['src/x/**'] },
+  ];
+
+  it('gives a new file to the component with the most specific glob, and the parent outside the nested directory', () => {
+    const owner = ownerIndex(nested);
+    expect([owner('src/x/new.ts', false), owner('src/x/deep/new.ts', false), owner('src/y/new.ts', false)]).toEqual(['b', 'b', 'a']);
+  });
+
+  it('lets a root ** component lose to any more specific glob', () => {
+    const owner = ownerIndex([{ id: 'root', name: 'Root', files: [], globs: ['**'] }, ...nested]);
+    expect([owner('src/x/new.ts', false), owner('src/y/new.ts', false), owner('docs/new.md', false)]).toEqual(['b', 'a', 'root']);
+  });
+
+  it('gives a new file matched at equal specificity by two components no owner', () => {
+    expect(ownerIndex(tie)('src/x/new.ts', false)).toBeNull();
+  });
+
+  it('lets a listed file keep its owner even when globs match it', () => {
+    expect(ownerIndex([{ ...nested[0]!, files: ['src/x/old.ts'] }, nested[1]!])('src/x/old.ts', true)).toBe('a');
+  });
+
+  it('waits with a note naming both components on an equal-specificity tie', async () => {
+    const root = await project();
+    const result = await reviewPlan(steps([{ path: 'src/x/new.ts', op: 'create' }]), { root, policy: DEFAULT_POLICY, components: tie, tempRoots: [] });
+    expect(result.review.auto).toBe(false);
+    expect(result.review.notes).toContain('src/x/new.ts matches the globs of A and B');
+    expect(result.owners['src/x/new.ts']).toBeNull();
+  });
+
+  it('still auto-approves a small plan that creates a file in a nested-owned directory', async () => {
+    const root = await project();
+    const result = await reviewPlan(steps([{ path: 'src/x/new.ts', op: 'create' }]), { root, policy: DEFAULT_POLICY, components: nested, tempRoots: [] });
+    expect([result.review.auto, result.owners['src/x/new.ts']]).toEqual([true, 'b']);
   });
 });

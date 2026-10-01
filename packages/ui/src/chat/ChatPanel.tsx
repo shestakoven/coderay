@@ -1,23 +1,27 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ToolStatus } from '@ide/protocol';
-import { canSend, canStop, childItems, decisionLabel, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
+import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget } from '../plan/prompt-text';
 import { PromptCard } from './PromptCard';
+
+const RECOVERED = "recovered from claude's transcript";
 
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const BUSY = 'The agent is busy. Wait for the turn to end, press Stop to end it, or Restart to also end background tasks.';
 
-export function ChatPanel({ chat, send, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets }: {
+export function ChatPanel({ chat, send, onClearFilter, onDismissError, planRow, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog }: {
   chat: ChatState;
   send: (message: ClientMessage) => boolean;
+  onClearFilter: () => void;
   onDismissError: () => void;
   planRow: { text: string; onOpen: () => void } | null;
   prompts: GatePromptView[];
   promptAnchored: boolean;
   onAnswerPrompt: (id: string, answer: GateAnswer) => void;
   onFocusTargets: (paths: string[]) => void;
+  dialog: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
   const end = useRef<HTMLDivElement>(null);
@@ -44,7 +48,7 @@ export function ChatPanel({ chat, send, onDismissError, planRow, prompts, prompt
   return (
     <section className="chat">
       <header className="chat-header">
-        <span>{chat.session ? `${chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
+        <span>{chat.session ? `${chat.session.status === 'refused' ? 'hook off' : chat.session.status}${chat.session.model ? ` · ${chat.session.model}` : ''}` : 'no session yet'}</span>
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
@@ -55,15 +59,22 @@ export function ChatPanel({ chat, send, onDismissError, planRow, prompts, prompt
         <button onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'}>Restart</button>
         <button onClick={() => send({ type: 'session.new' })} disabled={!chat.session}>New session</button>
       </header>
+      {dialog}
       {planRow && (
         <button className="plan-row" onClick={planRow.onOpen}>≡ {planRow.text}</button>
       )}
+      {chat.filter && (
+        <div className="chat-filter" data-testid="chat-filter">
+          <span>Filtered to {chat.filter.label}</span>
+          <button onClick={onClearFilter}>Clear filter</button>
+        </div>
+      )}
       <div className="chat-log">
-        {groups.map((group) => (
+        {groups.map((group) => ({ group, items: filterItems(group.items, chat.filter) })).filter(({ items }) => items.length > 0).map(({ group, items }) => (
           <div key={group.items[0]?.id} className={`turn ${group.turn?.kind ?? 'outside'}`}>
             {group.turn?.kind === 'agent-initiated' && <div className="turn-marker">↻ agent-initiated turn</div>}
             {!group.turn && group.items.some((item) => item.kind !== 'notice') && <div className="turn-marker">outside a turn</div>}
-            {group.items.map((item) => <Item key={item.id} item={item} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
+            {items.map((item) => <Item key={item.id} item={item} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
             {group.turn?.resultSubtype && TURN_END[group.turn.resultSubtype] && (
               <div className="turn-end">{TURN_END[group.turn.resultSubtype]}</div>
             )}
@@ -106,7 +117,9 @@ function Item({ item, chat, send, onFocusTargets }: {
   send: (message: ClientMessage) => boolean;
   onFocusTargets: (paths: string[]) => void;
 }) {
-  if (item.kind === 'message') return <div className={`msg ${item.role}`}>{item.text}</div>;
+  if (item.kind === 'message') {
+    return <div className={`msg ${item.role}`} title={item.recovered ? RECOVERED : undefined}>{item.text}{item.recovered && <span className="muted"> · {RECOVERED}</span>}</div>;
+  }
   if (item.kind === 'notice') return <div className="notice">{item.text}</div>;
   if (item.kind === 'prompt') {
     return <PromptCard item={item} onAnswer={(answer) => send({ type: 'prompt.answer', requestId: item.id, answer })} />;
@@ -116,7 +129,7 @@ function Item({ item, chat, send, onFocusTargets }: {
   const row = (
     <>
       <span className="tool-status">{STATUS_MARK[item.status]}</span> <b>{item.tool}</b>
-      {label && <span className={`decision ${item.decision}`}> · {label}</span>} <span className="muted">{item.summary}</span>
+      {label && <span className={`decision ${item.decision}`}> · {label}</span>}{item.recovered && <span className="muted"> · {RECOVERED}</span>} <span className="muted">{item.summary}</span>
     </>
   );
   return (

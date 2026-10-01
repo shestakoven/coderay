@@ -11,9 +11,11 @@ export interface ClassifiedTarget {
   abs: string | null;
   dir: boolean;
   mkdir: boolean;
+  deleting: boolean;
   exists: boolean;
   guarded: boolean;
   why: string;
+  unowned?: boolean;
 }
 
 export type PlanGate =
@@ -45,6 +47,7 @@ export interface GuardDecision {
 const NEEDS_PLAN = new Set<TargetKind>(['enforced', 'outside', 'unresolved', 'all-tracked']);
 const UNCHECKED = new Set<ToolClass>(['subagent', 'read', 'mcp', 'interactive']);
 const MAX_LISTED = 5;
+const NO_OWNER = 'no component owns this directory; name the file in a step, or expand the plan.';
 const NONE = { relevant: [], outOfScope: [], planId: null, version: null, stepKey: null };
 
 export const targetName = (target: ClassifiedTarget): string => target.rel ?? target.abs ?? target.raw;
@@ -90,19 +93,20 @@ export function decide(input: GuardInput): GuardDecision {
   const base = { ...stamp, stepKey: gate.activeStep, relevant, outOfScope };
   if (outOfScope.length === 0) return { ...base, outcome: 'allow', reason: `IDE: allowed by plan ${gate.planId}, step ${gate.activeStep}.` };
   const outside = describeTargets(outOfScope);
+  const hint = outOfScope.some((target) => target.unowned) ? ` ${NO_OWNER}` : '';
   const one = outOfScope.length === 1;
   if (input.mode === 'A') {
     return {
       ...base, outcome: 'deny',
-      reason: `IDE: ${outside} ${one ? 'is' : 'are'} outside the approved plan ${gate.planId}. Propose a new version of the plan with mcp__idecore__propose_plan (keep the active and done steps) to include ${one ? 'it' : 'them'}.`,
+      reason: `IDE: ${outside} ${one ? 'is' : 'are'} outside the approved plan ${gate.planId}. Propose a new version of the plan with mcp__idecore__propose_plan (keep the active and done steps) to include ${one ? 'it' : 'them'}.${hint}`,
     };
   }
-  if (input.mode === 'C') return { ...base, outcome: 'flag', reason: `IDE: allowed and flagged (control mode C): ${outside} outside the approved plan ${gate.planId}.` };
-  return { ...base, outcome: 'ask', reason: `IDE: ${outside} outside the approved plan ${gate.planId}; waiting for the user.` };
+  if (input.mode === 'C') return { ...base, outcome: 'flag', reason: `IDE: allowed and flagged (control mode C): ${outside} outside the approved plan ${gate.planId}.${hint}` };
+  return { ...base, outcome: 'ask', reason: `IDE: ${outside} outside the approved plan ${gate.planId}; waiting for the user.${hint}` };
 }
 
 function inScope(scope: FrozenScope, target: ClassifiedTarget): boolean {
-  if (target.kind === 'enforced' && target.rel !== null) return covers(scope, { rel: target.rel, dir: target.dir, mkdir: target.mkdir });
+  if (target.kind === 'enforced' && target.rel !== null) return covers(scope, { rel: target.rel, dir: target.dir, mkdir: target.mkdir, deleting: target.deleting });
   if (target.kind === 'all-tracked') return scope.globs.includes('**');
   return false;
 }

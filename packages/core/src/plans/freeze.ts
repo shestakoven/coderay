@@ -2,7 +2,7 @@ import { statSync } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { FrozenScope, PlanReview, PlanStep, Policy } from '@ide/protocol';
 import { classifyPaths } from '../gate/paths';
-import { escapeGlob } from '../gate/scope';
+import { escapeGlob, globMatches, globSpecificity } from '../gate/scope';
 import type { ComponentRef } from './plan-input';
 
 export interface ReviewContext {
@@ -32,19 +32,43 @@ export function freezeScope(steps: PlanStep[], root: string, components: Compone
   const byId = new Map(components.map((component) => [component.id, component]));
   const paths = new Set<string>();
   const globs = new Set<string>();
+  const deletePaths = new Set<string>();
+  const deleteGlobs = new Set<string>();
   for (const step of steps) {
     for (const target of step.targets) {
+      const removing = target.op === 'delete';
       if (target.componentId !== undefined) {
         const component = byId.get(target.componentId);
-        for (const file of component?.files ?? []) paths.add(file);
-        for (const glob of component?.globs ?? []) globs.add(glob);
+        for (const file of component?.files ?? []) {
+          paths.add(file);
+          if (removing) deletePaths.add(file);
+        }
+        for (const glob of component?.globs ?? []) {
+          globs.add(glob);
+          if (removing) deleteGlobs.add(glob);
+        }
       } else if (target.path !== undefined) {
-        if (isDirectory(root, target.path)) globs.add(`${escapeGlob(target.path)}/**`);
-        else paths.add(target.path);
+        if (isDirectory(root, target.path)) {
+          globs.add(`${escapeGlob(target.path)}/**`);
+          if (removing) deleteGlobs.add(`${escapeGlob(target.path)}/**`);
+        } else {
+          paths.add(target.path);
+          if (removing) deletePaths.add(target.path);
+        }
       }
     }
   }
-  return { paths: [...paths].sort(), globs: [...globs].sort() };
+  return { paths: [...paths].sort(), globs: [...globs].sort(), deletes: { paths: [...deletePaths].sort(), globs: [...deleteGlobs].sort() } };
+}
+
+// The components whose most specific matching glob is the most specific of all; more than one is a tie.
+export function globOwners(components: ComponentRef[], rel: string): ComponentRef[] {
+  const scored = components.flatMap((component) => {
+    const depths = component.globs.filter((glob) => globMatches(rel, glob)).map(globSpecificity);
+    return depths.length === 0 ? [] : [{ component, depth: Math.max(...depths) }];
+  });
+  const best = Math.max(-1, ...scored.map((entry) => entry.depth));
+  return scored.filter((entry) => entry.depth === best).map((entry) => entry.component);
 }
 
 // The instant-assignment rules of spec §4.1 for a planned file: listed files, then globs, then siblings.
@@ -54,8 +78,9 @@ export function ownerIndex(components: ComponentRef[]): (rel: string, exists: bo
     const listed = fileOwner.get(rel);
     if (listed !== undefined) return listed;
     if (exists) return null;
-    const byGlob = components.find((component) => component.globs.some((glob) => posix.matchesGlob(rel, glob)));
-    if (byGlob) return byGlob.id;
+    const byGlob = globOwners(components, rel);
+    if (byGlob.length > 1) return null;
+    if (byGlob.length === 1) return byGlob[0]!.id;
     const dir = posix.dirname(rel);
     const siblings = [...fileOwner].filter(([file]) => posix.dirname(file) === dir).map(([, id]) => id);
     return siblings.length >= MIN_SIBLINGS && new Set(siblings).size === 1 ? siblings[0]! : null;
@@ -89,7 +114,10 @@ export async function reviewPlan(steps: PlanStep[], ctx: ReviewContext): Promise
     if (info.guarded) notes.push(`${rel} is a guarded path`);
     else if (info.cls !== 'enforced') notes.push(`${rel} is ${info.why}`);
     owners[rel] = owner(rel, info.exists);
-    if (!info.exists && owners[rel] === null) notes.push(`the map cannot place the new file ${rel} in a component`);
+    if (!info.exists && owners[rel] === null) {
+      const both = globOwners(ctx.components, rel);
+      notes.push(both.length > 1 ? `${rel} matches the globs of ${both.map((component) => component.name).join(' and ')}` : `the map cannot place the new file ${rel} in a component`);
+    }
   }
   const distinct = [...new Set(Object.values(owners).filter((id): id is string => id !== null))];
   if (distinct.length > 1) notes.push(`files in ${distinct.length} components (${distinct.map(nameOf).join(', ')})`);

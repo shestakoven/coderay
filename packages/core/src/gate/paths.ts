@@ -84,17 +84,27 @@ function statOrNull(path: string): Stats | null {
   }
 }
 
-function allowedPatterns(entries: string[], home: string): string[] {
-  return entries.flatMap((entry) => {
-    const expanded = expandHome(entry, home);
-    return expanded.endsWith('/') ? [`${expanded}**`, expanded.slice(0, -1)] : [expanded];
-  });
+function homes(home: string): string[] {
+  try {
+    return [...new Set([home, realpathSync.native(home)])];
+  } catch {
+    return [home];
+  }
 }
+
+function allowedPatterns(entries: string[], home: string): string[] {
+  return [...new Set(entries.flatMap((entry) => homes(home).flatMap((base) => {
+    const expanded = expandHome(entry, base);
+    return expanded.endsWith('/') ? [`${expanded}**`, expanded.slice(0, -1)] : [expanded];
+  })))];
+}
+
+export const guardedMatcher = (policy: Policy) => ignore().add(policy.guarded);
 
 export async function classifyPaths(paths: string[], ctx: ClassifyContext): Promise<PathInfo[]> {
   const home = ctx.home ?? homedir();
   const temps = ctx.tempRoots ?? defaultTempRoots();
-  const guarded = ignore().add(ctx.policy.guarded);
+  const guarded = guardedMatcher(ctx.policy);
   const harness = ignore().add(ctx.policy.harness);
   const allowed = allowedPatterns(ctx.policy.outsideAllowed, home);
   const infos = paths.map((abs): PathInfo => {

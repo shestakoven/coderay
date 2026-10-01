@@ -1,22 +1,25 @@
 import { randomUUID } from 'node:crypto';
 import { statSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import type { ControlMode, GateAnswer, GatePreview, GatePromptView, GateTarget, GateTargetKind, Policy, ToolDecision } from '@ide/protocol';
 import { summarizeToolInput } from '../agent/tools';
 import { isRecord } from '../json';
-import { ownerIndex } from '../plans/freeze';
+import { globOwners, ownerIndex } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
 import type { PlanService } from '../plans/plan-service';
 import type { GateEventRecord, GateResolution, Store, ToolDecisionRecord } from '../store/store';
+import type { Hold } from './hold';
 import { classifyPaths, expandHome, realTarget } from './paths';
 import { decide, describeTargets, targetName, type ClassifiedTarget, type GuardDecision } from './scope-guard';
+import type { ToolCall } from '../watchdog/activity';
 import { shellWrites, type ShellTarget } from './shell';
 import { FILE_PATH_FIELD, toolClass, type ToolClass } from './tools';
 
 export const GATE_HOLD_MS = 3_530_000;
 const PREVIEW_CHARS = 20_000;
 const KEPT_CLOSED = 50;
+const KEPT_DECIDED = 100_000;
 const NO_RESPONSE = "IDE: the user did not respond in time. Stop and wait for the user's next message.";
 const CALL_ENDED = 'IDE: the call ended before the user answered.';
 
@@ -35,13 +38,14 @@ export interface HookGateOptions {
   store: Store;
   sessionId: () => string | null;
   policy: () => Policy;
-  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand'>;
+  plans: Pick<PlanService, 'gate' | 'canExpand' | 'expand' | 'onChange'>;
   components: () => ComponentRef[];
   context: (toolUseId: string) => GateContext;
   home?: string;
   tempRoots?: string[];
   env?: NodeJS.ProcessEnv;
   holdMs?: number;
+  hold?: Hold;
   now?: () => number;
   newId?: () => string;
 }
@@ -64,16 +68,20 @@ interface Landing {
   raw: string;
   abs: string;
   mkdir: boolean;
+  deleting: boolean;
 }
 
-type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended';
+type Outcome = GateAnswer | 'closed' | 'timeout' | 'tool-ended' | 'withdrawn' | 'fail-open';
 
 interface Pending {
   view: GatePromptView;
   event: GateEventRecord;
   judged: Judged;
+  expandable: boolean;
   settle(outcome: Outcome): void;
 }
+
+const ALLOWED = new Set<ToolDecision>(['allow', 'unchecked', 'ask-approved', 'flag']);
 
 const allow = (reason: string): HookAnswer => ({ permissionDecision: 'allow', permissionDecisionReason: reason });
 const deny = (reason: string): HookAnswer => ({ permissionDecision: 'deny', permissionDecisionReason: reason });
@@ -84,13 +92,18 @@ export class HookGate {
   private readonly newId: () => string;
   private readonly promptListeners = new Set<(prompts: GatePromptView[]) => void>();
   private readonly decisionListeners = new Set<(decision: ToolDecisionRecord) => void>();
-  private readonly pending = new Map<string, Pending>();
+  private readonly allowedListeners = new Set<(call: ToolCall) => void>();
+  private readonly waiting = new Map<string, Pending>();
   private closed: GatePromptView[] = [];
+  private judging: Promise<void> = Promise.resolve();
+  private readonly decided = new Set<string>();
+  private readonly inflight = new Map<string, number>();
 
   constructor(options: HookGateOptions) {
     this.options = options;
     this.now = options.now ?? Date.now;
     this.newId = options.newId ?? randomUUID;
+    options.plans.onChange(() => this.refreshExpand());
   }
 
   onChange(listener: (prompts: GatePromptView[]) => void): () => void {
@@ -103,15 +116,76 @@ export class HookGate {
     return () => this.decisionListeners.delete(listener);
   }
 
+  onAllowed(listener: (call: ToolCall) => void): () => void {
+    this.allowedListeners.add(listener);
+    return () => this.allowedListeners.delete(listener);
+  }
+
   prompts(): GatePromptView[] {
-    return [...[...this.pending.values()].map((pending) => pending.view), ...this.closed];
+    return [...[...this.waiting.values()].map((pending) => pending.view), ...this.closed];
+  }
+
+  pending(): GatePromptView[] {
+    return this.prompts().filter((prompt) => prompt.status === 'pending');
   }
 
   async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
     const input = parseHookInput(raw, this.options.root);
     if (!input) return deny('IDE: the hook input could not be read.');
-    const mode = this.options.policy().mode;
-    const judged = await this.judge(input);
+    this.inflight.set(input.toolUseId, (this.inflight.get(input.toolUseId) ?? 0) + 1);
+    try {
+      return await this.admit(input, signal, this.now() + (this.options.holdMs ?? GATE_HOLD_MS));
+    } finally {
+      const left = (this.inflight.get(input.toolUseId) ?? 1) - 1;
+      if (left > 0) this.inflight.set(input.toolUseId, left);
+      else this.inflight.delete(input.toolUseId);
+    }
+  }
+
+  hasCall(toolUseId: string): 'decided' | 'pending' | 'none' {
+    if (this.decided.has(toolUseId)) return 'decided';
+    return this.inflight.has(toolUseId) ? 'pending' : 'none';
+  }
+
+  private async admit(input: HookInput, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
+    const hold = this.options.hold;
+    const held = hold !== undefined && toolClass(input.toolName) !== 'ide';
+    for (;;) {
+      let waited = false;
+      if (held) {
+        waited = hold.isHeld();
+        const remaining = deadline - this.now();
+        if (remaining <= 0) return deny(NO_RESPONSE);
+        const wait = await hold.wait(signal, remaining);
+        if (wait === 'aborted') return null;
+        if (wait === 'timeout') return deny(NO_RESPONSE);
+      }
+      const mode = this.options.policy().mode;
+      const generation = hold?.generation();
+      const judged = waited ? await this.judgeInArrivalOrder(input) : await this.judge(input);
+      if (signal.aborted) return null;
+      if (held && (hold.isHeld() || hold.generation() !== generation)) continue;
+      return this.resolve(input, judged, mode, signal, deadline);
+    }
+  }
+
+  private async judgeInArrivalOrder(input: HookInput): Promise<Judged> {
+    const before = this.judging;
+    let done!: () => void;
+    this.judging = new Promise<void>((resolve) => (done = resolve));
+    await before;
+    try {
+      return await this.judge(input);
+    } finally {
+      done();
+    }
+  }
+
+  withdrawPending(_reason: string): void {
+    for (const pending of [...this.waiting.values()]) pending.settle('withdrawn');
+  }
+
+  private async resolve(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
     const { decision } = judged;
     if (decision.outcome === 'allow' || decision.outcome === 'unchecked') {
       this.record(input, judged, decision.outcome);
@@ -127,30 +201,30 @@ export class HookGate {
       this.event(input, judged, mode, 'flagged');
       return allow(decision.reason);
     }
-    return this.ask(input, judged, mode, signal);
+    return this.ask(input, judged, mode, signal, deadline);
   }
 
   answer(promptId: string, answer: GateAnswer): void {
-    const pending = this.pending.get(promptId);
+    const pending = this.waiting.get(promptId);
     if (!pending) throw new GateError('That call is no longer waiting for an answer.');
     if (answer === 'expand-plan') {
       if (!pending.view.canExpand || !this.options.plans.canExpand()) throw new GateError('The plan cannot be expanded for this call.');
-      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.rel as string, exists: target.exists, dir: target.dir })));
+      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.rel as string, exists: target.exists, dir: target.dir, deleted: target.deleting })));
     }
     pending.settle(answer);
   }
 
-  dropForTool(toolUseId: string): void {
-    for (const pending of [...this.pending.values()]) {
-      if (pending.view.toolUseId === toolUseId) pending.settle('tool-ended');
+  dropForTool(toolUseId: string, options: { record?: boolean } = {}): void {
+    for (const pending of [...this.waiting.values()]) {
+      if (pending.view.toolUseId === toolUseId) pending.settle(options.record === false ? 'fail-open' : 'tool-ended');
     }
   }
 
   dropAll(): void {
-    for (const pending of [...this.pending.values()]) pending.settle('tool-ended');
+    for (const pending of [...this.waiting.values()]) pending.settle('tool-ended');
   }
 
-  private async ask(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal): Promise<HookAnswer | null> {
+  private async ask(input: HookInput, judged: Judged, mode: ControlMode, signal: AbortSignal, deadline: number): Promise<HookAnswer | null> {
     const view = this.promptView(input, judged, mode);
     const event: GateEventRecord = {
       id: view.id, toolUseId: input.toolUseId, kind: 'pre-execution', mode, targets: judged.decision.outOfScope.map(targetName),
@@ -158,16 +232,16 @@ export class HookGate {
     };
     const outcome = await new Promise<Outcome>((resolve) => {
       const onAbort = () => settle('closed');
-      const timer = setTimeout(() => settle('timeout'), this.options.holdMs ?? GATE_HOLD_MS);
+      const timer = setTimeout(() => settle('timeout'), Math.max(0, deadline - this.now()));
       timer.unref();
       const settle = (value: Outcome) => {
-        if (!this.pending.has(view.id)) return;
+        if (!this.waiting.has(view.id)) return;
         clearTimeout(timer);
         signal.removeEventListener('abort', onAbort);
-        this.pending.delete(view.id);
+        this.waiting.delete(view.id);
         resolve(value);
       };
-      this.pending.set(view.id, { view, event, judged, settle });
+      this.waiting.set(view.id, { view, event, judged, expandable: isExpandable(judged), settle });
       this.saveEvent(event);
       this.emit();
       if (signal.aborted) settle('closed');
@@ -176,6 +250,14 @@ export class HookGate {
     if (outcome === 'closed') {
       this.close(view, event, null, 'dropped');
       return null;
+    }
+    if (outcome === 'withdrawn') {
+      this.close(view, event, null, 'dropped');
+      return this.admit(input, signal, deadline);
+    }
+    if (outcome === 'fail-open') {
+      this.close(view, event, null, 'dropped');
+      return deny(CALL_ENDED);
     }
     if (outcome === 'timeout' || outcome === 'tool-ended') {
       const reason = outcome === 'timeout' ? NO_RESPONSE : CALL_ENDED;
@@ -194,14 +276,16 @@ export class HookGate {
       this.record(input, judged, 'ask-approved', 'IDE: the user allowed this call once.');
       return allow('IDE: the user allowed this call once.');
     }
+    const generation = this.options.hold?.generation();
     const again = await this.judge(input);
     this.close(view, event, 'expand-plan', 'plan-expanded');
+    if (signal.aborted) return null;
+    if (this.options.hold && (this.options.hold.isHeld() || this.options.hold.generation() !== generation)) return this.admit(input, signal, deadline);
     if (again.decision.outcome === 'allow') {
-      this.record(input, again, 'ask-approved', again.decision.reason);
+      this.record(input, again, 'ask-approved', again.decision.reason, false);
       return allow(again.decision.reason);
     }
-    this.record(input, again, 'deny', again.decision.reason);
-    return deny(again.decision.reason);
+    return this.resolve(input, again, this.options.policy().mode, signal, deadline);
   }
 
   private async judge(input: HookInput): Promise<Judged> {
@@ -216,7 +300,7 @@ export class HookGate {
     if (cls === 'file-writer') {
       const path = input.toolInput[FILE_PATH_FIELD[input.toolName] as string];
       if (typeof path !== 'string' || path === '') return [special('unresolved', String(path ?? ''), 'no file path in the call')];
-      return this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false }], policy, home);
+      return this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false, deleting: false }], policy, home);
     }
     if (cls !== 'shell') return [];
     const command = input.toolInput.command;
@@ -234,10 +318,26 @@ export class HookGate {
 
   private async classify(landings: Landing[], policy: Policy, home: string): Promise<ClassifiedTarget[]> {
     const infos = await classifyPaths(landings.map((landing) => landing.abs), { root: this.options.root, policy, home, tempRoots: this.options.tempRoots });
+    const components = this.options.components();
+    const owner = ownerIndex(components);
     return infos.map((info, index) => ({
       raw: landings[index]!.raw, kind: info.cls, rel: info.rel, abs: info.abs, dir: info.isDir,
-      mkdir: landings[index]!.mkdir, exists: info.exists, guarded: info.guarded, why: info.why,
+      mkdir: landings[index]!.mkdir, deleting: landings[index]!.deleting, exists: info.exists, guarded: info.guarded, why: info.why,
+      unowned: info.cls === 'enforced' && info.rel !== null && !info.isDir && !info.exists && owner(info.rel, false) === null
+        && globOwners(components, info.rel).length === 0,
     }));
+  }
+
+  private refreshExpand(): void {
+    const canExpand = this.options.plans.canExpand();
+    let changed = false;
+    for (const pending of this.waiting.values()) {
+      const next = pending.expandable && canExpand;
+      if (pending.view.canExpand === next) continue;
+      pending.view = { ...pending.view, canExpand: next };
+      changed = true;
+    }
+    if (changed) this.emit();
   }
 
   private promptView(input: HookInput, judged: Judged, mode: ControlMode): GatePromptView {
@@ -248,24 +348,28 @@ export class HookGate {
       path: targetName(target),
       kind: target.kind as GateTargetKind,
       inScope: !outOfScope.has(target),
+      deleting: target.deleting,
       componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.rel, target.exists) : null,
     }));
-    const expandable = judged.decision.outOfScope.length > 0
-      && judged.decision.outOfScope.every((target) => target.kind === 'enforced' && target.rel !== null);
     return {
       id: this.newId(), toolUseId: input.toolUseId, parentToolUseId: context.parentToolUseId, tool: input.toolName,
       summary: summarizeToolInput(input.toolInput, this.options.root), preview: preview(input), reason: context.lastMessage,
-      targets, canExpand: expandable && this.options.plans.canExpand(), planId: judged.decision.planId, mode,
+      targets, canExpand: isExpandable(judged) && this.options.plans.canExpand(), planId: judged.decision.planId, mode,
       status: 'pending', answer: null, ts: this.now(),
     };
   }
 
-  private record(input: HookInput, judged: Judged, decision: ToolDecision, reason = judged.decision.reason): void {
+  private record(
+    input: HookInput, judged: Judged, decision: ToolDecision, reason = judged.decision.reason,
+    allowedOnce = decision === 'ask-approved' || decision === 'flag',
+  ): void {
     const record: ToolDecisionRecord = {
       toolUseId: input.toolUseId, decision, planId: judged.decision.planId, planVersion: judged.decision.version,
       stepKey: judged.decision.stepKey, targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
       reason, decidedAt: this.now(),
     };
+    this.decided.add(input.toolUseId);
+    if (this.decided.size > KEPT_DECIDED) this.decided.delete(this.decided.values().next().value as string);
     for (const listener of this.decisionListeners) {
       try {
         listener(record);
@@ -273,6 +377,30 @@ export class HookGate {
         console.error('gate: a decision listener threw', error);
       }
     }
+    if (ALLOWED.has(decision)) this.announce(input, judged, allowedOnce);
+  }
+
+  private announce(input: HookInput, judged: Judged, allowedOnce: boolean): void {
+    const cls = toolClass(input.toolName);
+    const background = cls === 'subagent' || (cls === 'shell' && (input.toolName === 'Monitor' || input.toolInput.run_in_background === true));
+    const call: ToolCall = {
+      toolUseId: input.toolUseId, parentToolUseId: this.options.context(input.toolUseId).parentToolUseId, tool: input.toolName, toolClass: cls,
+      targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
+      allTracked: judged.targets.some((target) => target.kind === 'all-tracked'),
+      cwdRel: background && cls === 'shell' ? this.relativeCwd(input.cwd) : null, background, allowedOnce,
+    };
+    for (const listener of this.allowedListeners) {
+      try {
+        listener(call);
+      } catch (error) {
+        console.error('gate: an allowed-call listener threw', error);
+      }
+    }
+  }
+
+  private relativeCwd(cwd: string): string | null {
+    const rel = relative(this.options.root, cwd);
+    return rel.startsWith('..') || isAbsolute(rel) ? null : rel;
   }
 
   private event(input: HookInput, judged: Judged, mode: ControlMode, resolution: GateResolution): void {
@@ -312,6 +440,11 @@ export class HookGate {
   }
 }
 
+function isExpandable(judged: Judged): boolean {
+  const { outOfScope } = judged.decision;
+  return outOfScope.length > 0 && outOfScope.every((target) => target.kind === 'enforced' && target.rel !== null);
+}
+
 function parseHookInput(raw: unknown, root: string): HookInput | null {
   if (!isRecord(raw) || typeof raw.tool_name !== 'string' || typeof raw.tool_use_id !== 'string') return null;
   return {
@@ -323,7 +456,7 @@ function parseHookInput(raw: unknown, root: string): HookInput | null {
 }
 
 function special(kind: 'unresolved' | 'all-tracked', raw: string, why: string): ClassifiedTarget {
-  return { raw, kind, rel: null, abs: null, dir: false, mkdir: false, exists: false, guarded: false, why };
+  return { raw, kind, rel: null, abs: null, dir: false, mkdir: false, deleting: false, exists: false, guarded: false, why };
 }
 
 function landingsOf(target: ShellTarget): Landing[] {
@@ -334,8 +467,8 @@ function landingsOf(target: ShellTarget): Landing[] {
   } catch {
     isDirectory = false;
   }
-  if (target.names.length > 0 && isDirectory) return target.names.map((name) => ({ raw: `${target.word}/${name}`, abs: join(abs, name), mkdir: false }));
-  return [{ raw: target.word, abs, mkdir: target.mkdir }];
+  if (target.names.length > 0 && isDirectory) return target.names.map((name) => ({ raw: `${target.word}/${name}`, abs: join(abs, name), mkdir: false, deleting: false }));
+  return [{ raw: target.word, abs, mkdir: target.mkdir, deleting: target.deleting }];
 }
 
 function preview(input: HookInput): GatePreview {

@@ -1,0 +1,9 @@
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Starting the build."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"fake":"mcp","id":"toolu_plan","tool":"propose_plan","input":{"goal":"Run the build","steps":[{"key":"edit","title":"Run the build","rationale":"Needed","targets":[{"path":"src/build.log","op":"create"}]}]}}
+{"fake":"mcp","id":"toolu_start","tool":"step","input":{"key":"edit","phase":"start"}}
+{"fake":"tool","id":"toolu_bg","name":"Bash","input":{"command":"echo started > src/build.log && sleep 60","description":"Build","run_in_background":true},"background":true,"result":"started"}
+{"fake":"sleep","ms":60000}
+{"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"$SESSION"}
+{"fake":"await-user"}

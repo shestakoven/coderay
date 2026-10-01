@@ -3,8 +3,9 @@ import { statSync } from 'node:fs';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { openStore, type PromptRecord, type SessionRecord, type ToolEventRecord } from '../../src/store/store';
+import { openStore, SCHEMA_V1, SCHEMA_V2, type PromptRecord, type SessionRecord, type ToolEventRecord } from '../../src/store/store';
 import type { GateEventRecord, PlanRecord, ToolDecisionRecord } from '../../src/store/store';
+import type { ChangeView, WatchdogEventView } from '@ide/protocol';
 import { DatabaseSync } from '../../src/store/sqlite';
 import { tempDir } from '../helpers';
 
@@ -171,6 +172,7 @@ describe('openStore', () => {
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
     db.exec('DROP TABLE plans; DROP TABLE step_states; DROP TABLE tool_decisions; DROP TABLE gate_events; PRAGMA user_version = 1;');
+    db.exec('DROP TABLE changes; DROP TABLE baselines; DROP TABLE checkpoints; DROP TABLE reverts; DROP TABLE summaries; DROP TABLE meta');
     db.close();
     const store = freshStore(dir);
     store.savePlan('s1', plan);
@@ -181,9 +183,9 @@ describe('openStore', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('PRAGMA user_version = 99');
+    db.exec('PRAGMA user_version = 4');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 99, newer than this IDE understands (2)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 4, newer than this IDE understands (3)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
@@ -205,5 +207,188 @@ describe('openStore', () => {
 
     expect(userVersion).toBe(1);
     expect(plansTable).toEqual([]);
+  });
+});
+
+const change = (id: string, at: number): ChangeView => ({
+  id, path: `src/${id}.ts`, beforeHash: 'b'.repeat(40), afterHash: null, at, origin: 'agent-tool', enforcement: 'recorded', outOfPlan: true,
+  toolUseIds: ['toolu_1', 'toolu_2'], planId: 'plan-1', planVersion: 2, stepKey: 'edit', eventId: 'ev-9', resolution: 'kept',
+  added: 3, removed: null, stored: true, unreadable: true, beforeMode: 0o755,
+});
+
+const baseline = (path: string) => ({ path, hash: `h-${path}`, stored: true, size: 10, mode: 0o644 });
+
+const watchdogView = (id: string, kind: WatchdogEventView['kind']): WatchdogEventView => ({
+  id, kind, mode: 'B', phase: 'resolved', resolution: 'reverted', changes: [change('c1', 1)],
+  toolCalls: [{ toolUseId: 'toolu_1', tool: 'Bash', summary: 'rm x', stepKey: null }], interrupted: true, paused: false,
+  runningSubagents: 1, backgroundShell: true, unknownOrigin: false, snapshotSha: 'abc', canExpand: true, defaultAction: 'revert',
+  reason: 'r', ts: 20, resolvedAt: 21,
+});
+
+describe('history tables (schema 3)', () => {
+  it('migrates a version 2 database to 3 in one step and keeps its rows', () => {
+    const dir = tempDir('ide-store-');
+    const old = new DatabaseSync(join(dir, 'history.sqlite'));
+    for (const sql of [SCHEMA_V1, SCHEMA_V2]) old.exec(sql);
+    old.exec('PRAGMA user_version = 2');
+    old.prepare("INSERT INTO sessions (id, claude_session_id, cwd, status, conversation_started, started_at) VALUES ('s','c','/p','running',0,1)").run();
+    old.prepare("INSERT INTO step_states (plan_id, key, status) VALUES ('p','a','done')").run();
+    old.prepare("INSERT INTO gate_events (id, session_id, kind, tool_use_id, mode, targets, resolution, ts) VALUES ('g','s','pre-execution','t','A','[]','denied',5)").run();
+    old.close();
+
+    const store = freshStore(dir);
+    expect(store.latestSession()?.id).toBe('s');
+    expect(store.gateEvents('s').map((event) => event.id)).toEqual(['g']);
+    store.saveBaselines([baseline('a.ts')], []);
+    expect(store.baselines()).toHaveLength(1);
+    store.close();
+
+    const check = new DatabaseSync(join(dir, 'history.sqlite'));
+    const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+    const step = check.prepare("SELECT status, cycle FROM step_states WHERE plan_id = 'p'").get();
+    check.close();
+    expect(version).toBe(3);
+    expect(step).toEqual({ status: 'done', cycle: 0 });
+  });
+
+  it('round-trips every change field and returns the newest N in arrival order', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    for (let i = 0; i < 5; i += 1) store.saveChange('s1', change(`c${i}`, i));
+    store.saveChange('s1', { ...change('null-fields', 9), planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, stored: false, unreadable: false, beforeMode: null });
+    expect(store.changes('s1', 3).map((c) => c.id)).toEqual(['c3', 'c4', 'null-fields']);
+    expect(store.changes('s1').find((c) => c.id === 'c1')).toEqual(change('c1', 1));
+    expect(store.changes('s1').find((c) => c.id === 'null-fields')).toEqual({
+      ...change('null-fields', 9), planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: null, stored: false, unreadable: false, beforeMode: null,
+    });
+  });
+
+  it('round-trips the opposite value of every boolean and nullable change field', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    const created = { ...change('created', 1), beforeHash: null, afterHash: 'a'.repeat(40), outOfPlan: false, resolution: null, stored: false };
+    const both = { ...change('both', 2), beforeHash: null, afterHash: null, outOfPlan: false, resolution: 'flagged' as const, unreadable: false, beforeMode: 0o120000 };
+    store.saveChange('s1', created);
+    store.saveChange('s1', both);
+    expect(store.changes('s1')).toEqual([created, both]);
+  });
+
+  it('orders changes by arrival, not by the watcher time, and a limit keeps the last saved', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveChange('s1', change('first', 50));
+    store.saveChange('s1', change('second', 10));
+    store.saveChange('s1', change('third', 30));
+    store.saveChange('s1', { ...change('first', 50), resolution: 'reverted' });
+    expect(store.changes('s1').map((c) => c.id)).toEqual(['first', 'second', 'third']);
+    expect(store.changes('s1', 2).map((c) => c.id)).toEqual(['second', 'third']);
+  });
+
+  it('rolls the version 3 step back when it fails, leaving version 2 and no v3 table', () => {
+    const dir = tempDir('ide-store-');
+    const old = new DatabaseSync(join(dir, 'history.sqlite'));
+    for (const sql of [SCHEMA_V1, SCHEMA_V2]) old.exec(sql);
+    old.exec('CREATE TABLE changes (x INTEGER); PRAGMA user_version = 2');
+    old.close();
+    expect(() => openStore(dir)).toThrow();
+    const check = new DatabaseSync(join(dir, 'history.sqlite'));
+    const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+    const tables = check.prepare("SELECT name FROM sqlite_master WHERE name IN ('baselines','checkpoints','reverts','summaries')").all();
+    const cycle = check.prepare("SELECT name FROM pragma_table_info('step_states') WHERE name = 'cycle'").all();
+    check.close();
+    expect([version, tables, cycle]).toEqual([2, [], []]);
+  });
+
+  it('returns the newest changes of the requested session only', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveSession(session('s2', 2));
+    store.saveChange('s1', change('a', 1));
+    store.saveChange('s2', change('b', 2));
+    expect(store.changes('s1').map((c) => c.id)).toEqual(['a']);
+  });
+
+  it('upserts a change saved twice', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveChange('s1', change('a', 1));
+    store.saveChange('s1', { ...change('a', 1), resolution: 'reverted' });
+    expect(store.changes('s1').map((c) => c.resolution)).toEqual(['reverted']);
+  });
+
+  it('saves many changes in one transaction and none when one fails', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveChanges('s1', [change('a', 1), change('b', 2)]);
+    expect(() => store.saveChanges('s1', [change('c', 3), { ...change('d', 4), path: null as never }])).toThrow();
+    expect(store.changes('s1').map((c) => c.id)).toEqual(['a', 'b']);
+  });
+
+  it('writes baselines and removals in one transaction', () => {
+    const store = freshStore();
+    store.saveBaselines([baseline('a.ts')], []);
+    expect(() => store.saveBaselines([baseline('b.ts'), { ...baseline('c.ts'), hash: null as never }], ['a.ts'])).toThrow();
+    expect(store.baselines().map((b) => b.path)).toEqual(['a.ts']);
+  });
+
+  it('stores and overwrites a meta value and reads an absent one as null', () => {
+    const dir = tempDir('ide-store-');
+    const store = freshStore(dir);
+    expect(store.meta('baselines.seeded')).toBeNull();
+    store.setMeta('baselines.seeded', '1');
+    store.setMeta('baselines.seeded', '2');
+    store.close();
+    expect(openStore(dir).meta('baselines.seeded')).toBe('2');
+  });
+
+  it('upserts baselines and deletes removed paths', () => {
+    const store = freshStore();
+    store.saveBaselines([baseline('a.ts'), baseline('b.ts')], []);
+    store.saveBaselines([{ ...baseline('a.ts'), hash: 'new', size: 99, mode: 0o755, stored: false }], ['b.ts']);
+    expect(store.baselines()).toEqual([{ path: 'a.ts', hash: 'new', stored: false, size: 99, mode: 0o755 }]);
+  });
+
+  it('upserts a checkpoint by plan, step and cycle and reads the manifests back', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    const open = { planId: 'p', stepKey: 'a', cycle: 0, before: { 'x.ts': 'h1', 'y.ts': null }, after: {}, startedAt: 5, sealedAt: null };
+    store.saveCheckpoint('s1', open);
+    store.saveCheckpoint('s1', { ...open, cycle: 1 });
+    const sealed = { ...open, after: { 'x.ts': 'h2', 'y.ts': null }, sealedAt: 9 };
+    store.saveCheckpoint('s1', sealed);
+    expect(store.checkpoints('s1')).toEqual([sealed, { ...open, cycle: 1 }]);
+  });
+
+  it('round-trips a revert and a summary', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    const revert = {
+      id: 'r1', kind: 'step' as const, eventId: null, planId: 'p', stepKey: 'a', changeIds: ['c1', 'c2'],
+      files: [{ path: 'a.ts', outcome: 'conflict' as const, reason: 'edited since' }], ts: 7, undoneAt: null,
+    };
+    store.saveRevert('s1', revert);
+    store.saveRevert('s1', { ...revert, undoneAt: 8 });
+    expect(store.reverts('s1')).toEqual([{ ...revert, undoneAt: 8 }]);
+    const summary = { key: 'step:p:a', scope: 'step' as const, ref: 'p/a', text: 'Edited the app', createdAt: 3 };
+    store.saveSummary(summary);
+    expect(store.summaries()).toEqual([summary]);
+  });
+
+  it('keeps pre-execution and watchdog events apart', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveGateEvent('s1', gateEvent);
+    store.saveWatchdogEvent('s1', watchdogView('w1', 'watchdog'));
+    store.saveWatchdogEvent('s1', watchdogView('f1', 'fail-open'));
+    expect(store.gateEvents('s1')).toEqual([gateEvent]);
+    expect(store.watchdogEvents('s1')).toEqual([watchdogView('w1', 'watchdog'), watchdogView('f1', 'fail-open')]);
+  });
+
+  it('updates a watchdog event when it is saved again', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveWatchdogEvent('s1', { ...watchdogView('w1', 'watchdog'), phase: 'pending', resolution: 'pending', resolvedAt: null });
+    store.saveWatchdogEvent('s1', watchdogView('w1', 'watchdog'));
+    expect(store.watchdogEvents('s1')).toEqual([watchdogView('w1', 'watchdog')]);
   });
 });

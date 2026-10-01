@@ -10,6 +10,7 @@ const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
 export interface Core {
   url: string;
   file(rel: string): string;
+  record: string;
   stop(): Promise<void>;
 }
 
@@ -26,12 +27,13 @@ export async function startCore(scenario: string): Promise<Core> {
   const bin = join(base, 'bin');
   mkdirSync(bin);
   writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  const record = join(base, 'fake-claude-record.jsonl');
   const child = spawn(
     process.execPath,
     ['--import', 'tsx', join(REPO, 'packages/core/src/main.ts'), '--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
     {
       cwd: REPO,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`) },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`) },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -64,6 +66,7 @@ export async function startCore(scenario: string): Promise<Core> {
   });
   return {
     url,
+    record,
     file: (rel) => readFileSync(join(root, rel), 'utf8'),
     stop: async () => {
       child.kill('SIGTERM');

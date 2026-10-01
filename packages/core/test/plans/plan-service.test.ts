@@ -85,7 +85,7 @@ describe('PlanService', () => {
     expect(await call).toEqual({ ok: true, value: { status: 'approved' } });
     expect(service.gate()).toEqual({
       state: 'approved', planId: 'plan-1', version: 1, activeStep: null,
-      scope: { paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'], globs: ['src/lib/**'] },
+      scope: { paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'], globs: ['src/lib/**'], deletes: { paths: [], globs: [] } },
     });
   });
 
@@ -145,6 +145,7 @@ describe('PlanService', () => {
     service.answer(plan.id, 1, { kind: 'reject', feedback: '' });
     expect(await call).toEqual({ ok: true, value: { status: 'rejected' } });
     expect(service.gate()).toEqual({ state: 'rejected', planId: 'plan-1' });
+    service.userMessage();
     await service.propose(small);
     expect(latest(service)).toMatchObject({ id: 'plan-2', version: 1 });
   });
@@ -154,6 +155,168 @@ describe('PlanService', () => {
     await service.propose(small);
     service.answer('plan-1', 1, { kind: 'reject', feedback: 'not now' });
     expect([latest(service)?.status, latest(service)?.feedback, service.gate()]).toEqual(['rejected', 'not now', { state: 'rejected', planId: 'plan-1' }]);
+  });
+
+  describe('after a Reject', () => {
+    const paused = 'You rejected the previous plan; this plan waits for you.';
+    const smallOn = (path: string) => ({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ path, op: 'modify' }] }] });
+    const rejectLatest = (service: PlanService) => {
+      const plan = latest(service)!;
+      service.answer(plan.id, plan.version, { kind: 'reject', feedback: '' });
+    };
+
+    it('makes the next small plan wait until the user sends a message', async () => {
+      const { service } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      const second = service.propose(smallOn('src/other.ts'));
+      const plan = await waiting(service);
+      expect([plan.review.auto, plan.review.notes[0]]).toEqual([false, paused]);
+      service.answer(plan.id, plan.version, { kind: 'approve' });
+      await second;
+      service.userMessage();
+      const third = await service.propose(smallOn('src/app.ts'));
+      expect([third, latest(service)?.approvedBy]).toEqual([{ ok: true, value: { status: 'approved' } }, 'auto']);
+    });
+
+    it('keeps every small plan waiting until the user sends a message, not just the first', async () => {
+      const { service } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      const second = service.propose(smallOn('src/other.ts'));
+      const plan = await waiting(service);
+      service.answer(plan.id, plan.version, { kind: 'changes', feedback: 'again' });
+      await second;
+      void service.propose(smallOn('src/other.ts'));
+      await waitFor(() => latest(service)?.version === 2, 'version 2');
+      expect([latest(service)?.status, latest(service)?.review.notes[0]]).toEqual(['proposed', paused]);
+    });
+
+    it('clears the pause when the agent session changes', async () => {
+      const { service, setSession } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      setSession('s2');
+      expect(await service.propose(smallOn('src/app.ts'))).toEqual({ ok: true, value: { status: 'approved' } });
+    });
+
+    it('does not repeat the note on a bigger plan, which waits anyway', async () => {
+      const { service } = await setup();
+      await service.propose(smallOn('src/app.ts'));
+      rejectLatest(service);
+      void service.propose(big);
+      const plan = await waiting(service);
+      expect(plan.review.notes).not.toContain(paused);
+    });
+  });
+
+  describe('step events', () => {
+    it('emits start and done with the plan version and reports the step states', async () => {
+      const { service } = await setup();
+      const events: unknown[] = [];
+      service.onStep((e) => events.push(e));
+      await service.propose(small);
+      expect(service.stepStates()).toEqual({ 'plan-1': {} });
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'start' });
+      expect(service.stepStates()).toEqual({ 'plan-1': { edit: 'active' } });
+      service.step({ key: 'edit', phase: 'done' });
+      expect(events).toEqual([
+        { planId: 'plan-1', version: 1, key: 'edit', phase: 'start' },
+        { planId: 'plan-1', version: 1, key: 'edit', phase: 'done' },
+      ]);
+      expect(service.stepStates()).toEqual({ 'plan-1': { edit: 'done' } });
+    });
+
+    it('emits nothing for a refused step and survives a throwing listener', async () => {
+      const { service, store } = await setup();
+      const events: unknown[] = [];
+      service.onStep(() => { throw new Error('listener'); });
+      service.onStep((e) => events.push(e));
+      const saved = vi.spyOn(store, 'saveStepState');
+      await service.propose(small);
+      expect(service.step({ key: 'edit', phase: 'done' }).ok).toBe(false);
+      expect(service.step({ key: 'nope', phase: 'start' }).ok).toBe(false);
+      expect(events).toEqual([]);
+      const seen: number[] = [];
+      service.onStep(() => seen.push(saved.mock.calls.length));
+      expect(service.step({ key: 'edit', phase: 'start' })).toEqual({ ok: true });
+      expect(events).toHaveLength(1);
+      expect(seen).toEqual([1]);
+    });
+  });
+
+  describe('resetStep', () => {
+    it('puts a started step back to pending, bumps the stored cycle and emits reset', async () => {
+      const { service, store } = await setup();
+      await service.propose(small);
+      const events: unknown[] = [];
+      service.onStep((e) => events.push(e));
+      const changes: number[] = [];
+      service.onChange(() => changes.push(1));
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'done' });
+      expect(store.stepCycle('plan-1', 'edit')).toBe(0);
+      const before = changes.length;
+      service.resetStep('plan-1', 'edit');
+      expect(service.stepStates()).toEqual({ 'plan-1': { edit: 'pending' } });
+      expect(store.stepCycle('plan-1', 'edit')).toBe(1);
+      expect(events.at(-1)).toEqual({ planId: 'plan-1', version: 1, key: 'edit', phase: 'reset' });
+      expect(changes.length).toBeGreaterThan(before);
+      expect(service.gate()).toMatchObject({ state: 'approved', planId: 'plan-1', activeStep: null });
+      expect(latest(service)).toMatchObject({ status: 'approved' });
+    });
+
+    it('survives a restart: state pending, cycle kept, plan approved again', async () => {
+      const { service, restart } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'done' });
+      service.resetStep('plan-1', 'edit');
+      const again = restart();
+      expect(again.stepStates()).toEqual({ 'plan-1': { edit: 'pending' } });
+      expect(again.gate()).toMatchObject({ state: 'approved', activeStep: null });
+    });
+
+    it('rejects an unknown step, an unknown plan and a pending step', async () => {
+      const { service } = await setup();
+      const call = service.propose(big);
+      await waiting(service);
+      service.answer('plan-1', 1, { kind: 'approve' });
+      await call;
+      expect(() => service.resetStep('plan-1', 'nope')).toThrow(PlanError);
+      expect(() => service.resetStep('plan-9', 'a')).toThrow(PlanError);
+      expect(() => service.resetStep('plan-1', 'a')).toThrow(PlanError);
+    });
+  });
+
+  describe('when the last step is done', () => {
+    const more = { ...small, steps: [...small.steps, { key: 'more', title: 'More', rationale: '', targets: [{ componentId: 'lib', op: 'modify' }] }] };
+    const done = 'The plan was completed before this revision was answered.';
+
+    it('withdraws a waiting revision and answers its call as rejected', async () => {
+      const { service } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      const call = service.propose(more);
+      await waiting(service);
+      service.step({ key: 'edit', phase: 'done' });
+      expect(await call).toEqual({ ok: true, value: { status: 'rejected', feedback: done } });
+      expect(service.plans().map((plan) => [plan.version, plan.status, plan.feedback])).toEqual([[1, 'done', null], [2, 'withdrawn', done]]);
+      expect(() => service.answer('plan-1', 2, { kind: 'approve' })).toThrow(PlanError);
+    });
+
+    it('withdraws a revision the user asked changes for', async () => {
+      const { service } = await setup();
+      await service.propose(small);
+      service.step({ key: 'edit', phase: 'start' });
+      const call = service.propose(more);
+      await waiting(service);
+      service.answer('plan-1', 2, { kind: 'changes', feedback: 'fewer steps' });
+      await call;
+      service.step({ key: 'edit', phase: 'done' });
+      expect(service.plans().map((plan) => [plan.version, plan.status, plan.feedback])).toEqual([[1, 'done', null], [2, 'withdrawn', done]]);
+    });
   });
 
   it('keeps the approved version enforced while a new version waits, and supersedes it on approval', async () => {
@@ -269,6 +432,16 @@ describe('PlanService', () => {
       steps: [{ key: 'edit', targets: [{ path: 'src/app.ts', op: 'modify' }, { path: 'src/other.ts', op: 'modify' }, { path: 'src/lib/new.ts', op: 'create' }] }],
     });
     expect(service.gate()).toMatchObject({ version: 2, scope: { paths: ['src/app.ts', 'src/lib/new.ts', 'src/other.ts'], globs: [] } });
+  });
+
+  it('expands a deleted path with op delete and grows the deletes of the scope', async () => {
+    const { service } = await setup();
+    await service.propose(small);
+    service.step({ key: 'edit', phase: 'start' });
+    const expanded = service.expand([{ rel: 'src/app.ts', exists: true, dir: false, deleted: true }, { rel: 'src/other.ts', exists: true, dir: false, deleted: true }]);
+    expect(expanded.steps[0]!.targets).toEqual([{ path: 'src/app.ts', op: 'modify' }, { path: 'src/app.ts', op: 'delete' }, { path: 'src/other.ts', op: 'delete' }]);
+    expect(expanded.scope.deletes).toEqual({ paths: ['src/app.ts', 'src/other.ts'], globs: [] });
+    expect(covers(expanded.scope, { rel: 'src/app.ts', dir: false, mkdir: false, deleting: true })).toBe(true);
   });
 
   it('expands into a directory, escaping glob metacharacters, and covers a new mkdir target', async () => {

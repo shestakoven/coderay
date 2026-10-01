@@ -131,6 +131,19 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
     expect([f.file('src/other.ts'), f.tool('toolu_fx_other')?.decision]).toEqual(["export const other = 'hello';\n", 'flag']);
   });
 
+  it("ends the pause after a Reject when the user sends a message through the session", async () => {
+    const f = await flow('multi-turn');
+    const small = { goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ path: 'src/app.ts', op: 'modify' }] }] };
+    f.session.send('hi');
+    await turnClosed(f);
+    await f.runtime.plans.propose(small);
+    f.runtime.plans.answer(f.runtime.plans.plans()[0]!.id, 1, { kind: 'reject', feedback: '' });
+    void f.runtime.plans.propose(small);
+    await waitFor(() => f.runtime.plans.plans().some((plan) => plan.status === 'proposed'), 'paused plan waits', 10_000);
+    f.session.send('again');
+    expect(await f.runtime.plans.propose(small)).toEqual({ ok: true, value: { status: 'approved' } });
+  });
+
   it('withdraws a waiting plan when the claude process dies', async () => {
     const f = await flow('gate-big-plan');
     f.session.send('fix them');
@@ -169,7 +182,12 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
 
   it('blocks every call when the core cannot be reached', async () => {
     const f = await flow('gate-no-plan');
-    await f.server.close();
+    // Closing the core at the canary ping leaves the core unreachable for the first hook call while the session still starts.
+    const ping = f.runtime.canary.ping.bind(f.runtime.canary);
+    f.runtime.canary.ping = (sessionId) => {
+      void f.server.close();
+      ping(sessionId);
+    };
     f.session.send('fix it');
     await turnClosed(f);
     expect([f.file('src/app.ts'), f.records().find((record) => record.hook)?.hook]).toEqual([

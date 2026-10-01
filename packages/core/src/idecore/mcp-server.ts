@@ -4,7 +4,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { z } from 'zod';
 import type { PlanService } from '../plans/plan-service';
-import { BodyError, isAgentRequest, readJsonBody } from '../server/agent-http';
+import { BodyError, isAgentRequest, readJsonBody, requireSecret } from '../server/agent-http';
 import type { HttpRoute } from '../server/server';
 
 export interface IdecoreRoute extends HttpRoute {
@@ -33,6 +33,7 @@ const result = (value: unknown) => ({ content: [{ type: 'text' as const, text: J
 const failure = (message: string) => ({ content: [{ type: 'text' as const, text: message }], isError: true });
 
 export function idecoreRoute(options: { secret: string; plans: PlanService }): IdecoreRoute {
+  requireSecret(options.secret);
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
   const buildServer = (): McpServer => {

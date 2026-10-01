@@ -2,6 +2,8 @@ import type { GatePromptView, GateTarget } from '@ide/protocol';
 
 export const promptTarget = (prompt: GatePromptView): GateTarget | null => prompt.targets.find((target) => !target.inScope) ?? null;
 
+export const agentReason = (prompt: GatePromptView): string => prompt.reason ?? 'The agent wrote nothing before this call.';
+
 export function promptHint(prompt: GatePromptView): string {
   const target = promptTarget(prompt);
   if (!target) return `The IDE does not know the tool ${prompt.tool}. The call waits for your answer.`;

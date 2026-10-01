@@ -4,7 +4,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
 import { AgentSession } from './agent/agent-session';
-import { createGateRuntime } from './gate/runtime';
+import { createExecutionRuntime } from './execution/runtime';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { Indexer } from './indexer/indexer';
@@ -21,6 +21,7 @@ import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
 import { ProgressReporter } from './progress';
+import { routeClientMessage, type SettingsClientMessage } from './server/router';
 import { startServer, type RunningServer } from './server/server';
 import { openStore } from './store/store';
 
@@ -66,7 +67,10 @@ try {
   const policy = new PolicyStore({ home, root });
   let server: RunningServer | undefined;
   let snapshot: MapSnapshot | undefined;
-  const runtime = createGateRuntime({
+  let session: AgentSession | undefined;
+  let indexer: Indexer | undefined;
+  const models = createModelProvider(home);
+  const rt = createExecutionRuntime({
     root, home, store,
     policy: () => policy.effective(),
     components: () => (snapshot?.components ?? []).map(({ id, name, files, globs }) => ({ id, name, files, globs })),
@@ -74,23 +78,35 @@ try {
       if (!server) throw new Error('the IDE core is not listening yet');
       return server.port;
     },
+    shadowDir: join(projectDir(home, root), 'shadow.git'),
+    provider: models,
+    files: () => indexer?.files() ?? [],
+    notice: (text) => (session ? session.notice(text) : console.warn(text)),
   });
-  const registry = new McpRegistry({ home, root, builtins: () => ({ idecore: runtime.mcpEntry() }) });
-  const session = new AgentSession({
+  const registry = new McpRegistry({
+    home, root, builtins: () => ({ idecore: rt.gate.mcpEntry() }),
+    expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
+  });
+  const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
     mcpServers: () => registry.sessionServers(),
-    gate: runtime.sessionGate,
+    gate: rt.sessionGate,
   });
-  runtime.attach(session);
-  await session.start();
-  const models = createModelProvider(home);
+  session = agent;
+  rt.attach(agent);
+  await agent.start();
+  try {
+    await rt.start();
+  } catch (error) {
+    agent.notice(`The IDE could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
+  }
 
   const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: { ...registry.view(), policy: policy.view() } });
-  const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: runtime.plans.plans() });
-  const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: runtime.gate.prompts() });
+  const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
+  const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
 
-  const changeSettings = (message: Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` }>): void => {
+  const changeSettings = (message: SettingsClientMessage): void => {
     switch (message.type) {
       case 'mcp.save':
         registry.save(message.level, message.name, message.entry, message.previousName);
@@ -114,7 +130,6 @@ try {
   };
 
   let closing: Promise<void> | undefined;
-  let indexer: Indexer | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
   let deployWatch: { close(): Promise<void> } | undefined;
@@ -123,39 +138,44 @@ try {
   const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
-        session.send(message.text);
+        agent.send(message.text);
         return;
       case 'chat.stop':
-        session.stop();
+        agent.stop();
         return;
       case 'session.restart':
-        await session.restart();
+        await agent.restart();
         return;
       case 'session.new':
-        await session.newSession();
+        await agent.newSession();
         return;
       case 'prompt.answer':
-        session.answerPrompt(message.requestId, message.answer);
+        agent.answerPrompt(message.requestId, message.answer);
         return;
       case 'plan.answer':
-        runtime.plans.answer(message.planId, message.version, message.answer);
+        rt.gate.plans.answer(message.planId, message.version, message.answer);
         return;
       case 'gate.answer':
-        runtime.gate.answer(message.promptId, message.answer);
+        rt.gate.gate.answer(message.promptId, message.answer);
         return;
       case 'settings.get':
         reply(settingsSnapshot());
         return;
-      default: {
-        let error: string | null = null;
-        try {
-          changeSettings(message);
-        } catch (failure) {
-          error = (failure as Error).message;
-        }
-        reply({ type: 'settings.result', requestId: message.requestId, error });
-        server?.broadcast(settingsSnapshot());
-      }
+      default:
+        await routeClientMessage(message, {
+          history: (history) => rt.history.handle(history, reply),
+          settings: (settings) => {
+            let error: string | null = null;
+            try {
+              changeSettings(settings);
+            } catch (failure) {
+              error = (failure as Error).message;
+            }
+            reply({ type: 'settings.result', requestId: settings.requestId, error });
+            server?.broadcast(settingsSnapshot());
+          },
+          unknown: (type) => reply({ type: 'error', message: `Unknown message type "${type}".` }),
+        });
     }
   };
 
@@ -165,13 +185,14 @@ try {
     staticDir: values.ui ? resolve(values.ui) : undefined,
     allowedOrigins: values['allow-origin'],
     snapshot: () => snapshot ?? null,
-    routes: runtime.routes,
+    routes: rt.gate.routes,
     greeting: () => [
       { type: 'map.progress', progress: progress.get() },
-      { type: 'session.snapshot', state: session.state() },
+      { type: 'session.snapshot', state: agent.state() },
       plansSnapshot(),
       gateSnapshot(),
       settingsSnapshot(),
+      { type: 'history.snapshot', history: rt.history.snapshot() },
     ],
     onClientMessage: (message, reply) => {
       if (closing) {
@@ -182,16 +203,18 @@ try {
     },
   });
   server = running;
-  session.onMessage((message) => {
+  agent.onMessage((message) => {
     running.broadcast(message);
     if (message.type === 'session.snapshot') running.broadcast(plansSnapshot());
   });
-  runtime.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
-  runtime.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
+  rt.gate.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
+  rt.gate.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
+  rt.history.onPatch((patch) => running.broadcast({ type: 'history.patch', patch }));
+  rt.history.onReset(() => running.broadcast({ type: 'history.snapshot', history: rt.history.snapshot() }));
 
   const shutdown = async (): Promise<void> => {
-    await session.close();
-    await runtime.close();
+    // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
+    await rt.close();
     progress.stop();
     classifier?.stop();
     await deployWatch?.close();
@@ -248,12 +271,13 @@ try {
       stateDir: projectDir(home, root),
       reasoning: models.reasoning,
       embed: models.embed,
-      isAgentIdle: () => session.isIdle(),
+      isAgentIdle: () => agent.isIdle(),
+      expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
       onChange: () => publish(),
       onEmbeddingProgress: (embedding) => progress.set({ embedding }),
     });
     mapService = service;
-    session.onIdle(() => service.onAgentIdle());
+    agent.onIdle(() => service.onAgentIdle());
     function publish(): MapSnapshot {
       version += 1;
       const view = service.view();

@@ -10,6 +10,7 @@ export interface ShellTarget {
   path: string | null;
   temp: boolean;
   mkdir: boolean;
+  deleting: boolean;
   names: string[];
   unresolved: string | null;
 }
@@ -22,6 +23,8 @@ export interface ShellWrites {
 type Part =
   | { kind: 'lit'; text: string }
   | { kind: 'tilde' }
+  | { kind: 'other' }
+  | { kind: 'escape' }
   | { kind: 'var'; name: string }
   | { kind: 'glob' }
   | { kind: 'sub'; body: string };
@@ -47,6 +50,12 @@ interface State {
   allTracked: boolean;
 }
 
+interface TargetExtra {
+  mkdir?: boolean;
+  deleting?: boolean;
+  names?: string[];
+}
+
 type WordValue = { text: string } | { temp: true } | { problem: string };
 
 const BREAKS = new Set([' ', '\t', '\n', ';', '&', '|', '(', ')', '<', '>']);
@@ -67,6 +76,7 @@ const DEVICE = /^\/dev\/(null|stdout|stderr|tty|zero|fd\/\d+)$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const MAX_DEPTH = 8;
+const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
@@ -182,12 +192,21 @@ function readWord(src: string, start: number): [Word, number] {
   if (src[i] === '~' && (i + 1 === src.length || src[i + 1] === '/' || BREAKS.has(src[i + 1]!))) {
     parts.push({ kind: 'tilde' });
     i += 1;
+  } else if (src[i] === '~' && /[A-Za-z0-9._-]/.test(src[i + 1] ?? '')) {
+    parts.push({ kind: 'other' });
   }
   let quoted = false;
   while (i < src.length) {
     const c = src[i]!;
     if (!quoted && BREAKS.has(c)) break;
-    if (c === '$') {
+    if (!quoted && c === '$' && src[i + 1] === "'") {
+      let end = i + 2;
+      while (end < src.length && src[end] !== "'") end += src[end] === '\\' ? 2 : 1;
+      const body = src.slice(i + 2, end);
+      if (body.includes('\\')) push({ kind: 'escape' });
+      else lit += body;
+      i = end + 1;
+    } else if (c === '$') {
       const [part, next] = readDollar(src, i);
       if (part) push(part);
       else lit += '$';
@@ -259,15 +278,22 @@ function closing(src: string, from: number, close: ')' | '`'): number {
       i += 1;
     } else if (close === '`') {
       if (c === '`') return i;
-    } else if (c === "'") {
-      const end = src.indexOf("'", i + 1);
-      i = end === -1 ? src.length : end;
+    } else if (c === "'" || c === '"') {
+      i = quoteEnd(src, i, c);
     } else if (c === '(') {
       depth += 1;
     } else if (c === ')') {
       if (depth === 0) return i;
       depth -= 1;
     }
+  }
+  return src.length;
+}
+
+function quoteEnd(src: string, open: number, quote: string): number {
+  for (let i = open + 1; i < src.length; i += 1) {
+    if (src[i] === '\\' && quote === '"') i += 1;
+    else if (src[i] === quote) return i;
   }
   return src.length;
 }
@@ -303,8 +329,14 @@ function command(name: string, args: Word[], state: State, depth: number): void 
     case 'rm':
     case 'rmdir':
     case 'unlink':
+      for (const word of operands(args, [])) addTarget(word, state, { deleting: true });
+      return;
     case 'tee':
       for (const word of operands(args, [])) addTarget(word, state);
+      return;
+    case 'source':
+    case '.':
+      state.targets.push(unresolved(name, `${name} runs a script the IDE cannot read`));
       return;
     case 'touch':
       for (const word of operands(args, ['-t', '-d', '-r'])) addTarget(word, state);
@@ -403,6 +435,11 @@ function moveOrCopy(name: string, args: Word[], state: State): void {
       i += 1;
     } else if (text?.startsWith('--target-directory=')) {
       into = literalWord(text.slice('--target-directory='.length));
+    } else if (text !== null && /^-[fvinuRrpaTbdlHLPsxZ]+t$/.test(text)) {
+      into = args[i + 1] ?? null;
+      i += 1;
+    } else if (text !== null && /^-t.+/.test(text)) {
+      into = literalWord(text.slice(2));
     } else if (text === '-T' || text === '--no-target-directory') {
       intoFile = true;
     } else if (text === '-S' || text === '--suffix') {
@@ -413,7 +450,7 @@ function moveOrCopy(name: string, args: Word[], state: State): void {
   }
   const destination = into ?? words.pop();
   if (!destination) return;
-  if (name === 'mv') for (const source of words) addTarget(source, state);
+  if (name === 'mv') for (const source of words) addTarget(source, state, { deleting: true });
   const names = words.map((source) => {
     const value = wordValue(source, state);
     return 'text' in value ? posix.basename(value.text) : null;
@@ -465,6 +502,24 @@ function git(args: Word[], state: State): void {
   const sub = literalText(word);
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
   else if (WORK_TREE_REWRITES.has(sub)) state.allTracked = true;
+  else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), args.slice(i + 1), state);
+}
+
+function gitPaths(sub: 'mv' | 'rm', global: Word[], rest: Word[], state: State): void {
+  const redirected = global.some((arg) => /^(-C|--git-dir|--work-tree)/.test(literalText(arg) ?? ''));
+  const fromFile = rest.some((arg) => literalText(arg)?.startsWith('--pathspec-from-file') ?? false);
+  if (redirected || fromFile) {
+    state.targets.push(unresolved(`git ${sub}`, redirected ? `git ${sub} runs in another directory` : `git ${sub} reads its paths from a file`));
+    return;
+  }
+  if (sub === 'mv') {
+    moveOrCopy('mv', rest, state);
+    return;
+  }
+  const end = rest.findIndex((arg) => literalText(arg) === '--');
+  const options = end === -1 ? rest : rest.slice(0, end);
+  if (options.some((arg) => literalText(arg) === '--cached')) return;
+  for (const target of operands(rest, [])) addTarget(target, state, { deleting: true });
 }
 
 function find(args: Word[], state: State): void {
@@ -489,6 +544,10 @@ function nestedShell(args: Word[], state: State, depth: number): void {
   const flag = args.findIndex((word) => /^-[a-z]*c[a-z]*$/.test(literalText(word) ?? ''));
   if (flag === -1) return;
   const script = args[flag + 1];
+  if (script !== undefined && literalText(script) === '--') {
+    state.targets.push(unresolved('--', 'a shell script the IDE cannot read'));
+    return;
+  }
   const text = script ? literalText(script) : null;
   if (text === null) {
     state.targets.push(unresolved(script?.raw ?? '-c', 'a shell script the IDE cannot read'));
@@ -526,14 +585,16 @@ function redirectTarget(redirect: Redirect, state: State): void {
 
 function wordValue(word: Word, state: State): WordValue {
   let text = '';
-  for (const part of word.parts) {
+  for (const [index, part] of word.parts.entries()) {
     if (part.kind === 'lit') text += part.text;
     else if (part.kind === 'tilde') {
       if (state.poisoned.has('HOME')) return { problem: 'the variable $HOME' };
       text += state.env.home;
-    } else if (part.kind === 'glob') return { problem: 'a wildcard' };
+    } else if (part.kind === 'other') return { problem: "another user's home directory" };
+    else if (part.kind === 'escape') return { problem: 'an escape sequence in a $\'…\' string' };
+    else if (part.kind === 'glob') return { problem: 'a wildcard' };
     else if (part.kind === 'sub') return { problem: 'command substitution' };
-    else if (text === '' && state.mktemp.has(part.name)) return { temp: true };
+    else if (text === '' && state.mktemp.has(part.name)) return tempValue(word.parts.slice(index + 1));
     else if (state.poisoned.has(part.name)) return { problem: `the variable $${part.name}` };
     else if (part.name === 'HOME') text += state.env.home;
     else if ((part.name === 'TMPDIR' || part.name === 'TMP') && state.env.vars[part.name]) text += state.env.vars[part.name];
@@ -542,8 +603,26 @@ function wordValue(word: Word, state: State): WordValue {
   return { text };
 }
 
-function addTarget(word: Word, state: State, extra: { mkdir?: boolean; names?: string[] } = {}): void {
-  const base = { word: word.raw, mkdir: extra.mkdir ?? false, names: extra.names ?? [] };
+function tempValue(rest: Part[]): WordValue {
+  const leaves = { problem: 'a path that leaves its temporary directory' };
+  let tail = '';
+  let dotted = false;
+  for (const part of rest) {
+    if (part.kind === 'lit') {
+      tail += part.text;
+      dotted ||= part.text.split('/').includes('..');
+    } else if (dotted) {
+      return leaves;
+    } else {
+      tail += '\0';
+    }
+  }
+  const inside = posix.normalize(`${TEMP_ROOT}${tail}`);
+  return inside === TEMP_ROOT || inside.startsWith(`${TEMP_ROOT}/`) ? { temp: true } : leaves;
+}
+
+function addTarget(word: Word, state: State, extra: TargetExtra = {}): void {
+  const base = { word: word.raw, mkdir: extra.mkdir ?? false, deleting: extra.deleting ?? false, names: extra.names ?? [] };
   const value = wordValue(word, state);
   if ('temp' in value) {
     state.targets.push({ ...base, path: null, temp: true, unresolved: null });
@@ -623,4 +702,4 @@ function literalText(word: Word): string | null {
 
 const literalWord = (text: string): Word => ({ parts: [{ kind: 'lit', text }], raw: text });
 const cwdOf = (state: State): string | null => state.cwd[state.cwd.length - 1] ?? null;
-const unresolved = (word: string, reason: string): ShellTarget => ({ word, path: null, temp: false, mkdir: false, names: [], unresolved: reason });
+const unresolved = (word: string, reason: string): ShellTarget => ({ word, path: null, temp: false, mkdir: false, deleting: false, names: [], unresolved: reason });

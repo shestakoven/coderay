@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { globMatches } from '../../src/gate/scope';
 import { assignFiles, nearestComponent, type AssignInput } from '../../src/map/assign';
 import type { AiComponent } from '../../src/map/map-file';
 import { unit } from '../helpers';
@@ -139,8 +140,7 @@ describe('assignFiles', () => {
   it('places 2,000 files under 300 "dir/**" AI globs well under the cost of a general glob matcher', () => {
     const components = Array.from({ length: 300 }, (_, i) => ai(`ai:d${i}`, [], [`d${i}/**`]));
     const paths = Array.from({ length: 2000 }, (_, i) => `d${i % 300}/f${i}.ts`);
-    const start = performance.now();
-    const result = assignFiles({
+    const run = () => assignFiles({
       paths,
       ai: components,
       manualOwner: new Map(),
@@ -148,8 +148,17 @@ describe('assignFiles', () => {
       vector: () => undefined,
       rule: null,
     });
-    const elapsed = performance.now() - start;
-    expect(elapsed).toBeLessThan(200);
+    const timings: number[] = [];
+    let result = run();
+    for (let i = 0; i < 5; i += 1) {
+      const start = performance.now();
+      result = run();
+      timings.push(performance.now() - start);
+    }
+    const general = performance.now();
+    for (const path of paths) for (const component of components) for (const glob of component.globs) globMatches(path, glob);
+    const generalMs = performance.now() - general;
+    expect(Math.min(...timings)).toBeLessThan(generalMs / 2);
     expect(result.owner.get('d17/f17.ts')).toBe('ai:d17');
     expect(result.unassigned).toEqual([]);
   });

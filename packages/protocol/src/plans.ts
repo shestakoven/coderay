@@ -29,6 +29,7 @@ export type ApprovedBy = 'user-card' | 'user-expand' | 'auto';
 export interface FrozenScope {
   paths: string[];
   globs: string[];
+  deletes?: { paths: string[]; globs: string[] };
 }
 
 export interface PlanReview {
@@ -53,7 +54,7 @@ export interface PlanView {
 
 export type PlanAnswer = { kind: 'approve' } | { kind: 'changes'; feedback: string } | { kind: 'reject'; feedback: string };
 
-export type ToolDecision = 'allow' | 'unchecked' | 'ask-approved' | 'ask-denied' | 'deny' | 'flag';
+export type ToolDecision = 'allow' | 'unchecked' | 'ask-approved' | 'ask-denied' | 'deny' | 'flag' | 'hook-missing' | 'hook-pending';
 
 export type GateAnswer = 'allow-once' | 'expand-plan' | 'deny';
 
@@ -63,6 +64,7 @@ export interface GateTarget {
   path: string;
   kind: GateTargetKind;
   inScope: boolean;
+  deleting: boolean;
   componentId: string | null;
 }
 
