@@ -4,11 +4,28 @@ export const MAX_CLIENT_FRAME_BYTES = 64 * 1024;
 
 export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended' | 'refused';
 
+export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+
+export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
+
+export interface ChatSummary {
+  id: string;
+  title: string;
+  startedAt: number;
+  lastActivityAt: number;
+  status: SessionStatus;
+  modelChoice: string | null;
+  effort: EffortLevel | null;
+  messages: number;
+}
+
 export interface SessionView {
   id: string;
   claudeSessionId: string;
   status: SessionStatus;
   model: string | null;
+  modelChoice: string | null;
+  effort: EffortLevel | null;
   cliVersion: string | null;
   permissionMode: string | null;
   startedAt: number;
@@ -129,6 +146,7 @@ export interface SessionPatch {
 export type SessionServerMessage =
   | { type: 'session.snapshot'; state: SessionState }
   | { type: 'session.patch'; patch: SessionPatch }
+  | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[] }
   | { type: 'error'; message: string };
 
 export type ChatClientMessage =
@@ -136,4 +154,7 @@ export type ChatClientMessage =
   | { type: 'chat.stop' }
   | { type: 'session.restart' }
   | { type: 'session.new' }
+  | { type: 'session.list' }
+  | { type: 'session.switch'; id: string }
+  | { type: 'session.configure'; modelChoice: string | null; effort: EffortLevel | null }
   | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer };

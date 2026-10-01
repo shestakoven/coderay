@@ -1,8 +1,10 @@
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
-import type {
-  ApprovedBy, ChangeView, ControlMode, FrozenScope, GatePromptView, PlanReview, PlanStatus, PlanStep, PromptAnswer, PromptBody, PromptStatus,
-  RevertRecordView, SessionStatus, StepStatus, TaskKind, TaskView, ToolDecision, ToolStatus, TurnKind, TurnView, WatchdogEventView,
+import {
+  EFFORT_LEVELS,
+  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type FrozenScope, type GatePromptView, type PlanReview,
+  type PlanStatus, type PlanStep, type PromptAnswer, type PromptBody, type PromptStatus, type RevertRecordView, type SessionStatus, type StepStatus,
+  type TaskKind, type TaskView, type ToolDecision, type ToolStatus, type TurnKind, type TurnView, type WatchdogEventView,
 } from '@ide/protocol';
 import { DatabaseSync } from './sqlite';
 
@@ -12,6 +14,8 @@ export interface SessionRecord {
   cwd: string;
   status: SessionStatus;
   model: string | null;
+  modelChoice: string | null;
+  effort: EffortLevel | null;
   cliVersion: string | null;
   pid: number | null;
   launchId: string | null;
@@ -117,6 +121,8 @@ export interface SessionHistory {
 
 export interface Store {
   latestSession(): SessionRecord | null;
+  session(id: string): SessionRecord | null;
+  listSessions(limit?: number): ChatSummary[];
   saveSession(session: SessionRecord): void;
   saveTurn(sessionId: string, turn: TurnView): void;
   saveMessage(sessionId: string, message: MessageRecord): void;
@@ -294,8 +300,20 @@ ALTER TABLE gate_events ADD COLUMN payload TEXT;
 ALTER TABLE step_states ADD COLUMN cycle INTEGER NOT NULL DEFAULT 0;
 `;
 
+const SCHEMA_V4 = `
+ALTER TABLE sessions ADD COLUMN model_choice TEXT;
+ALTER TABLE sessions ADD COLUMN effort TEXT;
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4];
+
+const CHAT_TITLE_LENGTH = 60;
+const NEW_CHAT_TITLE = 'New chat';
+
+const chatTitle = (text: string | null): string => text?.replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd() || NEW_CHAT_TITLE;
+
+const toEffort = (value: unknown): EffortLevel | null => (EFFORT_LEVELS.includes(value as EffortLevel) ? (value as EffortLevel) : null);
 
 function migrate(db: InstanceType<typeof DatabaseSync>): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -327,6 +345,8 @@ const toSession = (row: Row): SessionRecord => ({
   cwd: String(row.cwd),
   status: String(row.status) as SessionStatus,
   model: optText(row.model),
+  modelChoice: optText(row.model_choice),
+  effort: toEffort(row.effort),
   cliVersion: optText(row.cli_version),
   pid: optNumber(row.pid),
   launchId: optText(row.launch_id),
@@ -493,11 +513,27 @@ export function openStore(dir: string): Store {
   let open = true;
 
   const upsertSession = db.prepare(`
-    INSERT INTO sessions (id, claude_session_id, cwd, status, model, cli_version, pid, launch_id, conversation_started, started_at)
-    VALUES (:id, :claudeSessionId, :cwd, :status, :model, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt)
+    INSERT INTO sessions (id, claude_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at)
+    VALUES (:id, :claudeSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt)
     ON CONFLICT (id) DO UPDATE SET claude_session_id = excluded.claude_session_id, status = excluded.status,
-      model = excluded.model, cli_version = excluded.cli_version, pid = excluded.pid,
+      model = excluded.model, model_choice = excluded.model_choice, effort = excluded.effort, cli_version = excluded.cli_version, pid = excluded.pid,
       launch_id = excluded.launch_id, conversation_started = excluded.conversation_started`);
+  const listSessions = db.prepare(`
+    WITH counts AS (
+      SELECT session_id, MAX(ts) AS last_ts, SUM(role IN ('user', 'assistant')) AS messages FROM messages GROUP BY session_id
+    ), tools AS (
+      SELECT session_id, MAX(MAX(tool_use_at, COALESCE(ended_at, tool_use_at))) AS last_ts FROM tool_events GROUP BY session_id
+    ), firsts AS (
+      SELECT session_id, text, MIN(seq) FROM messages WHERE role = 'user' GROUP BY session_id
+    )
+    SELECT s.*, COALESCE(counts.messages, 0) AS message_count, firsts.text AS first_text,
+      MAX(s.started_at, COALESCE(counts.last_ts, 0), COALESCE(tools.last_ts, 0)) AS last_activity_at
+    FROM sessions s
+    LEFT JOIN counts ON counts.session_id = s.id
+    LEFT JOIN tools ON tools.session_id = s.id
+    LEFT JOIN firsts ON firsts.session_id = s.id
+    ORDER BY last_activity_at DESC, s.rowid DESC
+    LIMIT ?`);
   const upsertTurn = db.prepare(`
     INSERT INTO turns (id, session_id, kind, opened_at, started_at, closed_at, result_subtype)
     VALUES (:id, :sessionId, :kind, :openedAt, :startedAt, :closedAt, :resultSubtype)
@@ -583,10 +619,23 @@ export function openStore(dir: string): Store {
       const row = db.prepare('SELECT * FROM sessions ORDER BY started_at DESC, rowid DESC LIMIT 1').get();
       return row ? toSession(row) : null;
     },
+    session(id) {
+      const row = db.prepare('SELECT * FROM sessions WHERE id = ?').get(id);
+      return row ? toSession(row) : null;
+    },
+    listSessions(limit = 50) {
+      return listSessions.all(limit).map((row) => {
+        const session = toSession(row);
+        return {
+          id: session.id, title: chatTitle(optText(row.first_text)), startedAt: session.startedAt, lastActivityAt: Number(row.last_activity_at),
+          status: session.status, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
+        };
+      });
+    },
     saveSession(session) {
       upsertSession.run({
         id: session.id, claudeSessionId: session.claudeSessionId, cwd: session.cwd, status: session.status,
-        model: session.model, cliVersion: session.cliVersion, pid: session.pid,
+        model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, pid: session.pid,
         launchId: session.launchId, conversationStarted: session.conversationStarted ? 1 : 0, startedAt: session.startedAt,
       });
     },

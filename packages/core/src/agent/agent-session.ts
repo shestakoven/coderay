@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
-import type {
-  ChatItem, McpServerState, PromptAnswer, PromptBody, SessionPatch, SessionServerMessage, SessionState, SessionView, TaskView, TurnView,
+import {
+  EFFORT_LEVELS,
+  type ChatItem, type ChatSummary, type EffortLevel, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
+  type SessionState, type SessionView, type TaskView, type TurnView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
 import { defaultTranscriptsDir, largest, recoverTranscript, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
@@ -12,7 +14,7 @@ import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRec
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { parseStreamLine, type StreamEvent } from './stream';
-import { DISALLOWED_TOOLS, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
+import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
 export type McpServers = Record<string, object>;
@@ -34,7 +36,10 @@ export interface AgentSessionOptions {
   gate?: SessionGate;
   canaryMs?: number;
   transcriptsDir?: string;
+  canLeave?: () => string | null;
 }
+
+const ACTIVE_SESSION_KEY = 'activeSessionId';
 
 const HOOK_OFF_NOTICE =
   "The IDE's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
@@ -50,6 +55,11 @@ const SESSION_ERRORS = {
   'no-gate': 'The IDE could not prepare the hook settings for claude, so the agent was not started.',
   'hook-off': HOOK_OFF_NOTICE,
   'no-turn': 'The agent has no open turn to add a note to.',
+  'busy-configure': 'Wait for the agent to finish or press Stop before changing the model.',
+  'busy-switch': 'Wait for the agent to finish or press Stop before switching chats.',
+  'bad-model': 'That model name is not valid.',
+  'bad-effort': 'That effort level is not valid.',
+  'no-chat': 'That chat does not exist.',
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -64,7 +74,7 @@ export class SessionError extends Error {
 }
 
 type ExitReason = 'restart' | 'new' | 'close';
-type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId'>>;
+type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort'>>;
 
 interface PendingPrompt {
   input: unknown;
@@ -91,6 +101,7 @@ export class AgentSession {
   private readonly newSessionListeners = new Set<() => void>();
   private started = false;
   private session: SessionRecord | null = null;
+  private previous: SessionRecord | null = null;
   private tracker = new TurnTracker();
   private turns = new Map<string, TurnView>();
   private items = new Map<string, ChatItem>();
@@ -141,8 +152,13 @@ export class AgentSession {
   }
 
   private async loadLatest(): Promise<void> {
-    const latest = this.options.store.latestSession();
-    if (!latest || latest.status === 'ended') return;
+    const { store } = this.options;
+    const activeId = store.meta(ACTIVE_SESSION_KEY);
+    const latest = activeId === '' ? null : (activeId ? store.session(activeId) : null) ?? store.latestSession();
+    if (!latest || latest.status === 'ended') {
+      this.previous = latest ?? store.latestSession();
+      return;
+    }
     if (latest.status === 'running') this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
     this.crashed = this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
     if (latest.status === 'running') {
@@ -221,6 +237,10 @@ export class AgentSession {
 
   sessionId(): string | null {
     return this.session?.id ?? null;
+  }
+
+  listChats(): { activeId: string | null; sessions: ChatSummary[] } {
+    return { activeId: this.session?.id ?? null, sessions: this.options.store.listSessions() };
   }
 
   isIdle(): boolean {
@@ -398,7 +418,40 @@ export class AgentSession {
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
     this.notes = [];
     notify(this.newSessionListeners);
+    this.previous = this.session ?? this.previous;
+    this.setActive('');
     this.reset(null);
+  }
+
+  async switchSession(id: string): Promise<void> {
+    if (this.session?.id === id) return;
+    const target = this.options.store.session(id);
+    if (!target) throw new SessionError('no-chat');
+    if (this.terminating) throw new SessionError('restarting');
+    if (!this.isIdle()) throw new SessionError('busy-switch');
+    const blocked = this.options.canLeave?.() ?? null;
+    if (blocked !== null) throw new SessionError('busy-switch', blocked);
+    await this.terminate('close');
+    this.clearRefusal();
+    this.notes = [];
+    notify(this.newSessionListeners);
+    this.load(target);
+    this.apply(this.tracker.processExited());
+    // An ended chat is reopened so the next message resumes it instead of starting a new one.
+    if (target.status === 'ended' || target.status === 'running' || target.status === 'refused') this.update({ status: 'stopped', pid: null, launchId: null });
+    this.setActive(target.id);
+    this.emit({ type: 'session.snapshot', state: this.state() });
+  }
+
+  async configure(modelChoice: string | null, effort: EffortLevel | null): Promise<void> {
+    if (modelChoice !== null && !isModelChoice(modelChoice)) throw new SessionError('bad-model');
+    if (effort !== null && !EFFORT_LEVELS.includes(effort)) throw new SessionError('bad-effort');
+    if (this.terminating) throw new SessionError('restarting');
+    if (!this.isIdle()) throw new SessionError('busy-configure');
+    if (!this.session || this.session.status === 'ended') this.begin();
+    if (this.session?.modelChoice === modelChoice && this.session.effort === effort) return;
+    this.update({ modelChoice, effort });
+    if (this.process) await this.restart();
   }
 
   async close(): Promise<void> {
@@ -426,12 +479,19 @@ export class AgentSession {
   }
 
   private begin(): void {
+    const from = this.session ?? this.previous;
     const session: SessionRecord = {
-      id: randomUUID(), claudeSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null, cliVersion: null,
+      id: randomUUID(), claudeSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
+      modelChoice: from?.modelChoice ?? null, effort: from?.effort ?? null, cliVersion: null,
       pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(),
     };
     this.persist(() => this.options.store.saveSession(session));
+    this.setActive(session.id);
     this.reset(session);
+  }
+
+  private setActive(id: string): void {
+    this.persist(() => this.options.store.setMeta(ACTIVE_SESSION_KEY, id));
   }
 
   private reset(session: SessionRecord | null): void {
@@ -452,6 +512,9 @@ export class AgentSession {
     const lastSeq = [...history.messages, ...history.toolEvents, ...history.prompts].reduce((max, record) => Math.max(max, record.seq), 0);
     this.session = session;
     this.turns = new Map(history.turns.map((turn) => [turn.id, turn]));
+    this.mcpServers = [];
+    this.permissionMode = null;
+    this.pendingPrompts.clear();
     this.decisions.clear();
     for (const decision of history.decisions) this.decisions.set(decision.toolUseId, decision);
     this.items = new Map([
@@ -695,6 +758,8 @@ function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: str
   return [
     '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json',
     session.conversationStarted ? '--resume' : '--session-id', session.claudeSessionId,
+    ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
+    ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
     '--mcp-config', mcpConfigPath, '--strict-mcp-config',
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
     ...gateArgs,
@@ -706,7 +771,7 @@ function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: str
 function sessionView(session: SessionRecord, permissionMode: string | null): SessionView {
   return {
     id: session.id, claudeSessionId: session.claudeSessionId, status: session.status,
-    model: session.model, cliVersion: session.cliVersion, permissionMode, startedAt: session.startedAt,
+    model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, permissionMode, startedAt: session.startedAt,
   };
 }
 

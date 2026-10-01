@@ -1,5 +1,11 @@
-import type { ClientMessage, FileAnswer, FileHashes, McpEntry, McpLevel, PlanAnswer, Policy, PromptAnswer, WatchdogAnswer } from '@ide/protocol';
+import {
+  EFFORT_LEVELS,
+  type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
+  type WatchdogAnswer,
+} from '@ide/protocol';
+import { isModelChoice } from '../agent/tools';
 import { isRecord } from '../json';
+import { MAX_TERMINAL_INPUT, TERMINAL_ID } from '../terminal/terminal-service';
 
 const isLevel = (value: unknown): value is McpLevel => value === 'ide' || value === 'project';
 
@@ -11,15 +17,25 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     return null;
   }
   if (!isRecord(value)) return null;
-  const { type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before, after, revertId, stepKey, confirm } = value;
+  const {
+    type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
+    after, revertId, stepKey, confirm, id, modelChoice, effort, cols, rows, data,
+  } = value;
   switch (type) {
     case 'chat.send':
       return typeof text === 'string' ? { type, text } : null;
     case 'chat.stop':
     case 'session.restart':
     case 'session.new':
+    case 'session.list':
     case 'settings.get':
       return { type };
+    case 'session.switch':
+      return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
+    case 'session.configure':
+      return (modelChoice === null || (typeof modelChoice === 'string' && isModelChoice(modelChoice))) && (effort === null || isEffort(effort))
+        ? { type, modelChoice, effort }
+        : null;
     case 'prompt.answer': {
       const parsed = parseAnswer(answer);
       return typeof requestId === 'string' && parsed ? { type, requestId, answer: parsed } : null;
@@ -36,6 +52,14 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     }
     case 'watchdog.stop-agent':
       return typeof eventId === 'string' ? { type, eventId } : null;
+    case 'terminal.open':
+      return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
+    case 'terminal.resize':
+      return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
+    case 'terminal.input':
+      return isTerminalId(id) && typeof data === 'string' && data.length <= MAX_TERMINAL_INPUT ? { type, id, data } : null;
+    case 'terminal.close':
+      return isTerminalId(id) ? { type, id } : null;
   }
   if (typeof requestId !== 'string') return null;
   switch (type) {
@@ -56,6 +80,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isRecord(hashes) && typeof hashes.ide === 'string' && typeof hashes.project === 'string'
         ? { type, requestId, hashes: { ide: hashes.ide, project: hashes.project } }
         : null;
+    case 'fs.list':
+      return path === null || typeof path === 'string' ? { type, requestId, path } : null;
+    case 'project.open':
+      return typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH_LENGTH ? { type, requestId, path } : null;
     case 'history.diff':
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
     case 'revert.undo':
@@ -90,6 +118,14 @@ function parsePlanAnswer(value: unknown): PlanAnswer | null {
 }
 
 const MAX_CONFIRM_FILES = 5000;
+const MAX_PATH_LENGTH = 4096;
+const MAX_ID_LENGTH = 100;
+
+const isEffort = (value: unknown): value is EffortLevel => EFFORT_LEVELS.includes(value as EffortLevel);
+
+const isInteger = (value: unknown): value is number => Number.isInteger(value);
+
+const isTerminalId = (value: unknown): value is string => typeof value === 'string' && TERMINAL_ID.test(value);
 
 const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
 

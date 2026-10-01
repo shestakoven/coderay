@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ControlMode, Policy, PolicyHashes, PolicyLevel, PolicyView } from '@ide/protocol';
-import { MODE_LABEL, levelKey, policyForm, policyFromForm, type PolicyForm } from './policy-form';
+import { MODE_HINT, MODE_LABEL, levelKey, policyForm, policyFromForm, type PolicyForm } from './policy-form';
 
 const LEVELS: { level: PolicyLevel; title: string }[] = [
   { level: 'ide', title: 'IDE level — every project (~/.ide/policy.json)' },
@@ -72,10 +72,11 @@ export function PolicySection({ view, busy, onSave, onConfirm }: {
             <div key={level} className="policy-level">
               <h4>{title}</h4>
               <label>
-                Control mode {inheritBox(level, 'mode')}
+                When the agent writes outside the approved plan {inheritBox(level, 'mode')}
                 <select disabled={off('mode')} value={form.mode} onChange={(event) => update(level, { mode: event.target.value as ControlMode })}>
                   {(['A', 'B', 'C'] as const).map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
                 </select>
+                <span className="muted">{MODE_HINT[form.mode]}</span>
               </label>
               <label>
                 Approve plans automatically up to this many files (0 = never) {inheritBox(level, 'autoApproveMaxFiles')}

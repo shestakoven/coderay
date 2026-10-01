@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useReducer, useState } from 'react';
+import { useEffect, useMemo, useReducer, useState, type ReactNode } from 'react';
 import type { ClientMessage, HistoryView, PlanView, RollbackPreview } from '@ide/protocol';
 import type { ChatState } from '../chat/chat-state';
+import { Icon } from '../layout/Icon';
+import type { BottomTab } from '../layout/panel-state';
 import { timelineItems, type TimelineItem } from './history-state';
 import { agentIdle, canConfirmRollback, canOfferRollback, rollbackReducer } from './timeline-state';
 
@@ -14,6 +16,12 @@ interface Props {
   chat: ChatState;
   send: (message: ClientMessage) => boolean;
   onSelect: (item: TimelineItem) => void;
+  open: boolean;
+  onToggle: () => void;
+  tab: BottomTab;
+  onTab: (tab: BottomTab) => void;
+  terminal: ReactNode;
+  terminalCount: number;
 }
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -23,8 +31,7 @@ export function timelineSummary(items: TimelineItem[]): string {
   return [plural(count('step'), 'step'), plural(count('event') + count('gate'), 'event'), plural(count('revert'), 'revert')].join(' · ');
 }
 
-export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect }: Props) {
-  const [open, setOpen] = useState(false);
+export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount }: Props) {
   const [rollback, dispatch] = useReducer(rollbackReducer, null);
   const [undoing, setUndoing] = useState<Record<string, string>>({});
   const items = useMemo(() => timelineItems(plans, history), [plans, history]);
@@ -58,10 +65,16 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
 
   return (
     <footer className="timeline" data-testid="timeline">
-      <button className="timeline-bar" onClick={() => setOpen(!open)} aria-expanded={open}>
-        {open ? '▾' : '▸'} {timelineSummary(items)}
-      </button>
-      {open && (
+      <div className="bottom-tabs">
+        <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
+          <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={14} /> {timelineSummary(items)}
+        </button>
+        <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} aria-pressed={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
+          <Icon name="terminal" size={14} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
+        </button>
+      </div>
+      <div className="terminal-slot" hidden={!(open && tab === 'terminal')}>{terminal}</div>
+      {open && tab === 'timeline' && (
         <ul className="timeline-list">
           {items.map((item) => {
             const step = item.kind === 'step' ? latestPlan?.steps.find((s) => s.key === item.ref.stepKey) : undefined;

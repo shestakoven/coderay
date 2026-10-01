@@ -1,0 +1,7 @@
+{
+  "tool_name": "mcp__claude-in-chrome__javascript_tool",
+  "tool_input_preview": "{\"action\":\"javascript_exec\",\"tabId\":162902590,\"text\":\"location.reload(); await new Promise(r=>setTimeout(r,3500)); const b=[...document.querySelectorAll('.poc-toolbar button')].find(x=>x.textContent==...",
+  "error": "Failed to execute JavaScript: {\"code\":-32000,\"message\":\"Inspected target navigated or closed\"} The tab navigated or was closed mid-evaluation; call tabs_context to refresh tab IDs, then re-run against the current page (avoid long sleeps that span a navigation).",
+  "timestamp": "2026-09-25T20:12:42.335Z",
+  "retry_count": 1
+}

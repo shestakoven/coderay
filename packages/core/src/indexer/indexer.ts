@@ -1,10 +1,9 @@
 import { createHash } from 'node:crypto';
-import type { Stats } from 'node:fs';
 import { lstat, readdir, readFile, realpath } from 'node:fs/promises';
 import { join, relative, sep } from 'node:path';
-import { watch, type FSWatcher } from 'chokidar';
 import type { LanguageAdapter, ParsedFile } from '../lang/types';
 import type { IndexedFile } from '../model';
+import { watchRecursive, type RecursiveWatch } from '../watch/recursive';
 import { createIgnoreMatcher, type IgnoreMatcher } from './ignore';
 
 export const MAX_FILE_BYTES = 1_000_000;
@@ -30,13 +29,12 @@ export class Indexer {
   private readonly indexed = new Map<string, IndexedFile>();
   private readonly listeners = new Set<ChangeListener>();
   private readonly pending = new Set<string>();
-  private watcher: FSWatcher | undefined;
+  private watcher: RecursiveWatch | undefined;
   private timer: NodeJS.Timeout | undefined;
   private reconcileTimer: NodeJS.Timeout | undefined;
   private firstPendingAt: number | undefined;
   private live = false;
   private stopping = false;
-  private abortStart: (() => void) | undefined;
   private realRoot = '';
   private queue: Promise<void> = Promise.resolve();
 
@@ -52,18 +50,15 @@ export class Indexer {
   async start(): Promise<void> {
     this.realRoot = await realpath(this.root);
     if (this.stopping) return;
-    const watcher = watch(this.root, {
-      ignoreInitial: true,
-      followSymlinks: false,
-      ignorePermissionErrors: true,
-      ignored: (absPath, stats) => this.isUnwatched(this.toRel(absPath), stats),
+    // Events carry no file type, so a file no adapter handles is dropped by refresh() rather than here.
+    const watcher = watchRecursive(this.root, {
+      ignored: (absPath) => this.isIgnored(this.toRel(absPath), false),
+      onEvent: (absPath) => this.schedule(this.toRel(absPath)),
+      onError: (error) => console.error('indexer: watch error', error),
     });
     this.watcher = watcher;
-    watcher.on('error', (error) => console.error('indexer: watch error', error));
-    watcher.on('all', (_event, absPath) => this.schedule(this.toRel(absPath)));
-    await new Promise<void>((resolve) => {
-      this.abortStart = resolve;
-      watcher.once('ready', () => resolve());
+    await watcher.ready.catch((error: unknown) => {
+      if (!this.stopping) console.error('indexer: watch error', error);
     });
     if (this.stopping) return;
     this.queue = this.queue.then(async () => {
@@ -80,7 +75,6 @@ export class Indexer {
 
   async stop(): Promise<void> {
     this.stopping = true;
-    this.abortStart?.();
     clearTimeout(this.timer);
     clearTimeout(this.reconcileTimer);
     await this.watcher?.close();
@@ -98,11 +92,6 @@ export class Indexer {
 
   private toRel(absPath: string): string {
     return relative(this.root, absPath).split(sep).join('/');
-  }
-
-  private isUnwatched(relPath: string, stats: Stats | undefined): boolean {
-    if (this.isIgnored(relPath, stats?.isDirectory() ?? false)) return true;
-    return !!stats?.isFile() && !this.adapters.some((a) => a.handles(relPath));
   }
 
   private schedule(relPath: string): void {

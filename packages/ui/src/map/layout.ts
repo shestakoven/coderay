@@ -1,4 +1,5 @@
-import type { Edge, Node } from '@xyflow/react';
+import type { Node } from '@xyflow/react';
+import type { MapEdge } from './edge-focus';
 import type { ELK, ElkNode } from 'elkjs/lib/elk-api.js';
 import type { VisibleGraph, VisibleNode } from './visible-graph';
 
@@ -51,14 +52,16 @@ const ROOT_OPTIONS = {
   'elk.direction': 'RIGHT',
   'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
   'elk.spacing.nodeNode': '32',
-  'elk.layered.spacing.nodeNodeBetweenLayers': '64',
+  'elk.layered.spacing.nodeNodeBetweenLayers': '90',
+  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
+  'elk.layered.considerModelOrder.strategy': 'NONE',
 };
 
 export async function layoutGraph(
   graph: VisibleGraph,
   expanded: ReadonlySet<string>,
   elk: ELK,
-): Promise<{ nodes: MapFlowNode[]; edges: Edge[] }> {
+): Promise<{ nodes: MapFlowNode[]; edges: MapEdge[] }> {
   const childrenOf = new Map<string, VisibleNode[]>();
   for (const node of graph.nodes) {
     if (node.parentId) childrenOf.set(node.parentId, [...(childrenOf.get(node.parentId) ?? []), node]);
@@ -111,7 +114,7 @@ export async function layoutGraph(
       id: e.id,
       source: e.from,
       target: e.to,
-      label: e.weight > 1 ? String(e.weight) : undefined,
+      data: { weight: e.weight },
     })),
   };
 }

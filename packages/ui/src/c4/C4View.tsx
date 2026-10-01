@@ -24,6 +24,7 @@ import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { PromptPopover } from '../plan/PromptPopover';
 import { promptTarget } from '../plan/prompt-text';
 import { StepBadges } from '../plan/StepBadges';
+import { DetailsAside } from '../layout/DetailsSlot';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 
@@ -39,10 +40,19 @@ const ICONS: Record<string, string> = {
   doc: '<path d="M3.5 1.5h6l3 3v10h-9z M9.5 1.5v3h3"/>',
   globe: '<circle cx="8" cy="8" r="6.5"/><path d="M1.5 8h13M8 1.5c2 2 2 11 0 13M8 1.5c-2 2-2 11 0 13"/>',
   mail: '<rect x="1.5" y="3.5" width="13" height="9" rx="1"/><path d="M1.5 4.5l6.5 5 6.5-5"/>',
-  box: '<rect x="2.5" y="2.5" width="11" height="11" rx="2"/>',
+  box: '<path d="M8 1.5l5.5 3v7L8 14.5l-5.5-3v-7z"/><path d="M2.5 4.5L8 7.5l5.5-3M8 7.5v7"/>',
+  play: '<path d="M5 3l8 5-8 5z" fill="currentColor"/>',
   plug: '<path d="M5.5 1.5v3.5M10.5 1.5v3.5M3.5 5h9v2.5a4.5 4.5 0 0 1-9 0zM8 12v2.5"/>',
   stack: '<rect x="2.5" y="6" width="11" height="7.5" rx="1.5"/><path d="M4 4h8M5.5 2h5"/>',
 };
+
+function CaretIcon({ open }: { open: boolean }) {
+  return (
+    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d={open ? 'm6 9 6 6 6-6' : 'm9 18 6-6-6-6'} />
+    </svg>
+  );
+}
 
 function Icon({ name }: { name: string }) {
   return <svg className="c4-icon" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" dangerouslySetInnerHTML={{ __html: ICONS[name] ?? ICONS.box! }} />;
@@ -66,7 +76,7 @@ function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
       <div className="c4-title">
         <Icon name={data.icon} />
         <span>{data.title}</span>
-        {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret">{data.expanded ? '▾' : '▸'}</span>}
+        {(data.kind === 'container' || data.kind === 'group') && !data.root && !data.dim && <span className="c4-caret" title={data.expanded ? 'Collapse' : 'Expand'}><CaretIcon open={data.expanded === true} /></span>}
       </div>
       <div className="c4-sub">{data.subtitle}</div>
       {changed && <div className="c4-detail change-line">+{changed.added} {'\u2212'}{changed.removed} {'\u00b7'} {changed.files} file{changed.files === 1 ? '' : 's'}</div>}
@@ -279,12 +289,14 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         <PromptPopover nodeId={promptNode} />
       </ReactFlow>
       <div className="c4-toolbar">
-        <span className="c4-crumbs">
-          <button className="link" onClick={() => openRoot(null)} disabled={!root}>
-            {snapshot.projectName}
-          </button>
-          {root && <span> / {model.containers.find((c) => c.id === root)?.name}</span>}
-        </span>
+        {root && (
+          <span className="c4-crumbs">
+            <button className="link" onClick={() => openRoot(null)}>
+              {snapshot.projectName}
+            </button>
+            <span> / {model.containers.find((c) => c.id === root)?.name}</span>
+          </span>
+        )}
         {selection && <span className="muted">Showing only the selection's links · Esc or click the background to clear</span>}
         {movedCount > 0 && (
           <button
@@ -334,19 +346,19 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
   if (!selection) {
     if (model.warnings.length === 0 && model.tooling.length === 0) return null;
     return (
-      <aside className="details c4-notes">
+      <DetailsAside className="details c4-notes" inline>
         {model.tooling.length > 0 && <p className="muted">Tooling (not drawn): {model.tooling.join(', ')}</p>}
         {model.warnings.map((w) => (
           <p key={w} className="warn">{w}</p>
         ))}
-      </aside>
+      </DetailsAside>
     );
   }
   const componentName = (id: string) => snapshot.components.find((c) => c.id === id)?.name ?? (id === 'unassigned' ? 'Unassigned files' : id);
   if (selection.type === 'edge') {
     const links = model.links.filter((l) => selection.ids.includes(l.id));
     return (
-      <aside className="details">
+      <DetailsAside>
         {links.map((l) => (
           <section key={l.id}>
             <h2>
@@ -364,13 +376,13 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </section>
         ))}
-      </aside>
+      </DetailsAside>
     );
   }
   const rootComponent = selection.id.startsWith('root:') ? snapshot.components.find((c) => `root:${c.id}` === selection.id) : undefined;
   if (rootComponent) {
     return (
-      <aside className="details">
+      <DetailsAside>
         <h2>{rootComponent.name}</h2>
         {rootComponent.summary && <p className="summary">{rootComponent.summary}</p>}
         {rootComponent.description && <p>{rootComponent.description}</p>}
@@ -386,7 +398,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </>
         )}
-      </aside>
+      </DetailsAside>
     );
   }
   const container = model.containers.find((c) => c.id === selection.id);
@@ -396,7 +408,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
   if (shown) {
     const list = container ? [container] : members;
     return (
-      <aside className="details">
+      <DetailsAside>
         <h2>{container ? container.name : `${members.length} containers from one build`}</h2>
         <p className="muted">
           {shown.role} · {shown.tech}
@@ -431,13 +443,13 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
             </ul>
           </>
         )}
-      </aside>
+      </DetailsAside>
     );
   }
   if (external) {
     const users = model.links.filter((l) => l.to === external.id).map((l) => nameOf(model, l.from));
     return (
-      <aside className="details">
+      <DetailsAside>
         <h2>{external.name}</h2>
         <p className="muted">{external.kind} · classified from names only</p>
         <h3>Identifiers</h3>
@@ -450,7 +462,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
         </ul>
         <h3>Used by</h3>
         <p>{users.join(', ')}</p>
-      </aside>
+      </DetailsAside>
     );
   }
   return null;

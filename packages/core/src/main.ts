@@ -1,5 +1,7 @@
+import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { realpathSync, statSync } from 'node:fs';
+import { readFileSync, realpathSync, statSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClientMessage, MapSnapshot, ServerMessage } from '@ide/protocol';
@@ -20,10 +22,15 @@ import { McpRegistry } from './mcp/registry';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
+import { listDirectories } from './project/browse';
+import { RecentProjects } from './project/recent';
+import { takeLaunchToken } from './project/token';
+import { successorArgs, validateProjectPath } from './project/switch';
 import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
 import { startServer, type RunningServer } from './server/server';
 import { openStore } from './store/store';
+import { TerminalService } from './terminal/terminal-service';
 
 const { values } = parseArgs({
   options: {
@@ -32,6 +39,7 @@ const { values } = parseArgs({
     ui: { type: 'string' },
     'allow-origin': { type: 'string', multiple: true, default: [] },
     'ide-home': { type: 'string' },
+    'token-stdin': { type: 'boolean', default: false },
     claude: { type: 'string', default: 'claude' },
   },
 });
@@ -60,11 +68,14 @@ if (!lock.acquired) {
   console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
   process.exit(1);
 }
-const token = randomBytes(24).toString('base64url');
+const token = values['token-stdin'] ? readFileSync(0, 'utf8').trim() || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
+const recent = new RecentProjects(home);
+recent.add(root);
 
 try {
   const store = openStore(projectDir(home, root));
   const policy = new PolicyStore({ home, root });
+  const terminals = new TerminalService({ root });
   let server: RunningServer | undefined;
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
@@ -92,6 +103,7 @@ try {
     claude: { command: values.claude, args: [] },
     mcpServers: () => registry.sessionServers(),
     gate: rt.sessionGate,
+    canLeave: () => rt.canLeave(),
   });
   session = agent;
   rt.attach(agent);
@@ -105,6 +117,14 @@ try {
   const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: { ...registry.view(), policy: policy.view() } });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
+  const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats() });
+  const broadcastSessions = (): void => {
+    try {
+      server?.broadcast(sessionsSnapshot());
+    } catch (error) {
+      console.error('IDE core: could not list the chats', error);
+    }
+  };
 
   const changeSettings = (message: SettingsClientMessage): void => {
     switch (message.type) {
@@ -130,6 +150,7 @@ try {
   };
 
   let closing: Promise<void> | undefined;
+  let afterClose: (() => Promise<void>) | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
   let deployWatch: { close(): Promise<void> } | undefined;
@@ -139,6 +160,7 @@ try {
     switch (message.type) {
       case 'chat.send':
         agent.send(message.text);
+        broadcastSessions();
         return;
       case 'chat.stop':
         agent.stop();
@@ -148,6 +170,16 @@ try {
         return;
       case 'session.new':
         await agent.newSession();
+        return;
+      case 'session.list':
+        reply(sessionsSnapshot());
+        return;
+      case 'session.switch':
+        await agent.switchSession(message.id);
+        return;
+      case 'session.configure':
+        await agent.configure(message.modelChoice, message.effort);
+        broadcastSessions();
         return;
       case 'prompt.answer':
         agent.answerPrompt(message.requestId, message.answer);
@@ -161,6 +193,44 @@ try {
       case 'settings.get':
         reply(settingsSnapshot());
         return;
+      case 'terminal.open':
+        terminals.open(message.id, message.cols, message.rows);
+        return;
+      case 'terminal.input':
+        terminals.input(message.id, message.data);
+        return;
+      case 'terminal.resize':
+        terminals.resize(message.id, message.cols, message.rows);
+        return;
+      case 'terminal.close':
+        terminals.close(message.id);
+        return;
+      case 'fs.list':
+        reply({ type: 'fs.list.result', requestId: message.requestId, ...listDirectories(message.path, homedir()) });
+        return;
+      case 'project.open': {
+        const target = validateProjectPath(message.path);
+        let error = 'error' in target ? target.error : target.root === root ? 'That project is already open.' : null;
+        if (error === null && !('error' in target)) {
+          const probe = acquireCoreLock(projectDir(home, target.root));
+          if (probe.acquired) probe.release();
+          else error = `That project is already open in another IDE core (pid ${probe.holder}).`;
+        }
+        reply({ type: 'project.open.result', requestId: message.requestId, error });
+        if (error !== null || 'error' in target) return;
+        recent.add(target.root);
+        const args = successorArgs(process.argv.slice(2), target.root, running.port);
+        afterClose = async () => {
+          const child = spawn(process.execPath, [...process.execArgv, process.argv[1] ?? '', ...args, '--token-stdin'], {
+            detached: true,
+            stdio: ['pipe', 'inherit', 'inherit'],
+          });
+          await new Promise<void>((resolve) => child.stdin.end(token, () => resolve()));
+          child.unref();
+        };
+        closing ??= shutdown();
+        return;
+      }
       default:
         await routeClientMessage(message, {
           history: (history) => rt.history.handle(history, reply),
@@ -187,12 +257,15 @@ try {
     snapshot: () => snapshot ?? null,
     routes: rt.gate.routes,
     greeting: () => [
+      { type: 'project.info', info: { root, name: projectName, home: homedir(), recent: recent.list() } },
       { type: 'map.progress', progress: progress.get() },
       { type: 'session.snapshot', state: agent.state() },
+      sessionsSnapshot(),
       plansSnapshot(),
       gateSnapshot(),
       settingsSnapshot(),
       { type: 'history.snapshot', history: rt.history.snapshot() },
+      { type: 'terminal.snapshot', terminals: terminals.snapshot() },
     ],
     onClientMessage: (message, reply) => {
       if (closing) {
@@ -205,14 +278,20 @@ try {
   server = running;
   agent.onMessage((message) => {
     running.broadcast(message);
-    if (message.type === 'session.snapshot') running.broadcast(plansSnapshot());
+    if (message.type !== 'session.snapshot') return;
+    running.broadcast(plansSnapshot());
+    broadcastSessions();
   });
+  agent.onTurnClosed(broadcastSessions);
+  agent.onProcessExit(broadcastSessions);
   rt.gate.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
   rt.gate.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
   rt.history.onPatch((patch) => running.broadcast({ type: 'history.patch', patch }));
   rt.history.onReset(() => running.broadcast({ type: 'history.snapshot', history: rt.history.snapshot() }));
+  terminals.onMessage((message) => running.broadcast(message));
 
   const shutdown = async (): Promise<void> => {
+    const closingTerminals = terminals.closeAll();
     // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
     await rt.close();
     progress.stop();
@@ -222,9 +301,11 @@ try {
     await models.close();
     await stopping;
     await indexer?.stop();
+    await closingTerminals;
     await running.close();
     store.close();
     lock.release();
+    await afterClose?.();
     process.exit(0);
   };
   let firstInterrupt = 0;

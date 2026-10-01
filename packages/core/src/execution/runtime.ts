@@ -62,6 +62,7 @@ export interface ExecutionRuntime {
   attach(session: AgentSession): void;
   close(): Promise<void>;
   unavailable(): string | null;
+  canLeave(): string | null;
   onChangesUpserted(listener: (changes: ChangeView[]) => void): () => boolean;
 }
 
@@ -385,6 +386,12 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     history,
     baselines,
     unavailable: () => failure,
+    canLeave() {
+      if (gate.gate.pending().length > 0) return 'Answer the waiting tool question before switching chats.';
+      if (gate.plans.plans().some((plan) => plan.status === 'proposed')) return 'Answer the waiting plan before switching chats.';
+      if (watchdog.isPending()) return 'Resolve the watchdog question before switching chats.';
+      return null;
+    },
     onChangesUpserted(listener) {
       upserted.add(listener);
       return () => upserted.delete(listener);
@@ -414,6 +421,9 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         history.poke();
         watchdog.dropPending();
         if (!watchdog.isPending()) hold.release();
+      });
+      next.onMessage((message) => {
+        if (message.type === 'session.snapshot') watchdog.reload();
       });
       next.onUserMessage(() => void reconcile());
       next.onTurnClosed(() => void reconcile(true));

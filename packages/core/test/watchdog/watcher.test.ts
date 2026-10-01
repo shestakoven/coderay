@@ -1,9 +1,20 @@
-import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, utimesSync, writeFileSync, type FSWatcher } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { onTestFinished, describe, expect, it } from 'vitest';
+import { onTestFinished, describe, expect, it, vi } from 'vitest';
 import { WatchdogWatcher, type FsEvent } from '../../src/watchdog/watcher';
 import { tempDir, waitFor } from '../helpers';
+
+const created = vi.hoisted(() => ({ recursive: [] as unknown[] }));
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>();
+  const watch = (...args: unknown[]): FSWatcher => {
+    const w = (actual.watch as (...a: unknown[]) => FSWatcher)(...args);
+    if ((args[1] as { recursive?: boolean } | undefined)?.recursive) created.recursive.push(w);
+    return w;
+  };
+  return { ...actual, watch };
+});
 
 async function watched(settleMs = 20): Promise<{ root: string; events: FsEvent[]; received: number[]; watcher: WatchdogWatcher }> {
   const root = tempDir('watch-');
@@ -322,5 +333,17 @@ describe('WatchdogWatcher', { timeout: 120_000 }, () => {
     const watcher = new WatchdogWatcher({ root, readyMs: 100, testHooks: { swallowReady: true } });
     await expect(watcher.start()).rejects.toThrow(/ready/);
     expect(probeDirs()).toEqual(before);
+  });
+
+  it('logs a watch error instead of crashing and keeps reporting changes', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    const { root, events } = await watched();
+    const fsWatcher = created.recursive.at(-1) as FSWatcher;
+    const failure = Object.assign(new Error('EMFILE: too many open files, watch'), { code: 'EMFILE' });
+    expect(() => fsWatcher.emit('error', failure)).not.toThrow();
+    expect(logged).toHaveBeenCalledWith('watchdog: watch error', failure);
+    writeFileSync(join(root, 'after.ts'), 'x');
+    await waitFor(() => events.find((e) => e.rel === 'after.ts'), 'event after the watch error');
   });
 });
