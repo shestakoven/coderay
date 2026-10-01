@@ -13,6 +13,7 @@ import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import { focusEdges, type MapEdge } from './edge-focus';
 import { markCounts } from '../history/dialog-state';
+import { Icon } from '../layout/Icon';
 import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { dimsNode } from '../plan/plan-state';
 import { PromptPopover } from '../plan/PromptPopover';
@@ -25,14 +26,14 @@ import { graphSignature, visibleGraph } from './visible-graph';
 const elk = new ELK({ workerUrl: elkWorkerUrl });
 const FIT_PADDING = 0.1;
 
-export function MapView({ state, dispatch, hideTests }: { state: MapState; dispatch: Dispatch<MapAction>; hideTests: boolean }) {
+export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispatch<MapAction> }) {
   const overlay = usePlanOverlay();
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [edges, setEdges, onEdgesChange] = useEdgesState<MapEdge>([]);
   const graph = useMemo(
-    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts, hideTests) : null),
-    [state.snapshot, state.expanded, overlay.marks.ghosts, hideTests],
+    () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts, true) : null),
+    [state.snapshot, state.expanded, overlay.marks.ghosts],
   );
   const signature = useMemo(() => (graph ? graphSignature(graph) : null), [graph]);
   const promptNode = useMemo(
@@ -51,7 +52,6 @@ export function MapView({ state, dispatch, hideTests }: { state: MapState; dispa
   }, [nodes, state.snapshot, overlay.eventFiles, overlay.prompts]);
   const focus = hovered ?? state.selected;
   const focused = useMemo(() => focusEdges(edges, focus), [edges, focus]);
-  const hiddenCount = useMemo(() => focused.edges.filter((edge) => edge.hidden).length, [focused.edges]);
   const flowNodes = useMemo(
     () =>
       nodes.map((node) => {
@@ -116,14 +116,13 @@ export function MapView({ state, dispatch, hideTests }: { state: MapState; dispa
         proOptions={{ hideAttribution: true }}
       >
         <Background />
-        <Controls showInteractive={false} showFitView={false}>
+        <Controls showInteractive={false} showZoom={false} showFitView={false}>
           <FitButton bounds={bounds} />
         </Controls>
         <MiniMap pannable zoomable />
         <FitOnNewComponents fitKey={key} bounds={bounds} />
         <CenterOnFocus />
         <PromptPopover nodeId={promptNode} />
-        {hiddenCount > 0 && focus === null && <div className="map-hint">{hiddenCount} weaker dependencies hidden · hover or select a component to see its links</div>}
       </ReactFlow>
     </div>
     </PendingCountsContext.Provider>
@@ -164,7 +163,7 @@ function FitButton({ bounds }: { bounds: Bounds | null }) {
         if (bounds) void fitBounds(bounds, { padding: FIT_PADDING });
       }}
     >
-      ⤢
+      <Icon name="maximize" size={22} />
     </ControlButton>
   );
 }

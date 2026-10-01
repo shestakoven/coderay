@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ClientMessage, ControlMode, GateAnswer, MapProgress, PlanAnswer, ProjectInfo, SettingsView } from '@ide/protocol';
+import type { ClientMessage, GateAnswer, MapProgress, PlanAnswer, ProjectInfo, SettingsView } from '@ide/protocol';
 import { ErrorBoundary } from './layout/ErrorBoundary';
 import { ChatPanel } from './chat/ChatPanel';
 import { canSend, chatReducer, initialChatState } from './chat/chat-state';
@@ -22,17 +22,14 @@ import { C4View } from './c4/C4View';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
-import { MODE_LABEL, MODE_TITLE, withMode } from './settings/policy-form';
-import { initialModeSave, modeSaveReducer } from './settings/mode-save';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
 import { Icon } from './layout/Icon';
-import { ActivityBar } from './layout/ActivityBar';
 import { DetailsSlotContext } from './layout/DetailsSlot';
-import { LeftPanel } from './layout/LeftPanel';
+import { LeftPanel, LEFT_TABS } from './layout/LeftPanel';
 import { loadPanels, panelReducer, savePanels } from './layout/panel-state';
 import { Resizer } from './layout/Resizer';
-import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes, type SizedPanel } from './layout/sizes';
 import { ComponentTree, FileTree } from './layout/Trees';
+import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes, type SizedPanel } from './layout/sizes';
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { TerminalHub, type TerminalTab } from './terminal/terminal-hub';
 import { OpenProjectDialog, useOpenProject } from './project/OpenProjectDialog';
@@ -60,15 +57,12 @@ export function App() {
   const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
-  const [modeSave, dispatchModeSave] = useReducer(modeSaveReducer, initialModeSave);
-  const modeRequest = useRef<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
   const connection = useRef<Connection | null>(null);
   const [focus, setFocus] = useState<{ componentIds: string[]; nonce: number } | null>(null);
   const [anchored, setAnchored] = useState(false);
-  const [hideTests, setHideTests] = useState(true);
   const [tab, setTab] = useState<DetailsTab>('details');
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, undefined, () => loadPanels(storage()));
@@ -76,10 +70,10 @@ export function App() {
   const sendRef = useRef<(message: ClientMessage) => boolean>(() => false);
   const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
-  const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
+  const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const openProject = useOpenProject();
   const switching = useRef({ requested: false, dropped: false });
   const knownRoot = useRef<string | null>(null);
@@ -119,10 +113,6 @@ export function App() {
           break;
         case 'settings.result':
           setSettingsResult({ requestId: message.requestId, error: message.error });
-          if (message.requestId === modeRequest.current) {
-            modeRequest.current = null;
-            dispatchModeSave(message.error ? { type: 'failed', message: message.error, now: Date.now() } : { type: 'saved' });
-          }
           break;
         case 'plans.snapshot':
           dispatchPlans({ type: 'plans', plans: message.plans });
@@ -210,17 +200,6 @@ export function App() {
     send({ type: 'settings.get' });
     setSettingsOpen(true);
   };
-  useEffect(() => {
-    if (modeSave.error === null) return;
-    const timer = setTimeout(() => dispatchModeSave({ type: 'expire', now: Date.now() }), Math.max(0, modeSave.until - Date.now()));
-    return () => clearTimeout(timer);
-  }, [modeSave]);
-  const saveMode = (mode: ControlMode) => {
-    if (!settings) return;
-    const requestId = crypto.randomUUID();
-    modeRequest.current = requestId;
-    send({ type: 'policy.save', requestId, level: 'project', policy: withMode(settings.policy, mode) });
-  };
   const toReview = (settings?.servers.filter((server) => server.status === 'unapproved').length ?? 0)
     + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0)
     + (settings?.policy.externalEdits.ide || settings?.policy.externalEdits.project ? 1 : 0);
@@ -254,6 +233,7 @@ export function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, []);
+
   const onDetailsShown = useCallback(() => dispatchPanels({ type: 'node-selected' }), []);
   const onDetailsHidden = useCallback(() => dispatchPanels({ type: 'selection-cleared' }), []);
   const detailsSlot = useMemo(() => ({ element: detailsEl, onShown: onDetailsShown, onHidden: onDetailsHidden }), [detailsEl, onDetailsShown, onDetailsHidden]);
@@ -320,7 +300,7 @@ export function App() {
     if (owner && !state.expanded.has(owner)) dispatch({ type: 'toggle', componentId: owner });
     dispatch({ type: 'select', id: path });
   };
-  const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])];
+  const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (
     <DetailsPanel
       state={state}
@@ -355,48 +335,41 @@ export function App() {
               <button className={componentsView ? 'on' : ''} onClick={() => setComponentsView(true)}>Components</button>
             </span>
           )}
+          <div className="seg topbar-tabs" role="tablist">
+            {LEFT_TABS.map(({ key, label }) => (
+              <button key={key} role="tab" aria-selected={panels.leftTab === key && panels.left} className={panels.leftTab === key && panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'left-tab', tab: key })}>{label}</button>
+            ))}
+          </div>
           <span className="topbar-spacer" />
-          {settings && (
-            <label className="chip mode" title={MODE_TITLE}>
-              Out-of-plan writes{' '}
-              <select
-                value={settings.policy.effective.mode}
-                onChange={(event) => saveMode(event.target.value as ControlMode)}
-              >
-                {(['A', 'B', 'C'] as const).map((mode) => <option key={mode} value={mode}>{MODE_LABEL[mode]}</option>)}
-              </select>
-              {Object.hasOwn(settings.policy.project, 'mode') ? ' (this project)' : ''}
-              {modeSave.error !== null && <span className="warn" role="alert"> {modeSave.error}</span>}
-            </label>
-          )}
+          <div className="seg topbar-tabs" role="tablist">
+            <button role="tab" aria-selected={panels.rightTab === 'agent'} className={panels.rightTab === 'agent' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'agent' })}>Agent</button>
+            <button role="tab" aria-selected={panels.rightTab === 'plan'} className={panels.rightTab === 'plan' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'plan' })}>
+              Plan
+              {shown !== null && <span className="seg-dot" aria-label="has a plan" />}
+            </button>
+          </div>
+          <div className="topbar-actions">
+            <button className={panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'left' })} title="Project panel" aria-pressed={panels.left}><Icon name="panel-left" size={17} /></button>
+            <button className={panels.right ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'right' })} title="Agent and details" aria-pressed={panels.right}><Icon name="panel-right" size={17} /></button>
+            <button className={panels.focus ? 'on' : ''} onClick={() => dispatchPanels({ type: 'focus' })} title="Focus: map only (F)" aria-pressed={panels.focus}><Icon name="maximize" size={17} /></button>
+            <button className="with-badge" onClick={openSettings} title="Settings">
+              <Icon name="settings" size={17} />
+              {toReview > 0 && <b>{toReview}</b>}
+            </button>
+          </div>
         </header>
         <div className="workspace">
-          <ActivityBar
-            left={panels.left}
-            right={panels.right}
-            bottom={panels.bottom}
-            focus={panels.focus}
-            terminalOpen={panels.bottom && panels.bottomTab === 'terminal'}
-            onTerminal={toggleTerminal}
-            onToggle={(panel) => dispatchPanels({ type: 'toggle', panel })}
-            onFocus={() => dispatchPanels({ type: 'focus' })}
-            onSettings={openSettings}
-            onOpenProject={() => setOpenDialog(true)}
-            badge={toReview}
-          />
           <LeftPanel
-              hidden={!panels.left}
-              tab={panels.leftTab}
-              onTab={(tab) => dispatchPanels({ type: 'left-tab', tab })}
-              components={snapshot ? <ComponentTree snapshot={snapshot} changes={changes} marks={marks} selected={state.selected} onSelectComponent={selectComponent} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
-              detailsRef={setDetailsEl}
-              files={snapshot ? <FileTree snapshot={snapshot} changes={changes} selected={state.selected} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
-            />
+            hidden={!panels.left}
+            tab={panels.leftTab}
+            components={snapshot ? <ComponentTree snapshot={snapshot} changes={changes} marks={marks} selected={state.selected} onSelectComponent={selectComponent} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
+            detailsRef={setDetailsEl}
+            files={snapshot ? <FileTree snapshot={snapshot} changes={changes} selected={state.selected} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
+          />
           {panels.left && <Resizer orientation="vertical" label="Resize project panel" value={sizes.left} min={LIMITS.left.min} max={LIMITS.left.max} grow={1} onResize={(size) => resize('left', size)} onReset={() => resetSize('left')} />}
           <main className="map-area">
             <MapActivity progress={progress} status={snapshot?.status ?? null} />
             <div className="map-regroup">
-              {!showC4 && <button type="button" onClick={() => setHideTests((value) => !value)}>{hideTests ? 'Show test components' : 'Hide test components'}</button>}
               <button type="button" onClick={() => send({ type: 'map.regroup' })}>Regroup</button>
             </div>
             <PlanOverlayContext.Provider value={overlay}>
@@ -406,7 +379,7 @@ export function App() {
                 </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>
-                  <MapView state={state} dispatch={dispatch} hideTests={hideTests} />
+                  <MapView state={state} dispatch={dispatch} />
                 </ReactFlowProvider>
               )}
               {!showC4 && mapDetails}
@@ -414,13 +387,6 @@ export function App() {
           </main>
           {showRight && <Resizer orientation="vertical" label="Resize agent panel" value={sizes.right} min={LIMITS.right.min} max={LIMITS.right.max} grow={-1} onResize={(size) => resize('right', size)} onReset={() => resetSize('right')} />}
           <aside className="right-panel" hidden={!showRight} aria-label="Agent and details">
-            <div className="seg" role="tablist">
-              <button role="tab" aria-selected={panels.rightTab === 'agent'} className={panels.rightTab === 'agent' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'agent' })}>Agent</button>
-              <button role="tab" aria-selected={panels.rightTab === 'plan'} className={panels.rightTab === 'plan' ? 'on' : ''} onClick={() => dispatchPanels({ type: 'right-tab', tab: 'plan' })}>
-                Plan
-                {shown !== null && <span className="seg-dot" aria-label="has a plan" />}
-              </button>
-            </div>
             <div className="right-body" hidden={panels.rightTab !== 'agent'}>
               <ErrorBoundary label="The chat">
                 <ChatPanel
@@ -474,18 +440,17 @@ export function App() {
             tab={panels.bottomTab}
             onTab={(tab) => dispatchPanels({ type: 'bottom-tab', tab })}
             terminalCount={terminalTabs.length}
+            trailing={(
+              <>
+                <span className={`conn ${status}`}><i className="dot" />{status === 'open' ? 'core connected' : status}</span>
+                {mapChips.map((chip) => (
+                  <span key={chip.text} className={`chip ${chip.tone}`} title={chip.title}>{chip.text}</span>
+                ))}
+              </>
+            )}
             terminal={<TerminalPanel hub={hub} tabs={terminalTabs} visible={panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
           />
         </div>
-        <footer className="statusbar">
-          <span className={`conn ${status}`}><i className="dot" />{status === 'open' ? 'core connected' : status}</span>
-          {snapshot && <span>{snapshot.files.length} files · {snapshot.components.length} components</span>}
-          {mapChips.map((chip) => (
-            <span key={chip.text} className={`chip ${chip.tone}`} title={chip.title}>{chip.text}</span>
-          ))}
-          <span className="statusbar-spacer" />
-          {projectInfo && <span className="mono" title="Project root">{projectInfo.root}</span>}
-        </footer>
         {openDialog && (
           <OpenProjectDialog info={projectInfo} controller={openProject} send={send} onClose={() => { setOpenDialog(false); openProject.dispatch({ type: 'reset' }); }} />
         )}

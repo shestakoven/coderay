@@ -605,3 +605,83 @@ body.resizing .resizer { pointer-events: auto; }
 
 .error-boundary { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; margin: 12px; padding: 12px; border: 1px solid var(--error); border-radius: var(--r-1); }
 .error-boundary code { color: var(--error); white-space: pre-wrap; }
+
+/* Polish */
+button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+button:not(:disabled):hover { border-color: var(--accent); }
+.activity button, .seg button, .tree-label, .tree-caret { transition: background 0.12s, color 0.12s, border-color 0.12s; }
+.map-regroup { padding: 3px; gap: 2px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-2); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); }
+.map-regroup button { border: 0; background: none; }
+.map-regroup button:hover { background: var(--raised); color: var(--fg); }
+.statusbar { gap: 12px; }
+.statusbar > span { display: inline-flex; align-items: center; height: 100%; padding: 0 4px; border-radius: var(--r-1); }
+.statusbar > span:not(.statusbar-spacer):hover { background: var(--raised); color: var(--fg); }
+.topbar { border-bottom: 1px solid var(--border); }
+.view-switch { padding: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; gap: 2px; }
+.view-switch button { border: 0; border-radius: var(--r-1) !important; background: none; color: var(--muted); }
+.view-switch button.on { background: var(--raised); color: var(--fg); }
+.timeline-bar:hover { background: var(--raised); color: var(--fg); }
+
+/* Far zoom: title only, scaled so it stays readable */
+.node.component.far { display: flex; align-items: center; padding: 6px 14px; }
+.node.component.far .title { font-size: min(calc(13px / var(--zoom)), 22px); line-height: 1.15; }
+.node.component.far .summary, .node.component.far .meta { display: none; }
+
+/* Chat header at narrow widths */
+.chat-header .chat-status { flex: none; }
+.chat-switcher { flex: 1 1 0; }
+.chat-switcher-button { max-width: 100%; }
+.chat-header .spacer { flex: 0 0 0; }
+
+/* No divider lines: regions are told apart by background tone */
+.topbar, .activity, .statusbar, .timeline { background: var(--bg); border: 0; }
+.left-panel, .right-panel { border: 0; }
+.chat-header, .composer, .plan-dock, .right-panel .seg, .terminal-panel, .terminal-tabs { border: 0; }
+.resizer { background: transparent; }
+.resizer.vertical { width: 0; }
+.resizer.horizontal { height: 0; }
+.resizer.vertical::before { left: -3px; right: -3px; }
+.resizer:hover, .resizer:focus-visible, .resizer.dragging { background: var(--accent); }
+.resizer.vertical:hover, .resizer.vertical:focus-visible, .resizer.vertical.dragging { width: 2px; box-shadow: none; }
+.resizer.horizontal:hover, .resizer.horizontal:focus-visible, .resizer.horizontal.dragging { height: 2px; box-shadow: none; }
+.activity button.on { background: var(--surface); }
+
+/* One flat background everywhere; cards (map nodes, inputs) are the only raised surfaces */
+.left-panel, .right-panel, .chat, .chat-header, .plan-dock, .terminal-tabs, .md-code-bar { background: var(--bg); }
+.activity button.on { background: var(--raised); }
+
+/* Compact shell */
+.topbar { height: 34px; }
+.topbar-tabs { margin: 0; padding: 2px; }
+.topbar-tabs button { flex: none; padding: 2px 12px; font-size: 12px; }
+.chat-header { min-height: 36px; padding: 4px 8px; }
+.tree-row { min-height: 24px; }
+.statusbar { height: 22px; }
+.timeline-bar { padding-top: 3px; padding-bottom: 3px; }
+.topbar-actions { display: flex; gap: 2px; margin-left: 4px; }
+.topbar-actions button { position: relative; display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 0; background: none; color: var(--muted); }
+.topbar-actions button:hover { background: var(--raised); color: var(--fg); }
+.topbar-actions button.on { color: var(--fg); background: var(--raised); }
+.topbar-actions .with-badge b { top: 0; right: 0; }
+.topbar-actions { display: flex; gap: 2px; margin-left: 4px; }
+.topbar-actions button { position: relative; display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 0; background: none; color: var(--muted); }
+.topbar-actions button:hover { background: var(--raised); color: var(--fg); }
+.topbar-actions button.on { color: var(--fg); background: var(--raised); }
+.topbar-actions .with-badge b { top: 0; right: 0; }
+
+/* Status lives in the bottom tab row */
+.bottom-status { margin-left: auto; display: flex; align-items: center; gap: 12px; padding-right: 6px; color: var(--muted); font-size: 11.5px; }
+.bottom-status .chip { border: 0; padding: 0; background: none; }
+
+/* Composer sits flush on the bottom panel */
+.composer { padding: 6px 6px 0; }
+.composer { gap: 0; }
+.composer-usage:not(:empty) { margin-top: 4px; }
+
+/* Fit control is a bare icon, not a button */
+.react-flow__controls { box-shadow: none; }
+.react-flow__controls-button { width: 36px; height: 36px; background: transparent; border: 0; color: var(--muted); }
+.react-flow__controls-button:hover { background: transparent; color: var(--fg); }
+.react-flow__controls-button svg { width: 22px; height: 22px; max-width: none; max-height: none; fill: none; }
+.topbar-actions { gap: 8px; margin-left: 10px; }
+.topbar-actions button { width: 28px; height: 28px; border-radius: var(--r-1); }

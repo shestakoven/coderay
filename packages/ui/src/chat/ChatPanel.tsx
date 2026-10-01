@@ -87,16 +87,16 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
     <section className="chat">
       <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
-        {chat.session?.status !== 'running' && (
+        {(chat.session?.status === 'crashed' || chat.session?.status === 'refused') && (
           <span className={`chat-status ${chat.session?.status ?? 'none'}`} title={chat.session?.model ?? undefined}>
-            <i className="status-dot" />{chat.session ? (chat.session.status === 'refused' ? 'hook off' : chat.session.status) : 'no session yet'}
+            <i className="status-dot" />{chat.session.status === 'refused' ? 'hook off' : chat.session.status}
           </span>
         )}
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
         <span className="spacer" />
-        <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} disabled={chat.session?.status !== 'running'} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>
+        {chat.session?.status === 'running' && <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>}
       </header>
       {dialog}
       {planDock}

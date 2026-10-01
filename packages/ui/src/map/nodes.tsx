@@ -1,4 +1,4 @@
-import { Handle, Position, type NodeProps } from '@xyflow/react';
+import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import { useContext } from 'react';
 import { nodeStateClass } from '../history/history-state';
 import { changeLine } from '../history/timeline-state';
@@ -8,13 +8,18 @@ import type { MapFlowNode } from './layout';
 
 const classes = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(' ');
 
+// Below this zoom node text is unreadable, so components switch to a title-only view whose text scales up.
+const FAR_ZOOM = 0.75;
+const farZoom = (state: { transform: [number, number, number] }): number => (state.transform[2] < FAR_ZOOM ? Math.max(0.1, Math.round(state.transform[2] * 20) / 20) : 1);
+
 export function ComponentNode({ id, data, selected }: NodeProps<MapFlowNode>) {
   const mark = usePlanOverlay().marks.components.get(id);
   const pending = useContext(PendingCountsContext).get(id);
   const { changes, highlight } = usePlanOverlay();
   const changed = changes.get(id);
+  const zoom = useStore(farZoom);
   return (
-    <div className={classes('node', 'component', changed && nodeStateClass(changed.states), highlight.has(id) && 'highlight', data.expanded && 'expanded', data.stale && 'stale', mark && 'in-plan', selected && 'selected')}>
+    <div style={zoom < 1 ? ({ '--zoom': zoom } as React.CSSProperties) : undefined} className={classes('node', 'component', zoom < 1 && 'far', changed && nodeStateClass(changed.states), highlight.has(id) && 'highlight', data.expanded && 'expanded', data.stale && 'stale', mark && 'in-plan', selected && 'selected')}>
       <Handle type="target" position={Position.Left} />
       {mark && <StepBadges steps={mark.steps} />}
       {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}

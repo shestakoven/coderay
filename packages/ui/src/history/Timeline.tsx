@@ -22,6 +22,7 @@ interface Props {
   onTab: (tab: BottomTab) => void;
   terminal: ReactNode;
   terminalCount: number;
+  trailing?: ReactNode;
 }
 
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
@@ -31,7 +32,7 @@ export function timelineSummary(items: TimelineItem[]): string {
   return [plural(count('step'), 'step'), plural(count('event') + count('gate'), 'event'), plural(count('revert'), 'revert')].join(' · ');
 }
 
-export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount }: Props) {
+export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount, trailing }: Props) {
   const [rollback, dispatch] = useReducer(rollbackReducer, null);
   const [undoing, setUndoing] = useState<Record<string, string>>({});
   const items = useMemo(() => timelineItems(plans, history), [plans, history]);
@@ -67,11 +68,12 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
     <footer className="timeline" data-testid="timeline">
       <div className="bottom-tabs">
         <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
-          <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={14} /> {timelineSummary(items)}
+          <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={14} /> {items.length === 0 ? 'Timeline' : timelineSummary(items)}
         </button>
         <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} aria-pressed={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
           <Icon name="terminal" size={14} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
         </button>
+        {trailing && <div className="bottom-status">{trailing}</div>}
       </div>
       <div className="terminal-slot" hidden={!(open && tab === 'terminal')}>{terminal}</div>
       {open && tab === 'timeline' && (
