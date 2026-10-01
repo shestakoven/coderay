@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { MapSnapshot } from '@ide/protocol';
 import { nodeStateClass, type NodeChanges } from '../history/history-state';
 import type { Marks } from '../plan/plan-state';
+import { Icon } from './Icon';
 import { buildFileTree, matchesFilter, type FileTreeNode } from './tree-model';
 
 interface TreeProps {
@@ -38,7 +39,7 @@ export function ComponentTree({ snapshot, changes, marks, selected, onSelectComp
           return (
             <div key={component.id}>
               <div role="treeitem" aria-expanded={expanded} className={`tree-row ${stateOf(changes, component.id)} ${mark ? 'in-plan' : ''} ${selected === component.id ? 'selected' : ''}`}>
-                <button className="tree-caret" onClick={() => toggle(component.id)} aria-label={expanded ? 'Collapse' : 'Expand'}>{expanded ? '▾' : '▸'}</button>
+                <button className="tree-caret" onClick={() => toggle(component.id)} aria-label={expanded ? 'Collapse' : 'Expand'}><Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16} /></button>
                 <button className="tree-label" onClick={() => onSelectComponent(component.id)} title={component.summary}>{component.name}</button>
                 {mark && <span className="tag plan">{mark.steps.map((step) => step.n).join(',')}</span>}
                 <span className="tree-count">{component.files.length}</span>
@@ -93,7 +94,7 @@ function FileNodeRow({ node, depth, forceOpen, changes, selected, onSelectFile }
   return (
     <>
       <div role="treeitem" aria-expanded={expanded} className="tree-row" style={style}>
-        <button className="tree-caret" onClick={() => setOpen(!open)} aria-label={expanded ? 'Collapse' : 'Expand'}>{expanded ? '▾' : '▸'}</button>
+        <button className="tree-caret" onClick={() => setOpen(!open)} aria-label={expanded ? 'Collapse' : 'Expand'}><Icon name={expanded ? 'chevron-down' : 'chevron-right'} size={16} /></button>
         <button className="tree-label" onClick={() => setOpen(!open)}>{node.name}</button>
       </div>
       {expanded && node.children.map((child) => <FileNodeRow key={child.path} node={child} depth={depth + 1} forceOpen={forceOpen} changes={changes} selected={selected} onSelectFile={onSelectFile} />)}

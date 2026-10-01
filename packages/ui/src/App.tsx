@@ -21,6 +21,7 @@ import { hashToken, launchToken } from './net/token';
 import { MODE_LABEL, MODE_TITLE, withMode } from './settings/policy-form';
 import { initialModeSave, modeSaveReducer } from './settings/mode-save';
 import { SettingsPanel, type SettingsResult } from './settings/SettingsPanel';
+import { Icon } from './layout/Icon';
 import { ActivityBar } from './layout/ActivityBar';
 import { DetailsSlotContext } from './layout/DetailsSlot';
 import { LeftPanel } from './layout/LeftPanel';
@@ -278,7 +279,7 @@ export function App() {
         <header className="topbar">
           <button className="project-button" onClick={() => setOpenDialog(true)} title={projectInfo?.root ?? 'Open project…'}>
             <span className="project">{snapshot?.projectName ?? projectInfo?.name ?? '…'}</span>
-            <span className="muted">▾</span>
+            <Icon name="chevron-down" size={16} />
           </button>
           {c4 && (
             <span className="view-switch">

@@ -416,3 +416,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
   .working-dots i { animation: none; opacity: 1; }
   .chat-header.working-on::after { animation: none; background-position: 50% 0; }
 }
+
+/* Icons */
+.icon { flex: none; display: block; }
+.activity { width: 48px; gap: 6px; padding: 10px 0; }
+.activity button { width: 38px; height: 38px; display: grid; place-items: center; }
+.activity button.with-badge b { top: 3px; right: 3px; }
+.tree-caret { display: grid; place-items: center; width: 20px; height: 22px; }
+.project-button { gap: 6px; }
+.chat-switcher-button { gap: 4px; }
+.chat-new { display: grid; place-items: center; padding: 4px 6px; }
+.tree-row { min-height: 28px; }

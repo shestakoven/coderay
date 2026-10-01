@@ -1,5 +1,6 @@
 import { useEffect, useReducer, useState, type Dispatch } from 'react';
 import type { ClientMessage, ProjectInfo } from '@ide/protocol';
+import { Icon } from '../layout/Icon';
 import { browseReducer, initialBrowse, isOpening, joinPath, type BrowseAction, type BrowseState } from './browse-state';
 
 export interface OpenProjectController {
@@ -80,7 +81,7 @@ export function OpenProjectDialog({ info, controller, send, onClose }: {
             {state.entries.map((entry) => (
               <li key={entry.name}>
                 <button className="dir-row" disabled={opening} onClick={() => state.path && list(joinPath(state.path, entry.name))}>
-                  <span aria-hidden="true">▸</span>
+                  <Icon name="folder" size={16} />
                   <span>{entry.name}</span>
                   {entry.isGit && <span className="tag ok">git</span>}
                 </button>
