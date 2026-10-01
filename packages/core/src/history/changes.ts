@@ -69,6 +69,7 @@ export class ChangeService {
   private readonly stamps = new Map<string, number>();
   private readonly graceMs: number;
   private draining: Promise<void> | null = null;
+  private batching: Promise<void> = Promise.resolve();
   private loadedFor: string | null | undefined = undefined;
   private all: ChangeView[] = [];
 
@@ -106,6 +107,8 @@ export class ChangeService {
   }
 
   async reattribute(toolUseId: string, from: number, to: number): Promise<ChangeView[]> {
+    // A batch in flight may have attributed its changes before this call's window existed.
+    await this.batching;
     this.sync();
     const stamp = this.o.toolStamp?.(toolUseId) ?? this.stampFor();
     const updated: ChangeView[] = [];
@@ -169,8 +172,10 @@ export class ChangeService {
     try {
       while (this.queue.length > 0) {
         const batch = this.queue.splice(0, BATCH_MAX);
+        const processing = this.processBatch(batch);
+        this.batching = processing.then(() => undefined, () => undefined);
         try {
-          await this.processBatch(batch);
+          await processing;
           for (const q of batch) q.resolve();
         } catch (error) {
           for (const q of batch) q.reject(error);

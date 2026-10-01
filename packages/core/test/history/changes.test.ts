@@ -370,6 +370,25 @@ describe('ChangeService git internals', () => {
 });
 
 describe('ChangeService corrections', () => {
+  it('re-attributes a change whose batch was still being recorded when the call ended', async () => {
+    const f = await fixture();
+    f.clock.now = 500;
+    write(f.root, 'y.ts', 'written by the call');
+    const diff = f.shadow.diff.bind(f.shadow);
+    let counting!: () => void;
+    let release!: () => void;
+    const started = new Promise<void>((resolve) => { counting = resolve; });
+    const released = new Promise<void>((resolve) => { release = resolve; });
+    f.shadow.diff = async (...args) => { counting(); await released; return diff(...args); };
+    const handled = f.service.handle(f.ev('y.ts'));
+    await started;
+    const updating = f.service.reattribute('call-1', 400, 1000);
+    release();
+    await handled;
+    expect((await updating).map((c) => c.path)).toEqual(['y.ts']);
+    expect(byPath(f.service.changes(), 'y.ts')).toMatchObject({ origin: 'agent-tool', toolUseIds: ['call-1'] });
+  });
+
   it('re-attributes human changes inside a window to the call, sparing IDE claims and outside times', async () => {
     const f = await fixture();
     f.clock.now = 500;
