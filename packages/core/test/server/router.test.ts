@@ -3,7 +3,7 @@ import type { ClientMessage } from '@ide/protocol';
 import { routeClientMessage, routeOf } from '../../src/server/router';
 
 describe('routeOf', () => {
-  it.each(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'step.rollback-preview', 'step.rollback'])('routes %s to history', (type) => {
+  it.each(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback'])('routes %s to history', (type) => {
     expect(routeOf(type)).toBe('history');
   });
 
@@ -19,10 +19,10 @@ describe('routeOf', () => {
     const types: ClientMessage['type'][] = [
       'chat.send', 'chat.stop', 'session.restart', 'session.new', 'prompt.answer', 'plan.answer', 'gate.answer', 'settings.get',
       'mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits',
-      'watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'step.rollback-preview', 'step.rollback',
+      'watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback',
     ];
     const routed = types.filter((t) => routeOf(t) !== 'unknown');
-    expect(routed).toHaveLength(12);
+    expect(routed).toHaveLength(13);
   });
 });
 
@@ -39,6 +39,10 @@ describe('routeClientMessage', () => {
 
   it('sends each history message to the history handler only', async () => {
     expect(await run('step.rollback')).toEqual(['history:step.rollback']);
+  });
+
+  it('sends change.revert to the history handler only', async () => {
+    expect(await run('change.revert')).toEqual(['history:change.revert']);
   });
 
   it('sends settings messages to the settings handler only', async () => {

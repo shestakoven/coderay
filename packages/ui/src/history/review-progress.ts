@@ -10,7 +10,7 @@ export interface Position {
 }
 
 export function statusOf(reviewed: Reviewed, file: ReviewFile): FileStatus {
-  if (!(file.path in reviewed)) return 'pending';
+  if (!Object.hasOwn(reviewed, file.path)) return 'pending';
   return reviewed[file.path] === file.after ? 'reviewed' : 'updated';
 }
 

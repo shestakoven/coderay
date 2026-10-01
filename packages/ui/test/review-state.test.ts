@@ -130,12 +130,12 @@ describe('reviewGroups', () => {
     it('merges a file changed twice in one step into one row', () => {
       const history = view({
         changes: [
-          change({ path: 'src/a.ts', at: 1, beforeHash: 'orig', afterHash: 'mid', added: 3, removed: 1 }),
-          change({ path: 'src/a.ts', at: 2, beforeHash: 'mid', afterHash: 'final', added: 2, removed: 4 }),
+          change({ id: 'c1', path: 'src/a.ts', at: 1, beforeHash: 'orig', afterHash: 'mid', added: 3, removed: 1 }),
+          change({ id: 'c2', path: 'src/a.ts', at: 2, beforeHash: 'mid', afterHash: 'final', added: 2, removed: 4 }),
         ],
       });
       const [group] = reviewGroups(history, [plan()]);
-      expect(group?.files).toEqual([{ path: 'src/a.ts', before: 'orig', after: 'final', added: 5, removed: 5 }]);
+      expect(group?.files).toEqual([{ path: 'src/a.ts', ids: ['c1', 'c2'], before: 'orig', after: 'final', added: 5, removed: 5 }]);
     });
 
     it('takes the first before and the last after by time even when changes arrive out of order', () => {
@@ -288,6 +288,102 @@ describe('reviewGroups', () => {
     });
   });
 
+  describe('reverted changes', () => {
+    it('drops a reverted change', () => {
+      const history = view({ changes: [change({ path: 'src/kept.ts' }), change({ path: 'src/undone.ts', resolution: 'reverted' })] });
+      expect(reviewGroups(history, [plan()]).flatMap(paths)).toEqual(['src/kept.ts']);
+    });
+
+    it('returns no groups when every change was reverted', () => {
+      const history = view({
+        changes: [
+          change({ resolution: 'reverted' }),
+          change({ resolution: 'reverted', outOfPlan: true }),
+          change({ resolution: 'reverted', origin: 'human', planId: null, planVersion: null, stepKey: null }),
+        ],
+      });
+      expect(reviewGroups(history, [plan()])).toEqual([]);
+    });
+
+    it.each(['kept', 'plan-expanded', 'relabeled-human', 'flagged'] as const)('keeps a change resolved as %s', (resolution) => {
+      expect(reviewGroups(view({ changes: [change({ path: 'src/a.ts', resolution })] }), [plan()]).flatMap(paths)).toEqual(['src/a.ts']);
+    });
+
+    it('omits a step whose only change was reverted', () => {
+      const history = view({ changes: [change({ stepKey: 'a', resolution: 'reverted' }), change({ stepKey: 'b' })] });
+      expect(keys(reviewGroups(history, [plan()]))).toEqual(['p1/b']);
+    });
+
+    it('omits the Outside the plan group when its only change was reverted', () => {
+      const history = view({ changes: [change({ stepKey: 'a', outOfPlan: true, resolution: 'reverted' }), change({ stepKey: 'a' })] });
+      expect(keys(reviewGroups(history, [plan()]))).toEqual(['p1/a']);
+    });
+
+    it('omits the External changes group when its only change was reverted', () => {
+      const history = view({ changes: [change({ origin: 'human', resolution: 'reverted' }), change({ stepKey: 'a' })] });
+      expect(keys(reviewGroups(history, [plan()]))).toEqual(['p1/a']);
+    });
+
+    it('keeps the unreverted changes of a file in its row without the reverted ones', () => {
+      const history = view({
+        changes: [
+          change({ id: 'c1', path: 'src/a.ts', at: 1, beforeHash: 'orig', afterHash: 'mid', added: 3, removed: 1, resolution: 'reverted' }),
+          change({ id: 'c2', path: 'src/a.ts', at: 2, beforeHash: 'mid', afterHash: 'final', added: 2, removed: 4 }),
+        ],
+      });
+      expect(reviewGroups(history, [plan()])[0]?.files).toEqual([{ path: 'src/a.ts', ids: ['c2'], before: 'mid', after: 'final', added: 2, removed: 4 }]);
+    });
+
+    it('leaves the reverted lines out of the group totals', () => {
+      const history = view({ changes: [change({ path: 'src/a.ts', added: 5, removed: 5, resolution: 'reverted' }), change({ path: 'src/b.ts', added: 2, removed: 1 })] });
+      expect(reviewGroups(history, [plan()])[0]).toMatchObject({ added: 2, removed: 1 });
+    });
+
+    it('does not count a reverted file in the review count', () => {
+      const history = view({ changes: [change({ path: 'src/a.ts', resolution: 'reverted' }), change({ path: 'src/b.ts' })] });
+      expect(reviewCount(reviewGroups(history, [plan()]))).toBe(1);
+    });
+  });
+
+  describe('change ids', () => {
+    it('lists the id of a file changed once', () => {
+      const history = view({ changes: [change({ id: 'only', path: 'src/a.ts' })] });
+      expect(reviewGroups(history, [plan()])[0]?.files[0]?.ids).toEqual(['only']);
+    });
+
+    it('lists every change id of a file row ordered by time, not by arrival', () => {
+      const history = view({
+        changes: [
+          change({ id: 'third', path: 'src/a.ts', at: 3 }),
+          change({ id: 'first', path: 'src/a.ts', at: 1 }),
+          change({ id: 'second', path: 'src/a.ts', at: 2 }),
+        ],
+      });
+      expect(reviewGroups(history, [plan()])[0]?.files[0]?.ids).toEqual(['first', 'second', 'third']);
+    });
+
+    it('keeps the ids of different files in their own rows', () => {
+      const history = view({ changes: [change({ id: 'a1', path: 'src/a.ts', at: 1 }), change({ id: 'b1', path: 'src/b.ts', at: 2 }), change({ id: 'a2', path: 'src/a.ts', at: 3 })] });
+      expect(reviewGroups(history, [plan()])[0]?.files.map((f) => [f.path, f.ids])).toEqual([['src/a.ts', ['a1', 'a2']], ['src/b.ts', ['b1']]]);
+    });
+
+    it('keeps the ids of the same file in two steps apart', () => {
+      const history = view({ changes: [change({ id: 'in-a', path: 'src/a.ts', stepKey: 'a' }), change({ id: 'in-b', path: 'src/a.ts', stepKey: 'b' })] });
+      expect(reviewGroups(history, [plan()]).map((g) => [g.key, g.files[0]?.ids])).toEqual([['p1/a', ['in-a']], ['p1/b', ['in-b']]]);
+    });
+
+    it('leaves out the ids of recorded and IDE changes', () => {
+      const history = view({
+        changes: [
+          change({ id: 'agent', path: 'src/a.ts', at: 1 }),
+          change({ id: 'recorded', path: 'src/a.ts', at: 2, enforcement: 'recorded' }),
+          change({ id: 'ide', path: 'src/a.ts', at: 3, origin: 'ide' }),
+        ],
+      });
+      expect(reviewGroups(history, [plan()])[0]?.files[0]?.ids).toEqual(['agent']);
+    });
+  });
+
   describe('step summary', () => {
     it('attaches the step summary matching plan id and step key', () => {
       const wanted = summary({ key: 's-a', ref: 'p1/a', text: 'did a' });
@@ -318,7 +414,7 @@ describe('reviewGroups', () => {
 describe('reviewCount', () => {
   const group = (files: string[]): ReviewGroup => ({
     key: files.join(','), title: 't', outOfPlan: false, summary: null, added: 0, removed: 0,
-    files: files.map((path) => ({ path, before: null, after: 'h', added: 0, removed: 0 })),
+    files: files.map((path) => ({ path, ids: [path], before: null, after: 'h', added: 0, removed: 0 })),
   });
 
   it('is zero for no groups', () => {

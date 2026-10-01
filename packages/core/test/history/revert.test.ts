@@ -461,3 +461,71 @@ describe('RevertService.undo', () => {
     await expect(f.reverts.undo('nope')).rejects.toBeInstanceOf(RevertError);
   });
 });
+
+describe('RevertService review reverts', () => {
+  const review = (...changes: ChangeView[]) => ({ changeIds: ids(...changes), eventId: null, kind: 'review' as const });
+
+  it('restores a human edit and records a review revert with no event', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', 'human edit');
+    expect(f.service.changes().find((x) => x.id === c.id)).toMatchObject({ origin: 'human', enforcement: 'enforced' });
+    const record = await f.reverts.revertChanges(review(c));
+    expect(read(f.root, 'a.ts')).toBe('original');
+    expect(record).toMatchObject({ kind: 'review', eventId: null, planId: null, stepKey: null, changeIds: [c.id], undoneAt: null });
+    expect(record.files).toEqual([{ path: 'a.ts', outcome: 'restored', reason: null }]);
+  });
+
+  it('marks a reverted change as reverted', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', 'human edit');
+    await f.reverts.revertChanges(review(c));
+    expect(f.service.changes().find((x) => x.id === c.id)).toMatchObject({ resolution: 'reverted' });
+  });
+
+  it('keeps the kind review in the stored record and in the change callback', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', 'human edit');
+    const seen: RevertRecordView[] = [];
+    f.reverts.onChange((r) => seen.push(r));
+    const record = await f.reverts.revertChanges(review(c));
+    expect([f.reverts.reverts().map((r) => r.kind), seen.map((r) => r.kind)]).toEqual([['review'], ['review']]);
+    expect(f.reverts.reverts()).toEqual([record]);
+  });
+
+  it('reverts a deleted human file by recreating it', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', null);
+    const record = await f.reverts.revertChanges(review(c));
+    expect(record.files).toEqual([{ path: 'a.ts', outcome: 'recreated', reason: null }]);
+    expect(read(f.root, 'a.ts')).toBe('original');
+  });
+
+  it('reverts all changes of one file in a single review revert, back to the first before', async () => {
+    const f = await fixture();
+    const c1 = await f.change('a.ts', 'first edit');
+    const c2 = await f.change('a.ts', 'second edit');
+    const record = await f.reverts.revertChanges(review(c1, c2));
+    expect(read(f.root, 'a.ts')).toBe('original');
+    expect(record.files).toEqual([{ path: 'a.ts', outcome: 'restored', reason: null }]);
+    expect(f.service.changes().filter((x) => x.path === 'a.ts').map((x) => x.resolution)).toEqual(['reverted', 'reverted']);
+  });
+
+  it('leaves a file edited again after the change alone and does not mark it reverted', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', 'human edit');
+    put(f.root, 'a.ts', 'newer edit');
+    const record = await f.reverts.revertChanges(review(c));
+    expect(read(f.root, 'a.ts')).toBe('newer edit');
+    expect(record).toMatchObject({ kind: 'review', files: [{ path: 'a.ts', outcome: 'conflict' }] });
+    expect(f.service.changes().find((x) => x.id === c.id)?.resolution).toBeNull();
+  });
+
+  it('can be undone like any other revert', async () => {
+    const f = await fixture();
+    const c = await f.change('a.ts', 'human edit');
+    const record = await f.reverts.revertChanges(review(c));
+    const undone = await f.reverts.undo(record.id);
+    expect(read(f.root, 'a.ts')).toBe('human edit');
+    expect(undone.record).toMatchObject({ id: record.id, kind: 'review', undoneAt: expect.any(Number) });
+  });
+});

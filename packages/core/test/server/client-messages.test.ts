@@ -198,4 +198,50 @@ describe('parseClientMessage', () => {
     expect(parseClientMessage(JSON.stringify(rollback(5000)))).not.toBeNull();
     expect(parseClientMessage(JSON.stringify(rollback(5001)))).toBeNull();
   });
+
+  describe('change.revert', () => {
+    const revert = (fields: object) => parseClientMessage(JSON.stringify({ type: 'change.revert', requestId: 'r', ...fields }));
+
+    it('parses a request with its change ids in order', () => {
+      expect(revert({ changeIds: ['c2', 'c1'] })).toEqual({ type: 'change.revert', requestId: 'r', changeIds: ['c2', 'c1'] });
+    });
+
+    it('parses a request with a single change id', () => {
+      expect(revert({ changeIds: ['c1'] })).toEqual({ type: 'change.revert', requestId: 'r', changeIds: ['c1'] });
+    });
+
+    it('drops fields it does not know', () => {
+      expect(revert({ changeIds: ['c1'], confirm: ['a.ts'], extra: 1 })).toEqual({ type: 'change.revert', requestId: 'r', changeIds: ['c1'] });
+    });
+
+    it('rejects an empty id list', () => {
+      expect(revert({ changeIds: [] })).toBeNull();
+    });
+
+    it('rejects a request without change ids', () => {
+      expect(revert({})).toBeNull();
+    });
+
+    it.each([['a string', 'c1'], ['null', null], ['an object', { 0: 'c1', length: 1 }], ['a number', 1]])('rejects change ids given as %s', (_, changeIds) => {
+      expect(revert({ changeIds })).toBeNull();
+    });
+
+    it.each([['a number', 2], ['null', null], ['an object', {}], ['an array', ['c2']], ['a boolean', true]])('rejects a list with %s among the ids', (_, item) => {
+      expect(revert({ changeIds: ['c1', item] })).toBeNull();
+    });
+
+    it('rejects a request without a requestId', () => {
+      expect(parseClientMessage(JSON.stringify({ type: 'change.revert', changeIds: ['c1'] }))).toBeNull();
+    });
+
+    it('rejects a request whose requestId is not a string', () => {
+      expect(revert({ requestId: 7, changeIds: ['c1'] })).toBeNull();
+    });
+
+    it('caps the id list at 5,000 changes', () => {
+      const ids = (count: number) => Array.from({ length: count }, (_, i) => `c${i}`);
+      expect(revert({ changeIds: ids(5000) })).toMatchObject({ type: 'change.revert', changeIds: ids(5000) });
+      expect(revert({ changeIds: ids(5001) })).toBeNull();
+    });
+  });
 });

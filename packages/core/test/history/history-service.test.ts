@@ -1,7 +1,7 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import type { HistoryClientMessage, HistoryPatch, HistoryServerMessage } from '@ide/protocol';
+import type { ChangeView, HistoryClientMessage, HistoryPatch, HistoryServerMessage, RevertRecordView } from '@ide/protocol';
 import { tempDir, waitFor } from '../helpers';
 import { build, OUT_OF_PLAN, pendingEvent, WAIT_TURN } from '../execution/harness';
 
@@ -11,6 +11,11 @@ const collect = (): { replies: Reply[]; reply: (m: Reply) => void } => {
   return { replies, reply: (m) => void replies.push(m) };
 };
 const results = (replies: Reply[]) => replies.filter((m): m is Extract<Reply, { type: 'history.result' }> => m.type === 'history.result');
+const reviewRecord = (changeIds: string[]): RevertRecordView => ({ id: 'rv', kind: 'review', eventId: null, planId: null, stepKey: null, changeIds, files: [], ts: 1, undoneAt: null });
+const fakeChange = (id: string): ChangeView => ({
+  id, path: `src/${id}.ts`, beforeHash: null, afterHash: 'h', at: 1, origin: 'human', enforcement: 'enforced', outOfPlan: false, toolUseIds: [], planId: null,
+  planVersion: null, stepKey: null, eventId: null, resolution: null, added: 0, removed: 0, stored: true, unreadable: false, beforeMode: null,
+});
 
 describe('HistoryService', { timeout: 30_000 }, () => {
   it('snapshots the changes, events, reverts, checkpoints, gate events and summaries', async () => {
@@ -130,6 +135,83 @@ describe('HistoryService', { timeout: 30_000 }, () => {
     const rollback = vi.spyOn(b.rt.reverts, 'rollbackStep').mockResolvedValue({ id: 'rv', kind: 'step', eventId: null, planId: 'p', stepKey: 's', changeIds: [], files: [], ts: 1, undoneAt: null });
     await b.rt.history.handle({ type: 'step.rollback', requestId: 'r', planId: 'p', stepKey: 's', confirm: ['a.ts'] }, reply);
     expect([rollback.mock.calls, replies]).toEqual([[['p', 's', ['a.ts']]], [{ type: 'history.result', requestId: 'r', error: null }]]);
+  });
+
+  describe('change.revert', () => {
+    it('reverts the given changes as a review revert without an event and answers with a null error', async () => {
+      const b = await build({ scenario: WAIT_TURN });
+      const { replies, reply } = collect();
+      const revert = vi.spyOn(b.rt.reverts, 'revertChanges').mockResolvedValue(reviewRecord([]));
+      await b.rt.history.handle({ type: 'change.revert', requestId: 'r', changeIds: ['c1', 'c2'] }, reply);
+      expect([revert.mock.calls, replies]).toEqual([
+        [[{ changeIds: ['c1', 'c2'], eventId: null, kind: 'review' }]],
+        [{ type: 'history.result', requestId: 'r', error: null }],
+      ]);
+    });
+
+    it('sends a patch with exactly the changes of the revert record', async () => {
+      const b = await build({ scenario: WAIT_TURN });
+      vi.spyOn(b.rt.changes, 'changes').mockReturnValue([fakeChange('x1'), fakeChange('x2'), fakeChange('x3')]);
+      vi.spyOn(b.rt.reverts, 'revertChanges').mockResolvedValue(reviewRecord(['x1', 'x3']));
+      const patches: HistoryPatch[] = [];
+      b.rt.history.onPatch((p) => patches.push(p));
+      await b.rt.history.handle({ type: 'change.revert', requestId: 'r', changeIds: ['x1', 'x2', 'x3'] }, () => undefined);
+      const touched = () => patches.flatMap((p) => p.changes ?? []).filter((c) => c.id.startsWith('x'));
+      await waitFor(() => touched().length > 0, 'the change patch');
+      expect(touched().map((c) => c.id).sort()).toEqual(['x1', 'x3']);
+    });
+
+    it('answers with the error text and sends no change patch when the revert is rejected', async () => {
+      const b = await build({ scenario: WAIT_TURN });
+      vi.spyOn(b.rt.changes, 'changes').mockReturnValue([fakeChange('x1')]);
+      vi.spyOn(b.rt.reverts, 'revertChanges').mockRejectedValue(new Error('no session to revert in'));
+      const patches: HistoryPatch[] = [];
+      b.rt.history.onPatch((p) => patches.push(p));
+      const { replies, reply } = collect();
+      await b.rt.history.handle({ type: 'change.revert', requestId: 'r', changeIds: ['x1'] }, reply);
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      expect(replies).toEqual([{ type: 'history.result', requestId: 'r', error: 'no session to revert in' }]);
+      expect(patches.flatMap((p) => p.changes ?? []).filter((c) => c.id === 'x1')).toEqual([]);
+    });
+
+    it('restores a human edit and publishes the review record and the reverted change', async () => {
+      const b = await build({ scenario: WAIT_TURN });
+      const patches: HistoryPatch[] = [];
+      b.rt.history.onPatch((p) => patches.push(p));
+      await b.send();
+      b.write('notes.txt', 'edited\n');
+      const change = await waitFor(() => b.changes().find((c) => c.path === 'notes.txt'), 'the change');
+      const { replies, reply } = collect();
+      await b.rt.history.handle({ type: 'change.revert', requestId: 'r', changeIds: [change.id] }, reply);
+      expect(replies).toEqual([{ type: 'history.result', requestId: 'r', error: null }]);
+      expect(readFileSync(join(b.root, 'notes.txt'), 'utf8')).toBe('notes\n');
+      const record = await waitFor(() => patches.flatMap((p) => p.reverts ?? []).at(-1), 'the revert patch');
+      expect(record).toMatchObject({ kind: 'review', eventId: null, changeIds: [change.id], files: [{ path: 'notes.txt', outcome: 'restored', reason: null }] });
+      await waitFor(() => patches.flatMap((p) => p.changes ?? []).find((c) => c.id === change.id && c.resolution === 'reverted'), 'the reverted change');
+    });
+
+    it('answers a request queued before start() with a clean error once the runtime is closed, without reverting', async () => {
+      const b = await build({ scenario: WAIT_TURN, start: false });
+      const revert = vi.spyOn(b.rt.reverts, 'revertChanges');
+      const { replies, reply } = collect();
+      const handled = b.rt.history.handle({ type: 'change.revert', requestId: 'c', changeIds: ['c1'] }, reply);
+      await b.rt.close();
+      await handled;
+      expect(replies).toEqual([{ type: 'history.result', requestId: 'c', error: 'the IDE core is shutting down' }]);
+      expect(revert).not.toHaveBeenCalled();
+    });
+
+    it('answers with an error result and does not revert when the runtime could not start', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const home = tempDir('hs-blocker-');
+      writeFileSync(join(home, 'file'), 'not a directory');
+      const b = await build({ scenario: WAIT_TURN, runtime: { shadowDir: join(home, 'file', 'shadow.git') } });
+      const revert = vi.spyOn(b.rt.reverts, 'revertChanges');
+      const { replies, reply } = collect();
+      await b.rt.history.handle({ type: 'change.revert', requestId: 'c', changeIds: ['c1'] }, reply);
+      expect(replies).toEqual([{ type: 'history.result', requestId: 'c', error: expect.stringMatching(/unavailable/) }]);
+      expect(revert).not.toHaveBeenCalled();
+    });
   });
 
   it('routes watchdog.answer and watchdog.stop-agent failures out as error messages, not results', async () => {
