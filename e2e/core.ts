@@ -77,11 +77,48 @@ const listeners = (port: string): string[] => {
   }
 };
 
-// A project switch or close leaves a detached successor on the port; it is not the child we spawned.
-async function stopSuccessor(url: string): Promise<void> {
-  const port = new URL(url).port;
-  for (const pid of listeners(port)) process.kill(Number(pid), 'SIGTERM');
-  for (let attempt = 0; attempt < 100 && listeners(port).length > 0; attempt += 1) await new Promise((r) => setTimeout(r, 100));
+const commandOf = (pid: string): string => {
+  try {
+    return execFileSync('ps', ['-o', 'command=', '-p', pid], { encoding: 'utf8' });
+  } catch {
+    return '';
+  }
+};
+
+const alive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code !== 'ESRCH';
+  }
+};
+
+const signal = (pid: number, name: NodeJS.Signals): void => {
+  try {
+    process.kill(pid, name);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error;
+  }
+};
+
+async function untilGone(pids: number[], attempts: number): Promise<number[]> {
+  let left = pids.filter(alive);
+  for (let attempt = 0; attempt < attempts && left.length > 0; attempt += 1) {
+    await new Promise((r) => setTimeout(r, 100));
+    left = left.filter(alive);
+  }
+  return left;
+}
+
+// A project switch or close leaves a detached successor on the port; it still writes to its home while it exits.
+async function stopSuccessor(url: string, base: string): Promise<void> {
+  const pids = listeners(new URL(url).port).filter((pid) => commandOf(pid).includes(base)).map(Number);
+  for (const pid of pids) signal(pid, 'SIGTERM');
+  const stuck = await untilGone(pids, 100);
+  for (const pid of stuck) signal(pid, 'SIGKILL');
+  const left = await untilGone(stuck, 30);
+  if (left.length > 0) throw new Error(`the core successor did not exit: ${left.join(', ')}`);
 }
 
 export async function startCore(scenario: string): Promise<Core> {
@@ -103,7 +140,7 @@ export async function startCore(scenario: string): Promise<Core> {
     stop: async () => {
       core.child.kill('SIGTERM');
       await core.exited;
-      await stopSuccessor(core.url);
+      await stopSuccessor(core.url, base);
       rmSync(base, { recursive: true, force: true });
     },
   };
@@ -123,7 +160,7 @@ export async function startLauncher(): Promise<Launcher> {
     stop: async () => {
       core.child.kill('SIGTERM');
       await core.exited;
-      await stopSuccessor(core.url);
+      await stopSuccessor(core.url, base);
       rmSync(base, { recursive: true, force: true });
     },
   };

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { expect, test, type Page } from '@playwright/test';
@@ -8,14 +8,26 @@ import { startCore, startLauncher, type Core, type Launcher } from './core';
 let launcher: Launcher | undefined;
 let core: Core | undefined;
 
+const folders: string[] = [];
+
+// The folders go after the cores: a core can still be writing into its project until it exits.
 test.afterEach(async () => {
-  await launcher?.stop();
-  await core?.stop();
-  launcher = undefined;
-  core = undefined;
+  try {
+    await launcher?.stop();
+    await core?.stop();
+  } finally {
+    launcher = undefined;
+    core = undefined;
+    for (const folder of folders.splice(0)) rmSync(folder, { recursive: true, force: true });
+  }
 });
 
-const tempFolder = (): string => realpathSync(mkdtempSync(join(tmpdir(), 'ide-start-')));
+function tempFolder(): string {
+  const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ide-start-')));
+  folders.push(folder);
+  return folder;
+}
+
 const action = (page: Page, title: string) => page.locator('.start-action').filter({ hasText: title });
 
 async function browseTo(page: Page, folder: string): Promise<void> {
