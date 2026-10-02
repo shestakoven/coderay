@@ -12,6 +12,7 @@ import type { RevertService } from './revert';
 import type { Summarizer } from './summarizer';
 
 const SNAPSHOT_CHANGES = 2_000;
+const SNAPSHOT_RECORDED = 200;
 const FLUSH_MS = 100;
 
 type Reply = (message: HistoryServerMessage | { type: 'error'; message: string }) => void;
@@ -34,6 +35,18 @@ export interface HistoryServiceOptions {
 
 const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
 
+// The newest enforced changes and a few recorded ones, in order: recorded rows must not push out the ones to review.
+function newest(changes: ChangeView[]): ChangeView[] {
+  const kept: ChangeView[] = [];
+  let enforced = 0;
+  let recorded = 0;
+  for (let i = changes.length - 1; i >= 0; i -= 1) {
+    const change = changes[i]!;
+    if (change.enforcement === 'enforced' ? enforced++ < SNAPSHOT_CHANGES : recorded++ < SNAPSHOT_RECORDED) kept.push(change);
+  }
+  return kept.reverse();
+}
+
 export class HistoryService {
   private readonly listeners = new Set<(patch: HistoryPatch) => void>();
   private readonly resetListeners = new Set<() => void>();
@@ -54,7 +67,7 @@ export class HistoryService {
   snapshot(): HistoryView {
     const sessionId = this.o.sessionId();
     return {
-      changes: this.o.changes.changes().slice(-SNAPSHOT_CHANGES),
+      changes: newest(this.o.changes.changes()),
       events: this.o.watchdog.events(),
       reverts: this.o.reverts.reverts(),
       checkpoints: this.o.checkpoints.views(),

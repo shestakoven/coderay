@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
 import type { ChangeView, ControlMode, FileAnswer, WatchdogAnswer, WatchdogEventView } from '@ide/protocol';
 import { Hold } from '../../src/gate/hold';
+import { invalidateWorktrees } from '../../src/gate/worktrees';
 import { Baselines, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
 import { Checkpoints } from '../../src/history/checkpoints';
@@ -17,6 +18,7 @@ import { openStore } from '../../src/store/store';
 import { ActivityLedger, type ToolCall } from '../../src/watchdog/activity';
 import { Watchdog, WatchdogError, type WatchdogSession } from '../../src/watchdog/watchdog';
 import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
+import { git } from '../worktree-fixture';
 
 const saved: Record<string, string | undefined> = {};
 const ISOLATION = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
@@ -234,6 +236,95 @@ describe('Watchdog.answer', () => {
     const e = await f.raise(await f.produce(['b.ts']));
     await answer(f, e.id, all('expand-plan'));
     expect(f.plans.plans().at(-1)!.steps[0]!.targets).toContainEqual({ path: 'b.ts', op: 'modify' });
+  });
+});
+
+describe('Watchdog.answer for a nested worktree', () => {
+  const WT = '.worktrees/wt1';
+
+  async function worktreeFixture(o: Setup = {}) {
+    const f = await fixture(o);
+    await writeTree(f.root, { '.gitignore': '.worktrees/\n' });
+    git(f.root, 'add', '-A');
+    git(f.root, 'commit', '-q', '-m', 'init');
+    git(f.root, 'worktree', 'add', '-q', '.worktrees/wt1');
+    invalidateWorktrees(f.root);
+    return f;
+  }
+
+  it('expands the plan with the paths inside the worktree: modify for a file git has, create for a new one, delete for a removed one', async () => {
+    const f = await worktreeFixture({ plan: true });
+    const deleted = await f.remove(`${WT}/b.ts`);
+    const [modified, created] = await f.produce([`${WT}/a.ts`, `${WT}/src/new.ts`]);
+    const e = await f.raise([deleted, modified!, created!]);
+    expect(e.canExpand).toBe(true);
+    await answer(f, e.id, all('expand-plan'));
+    const targets = f.plans.plans().at(-1)!.steps[0]!.targets;
+    expect(targets).toEqual(expect.arrayContaining([
+      { path: 'src/app.ts', op: 'modify' }, { path: 'a.ts', op: 'modify' }, { path: 'src/new.ts', op: 'create' }, { path: 'b.ts', op: 'delete' },
+    ]));
+    expect(targets.filter((target) => target.path?.startsWith('.worktrees/'))).toEqual([]);
+    expect(f.plans.gate()).toMatchObject({ state: 'approved', version: 2 });
+    expect(event(f, e.id).resolution).toBe('plan-expanded');
+  });
+
+  it('judges a later write to the same worktree file as in plan after the expansion', async () => {
+    const f = await worktreeFixture({ plan: true });
+    const e = await f.raise(await f.produce([`${WT}/a.ts`]));
+    await answer(f, e.id, all('expand-plan'));
+    f.watchdog.consider((await f.produce([`${WT}/a.ts`], 'second'))[0]!);
+    await sleepMs(120);
+    expect(f.watchdog.events().filter((x) => x.phase === 'pending')).toEqual([]);
+  });
+
+  it('reverts a worktree file to the content git has for it, instead of deleting it', async () => {
+    const f = await worktreeFixture({ plan: true });
+    const e = await f.raise(await f.produce([`${WT}/a.ts`]));
+    await answer(f, e.id, all('revert'));
+    expect(f.read(`${WT}/a.ts`)).toBe('a');
+    expect(event(f, e.id).resolution).toBe('reverted');
+  });
+
+  it('recreates a deleted worktree file on revert', async () => {
+    const f = await worktreeFixture({ plan: true });
+    const e = await f.raise([await f.remove(`${WT}/b.ts`)]);
+    await answer(f, e.id, all('revert'));
+    expect(f.read(`${WT}/b.ts`)).toBe('b');
+  });
+});
+
+describe('Watchdog.answer for a file of a nested worktree whose previous content is not known', () => {
+  const WT = '.worktrees/wt1';
+
+  async function unseenWorktree() {
+    const f = await fixture({ plan: true });
+    await writeTree(f.root, { '.gitignore': '.worktrees/\n' });
+    git(f.root, 'add', '-A');
+    git(f.root, 'commit', '-q', '-m', 'init');
+    git(f.root, 'worktree', 'add', '-q', '.worktrees/wt1');
+    invalidateWorktrees(f.root);
+    const [change] = await f.produce([`${WT}/scratch.txt`]);
+    expect([change!.beforeHash, change!.beforeMode !== null]).toEqual([null, true]);
+    return { f, change: change! };
+  }
+
+  it('expands the plan with a modify for it, as for a file that was there before', async () => {
+    const { f, change } = await unseenWorktree();
+    const e = await f.raise([change]);
+    expect(e.canExpand).toBe(true);
+    await answer(f, e.id, all('expand-plan'));
+    const targets = f.plans.plans().at(-1)!.steps[0]!.targets;
+    expect(targets).toEqual(expect.arrayContaining([{ path: 'scratch.txt', op: 'modify' }]));
+    expect(targets).not.toContainEqual({ path: 'scratch.txt', op: 'create' });
+  });
+
+  it('leaves it on disk when the user answers revert, and records that the file was not reverted', async () => {
+    const { f, change } = await unseenWorktree();
+    const e = await f.raise([change]);
+    await answer(f, e.id, all('revert'));
+    expect(f.read(`${WT}/scratch.txt`)).toBe('agent version');
+    expect(f.store.reverts('s1').flatMap((record) => record.files)).toEqual([{ path: `${WT}/scratch.txt`, outcome: 'conflict', reason: 'the previous content is not known' }]);
+    expect(event(f, e.id).resolution).toBe('kept');
   });
 });
 

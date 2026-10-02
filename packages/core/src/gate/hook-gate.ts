@@ -209,7 +209,7 @@ export class HookGate {
     if (!pending) throw new GateError('That call is no longer waiting for an answer.');
     if (answer === 'expand-plan') {
       if (!pending.view.canExpand || !this.options.plans.canExpand()) throw new GateError('The plan cannot be expanded for this call.');
-      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.rel as string, exists: target.exists, dir: target.dir, deleted: target.deleting })));
+      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.scopeRel ?? target.rel as string, exists: target.exists, dir: target.dir, deleted: target.deleting })));
     }
     pending.settle(answer);
   }
@@ -320,12 +320,16 @@ export class HookGate {
     const infos = await classifyPaths(landings.map((landing) => landing.abs), { root: this.options.root, policy, home, tempRoots: this.options.tempRoots });
     const components = this.options.components();
     const owner = ownerIndex(components);
-    return infos.map((info, index) => ({
-      raw: landings[index]!.raw, kind: info.cls, rel: info.rel, abs: info.abs, dir: info.isDir,
-      mkdir: landings[index]!.mkdir, deleting: landings[index]!.deleting, exists: info.exists, guarded: info.guarded, why: info.why,
-      unowned: info.cls === 'enforced' && info.rel !== null && !info.isDir && !info.exists && owner(info.rel, false) === null
-        && globOwners(components, info.rel).length === 0,
-    }));
+    return infos.map((info, index) => {
+      const project = info.scopeRel ?? info.rel;
+      return {
+        raw: landings[index]!.raw, kind: info.cls, rel: info.rel, abs: info.abs, dir: info.isDir,
+        mkdir: landings[index]!.mkdir, deleting: landings[index]!.deleting, exists: info.exists, guarded: info.guarded, why: info.why,
+        unowned: info.cls === 'enforced' && project !== null && !info.isDir && !info.exists && owner(project, false) === null
+          && globOwners(components, project).length === 0,
+        ...(info.scopeRel === undefined ? {} : { scopeRel: info.scopeRel }),
+      };
+    });
   }
 
   private refreshExpand(): void {
@@ -349,7 +353,7 @@ export class HookGate {
       kind: target.kind as GateTargetKind,
       inScope: !outOfScope.has(target),
       deleting: target.deleting,
-      componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.rel, target.exists) : null,
+      componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.scopeRel ?? target.rel, target.exists) : null,
     }));
     return {
       id: this.newId(), toolUseId: input.toolUseId, parentToolUseId: context.parentToolUseId, tool: input.toolName,

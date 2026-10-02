@@ -4,11 +4,12 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { ChangeOrigin, ChangeResolution, ChangeView, Policy } from '@ide/protocol';
 import { classifyPaths } from '../gate/paths';
+import { worktreeOf, type NestedRepo, type WorktreeHit } from '../gate/worktrees';
 import type { PlanGate } from '../gate/scope-guard';
 import type { BaselineRecord, Store } from '../store/store';
 import type { ActivityLedger } from '../watchdog/activity';
 import type { FsEvent } from '../watchdog/watcher';
-import { hashCandidates, type Baselines, type Drift } from './baselines';
+import { forgetGoneNested, hashCandidates, knownNested, seedNested, type Baselines, type Drift } from './baselines';
 import type { Checkpoints } from './checkpoints';
 import type { IdeWrites } from './ide-writes';
 import type { ShadowRepo, StoredBlob } from './shadow';
@@ -20,6 +21,13 @@ const GRACE_MS = 2_000;
 const LINE_COUNT_MAX = 100;
 const GIT_BUFFER = 64 * 1024 * 1024;
 const KEPT_CHANGES = 10_000;
+const SYMLINK_MODE = 0o120000;
+const GIT_ENTRY = /^(\d+) (?:blob )?([0-9a-f]{40,64})(?: (\d+))?$/;
+// "git add -N" puts the empty blob in the index for a file git does not have yet.
+const EMPTY_BLOBS = new Set(['e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', '473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813']);
+// Gitignored files, harness paths (.omc/), submodules and the rest of a worktree beyond the project are not history:
+// they only bury the changes worth reviewing.
+const UNTRACKED = new Set(['gitignored', 'a harness path', 'inside a submodule', 'outside the project in a nested worktree']);
 
 export interface ChangeServiceOptions {
   root: string;
@@ -53,6 +61,78 @@ const git = (root: string, args: string[]): Promise<string> =>
     execFile('git', ['-C', root, ...args], { maxBuffer: GIT_BUFFER, encoding: 'utf8' }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
   });
 
+const gitBytes = (root: string, args: string[]): Promise<Buffer> =>
+  new Promise((resolve, reject) => {
+    execFile('git', ['-C', root, ...args], { maxBuffer: GIT_BUFFER, encoding: 'buffer' }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
+  });
+
+const gitWithInput = (root: string, args: string[], input: string): Promise<string> =>
+  new Promise((resolve, reject) => {
+    const child = execFile('git', ['-C', root, ...args], { maxBuffer: GIT_BUFFER, encoding: 'utf8' }, (error, stdout) => (error ? reject(error) : resolve(stdout)));
+    child.stdin?.on('error', () => {});
+    child.stdin?.end(input);
+  });
+
+interface GitEntry { sha: string; mode: number }
+
+const entryMode = (mode: string): number => (mode === '100755' ? 0o755 : mode === '120000' ? SYMLINK_MODE : 0o644);
+
+// "<mode> <sha> <stage>\t<path>" (ls-files -s) or "<mode> blob <sha>\t<path>" (ls-tree), NUL-separated.
+// Of the index only a merged entry counts: a conflicted file has none, and an intent-to-add one has no content yet.
+function parseEntries(out: string, index: boolean): Map<string, GitEntry> {
+  const entries = new Map<string, GitEntry>();
+  for (const record of out.split('\0')) {
+    const tab = record.indexOf('\t');
+    const head = GIT_ENTRY.exec(record.slice(0, tab));
+    if (tab < 0 || !head || head[1] === '160000') continue;
+    if (index && ((head[3] ?? '0') !== '0' || EMPTY_BLOBS.has(head[2]!))) continue;
+    entries.set(record.slice(tab + 1), { sha: head[2]!, mode: entryMode(head[1]!) });
+  }
+  return entries;
+}
+
+function byRepo(nested: ReadonlyMap<string, WorktreeHit>, rels: string[]): Map<string, string[]> {
+  const groups = new Map<string, string[]>();
+  for (const rel of rels) {
+    const repo = nested.get(rel)!.worktreeRoot;
+    const group = groups.get(repo);
+    if (group) group.push(rel);
+    else groups.set(repo, [rel]);
+  }
+  return groups;
+}
+
+// Each nested worktree's own git, asked once for all of its paths in the batch.
+async function perRepo(nested: ReadonlyMap<string, WorktreeHit>, rels: string[], args: string[]): Promise<Map<string, GitEntry>> {
+  const out = new Map<string, GitEntry>();
+  await Promise.all([...byRepo(nested, rels)].map(async ([repo, group]) => {
+    const byInner = new Map(group.map((rel) => [nested.get(rel)!.inner, rel]));
+    try {
+      for (const [inner, entry] of parseEntries(await git(repo, ['--literal-pathspecs', ...args, '--', ...byInner.keys()]), args[0] === 'ls-files')) {
+        const rel = byInner.get(inner);
+        if (rel !== undefined) out.set(rel, entry);
+      }
+    } catch {
+      // No index or no HEAD yet: the file has no committed version to start from.
+    }
+  }));
+  return out;
+}
+
+// The hash git gives each file after its clean filters, as the index has it; none for a repository where that fails.
+async function cleanHashes(nested: ReadonlyMap<string, WorktreeHit>, rels: string[]): Promise<Map<string, string>> {
+  const out = new Map<string, string>();
+  await Promise.all([...byRepo(nested, rels.filter((rel) => !rel.includes('\n')))].map(async ([repo, group]) => {
+    try {
+      const hashes = (await gitWithInput(repo, ['hash-object', '--stdin-paths'], `${group.map((rel) => nested.get(rel)!.inner).join('\n')}\n`)).split('\n');
+      group.forEach((rel, i) => { if (hashes[i]) out.set(rel, hashes[i]!); });
+    } catch {
+      // A file gone meanwhile, or a filter that cannot run here: compared by content as it is.
+    }
+  }));
+  return out;
+}
+
 async function mapLimit<T>(items: T[], limit: number, work: (item: T) => Promise<void>): Promise<void> {
   let next = 0;
   const lanes = Array.from({ length: Math.min(limit, items.length) }, async () => {
@@ -66,6 +146,8 @@ export class ChangeService {
   private readonly queue: Queued[] = [];
   private readonly lastRecorded = new Map<string, string | null>();
   private readonly unreadableSeen = new Set<string>();
+  // Files of a nested worktree that were there when the IDE first saw it but were not taken as baselines then.
+  private readonly unsighted = new Set<string>();
   private readonly stamps = new Map<string, number>();
   private readonly graceMs: number;
   private draining: Promise<void> | null = null;
@@ -91,6 +173,11 @@ export class ChangeService {
 
   async idle(): Promise<void> {
     while (this.draining) await this.draining;
+  }
+
+  // Files of a nested worktree a scan saw for the first time without taking them as baselines.
+  markUnsighted(rels: string[]): void {
+    for (const rel of rels) if (!this.o.baselines.get(rel)) this.unsighted.add(rel);
   }
 
   changes(): ChangeView[] {
@@ -193,20 +280,30 @@ export class ChangeService {
     const { root, policy, shadow, baselines } = this.o;
     const seen = [...latest.keys()];
     const classified = await classifyPaths(seen.map((rel) => join(root, rel)), { root, policy });
-    // Gitignored files and harness paths (.omc/) are not history: they only bury the changes worth reviewing.
-    const watched = classified.map((info) => info.why !== 'gitignored' && info.why !== 'a harness path');
+    const gone = forgetGoneNested(root, baselines, (dir) => seen.some((rel) => rel.startsWith(`${dir}/`)));
+    const watched = classified.map((info, i) => !UNTRACKED.has(info.why) && !gone.some((prefix) => seen[i]!.startsWith(prefix)));
     const rels = seen.filter((_, i) => watched[i]);
     const infos = classified.filter((_, i) => watched[i]);
     const enforcedRels = rels.filter((_, i) => infos[i]!.cls === 'enforced');
     const recordedRels = rels.filter((_, i) => infos[i]!.cls !== 'enforced');
+    const nested = new Map<string, WorktreeHit>();
+    rels.forEach((rel, i) => {
+      const hit = infos[i]!.cls === 'enforced' && infos[i]!.scopeRel !== undefined ? worktreeOf(root, rel) : null;
+      if (hit) nested.set(rel, hit);
+    });
+    await this.firstSight(nested);
     const real = await this.gitPaths(rels.filter((rel) => rel.startsWith('.git/')));
-    const [enforcedBlobs, recordedBlobs, tracked] = await Promise.all([
+    const [enforcedBlobs, recordedBlobs, outerTracked, index] = await Promise.all([
       hashCandidates(root, shadow, enforcedRels, real),
       this.hashOnly(recordedRels, real),
-      this.trackedAmong(enforcedRels),
+      this.trackedAmong(enforcedRels.filter((rel) => !nested.has(rel))),
+      perRepo(nested, [...nested.keys()], ['ls-files', '-c', '-s', '-z']),
     ]);
+    const tracked = new Set([...outerTracked, ...index.keys()]);
     const blobs = new Map([...enforcedBlobs.blobs, ...recordedBlobs.blobs]);
     const unreadable = new Set([...enforcedBlobs.unreadable, ...recordedBlobs.unreadable]);
+    const fromGit = await this.gitBefore([...nested.keys()].filter((rel) => !baselines.get(rel)), nested, index, blobs);
+    const seeds: BaselineRecord[] = [];
 
     const made: ChangeView[] = [];
     const checks = new Map<string, { before: boolean }>();
@@ -220,7 +317,9 @@ export class ChangeService {
       const { event, stamp } = latest.get(rel)!;
       const enforced = enforcedRels.includes(rel);
       const blob = blobs.get(rel) ?? null;
-      const base = enforced ? baselines.get(rel) : undefined;
+      const base = enforced ? baselines.get(rel) ?? fromGit.get(rel) : undefined;
+      // A file that was there before the IDE first saw it, with no version anywhere: whatever it held is not known.
+      const existedUnseen = enforced && base === undefined && this.unsighted.has(rel) && blob !== null;
       const beforeHash = enforced ? base?.hash ?? null : this.lastRecorded.get(rel) ?? null;
       const isUnreadable = unreadable.has(rel);
       let afterHash: string | null;
@@ -230,7 +329,10 @@ export class ChangeService {
         afterHash = beforeHash;
       } else {
         afterHash = blob?.hash ?? null;
-        if (afterHash === beforeHash) continue;
+        if (afterHash === beforeHash) {
+          if (base && fromGit.get(rel) === base) seeds.push(base);
+          continue;
+        }
       }
       let origin: ChangeOrigin = 'ide';
       let toolUseIds: string[] = [];
@@ -245,7 +347,8 @@ export class ChangeService {
       const flagged = isGitState(rel) && byAgent;
       made.push(this.build({
         path: rel, beforeHash, afterHash, at: event.wall, origin, enforcement: enforced ? 'enforced' : 'recorded', toolUseIds,
-        stamp: byAgent ? this.toolStampOf(toolUseIds) ?? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable, beforeMode: base?.mode ?? null,
+        stamp: byAgent ? this.toolStampOf(toolUseIds) ?? stamp : null, resolution: flagged ? 'flagged' : null, stored: enforced && !isUnreadable && (blob?.stored ?? false), unreadable: isUnreadable,
+        beforeMode: base?.mode ?? (existedUnseen ? blob.mode : null),
       }));
       newStamps.set(made.at(-1)!.id, event.at);
       if (isUnreadable) continue;
@@ -257,6 +360,9 @@ export class ChangeService {
       if (blob) rows.push({ path: rel, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
       else removed.push(rel);
     }
+    // A nested worktree's file first seen unchanged from its git version is its baseline, not a change.
+    if (seeds.length > 0) baselines.setMany(seeds);
+    for (const rel of rels) this.unsighted.delete(rel);
     if (made.length === 0) return;
     try {
       await this.countLines(made, checks);
@@ -331,6 +437,45 @@ export class ChangeService {
       if (stat && (stat.isFile() || stat.isSymbolicLink())) unreadable.push(rel);
     });
     return { blobs, unreadable };
+  }
+
+  // The before-image of a nested worktree's file the IDE has no baseline for: its index version, else its HEAD version.
+  private async gitBefore(
+    missing: string[], nested: ReadonlyMap<string, WorktreeHit>, index: ReadonlyMap<string, GitEntry>, blobs: ReadonlyMap<string, StoredBlob>,
+  ): Promise<Map<string, BaselineRecord>> {
+    const out = new Map<string, BaselineRecord>();
+    if (missing.length === 0) return out;
+    const entries = new Map(missing.flatMap((rel): [string, GitEntry][] => (index.has(rel) ? [[rel, index.get(rel)!]] : [])));
+    const unindexed = missing.filter((rel) => !entries.has(rel));
+    if (unindexed.length > 0) for (const [rel, entry] of await perRepo(nested, unindexed, ['ls-tree', '-r', '-z', 'HEAD'])) entries.set(rel, entry);
+    const regular = [...entries].filter(([rel, entry]) => entry.mode !== SYMLINK_MODE && blobs.has(rel) && blobs.get(rel)!.mode !== SYMLINK_MODE);
+    const clean = await cleanHashes(nested, regular.map(([rel]) => rel));
+    await mapLimit([...entries], HASH_CONCURRENCY, async ([rel, entry]) => {
+      const current = blobs.get(rel);
+      // Unchanged since git put it there, judged as git judges it (through its eol, ident and LFS filters).
+      if (current && (current.hash === entry.sha || clean.get(rel) === entry.sha)) return void out.set(rel, { path: rel, ...current });
+      const hit = nested.get(rel)!;
+      const args = entry.mode === SYMLINK_MODE ? ['cat-file', 'blob', entry.sha] : ['cat-file', '--filters', `--path=${hit.inner}`, entry.sha];
+      const content = await gitBytes(hit.worktreeRoot, args).catch(() => null);
+      const blob = content === null ? null : await this.o.shadow.putContent(content, entry.mode).catch(() => null);
+      out.set(rel, blob ? { path: rel, ...blob } : { path: rel, hash: entry.sha, stored: false, size: 0, mode: entry.mode });
+    });
+    return out;
+  }
+
+  // A nested worktree no scan has seen yet: its files are taken as they are now, apart from the ones in this batch.
+  private async firstSight(nested: ReadonlyMap<string, WorktreeHit>): Promise<void> {
+    const repos = new Map<string, { repo: NestedRepo; pending: Set<string> }>();
+    for (const [rel, hit] of nested) {
+      const entry = repos.get(hit.dir) ?? { repo: { dir: hit.dir, abs: hit.worktreeRoot }, pending: new Set<string>() };
+      entry.pending.add(rel);
+      repos.set(hit.dir, entry);
+    }
+    for (const { repo, pending } of repos.values()) {
+      if (knownNested(this.o.baselines, repo)) continue;
+      const left = await seedNested(this.o.root, this.o.policy, this.o.shadow, this.o.baselines, repo, pending);
+      for (const rel of left) this.unsighted.add(rel);
+    }
   }
 
   private async trackedAmong(rels: string[]): Promise<Set<string>> {

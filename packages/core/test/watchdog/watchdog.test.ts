@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView, ControlMode, FrozenScope, WatchdogEventView } from '@ide/protocol';
 import { Hold } from '../../src/gate/hold';
+import { invalidateWorktrees } from '../../src/gate/worktrees';
 import type { PlanGate } from '../../src/gate/scope-guard';
 import { Baselines, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
@@ -15,6 +16,7 @@ import { openStore } from '../../src/store/store';
 import { ActivityLedger, type ToolCall } from '../../src/watchdog/activity';
 import { Watchdog, type WatchdogSession } from '../../src/watchdog/watchdog';
 import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
+import { git } from '../worktree-fixture';
 
 const saved: Record<string, string | undefined> = {};
 const ISOLATION = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
@@ -702,3 +704,138 @@ describe('Watchdog.raiseFailOpen', () => {
     expect(c.watchdog.events()).toMatchObject([{ kind: 'fail-open', phase: 'resolved', resolution: 'flagged' }]);
   });
 });
+
+describe('Watchdog for a file of a nested worktree', () => {
+  const WT = '.worktrees/wt1';
+
+  async function worktreeFixture(o: Setup = {}) {
+    const f = await fixture(o);
+    await writeTree(f.root, { '.gitignore': '.worktrees/\n' });
+    git(f.root, 'add', '-A');
+    git(f.root, 'commit', '-q', '-m', 'init');
+    git(f.root, 'worktree', 'add', '-q', '.worktrees/wt1');
+    invalidateWorktrees(f.root);
+    return f;
+  }
+
+  it('does not raise for a write into the worktree that the plan covers by the path inside it', async () => {
+    const f = await worktreeFixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    const change = (await f.produce([`${WT}/src/in.ts`]))[0]!;
+    expect([change.origin, change.enforcement, change.planId]).toEqual(['agent-tool', 'enforced', 'p1']);
+    f.watchdog.consider(change);
+    await sleepMs(120);
+    expect([f.watchdog.events(), f.hold.isHeld(), f.session.calls]).toEqual([[], false, []]);
+  });
+
+  it('does not raise for a write the plan covers by a glob over the path inside the worktree', async () => {
+    const f = await worktreeFixture();
+    f.gate.value = approved({ globs: ['src/**'] });
+    f.toolCall();
+    f.watchdog.consider((await f.produce([`${WT}/src/deep/in.ts`]))[0]!);
+    await sleepMs(120);
+    expect(f.watchdog.events()).toEqual([]);
+  });
+
+  it('raises for a write into the worktree that the plan does not cover, naming the file by its real path', async () => {
+    const f = await worktreeFixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    f.watchdog.consider((await f.produce([`${WT}/src/x.ts`]))[0]!);
+    const event = await pendingEvent(f);
+    expect(event.changes.map((c) => [c.path, c.outOfPlan])).toEqual([[`${WT}/src/x.ts`, true]]);
+    expect(f.hold.isHeld()).toBe(true);
+  });
+
+  it('judges an unstamped change in the worktree by the plan that is approved now', async () => {
+    const f = await worktreeFixture();
+    f.toolCall();
+    const [inside, outside] = await f.produce([`${WT}/src/in.ts`, `${WT}/src/x.ts`]);
+    expect([inside!.planId, outside!.planId]).toEqual([null, null]);
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.watchdog.consider(inside!);
+    await sleepMs(120);
+    expect(f.watchdog.events()).toEqual([]);
+    f.watchdog.consider(outside!);
+    expect((await pendingEvent(f)).changes.map((c) => c.path)).toEqual([`${WT}/src/x.ts`]);
+  });
+
+  it('still judges a path that merely looks like the plan one but lies outside any worktree by its own path', async () => {
+    const f = await worktreeFixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    f.watchdog.consider((await f.produce(['other/src/in.ts']))[0]!);
+    expect((await pendingEvent(f)).changes.map((c) => c.path)).toEqual(['other/src/in.ts']);
+  });
+
+  it('raises a fail-open event only for the worktree files outside the plan', async () => {
+    const f = await worktreeFixture();
+    f.gate.value = approved({ paths: ['src/in.ts'] });
+    f.toolCall();
+    f.watchdog.raiseFailOpen('t1', await f.produce([`${WT}/src/in.ts`, `${WT}/src/x.ts`]));
+    expect((await pendingEvent(f)).changes.map((c) => c.path)).toEqual([`${WT}/src/x.ts`]);
+  });
+});
+
+describe('Watchdog for a worktree inside a directory the plan covers', () => {
+  async function insidePlanDirectory() {
+    const f = await fixture();
+    await writeTree(f.root, { '.gitignore': '.worktrees/\n' });
+    sh(f.root, 'add', '-A');
+    sh(f.root, 'commit', '-q', '-m', 'init');
+    git(f.root, 'worktree', 'add', '-q', 'src/wt');
+    invalidateWorktrees(f.root);
+    f.gate.value = approved({ globs: ['src/**'] });
+    f.toolCall();
+    return f;
+  }
+
+  it('raises for a file of the worktree that the plan covers only by its real path', async () => {
+    const f = await insidePlanDirectory();
+    const change = (await f.produce(['src/wt/package.json']))[0]!;
+    expect([change.origin, change.enforcement, change.planId]).toEqual(['agent-tool', 'enforced', 'p1']);
+    f.watchdog.consider(change);
+    const event = await pendingEvent(f);
+    expect(event.changes.map((c) => [c.path, c.outOfPlan])).toEqual([['src/wt/package.json', true]]);
+    expect(f.hold.isHeld()).toBe(true);
+  });
+
+  it('does not raise for a file of the worktree that the plan covers by its inner path', async () => {
+    const f = await insidePlanDirectory();
+    f.watchdog.consider((await f.produce(['src/wt/src/in.ts']))[0]!);
+    await sleepMs(120);
+    expect([f.watchdog.events(), f.hold.isHeld()]).toEqual([[], false]);
+  });
+
+  it('raises only for the file the plan does not cover by its inner path, when both come in one batch', async () => {
+    const f = await insidePlanDirectory();
+    for (const change of await f.produce(['src/wt/src/in.ts', 'src/wt/package.json'])) f.watchdog.consider(change);
+    expect((await pendingEvent(f)).changes.map((c) => c.path)).toEqual(['src/wt/package.json']);
+  });
+
+  it('judges a change that carries no plan by the plan approved now, by the path inside the worktree', async () => {
+    const f = await insidePlanDirectory();
+    f.gate.value = { state: 'none' };
+    const [inside, outside] = await f.produce(['src/wt/src/in.ts', 'src/wt/package.json']);
+    expect([inside!.planId, outside!.planId]).toEqual([null, null]);
+    f.gate.value = approved({ globs: ['src/**'] });
+    f.watchdog.consider(inside!);
+    await sleepMs(120);
+    expect(f.watchdog.events()).toEqual([]);
+    f.watchdog.consider(outside!);
+    expect((await pendingEvent(f)).changes.map((c) => c.path)).toEqual(['src/wt/package.json']);
+  });
+
+  it('judges a change stamped with an older version of the plan by that version, by the path inside the worktree', async () => {
+    const f = await insidePlanDirectory();
+    const [inside, outside] = await f.produce(['src/wt/src/in.ts', 'src/wt/package.json']);
+    f.gate.value = { state: 'approved', planId: 'p1', version: 2, scope: { paths: [], globs: [] }, activeStep: 's1' };
+    f.watchdog.consider(inside!);
+    await sleepMs(120);
+    expect(f.watchdog.events()).toEqual([]);
+    f.watchdog.consider(outside!);
+    expect((await pendingEvent(f)).changes.map((c) => c.path)).toEqual(['src/wt/package.json']);
+  });
+});
+

@@ -54,6 +54,10 @@ const DEFAULT_MODE = 0o644;
 const SYMLINK_MODE = 0o120000;
 const RESTORE_TIMEOUT_MS = 30_000;
 const NOT_UNDOABLE = "the agent's version is not stored, so the revert could not be undone";
+const UNKNOWN_BEFORE = 'the previous content is not known';
+
+// A file that existed before the change with a content nobody recorded: no before-hash, yet a before-mode.
+const unknownBefore = (change: ChangeView): boolean => change.beforeHash === null && change.beforeMode !== null;
 
 const isGitState = (rel: string): boolean => rel === '.git/HEAD' || rel === '.git/refs' || rel.startsWith('.git/refs/');
 const conflict = (path: string, reason: string): RevertFile => ({ path, outcome: 'conflict', reason });
@@ -141,6 +145,7 @@ export class RevertService {
     if (isGitState(rel)) return { path: rel, outcome: 'not-rolled-back', reason: 'git state is never rolled back' };
     if (first.unreadable || last.unreadable) return conflict(rel, 'the content could not be read');
     if (first.beforeMode === SYMLINK_MODE) return conflict(rel, 'cannot restore a symlink');
+    if (unknownBefore(first)) return conflict(rel, UNKNOWN_BEFORE);
     const firstIndex = all.indexOf(first);
     const lastIndex = all.indexOf(last);
     const selected = new Set(group);
@@ -325,6 +330,7 @@ export class RevertService {
       if (all.some((c, i) => c.path === rel && i > firstAt && !ownSet.has(c))) { result.preview.conflicts.push({ path: rel, reason: CHANGED_AGAIN }); continue; }
       if (own.some((c) => c.unreadable)) { result.preview.conflicts.push({ path: rel, reason: 'the content could not be read' }); continue; }
       if (first.beforeMode === SYMLINK_MODE) { result.preview.conflicts.push({ path: rel, reason: 'cannot restore a symlink' }); continue; }
+      if (beforeHash === null && unknownBefore(first)) { result.preview.conflicts.push({ path: rel, reason: UNKNOWN_BEFORE }); continue; }
       const seen = await this.inspect(rel, beforeHash, afterHash);
       if (seen.reason) { result.preview.conflicts.push({ path: rel, reason: seen.reason }); continue; }
       const mode = first.beforeMode ?? this.o.baselines.get(rel)?.mode ?? DEFAULT_MODE;

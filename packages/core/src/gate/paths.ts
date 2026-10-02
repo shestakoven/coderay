@@ -4,6 +4,7 @@ import { basename, dirname, join, posix, relative, resolve, sep } from 'node:pat
 import ignore from 'ignore';
 import type { Policy } from '@ide/protocol';
 import { gitIgnored } from './gitignore';
+import { discoverNestedRepo, invalidateWorktrees, refreshWorktrees, scopeRelOf, worktreeOf, type WorktreeHit } from './worktrees';
 
 export type PathClass = 'enforced' | 'recorded' | 'temp' | 'outside';
 
@@ -15,6 +16,8 @@ export interface PathInfo {
   isDir: boolean;
   exists: boolean;
   why: string;
+  // The path the project names this file by: its path inside a nested worktree; absent for any other path.
+  scopeRel?: string;
 }
 
 export interface ClassifyContext {
@@ -107,12 +110,31 @@ export async function classifyPaths(paths: string[], ctx: ClassifyContext): Prom
   const guarded = guardedMatcher(ctx.policy);
   const harness = ignore().add(ctx.policy.harness);
   const allowed = allowedPatterns(ctx.policy.outsideAllowed, home);
-  const infos = paths.map((abs): PathInfo => {
+  const inside = paths.filter((abs) => abs !== ctx.root && under(abs, ctx.root));
+  if (inside.some((abs) => basename(abs) === '.git' && abs !== join(ctx.root, '.git'))) invalidateWorktrees(ctx.root);
+  if (inside.length > 0) await refreshWorktrees(ctx.root);
+  const nested = new Map<number, WorktreeHit>();
+  const inNested = (base: Omit<PathInfo, 'rel' | 'cls' | 'why'>, rel: string, hit: WorktreeHit): PathInfo => {
+    const scopeRel = scopeRelOf(ctx.root, hit);
+    if (scopeRel === null) return { ...base, rel, cls: 'recorded', why: 'outside the project in a nested worktree' };
+    if (scopeRel === '') return { ...base, rel, scopeRel, cls: 'enforced', why: 'the project root in a nested worktree' };
+    const probes = base.isDir ? [`${rel}/`, `${scopeRel}/`] : [rel, scopeRel];
+    const info = { ...base, rel, scopeRel };
+    if (probes.some((probe) => guarded.ignores(probe))) return { ...info, cls: 'enforced', guarded: true, why: 'a guarded path' };
+    if (probes.some((probe) => harness.ignores(probe))) return { ...info, cls: 'recorded', why: 'a harness path' };
+    return { ...info, cls: 'enforced', why: 'a project file in a nested worktree' };
+  };
+  const infos = paths.map((abs, index): PathInfo => {
     const stat = statOrNull(abs);
     const base = { abs, isDir: stat?.isDirectory() ?? false, exists: stat !== null, guarded: false };
     if (under(abs, ctx.root)) {
       const rel = relative(ctx.root, abs).split(sep).join('/');
       if (rel === '') return { ...base, rel, cls: 'enforced', why: 'the project root' };
+      const hit = worktreeOf(ctx.root, rel);
+      if (hit) {
+        nested.set(index, hit);
+        return inNested(base, rel, hit);
+      }
       const probe = base.isDir ? `${rel}/` : rel;
       if (guarded.ignores(probe)) return { ...base, rel, cls: 'enforced', guarded: true, why: 'a guarded path' };
       if (rel === '.git' || rel.startsWith('.git/')) return { ...base, rel, cls: 'recorded', why: 'git internals' };
@@ -124,9 +146,38 @@ export async function classifyPaths(paths: string[], ctx: ClassifyContext): Prom
     if (allowed.some((pattern) => posix.matchesGlob(abs, pattern))) return { ...base, rel: null, cls: 'temp', why: 'allowed outside the project' };
     return { ...base, rel: null, cls: 'outside', why: 'outside the project' };
   });
-  const candidates = infos.filter((info) => info.cls === 'enforced' && !info.guarded && info.rel);
-  const ignored = await gitIgnored(ctx.root, candidates.map((info) => info.rel as string));
-  return infos.map((info) =>
-    info.cls === 'enforced' && !info.guarded && info.rel !== null && ignored.has(info.rel) ? { ...info, cls: 'recorded', why: 'gitignored' } : info,
-  );
+  const checked = (i: number): boolean => infos[i]!.cls === 'enforced' && !infos[i]!.guarded && Boolean(infos[i]!.rel);
+  const outer = infos.flatMap((_, i) => (checked(i) && !nested.has(i) ? [i] : []));
+  const { ignored, submodule } = await gitIgnored(ctx.root, outer.map((i) => infos[i]!.rel as string));
+  for (const i of outer) {
+    const info = infos[i]!;
+    if (submodule.has(info.rel as string)) {
+      infos[i] = { ...info, cls: 'recorded', why: 'inside a submodule' };
+      continue;
+    }
+    if (!ignored.has(info.rel as string)) continue;
+    const hit = discoverNestedRepo(ctx.root, info.rel as string);
+    if (hit) {
+      nested.set(i, hit);
+      infos[i] = inNested(info, info.rel as string, hit);
+    } else {
+      infos[i] = { ...info, cls: 'recorded', why: 'gitignored' };
+    }
+  }
+  const byRepo = new Map<string, number[]>();
+  for (const [i, hit] of nested) {
+    if (!checked(i)) continue;
+    const indexes = byRepo.get(hit.worktreeRoot);
+    if (indexes) indexes.push(i);
+    else byRepo.set(hit.worktreeRoot, [i]);
+  }
+  await Promise.all([...byRepo].map(async ([repo, indexes]) => {
+    const inner = await gitIgnored(repo, indexes.map((i) => nested.get(i)!.inner));
+    for (const i of indexes) {
+      const path = nested.get(i)!.inner;
+      if (inner.submodule.has(path)) infos[i] = { ...infos[i]!, cls: 'recorded', why: 'inside a submodule' };
+      else if (inner.ignored.has(path)) infos[i] = { ...infos[i]!, cls: 'recorded', why: 'gitignored' };
+    }
+  }));
+  return infos;
 }

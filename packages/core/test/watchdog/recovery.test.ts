@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, mkdirSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterAll, beforeAll, describe, expect, it, onTestFinished } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { Hold } from '../../src/gate/hold';
-import { Baselines, scanTree } from '../../src/history/baselines';
+import { invalidateWorktrees } from '../../src/gate/worktrees';
+import { Baselines, newScanCache, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
 import { Checkpoints } from '../../src/history/checkpoints';
 import { IdeWrites } from '../../src/history/ide-writes';
@@ -15,6 +16,7 @@ import { ActivityLedger } from '../../src/watchdog/activity';
 import { largest, recoverBaselines, recoverTranscript, UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { Watchdog, type WatchdogSession } from '../../src/watchdog/watchdog';
 import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
+import { git, projectWithWorktree } from '../worktree-fixture';
 
 const saved: Record<string, string | undefined> = {};
 const ISOLATION = { GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_SYSTEM: '/dev/null' };
@@ -275,6 +277,143 @@ describe('the unclean-stop marker and orphaned unknown changes', () => {
     await f.run();
     expect(f.watchdog.events()).toHaveLength(1);
     expect(f.watchdog.events()[0]!.changes.map((c) => c.path).sort()).toEqual(['a.ts', 'b.ts']);
+  });
+});
+
+describe('recoverBaselines with a nested worktree', () => {
+  async function worktreeFixture() {
+    const { root } = await projectWithWorktree();
+    const w = await world(root, tempDir('rc-store-'), tempDir('rc-shadow-'));
+    await scanTree(root, DEFAULT_POLICY, w.shadow, w.baselines);
+    const notices: string[] = [];
+    const run = (crashed = true) => recoverBaselines({
+      root, shadow: w.shadow, baselines: w.baselines, policy: DEFAULT_POLICY, changes: w.changes, watchdog: w.watchdog, crashed, notice: (text) => notices.push(text),
+    });
+    return { root, ...w, notices, run };
+  }
+
+  it('raises nothing after an unclean stop for a worktree created while the core was down, and baselines it', async () => {
+    const f = await worktreeFixture();
+    git(f.root, 'worktree', 'add', '-q', '.worktrees/wt2');
+    invalidateWorktrees(f.root);
+    await f.run();
+    expect([f.watchdog.events(), f.changes.changes(), f.notices]).toEqual([[], [], []]);
+    expect(f.baselines.paths()).toEqual(expect.arrayContaining(['.worktrees/wt2/backend/src/a.py']));
+    expect(f.baselines.meta(UNCLEAN_STOP_KEY)).toBe('');
+  });
+
+  it('raises nothing after an unclean stop for a worktree removed while the core was down, and forgets its files', async () => {
+    const f = await worktreeFixture();
+    expect(f.baselines.paths()).toContain('.worktrees/wt1/backend/src/a.py');
+    git(f.root, 'worktree', 'remove', '--force', '.worktrees/wt1');
+    invalidateWorktrees(f.root);
+    await f.run();
+    expect([f.watchdog.events(), f.changes.changes()]).toEqual([[], []]);
+    expect(f.baselines.paths().filter((path) => path.startsWith('.worktrees/'))).toEqual([]);
+  });
+
+  it('still raises an unknown event for a file of a known worktree that changed while the core was down', async () => {
+    const f = await worktreeFixture();
+    const before = f.baselines.get('.worktrees/wt1/backend/src/a.py')!.hash;
+    editOnDisk(f.root, { '.worktrees/wt1/backend/src/a.py': 'a = 5\n', 'backend/src/a.py': 'a = 6\n' });
+    await f.run();
+    expect(f.watchdog.events()).toHaveLength(1);
+    expect(f.changes.changes().map((c) => [c.path, c.origin]).sort()).toEqual([['.worktrees/wt1/backend/src/a.py', 'unknown'], ['backend/src/a.py', 'unknown']]);
+    expect(f.changes.changes().find((c) => c.path.startsWith('.worktrees/'))!.beforeHash).toBe(before);
+  });
+});
+
+const PLACES = [
+  ['gitignored', '.worktrees/wt1'],
+  ['not gitignored', 'trees/w1'],
+  ['guarded', '.claude/worktrees/w1'],
+] as const;
+
+describe.each(PLACES)('recoverBaselines after a worktree in a %s place went away while the core was down', (_kind, dir) => {
+  async function seenWorktree() {
+    const { root } = await projectWithWorktree({}, dir);
+    const w = await world(root, tempDir('rc-store-'), tempDir('rc-shadow-'));
+    await scanTree(root, DEFAULT_POLICY, w.shadow, w.baselines);
+    expect(w.baselines.paths()).toContain(`${dir}/backend/src/a.py`);
+    const notices: string[] = [];
+    const run = (crashed: boolean) => recoverBaselines({
+      root, shadow: w.shadow, baselines: w.baselines, policy: DEFAULT_POLICY, changes: w.changes, watchdog: w.watchdog, crashed, notice: (text) => notices.push(text),
+    });
+    const under = (prefix: string = dir): string[] => w.baselines.paths().filter((path) => path.startsWith(`${prefix}/`));
+    const quiet = (): unknown[] => [w.watchdog.events(), w.changes.changes(), notices, under()];
+    return { root, ...w, run, quiet, under };
+  }
+
+  it.each([[true], [false]])('raises nothing and forgets its files when git removed it (crashed: %s)', async (crashed) => {
+    const f = await seenWorktree();
+    git(f.root, 'worktree', 'remove', '--force', dir);
+    invalidateWorktrees(f.root);
+    await f.run(crashed);
+    expect(f.quiet()).toEqual([[], [], [], []]);
+  });
+
+  it('raises nothing and forgets its files when the directory vanished and git has not noticed', async () => {
+    const f = await seenWorktree();
+    rmSync(join(f.root, dir), { recursive: true });
+    await f.run(true);
+    expect(f.quiet()).toEqual([[], [], [], []]);
+  });
+
+  it('raises nothing when another repository took its place', async () => {
+    const f = await seenWorktree();
+    rmSync(join(f.root, dir), { recursive: true });
+    sh(f.root, 'worktree', 'prune');
+    sh(f.root, 'clone', '-q', f.root, dir);
+    invalidateWorktrees(f.root);
+    await f.run(true);
+    expect(f.quiet()).toEqual([[], [], [], []]);
+  });
+
+  it('raises nothing for the moved worktree, which it takes as it is at its new place', async () => {
+    const f = await seenWorktree();
+    sh(f.root, 'worktree', 'move', dir, `${dir}-moved`);
+    invalidateWorktrees(f.root);
+    await f.run(true);
+    expect([f.watchdog.events(), f.changes.changes(), f.under()]).toEqual([[], [], []]);
+    expect(f.under(`${dir}-moved`)).toContain(`${dir}-moved/backend/src/a.py`);
+  });
+});
+
+describe('recoverBaselines for a worktree created while the core was down, with files that are not settled', () => {
+  const NEW = 'trees/w2';
+
+  async function created() {
+    const { root } = await projectWithWorktree();
+    const w = await world(root, tempDir('rc-store-'), tempDir('rc-shadow-'));
+    await scanTree(root, DEFAULT_POLICY, w.shadow, w.baselines);
+    sh(root, 'worktree', 'add', '-q', NEW);
+    writeFileSync(join(root, NEW, 'scratch.txt'), 'scratch\n');
+    const later = new Date(Date.now() + 60_000);
+    for (const file of ['scratch.txt', 'backend/src/a.py']) utimesSync(join(root, NEW, file), later, later);
+    invalidateWorktrees(root);
+    const marked = vi.spyOn(w.changes, 'markUnsighted');
+    const run = () => recoverBaselines({
+      root, shadow: w.shadow, baselines: w.baselines, policy: DEFAULT_POLICY, changes: w.changes, watchdog: w.watchdog, crashed: true, cache: newScanCache(),
+    });
+    return { root, ...w, marked, run };
+  }
+
+  it('hands those files to the change service as not seen, raising nothing and baselining none of them', async () => {
+    const f = await created();
+    await f.run();
+    expect(f.marked).toHaveBeenCalledTimes(1);
+    expect(f.marked.mock.calls[0]![0]).toEqual(expect.arrayContaining([`${NEW}/scratch.txt`, `${NEW}/backend/src/a.py`]));
+    expect([f.watchdog.events(), f.changes.changes()]).toEqual([[], []]);
+    expect(f.baselines.paths()).not.toContain(`${NEW}/scratch.txt`);
+    expect(f.baselines.paths()).not.toContain(`${NEW}/backend/src/a.py`);
+  });
+
+  it('lets the later event of such an untracked file record it as one whose previous content is not known', async () => {
+    const f = await created();
+    await f.run();
+    const at = performance.now();
+    await f.changes.handle({ rel: `${NEW}/scratch.txt`, exists: true, at, wall: Date.now() });
+    expect(f.changes.changes()).toMatchObject([{ path: `${NEW}/scratch.txt`, beforeHash: null, beforeMode: 0o644 }]);
   });
 });
 

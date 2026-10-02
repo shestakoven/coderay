@@ -127,6 +127,12 @@ export class ShadowRepo {
     return { hash: out.toString().trim(), stored: store, size: Buffer.byteLength(content), mode: SYMLINK_MODE };
   }
 
+  async putContent(content: Buffer, mode: number): Promise<StoredBlob> {
+    const write = content.length <= MAX_BLOB_BYTES;
+    const out = await this.run(['hash-object', ...(write ? ['-w'] : []), '--stdin', '--no-filters'], { input: content });
+    return { hash: out.toString().trim(), stored: write, size: content.length, mode };
+  }
+
   async putMany(paths: string[]): Promise<Map<string, StoredBlob | null>> {
     const result = new Map<string, StoredBlob | null>();
     for (const p of paths) result.set(p, null);

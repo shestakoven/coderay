@@ -4,6 +4,7 @@ import type { Hold } from '../gate/hold';
 import type { HookGate } from '../gate/hook-gate';
 import type { PlanGate } from '../gate/scope-guard';
 import { covers } from '../gate/scope';
+import { scopeRelOf, worktreeOf } from '../gate/worktrees';
 import type { ChangeService } from '../history/changes';
 import type { RevertService } from '../history/revert';
 import type { ShadowRepo } from '../history/shadow';
@@ -246,7 +247,8 @@ export class Watchdog {
   private expandTarget(event: WatchdogEventView, path: string): { rel: string; exists: boolean; dir: boolean; deleted: boolean } {
     const own = event.changes.filter((c) => c.path === path);
     const deleted = own.at(-1)!.afterHash === null && !own.at(-1)!.unreadable;
-    return { rel: path, exists: deleted || own[0]!.beforeHash !== null, dir: false, deleted };
+    const existed = own[0]!.beforeHash !== null || own[0]!.beforeMode !== null;
+    return { rel: this.projectRel(path), exists: deleted || existed, dir: false, deleted };
   }
 
   private async deliver(event: WatchdogEventView, text: string, changed: boolean): Promise<void> {
@@ -422,7 +424,7 @@ export class Watchdog {
   }
 
   private isOutOfPlan(change: ChangeView): boolean {
-    const target = { rel: change.path, dir: false, mkdir: false, deleting: change.afterHash === null && !change.unreadable };
+    const target = { rel: this.projectRel(change.path), dir: false, mkdir: false, deleting: change.afterHash === null && !change.unreadable };
     if (change.planId !== null && change.planVersion !== null) {
       const stamped = this.o.plans.scopeOf(change.planId, change.planVersion);
       return stamped === null || !covers(stamped, target);
@@ -430,6 +432,12 @@ export class Watchdog {
     const gate: PlanGate = this.o.plans.gate();
     if (gate.state !== 'approved') return true;
     return !covers(gate.scope, target);
+  }
+
+  // A file of a nested worktree is named in a plan by its path inside the worktree.
+  private projectRel(path: string): string {
+    const hit = worktreeOf(this.o.root, path);
+    return (hit && scopeRelOf(this.o.root, hit)) ?? path;
   }
 
   private prune(): void {

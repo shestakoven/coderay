@@ -30,10 +30,45 @@ describe('HistoryService', { timeout: 30_000 }, () => {
 
   it('keeps only the latest 2,000 changes in the snapshot', async () => {
     const b = await build({ scenario: WAIT_TURN });
-    const many = Array.from({ length: 2_050 }, (_, i) => ({ ...b.rt.changes.changes()[0]!, id: `c${i}` }));
+    const many = Array.from({ length: 2_050 }, (_, i) => ({ ...b.rt.changes.changes()[0]!, id: `c${i}`, enforcement: 'enforced' as const }));
     vi.spyOn(b.rt.changes, 'changes').mockReturnValue(many);
     const { changes } = b.rt.history.snapshot();
     expect([changes.length, changes[0]!.id, changes.at(-1)!.id]).toEqual([2_000, 'c50', 'c2049']);
+  });
+
+  describe('the changes in the snapshot', () => {
+    const row = (id: string, enforcement: ChangeView['enforcement']): ChangeView => ({ ...fakeChange(id), enforcement });
+    const snapshotOf = async (rows: ChangeView[]) => {
+      const b = await build({ scenario: WAIT_TURN });
+      vi.spyOn(b.rt.changes, 'changes').mockReturnValue(rows);
+      return b.rt.history.snapshot().changes;
+    };
+
+    it('keeps the newest 2,000 enforced and the newest 200 recorded changes, in their original order', async () => {
+      const rows = Array.from({ length: 2_500 }, (_, i) => row(`c${i}`, i % 5 === 4 ? 'recorded' : 'enforced'));
+      const kept = await snapshotOf(rows);
+      const enforced = rows.filter((c) => c.enforcement === 'enforced').slice(-2_000);
+      const recorded = rows.filter((c) => c.enforcement === 'recorded').slice(-200);
+      const expected = rows.filter((c) => enforced.includes(c) || recorded.includes(c));
+      expect([kept.filter((c) => c.enforcement === 'enforced').length, kept.filter((c) => c.enforcement === 'recorded').length]).toEqual([2_000, 200]);
+      expect(kept.map((c) => c.id)).toEqual(expected.map((c) => c.id));
+    });
+
+    it('never lets recorded changes push enforced ones out of the snapshot', async () => {
+      const rows = [...Array.from({ length: 100 }, (_, i) => row(`e${i}`, 'enforced')), ...Array.from({ length: 2_500 }, (_, i) => row(`r${i}`, 'recorded'))];
+      const kept = await snapshotOf(rows);
+      expect(kept.filter((c) => c.enforcement === 'enforced').map((c) => c.id)).toEqual(rows.slice(0, 100).map((c) => c.id));
+      expect([kept.length, kept[100]!.id, kept.at(-1)!.id]).toEqual([300, 'r2300', 'r2499']);
+    });
+
+    it('keeps every change while both kinds are below their caps', async () => {
+      const rows = Array.from({ length: 50 }, (_, i) => row(`c${i}`, i % 2 === 0 ? 'enforced' : 'recorded'));
+      expect((await snapshotOf(rows)).map((c) => c.id)).toEqual(rows.map((c) => c.id));
+    });
+
+    it('returns no changes for an empty history', async () => {
+      expect(await snapshotOf([])).toEqual([]);
+    });
   });
 
   it('turns a file change into a patch with the Change', async () => {

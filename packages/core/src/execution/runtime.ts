@@ -202,7 +202,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     const startedWall = Date.now();
     const started = performance.now();
     const policy = o.policy();
-    const { seeded, drift } = await scanTree(o.root, policy, shadow, baselines, scanCache, { refresh });
+    const { seeded, drift } = await scanTree(o.root, policy, shadow, baselines, scanCache, { refresh, unsighted: (rels) => changes.markUnsighted(rels) });
     let failed = false;
     if (!seeded && drift.length > 0) {
       const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy });

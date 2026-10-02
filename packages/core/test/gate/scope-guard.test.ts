@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ControlMode } from '@ide/protocol';
-import { covers, escapeGlob } from '../../src/gate/scope';
+import { covers, escapeGlob, type FrozenScope } from '../../src/gate/scope';
 import { decide, type ClassifiedTarget, type PlanGate, type TargetKind } from '../../src/gate/scope-guard';
 import { toolClass } from '../../src/gate/tools';
 
@@ -128,6 +128,95 @@ describe('decide', () => {
   it('lists at most five targets in a reason', () => {
     const many = ['a', 'b', 'c', 'd', 'e', 'f', 'g'].map((name) => target('enforced', `x/${name}.ts`));
     expect(run('Bash', many, { state: 'none' }).reason).toContain('x/a.ts, x/b.ts, x/c.ts, x/d.ts, x/e.ts and 2 more');
+  });
+});
+
+describe('decide for a file of a nested worktree', () => {
+  const REAL = '.worktrees/wt1/backend/src';
+  const gate = (scope: FrozenScope): PlanGate => ({ state: 'approved', planId: 'plan-1', version: 2, scope, activeStep: 'edit' });
+  const inWorktree = (name: string, extra: Partial<ClassifiedTarget> = {}) => target('enforced', `${REAL}/${name}`, { scopeRel: `backend/src/${name}`, ...extra });
+
+  it('allows a write the plan covers by the path inside the worktree and stamps it like any in-scope write', () => {
+    const decision = run('Write', [inWorktree('a.py')], gate({ paths: ['backend/src/a.py'], globs: [] }));
+    expect(decision).toMatchObject({ outcome: 'allow', planId: 'plan-1', version: 2, stepKey: 'edit', outOfScope: [] });
+  });
+
+  it('refuses a write to another file of the worktree and names it by its real path', () => {
+    const decision = run('Write', [inWorktree('other.py')], gate({ paths: ['backend/src/a.py'], globs: [] }));
+    expect([decision.outcome, decision.outOfScope.map((t) => t.rel)]).toEqual(['ask', [`${REAL}/other.py`]]);
+  });
+
+  it.each([
+    ['A', 'deny'],
+    ['B', 'ask'],
+    ['C', 'flag'],
+  ] as const)('handles an out-of-scope write to a worktree in mode %s with %s', (mode, outcome) => {
+    expect(run('Write', [inWorktree('other.py')], gate({ paths: ['backend/src/a.py'], globs: [] }), mode).outcome).toBe(outcome);
+  });
+
+  it('allows a write under a glob of the plan by the path inside the worktree, and not outside the glob', () => {
+    const scope = gate({ paths: [], globs: ['backend/src/**'] });
+    const outside = target('enforced', '.worktrees/wt1/backend/lib/x.py', { scopeRel: 'backend/lib/x.py' });
+    expect([run('Write', [inWorktree('deep/x.py')], scope).outcome, run('Write', [outside], scope).outcome]).toEqual(['allow', 'ask']);
+  });
+
+  it('judges a file of the worktree only by its path inside it, not by the real path the plan names', () => {
+    const decision = run('Write', [inWorktree('a.py')], gate({ paths: [`${REAL}/a.py`], globs: [] }));
+    expect(decision.outcome).toBe('ask');
+  });
+
+  it('does not let the path inside the worktree make a file outside it in scope', () => {
+    const scope = gate({ paths: ['backend/src/a.py'], globs: [] });
+    expect(run('Write', [target('enforced', 'frontend/backend/src/a.py')], scope).outcome).toBe('ask');
+  });
+
+  it('judges a delete in the worktree by the deletes of the plan, by the path inside the worktree', () => {
+    const scope = gate({ paths: ['backend/src/a.py', 'backend/src/old.py'], globs: [], deletes: { paths: ['backend/src/old.py'], globs: [] } });
+    const removal = (name: string) => inWorktree(name, { deleting: true });
+    expect([run('Bash', [removal('old.py')], scope).outcome, run('Bash', [removal('a.py')], scope).outcome]).toEqual(['allow', 'ask']);
+  });
+
+  it('refuses the whole call when only one of its targets is out of scope', () => {
+    const scope = gate({ paths: ['backend/src/a.py'], globs: [] });
+    const decision = run('Bash', [inWorktree('a.py'), inWorktree('other.py')], scope);
+    expect([decision.outcome, decision.outOfScope.map((t) => t.scopeRel)]).toEqual(['ask', ['backend/src/other.py']]);
+  });
+});
+
+describe('decide for a worktree that lies in a directory the plan covers', () => {
+  const gate = (scope: FrozenScope): PlanGate => ({ state: 'approved', planId: 'plan-1', version: 2, scope, activeStep: 'edit' });
+  const over = gate({ paths: [], globs: ['src/**'] });
+  const inWorktree = (inner: string, extra: Partial<ClassifiedTarget> = {}) => target('enforced', `src/wt/${inner}`, { scopeRel: inner, ...extra });
+
+  it('does not let the real path under the covered directory put a file the plan has no name for in scope', () => {
+    const decision = run('Write', [inWorktree('package.json')], over);
+    expect([decision.outcome, decision.outOfScope.map((t) => t.rel)]).toEqual(['ask', ['src/wt/package.json']]);
+  });
+
+  it('allows that very path when it is no worktree file, which shows the inner name is what is judged', () => {
+    expect(run('Write', [target('enforced', 'src/wt/package.json')], over).outcome).toBe('allow');
+  });
+
+  it('allows a file of the worktree whose inner path the glob covers', () => {
+    expect(run('Write', [inWorktree('src/deep/x.ts')], over).outcome).toBe('allow');
+  });
+
+  it('refuses a call that writes a covered and an uncovered file of the worktree, naming only the uncovered one', () => {
+    const decision = run('Bash', [inWorktree('src/x.ts'), inWorktree('package.json')], over);
+    expect([decision.outcome, decision.outOfScope.map((t) => t.scopeRel)]).toEqual(['ask', ['package.json']]);
+  });
+
+  it('judges a deletion by the deletes of the plan with the inner path, not with the real one', () => {
+    const scope = gate({ paths: [], globs: ['src/**'], deletes: { paths: ['src/wt/old.ts'], globs: [] } });
+    expect(run('Bash', [inWorktree('old.ts', { deleting: true })], scope).outcome).toBe('ask');
+    const covered = gate({ paths: [], globs: ['src/**'], deletes: { paths: ['old.ts'], globs: [] } });
+    expect(run('Bash', [inWorktree('old.ts', { deleting: true })], covered).outcome).toBe('allow');
+  });
+
+  it('does not cover the file of another repository by the path inside it', () => {
+    const scope = gate({ paths: [], globs: ['lib/**'] });
+    expect(run('Write', [target('enforced', 'deps/foo/lib/x.ex')], scope).outcome).toBe('ask');
+    expect(run('Write', [target('enforced', 'deps/foo/lib/x.ex', { scopeRel: 'lib/x.ex' })], scope).outcome).toBe('allow');
   });
 });
 

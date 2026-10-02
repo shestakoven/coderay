@@ -16,6 +16,7 @@ export interface ClassifiedTarget {
   guarded: boolean;
   why: string;
   unowned?: boolean;
+  scopeRel?: string;
 }
 
 export type PlanGate =
@@ -106,7 +107,9 @@ export function decide(input: GuardInput): GuardDecision {
 }
 
 function inScope(scope: FrozenScope, target: ClassifiedTarget): boolean {
-  if (target.kind === 'enforced' && target.rel !== null) return covers(scope, { rel: target.rel, dir: target.dir, mkdir: target.mkdir, deleting: target.deleting });
+  if (target.kind === 'enforced' && target.rel !== null) {
+    return covers(scope, { rel: target.scopeRel ?? target.rel, dir: target.dir, mkdir: target.mkdir, deleting: target.deleting });
+  }
   if (target.kind === 'all-tracked') return scope.globs.includes('**');
   return false;
 }

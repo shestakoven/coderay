@@ -33,7 +33,7 @@ export function largest(values: Iterable<number>): number {
 }
 
 async function scanAndRecord(o: RecoverBaselinesOptions): Promise<void> {
-  const { seeded, drift } = await scanTree(o.root, o.policy, o.shadow, o.baselines, o.cache);
+  const { seeded, drift } = await scanTree(o.root, o.policy, o.shadow, o.baselines, o.cache, { unsighted: (rels) => o.changes.markUnsighted(rels) });
   if (seeded || drift.length === 0) return;
   const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy: o.policy });
   const enforced: Drift[] = [];
