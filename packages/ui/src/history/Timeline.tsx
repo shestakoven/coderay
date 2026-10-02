@@ -131,6 +131,9 @@ function PreviewBody({ preview, confirm, onToggle }: { preview: RollbackPreview;
   return (
     <>
       {!preview.allowed && <p className="warn">{preview.reason ?? 'This step cannot be rolled back now.'}</p>}
+      {preview.allowed && preview.autoFiles.length + preview.confirmFiles.length + preview.notRolledBack.length + preview.conflicts.length === 0 && (
+        <p className="muted">Nothing to roll back: no file changes of this step are on record.</p>
+      )}
       {preview.autoFiles.length > 0 && (
         <><h4>Rolled back automatically</h4><ul>{preview.autoFiles.map((p) => <li key={p}><code>{p}</code></li>)}</ul></>
       )}
