@@ -1,87 +1,29 @@
-import type { ReactNode } from 'react';
-import type { DiffHunk, FileDiff } from '@ide/protocol';
-import { tokenClasses } from './highlight';
-import { wordDiff, type Segment } from './word-diff';
+import { Fragment, memo, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { FileDiff } from '@ide/protocol';
+import './review.css';
+import { anchorKey, blocksOf, foldOf, FOLD_STEP, limitRows, splitRows, type Block, type DiffMode, type FileKind, type LineAnchor, type Row } from './diff-rows';
 
-interface Row {
-  op: 'context' | 'add' | 'del';
-  oldNo: number | null;
-  newNo: number | null;
-  text: string;
-  segments?: Segment[];
-  classes?: (string | null)[];
+export interface DiffViewProps {
+  diff: FileDiff;
+  path: string;
+  mode?: DiffMode;
+  kind?: FileKind;
+  renamedFrom?: string | null;
+  // Anchors (old:N / new:N) that carry a comment, and what to show under their line.
+  marked?: ReadonlySet<string>;
+  threads?: ReadonlyMap<string, ReactNode>;
+  onGutter?: (anchor: LineAnchor) => void;
+  activeHunk?: number;
 }
 
-function rowsOf(hunk: DiffHunk): Row[] {
-  let oldNo = hunk.oldStart;
-  let newNo = hunk.newStart;
-  return hunk.lines.map((line) => {
-    if (line.op === 'del') return { op: 'del', oldNo: oldNo++, newNo: null, text: line.text };
-    if (line.op === 'add') return { op: 'add', oldNo: null, newNo: newNo++, text: line.text };
-    return { op: 'context', oldNo: oldNo++, newNo: newNo++, text: line.text };
-  });
-}
+const MARK = { add: '+', del: '−', context: '' } as const;
+const CHUNK = 60;
+const ROW_PX = 19.4;
+const EAGER_CHUNKS = 2;
 
-const MIN_SIMILARITY = 0.5;
-const LOOKAHEAD = 3;
-
-const similarity = (segments: Segment[]): number => {
-  const total = segments.reduce((sum, part) => sum + part.text.length, 0);
-  return total === 0 ? 0 : segments.filter((part) => !part.changed).reduce((sum, part) => sum + part.text.length, 0) / total;
-};
-
-// A run of deleted lines followed by added lines: each deleted line is paired, in order, with the
-// most similar added line nearby; only similar pairs get word-level marks, a rewritten line stays plain.
-function markPairs(rows: Row[]): void {
-  for (let start = 0; start < rows.length; start++) {
-    if (rows[start]!.op !== 'del') continue;
-    let mid = start;
-    while (mid < rows.length && rows[mid]!.op === 'del') mid++;
-    let end = mid;
-    while (end < rows.length && rows[end]!.op === 'add') end++;
-    let next = mid;
-    for (let del = start; del < mid && next < end; del++) {
-      let best: { at: number; pair: NonNullable<ReturnType<typeof wordDiff>>; score: number } | null = null;
-      for (let add = next; add < Math.min(end, next + LOOKAHEAD); add++) {
-        const pair = wordDiff(rows[del]!.text, rows[add]!.text);
-        const score = pair ? Math.min(similarity(pair.before), similarity(pair.after)) : 0;
-        if (pair && score >= MIN_SIMILARITY && (!best || score > best.score)) best = { at: add, pair, score };
-      }
-      if (!best) continue;
-      rows[del]!.segments = best.pair.before;
-      rows[best.at]!.segments = best.pair.after;
-      next = best.at + 1;
-    }
-    start = end - 1;
-  }
-}
-
-// Highlighting each side of the hunk as one block keeps multi-line comments and strings intact.
-function colorRows(path: string, rows: Row[]): void {
-  const side = (keep: (row: Row) => boolean): void => {
-    const picked = rows.filter(keep);
-    const classes = tokenClasses(path, picked.map((row) => row.text).join('\n'));
-    if (!classes) return;
-    let at = 0;
-    for (const row of picked) {
-      row.classes = classes.slice(at, at + row.text.length);
-      at += row.text.length + 1;
-    }
-  };
-  side((row) => row.op !== 'add');
-  const oldClasses = new Map(rows.filter((row) => row.classes).map((row) => [row, row.classes]));
-  side((row) => row.op !== 'del');
-  for (const row of rows) if (row.op === 'del') row.classes = oldClasses.get(row);
-}
-
-function changedMask(row: Row): boolean[] {
-  if (!row.segments) return [];
-  return row.segments.flatMap((part) => Array.from({ length: part.text.length }, () => part.changed));
-}
-
-function renderRow(row: Row): ReactNode {
-  if (!row.classes && !row.segments) return row.text;
-  const changed = changedMask(row);
+function renderText(row: Row): ReactNode {
+  if (!row.classes && !row.segments) return row.text === '' ? ' ' : row.text;
+  const changed = row.segments ? row.segments.flatMap((part) => Array.from({ length: part.text.length }, () => part.changed)) : [];
   const pieces: ReactNode[] = [];
   let from = 0;
   for (let i = 1; i <= row.text.length; i++) {
@@ -96,30 +38,153 @@ function renderRow(row: Row): ReactNode {
   return pieces;
 }
 
-const MARK = { add: '+', del: '−', context: '' } as const;
+interface GutterProps {
+  side: 'old' | 'new';
+  row: Row;
+  marked: boolean;
+  onGutter?: (anchor: LineAnchor) => void;
+}
 
-export function DiffView({ diff, path }: { diff: FileDiff; path: string }) {
+function Gutter({ side, row, marked, onGutter }: GutterProps) {
+  const line = side === 'old' ? row.oldNo : row.newNo;
+  if (line === null) return <span className="diff-no" />;
+  // A comment sits on an added or unchanged line by its new number, or on a removed line by its old number.
+  if (!onGutter || (side === 'old' && row.op !== 'del')) return <span className="diff-no">{line}</span>;
   return (
-    <div className="diff-view">
-      {diff.hunks.map((hunk) => {
-        const rows = rowsOf(hunk);
-        markPairs(rows);
-        colorRows(path, rows);
-        return (
-          <div key={`${hunk.oldStart}:${hunk.newStart}`} className="diff-hunk">
-            <div className="diff-hunk-head">@@ −{hunk.oldStart},{hunk.oldLines} +{hunk.newStart},{hunk.newLines} @@</div>
-            {rows.map((row, i) => (
-              <div key={i} className={`diff-row ${row.op}`}>
-                <span className="diff-no">{row.oldNo}</span>
-                <span className="diff-no">{row.newNo}</span>
-                <span className="diff-mark">{MARK[row.op]}</span>
-                <span className="diff-text">{renderRow(row)}</span>
-              </div>
-            ))}
-          </div>
-        );
-      })}
-      {diff.truncated && <div className="diff-hunk-head">… truncated</div>}
+    <button
+      className={`diff-no commentable${marked ? ' marked' : ''}`}
+      tabIndex={-1}
+      title={`Comment on line ${line}${side === 'old' ? ' (removed)' : ''}`}
+      aria-label={`Comment on line ${line}${side === 'old' ? ', removed' : ''}`}
+      onClick={() => onGutter({ side, line, text: row.text })}
+    >
+      <span className="num">{line}</span>
+      <span className="plus" aria-hidden="true">+</span>
+    </button>
+  );
+}
+
+const UnifiedRow = memo(function UnifiedRow({ row, oldMarked, newMarked, onGutter }: { row: Row; oldMarked: boolean; newMarked: boolean; onGutter?: (anchor: LineAnchor) => void }) {
+  return (
+    <div className={`diff-row ${row.op}`}>
+      <Gutter side="old" row={row} marked={oldMarked} onGutter={onGutter} />
+      <Gutter side="new" row={row} marked={newMarked} onGutter={onGutter} />
+      <span className="diff-mark">{MARK[row.op]}</span>
+      <span className="diff-text">{renderText(row)}</span>
     </div>
+  );
+});
+
+function Cell({ row, side, marked, onGutter }: { row: Row | null; side: 'old' | 'new'; marked: boolean; onGutter?: (anchor: LineAnchor) => void }) {
+  if (!row) return <div className="diff-cell blank" />;
+  return (
+    <div className={`diff-cell ${row.op}`}>
+      <Gutter side={side} row={row} marked={marked} onGutter={onGutter} />
+      <span className="diff-mark">{MARK[row.op]}</span>
+      <span className="diff-text">{renderText(row)}</span>
+    </div>
+  );
+}
+
+const SplitRowView = memo(function SplitRowView({ left, right, leftMarked, rightMarked, onGutter }: { left: Row | null; right: Row | null; leftMarked: boolean; rightMarked: boolean; onGutter?: (anchor: LineAnchor) => void }) {
+  return (
+    <div className="diff-split-row">
+      <Cell row={left} side="old" marked={leftMarked} onGutter={onGutter} />
+      <Cell row={right} side="new" marked={rightMarked} onGutter={onGutter} />
+    </div>
+  );
+});
+
+// A long run of rows is cut into chunks that only build their DOM when they come near the scroll viewport.
+function Chunk({ rows, eager, children }: { rows: number; eager: boolean; children: () => ReactNode }) {
+  const [built, setBuilt] = useState(eager);
+  const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const element = box.current;
+    if (built || !element) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      if (!entry?.isIntersecting) return;
+      setBuilt(true);
+      observer.disconnect();
+    }, { root: element.closest('.rv-diff'), rootMargin: '1600px 0px' });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [built]);
+  if (eager && rows < CHUNK) return <>{children()}</>;
+  return <div ref={box} className="diff-chunk" style={built ? { containIntrinsicSize: `auto ${Math.round(rows * ROW_PX)}px` } : { height: Math.round(rows * ROW_PX) }}>{built ? children() : null}</div>;
+}
+
+const chunks = <T,>(items: T[]): T[][] => (items.length <= CHUNK * 2 ? [items] : Array.from({ length: Math.ceil(items.length / CHUNK) }, (_, i) => items.slice(i * CHUNK, (i + 1) * CHUNK)));
+
+export function DiffView({ diff, path, mode = 'unified', kind = 'modified', renamedFrom = null, marked, threads, onGutter, activeHunk }: DiffViewProps) {
+  const blocks = useMemo(() => blocksOf(diff, path), [diff, path]);
+  const [limit, setLimit] = useState(0);
+  const fold = foldOf(kind, blocks, limit);
+  const shown = useMemo(() => (fold ? limitRows(blocks, fold.visible) : blocks), [blocks, fold?.visible]);
+  const isMarked = (side: 'old' | 'new', line: number | null): boolean => line !== null && marked?.has(anchorKey(side, line)) === true;
+  const thread = (anchor: Row | null, side: 'old' | 'new'): ReactNode => {
+    const line = side === 'old' ? anchor?.oldNo : anchor?.newNo;
+    return line == null ? null : threads?.get(anchorKey(side, line)) ?? null;
+  };
+
+  if (blocks.length === 0) {
+    return (
+      <div className="diff-view bare" data-kind={kind}>
+        <p className="diff-note">{renamedFrom ? <>Moved from <code>{renamedFrom}</code>. The content did not change.</> : 'No textual changes.'}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`diff-view ${mode}`} data-kind={kind}>
+      {shown.map((block) => (
+        <HunkBlock key={`${block.oldStart}:${block.newStart}`} block={block} count={blocks.length} active={activeHunk === block.index} mode={mode}>
+          {mode === 'split'
+            ? chunks(splitRows(block.rows)).map((group, g) => (
+              <Chunk key={g} rows={group.length} eager={g < EAGER_CHUNKS || group.length < CHUNK}>
+                {() => group.map((pair, i) => (
+                  <Fragment key={i}>
+                    <SplitRowView left={pair.left} right={pair.right} leftMarked={isMarked('old', pair.left?.oldNo ?? null)} rightMarked={isMarked('new', pair.right?.newNo ?? null)} onGutter={onGutter} />
+                    {thread(pair.left, 'old')}
+                    {thread(pair.right, 'new')}
+                  </Fragment>
+                ))}
+              </Chunk>
+            ))
+            : chunks(block.rows).map((group, g) => (
+              <Chunk key={g} rows={group.length} eager={g < EAGER_CHUNKS || group.length < CHUNK}>
+                {() => group.map((row, i) => (
+                  <Fragment key={i}>
+                    <UnifiedRow row={row} oldMarked={isMarked('old', row.oldNo)} newMarked={isMarked('new', row.newNo)} onGutter={onGutter} />
+                    {thread(row, 'old')}
+                    {thread(row, 'new')}
+                  </Fragment>
+                ))}
+              </Chunk>
+            ))}
+        </HunkBlock>
+      ))}
+      {fold && fold.hidden > 0 && (
+        <div className="diff-fold">
+          <span>{fold.hidden.toLocaleString()} more {kind === 'new' ? 'added' : 'deleted'} lines are hidden</span>
+          <button onClick={() => setLimit(fold.visible + FOLD_STEP)}>Show {Math.min(FOLD_STEP, fold.hidden).toLocaleString()} more</button>
+          <button onClick={() => setLimit(fold.total)}>Show all {fold.total.toLocaleString()} lines</button>
+        </div>
+      )}
+      {diff.truncated && <div className="diff-fold"><span>The diff is cut here: the file is too large to show in full.</span></div>}
+    </div>
+  );
+}
+
+function HunkBlock({ block, count, active, mode, children }: { block: Block; count: number; active: boolean; mode: DiffMode; children: ReactNode }) {
+  return (
+    <section className={`diff-hunk${active ? ' active' : ''}`} data-hunk={block.index} aria-label={`Hunk ${block.index + 1} of ${count}`}>
+      <div className="diff-hunk-head">
+        {count > 1 && <span className="diff-hunk-no">{block.index + 1}/{count}</span>}
+        <span className="diff-hunk-range">{block.header}</span>
+        <span className="review-stat">{block.added > 0 && <span className="add">+{block.added}</span>} {block.removed > 0 && <span className="del">−{block.removed}</span>}</span>
+      </div>
+      <div className={`diff-body ${mode}`}>{children}</div>
+    </section>
   );
 }

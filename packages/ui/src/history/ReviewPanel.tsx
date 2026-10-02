@@ -2,7 +2,7 @@ import { useState } from 'react';
 import type { HistoryView, PlanView } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
 import { Hunks } from './DiffPanel';
-import { reviewGroups, type ReviewFile, type ReviewGroup } from './review-state';
+import { reviewSections, type ReviewItem as ReviewFile, type ReviewSection as ReviewGroup } from './review-model';
 import type { DiffResult } from './WatchdogDialog';
 
 interface Props {
@@ -15,7 +15,7 @@ interface Props {
 }
 
 export function ReviewPanel({ history, plans, diffs, requestDiff, onShowOnMap, onStart }: Props) {
-  const groups = reviewGroups(history, plans);
+  const groups = reviewSections(history, plans);
   const [requested, setRequested] = useState<Record<string, string | null>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});

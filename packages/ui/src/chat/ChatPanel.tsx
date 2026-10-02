@@ -21,10 +21,11 @@ const TURN_END: Record<string, string> = { error_during_execution: 'stopped', cr
 const START_WAIT_MS = 15000;
 const BUSY = 'The agent is working: it reads your message at its next step. Enter sends.';
 
-export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock }: {
+export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
+  focusItem?: { id: string; nonce: number } | null;
   onClearFilter: () => void;
   onDismissError: () => void;
   prompts: GatePromptView[];
@@ -51,6 +52,15 @@ export function ChatPanel({ chat, chats, send, onClearFilter, onDismissError, pr
   useEffect(() => {
     end.current?.scrollIntoView({ block: 'end' });
   }, [itemCount, active, chat.draft.length]);
+  useEffect(() => {
+    if (!focusItem) return;
+    const target = [...document.querySelectorAll<HTMLElement>('[data-item-id]')].find((element) => element.dataset.itemId === focusItem.id);
+    if (!target) return;
+    target.scrollIntoView({ block: 'center' });
+    target.classList.add('flash');
+    const timer = setTimeout(() => target.classList.remove('flash'), 1800);
+    return () => clearTimeout(timer);
+  }, [focusItem]);
   useEffect(() => {
     if (sentAt === null) return;
     const timer = setTimeout(() => setSentAt(null), START_WAIT_MS);
@@ -224,7 +234,7 @@ function Item({ item, chat, send, onFocusTargets }: {
     </>
   );
   return (
-    <div className={`tool ${item.status}`}>
+    <div className={`tool ${item.status}`} data-item-id={item.id}>
       {item.targets.length > 0
         ? <button className="tool-row link-row" title={item.summary} onClick={() => onFocusTargets(item.targets)}>{row}</button>
         : <div className="tool-row" title={item.summary}>{row}</div>}

@@ -10,7 +10,7 @@ import { WatchdogDialog } from './history/WatchdogDialog';
 import { DiffPanel } from './history/DiffPanel';
 import { ReviewMode } from './history/ReviewMode';
 import { ReviewPanel } from './history/ReviewPanel';
-import { reviewCount, reviewGroups } from './history/review-state';
+import { reviewSections, sectionFiles } from './history/review-model';
 import { Timeline } from './history/Timeline';
 import { DetailsPanel, type DetailsTab } from './map/DetailsPanel';
 import { initialMapState, mapReducer } from './map/map-state';
@@ -77,6 +77,7 @@ export function App() {
   const [projectInfo, setProjectInfo] = useState<ProjectInfo | null>(null);
   const [openDialog, setOpenDialog] = useState(false);
   const [reviewMode, setReviewMode] = useState(false);
+  const [chatFocus, setChatFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const openProject = useOpenProject();
   const switching = useRef({ requested: false, dropped: false });
@@ -308,7 +309,7 @@ export function App() {
     const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
     if (owners.size > 0) focusComponents([...owners]);
   };
-  const reviewFiles = reviewCount(reviewGroups(hist.history, plans.plans));
+  const reviewFiles = useMemo(() => sectionFiles(reviewSections(hist.history, plans.plans)).length, [hist.history, plans.plans]);
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (
     <DetailsPanel
@@ -402,9 +403,15 @@ export function App() {
                 history={hist.history}
                 plans={plans.plans}
                 results={hist.results}
+                chatItems={chat.items}
                 requestDiff={requestDiff}
                 send={send}
                 root={projectInfo?.root ?? ''}
+                onShowInChat={(id) => {
+                  dispatchPanels({ type: 'right-tab', tab: 'agent' });
+                  dispatchChat({ type: 'filter', filter: null });
+                  setChatFocus({ id, nonce: Date.now() });
+                }}
                 onShowOnMap={(paths) => {
                   setReviewMode(false);
                   showPathsOnMap(paths);
@@ -421,6 +428,7 @@ export function App() {
                   chat={chat}
                   chats={chats}
                   send={send}
+                  focusItem={chatFocus}
                   onClearFilter={() => dispatchChat({ type: 'filter', filter: null })}
                   onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
                   prompts={pendingPrompts(plans.prompts)}

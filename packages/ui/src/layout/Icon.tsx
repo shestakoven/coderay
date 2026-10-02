@@ -20,6 +20,17 @@ const PATHS = {
   stop: <rect x="6" y="6" width="12" height="12" rx="2" fill="currentColor" />,
   terminal: <><path d="m4 17 6-6-6-6" /><path d="M12 19h8" /></>,
   search: <><circle cx="11" cy="11" r="8" /><path d="m21 21-4.3-4.3" /></>,
+  comment: <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />,
+  help: <><circle cx="12" cy="12" r="10" /><path d="M9.1 9a3 3 0 0 1 5.8 1c0 2-3 3-3 3" /><path d="M12 17h.01" /></>,
+  info: <><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><path d="M12 8h.01" /></>,
+  alert: <><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3z" /><path d="M12 9v4" /><path d="M12 17h.01" /></>,
+  'view-unified': <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M7.5 9h9" /><path d="M7.5 15h9" /></>,
+  'view-split': <><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M12 3v18" /></>,
+  'chevron-up': <path d="m18 15-6-6-6 6" />,
+  'chevron-left': <path d="m15 18-6-6 6-6" />,
+  'arrow-up-right': <><path d="M7 17 17 7" /><path d="M8 7h9v9" /></>,
+  'file-kind': <><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z" /><path d="M14 2v6h6" /></>,
+  map: <><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" /><path d="M9 4v14" /><path d="M15 6v14" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;
