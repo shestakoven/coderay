@@ -36,6 +36,8 @@ import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes
 import { TerminalPanel } from './terminal/TerminalPanel';
 import { TerminalHub, type TerminalTab } from './terminal/terminal-hub';
 import { OpenProjectDialog, useOpenProject } from './project/OpenProjectDialog';
+import { StartScreen } from './project/StartScreen';
+import { initialStart, startReducer } from './project/start-state';
 import type { ChatList } from './chat/ChatSwitcher';
 
 const storage = (): Storage | undefined => {
@@ -80,8 +82,9 @@ export function App() {
   const [chatFocus, setChatFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
   const openProject = useOpenProject();
+  const [start, dispatchStart] = useReducer(startReducer, initialStart);
   const switching = useRef({ requested: false, dropped: false });
-  const knownRoot = useRef<string | null>(null);
+  const knownRoot = useRef<string | null | undefined>(undefined);
   const snapshot = state.snapshot;
   const shown = useMemo(() => planOnMap(plans.plans), [plans.plans]);
   const marks = useMemo(() => planMarks(shown, snapshot), [shown, snapshot]);
@@ -156,7 +159,7 @@ export function App() {
           setChats((previous) => ({ ...previous, models: message.models }));
           break;
         case 'project.info':
-          if (knownRoot.current !== null && knownRoot.current !== message.info.root) location.reload();
+          if (knownRoot.current !== undefined && knownRoot.current !== message.info.root) location.reload();
           knownRoot.current = message.info.root;
           setProjectInfo(message.info);
           break;
@@ -165,6 +168,17 @@ export function App() {
           break;
         case 'project.open.result':
           openProject.dispatch({ type: 'server', message });
+          if (message.error === null) switching.current.requested = true;
+          break;
+        case 'project.create.result':
+        case 'project.clone.result':
+          dispatchStart({ type: 'server', message });
+          if (message.error === null) switching.current.requested = true;
+          break;
+        case 'project.clone.progress':
+          dispatchStart({ type: 'server', message });
+          break;
+        case 'project.close.result':
           if (message.error === null) switching.current.requested = true;
           break;
         case 'error':
@@ -310,6 +324,10 @@ export function App() {
     if (owners.size > 0) focusComponents([...owners]);
   };
   const reviewFiles = useMemo(() => sectionFiles(reviewSections(hist.history, plans.plans)).length, [hist.history, plans.plans]);
+  if (projectInfo === null && status !== 'closed') return <div className="app boot" aria-busy="true" />;
+  if (projectInfo !== null && projectInfo.root === null) {
+    return <StartScreen info={projectInfo} status={status} browse={openProject} start={start} dispatchStart={dispatchStart} send={send} />;
+  }
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (
     <DetailsPanel
@@ -491,7 +509,7 @@ export function App() {
           />
         </div>
         {openDialog && (
-          <OpenProjectDialog info={projectInfo} controller={openProject} send={send} onClose={() => { setOpenDialog(false); openProject.dispatch({ type: 'reset' }); }} />
+          <OpenProjectDialog info={projectInfo} controller={openProject} send={send} onClose={() => { setOpenDialog(false); openProject.dispatch({ type: 'reset' }); }} onCloseProject={() => send({ type: 'project.close', requestId: crypto.randomUUID() })} />
         )}
         {settingsOpen && (
           <SettingsPanel

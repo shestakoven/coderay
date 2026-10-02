@@ -31,6 +31,7 @@ const PATHS = {
   'arrow-up-right': <><path d="M7 17 17 7" /><path d="M8 7h9v9" /></>,
   'file-kind': <><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5z" /><path d="M14 2v6h6" /></>,
   map: <><path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2z" /><path d="M9 4v14" /><path d="M15 6v14" /></>,
+  'git-branch': <><circle cx="6" cy="5.5" r="2.5" /><circle cx="6" cy="18.5" r="2.5" /><circle cx="18" cy="8.5" r="2.5" /><path d="M6 8v8" /><path d="M18 11c0 4-12 2-12 5" /></>,
 } satisfies Record<string, ReactNode>;
 
 export type IconName = keyof typeof PATHS;
