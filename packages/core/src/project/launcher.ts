@@ -35,15 +35,30 @@ export async function startLauncher(options: LauncherOptions): Promise<RunningLa
   let clone: { requestId: string; handle: CloneHandle } | undefined;
   let closing: Promise<void> | undefined;
   let finish!: () => void;
-  const finished = new Promise<void>((resolve) => { finish = resolve; });
+  let fail!: (error: unknown) => void;
+  const finished = new Promise<void>((resolve, reject) => {
+    finish = resolve;
+    fail = reject;
+  });
+  // The owner awaits `finished`; a failure nobody awaits must not crash the process on top of the log line.
+  finished.catch(() => {});
 
   const hand = async (root: string): Promise<void> => {
     handingOver = true;
-    recent.add(root);
-    await new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
-    await running.close();
-    await options.handover(root, running.port);
-    finish();
+    try {
+      recent.add(root);
+    } catch {
+      // The recent list is cosmetic: a failed write must not block the handover.
+    }
+    try {
+      await new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
+      await running.close();
+      await options.handover(root, running.port);
+      finish();
+    } catch (error) {
+      console.error('launcher: handover failed', error);
+      fail(error);
+    }
   };
 
   const settle = (result: ProjectResult, replyError: (error: string | null) => void): void => {

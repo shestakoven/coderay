@@ -13,10 +13,10 @@ import { fakeGit } from './fake-git';
 
 const TOKEN = 'launcher-test-token';
 
-async function launch(options: { before?: (home: string) => void; git?: string } = {}) {
+async function launch(options: { before?: (home: string) => void; git?: string; handover?: (root: string, port: number) => Promise<void> } = {}) {
   const home = tempDir('ide-launcher-home-');
   options.before?.(home);
-  const handover = vi.fn(async (_root: string, _port: number) => {});
+  const handover = vi.fn(options.handover ?? (async (_root: string, _port: number) => {}));
   const launcher = await startLauncher({ port: 0, token: TOKEN, allowedOrigins: [], home, handover, git: options.git });
   onTestFinished(() => launcher.close());
   const socket = new WebSocket(`ws://127.0.0.1:${launcher.port}/ws?token=${TOKEN}`);
@@ -78,6 +78,28 @@ describe('launcher project.open', () => {
     await launcher.finished;
     expect(handover).toHaveBeenCalledExactlyOnceWith(dir, launcher.port);
     expect(new RecentProjects(home).list().map((p) => p.path)).toEqual([dir]);
+  });
+
+  it('rejects finished with the handover error and reports it', async () => {
+    const dir = tempDir('ide-launcher-proj-');
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => logged.mockRestore());
+    const failure = new Error('spawn failed');
+    const { send, next, handover, launcher } = await launch({ handover: async () => { throw failure; } });
+    send({ type: 'project.open', requestId: 'o1', path: dir });
+    expect(await next('project.open.result', 'o1')).toMatchObject({ error: null });
+    await expect(launcher.finished).rejects.toBe(failure);
+    expect(handover).toHaveBeenCalledTimes(1);
+    expect(logged).toHaveBeenCalledWith(expect.stringContaining('handover'), failure);
+  });
+
+  it('still hands over when the recent list cannot be written', async () => {
+    const dir = tempDir('ide-launcher-proj-');
+    const { send, next, handover, launcher } = await launch({ before: (home) => mkdirSync(join(home, 'recent-projects.json')) });
+    send({ type: 'project.open', requestId: 'o1', path: dir });
+    expect(await next('project.open.result', 'o1')).toMatchObject({ error: null });
+    await launcher.finished;
+    expect(handover).toHaveBeenCalledExactlyOnceWith(dir, launcher.port);
   });
 
   it('refuses a missing folder and does not hand over', async () => {
