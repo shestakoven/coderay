@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ClonePhase } from '@ide/protocol';
 import { CLONE_CANCELLED, parseCloneProgress, startClone } from '../../src/project/clone';
 import { GIT_NOT_FOUND } from '../../src/project/git';
@@ -9,11 +9,17 @@ import { tempDir, waitFor } from '../helpers';
 import { fakeGit } from './fake-git';
 
 type Progress = { phase: ClonePhase; percent: number };
-const clone = (options: { url: string; parent: string; name?: string | null; git?: string }) => {
+const clone = (options: { url: string; parent: string; name?: string | null; git?: string; killAfterMs?: number }) => {
   const progress: Progress[] = [];
   const handle = startClone({ ...options, name: options.name ?? null, onProgress: (item) => progress.push(item) });
   return { ...handle, progress };
 };
+
+function groupSignals(): () => unknown[] {
+  const kill = vi.spyOn(process, 'kill');
+  onTestFinished(() => kill.mockRestore());
+  return () => kill.mock.calls.filter(([pid]) => Number(pid) < 0).map(([, signal]) => signal);
+}
 
 function source(dir: string, name = 'source'): string {
   const path = join(dir, name);
@@ -122,6 +128,12 @@ describe('startClone input checks', () => {
     expect(readdirSync(parent)).toEqual([]);
   });
 
+  it('resolves with an error when the url cannot be passed to git', async () => {
+    const parent = tempDir('ide-clone-parent-');
+    expect(await clone({ url: 'a\0b', parent, name: 'x' }).done).toEqual({ error: expect.any(String) });
+    expect(readdirSync(parent)).toEqual([]);
+  });
+
   it('refuses a relative or missing parent', async () => {
     const dir = tempDir('ide-clone-');
     expect('error' in (await clone({ url: 'https://h/o/r.git', parent: 'relative', name: 'x', git: never }).done)).toBe(true);
@@ -171,12 +183,41 @@ describe('startClone with a fake git', () => {
     expect(readdirSync(parent)).toEqual([]);
   });
 
-  it('ignores a cancel after the clone has finished', async () => {
+  it('ignores a cancel after the clone has finished, signalling nothing', async () => {
     const parent = tempDir('ide-clone-parent-');
     const git = fakeGit(tempDir('ide-fake-git-'), 'for last; do :; done\nmkdir -p "$last"');
     const run = clone({ url: 'x', parent, name: 'copy', git });
     expect(await run.done).toEqual({ root: join(parent, 'copy') });
+    const signals = groupSignals();
     run.cancel();
+    expect(signals()).toEqual([]);
     expect(existsSync(join(parent, 'copy'))).toBe(true);
+  });
+
+  it('kills a git that ignores SIGTERM once the delay has passed, and only once', async () => {
+    const parent = tempDir('ide-clone-parent-');
+    const git = fakeGit(tempDir('ide-fake-git-'), 'for last; do :; done\nmkdir -p "$last"\ntrap \'\' TERM\necho "Receiving objects:  10% (1/10)" >&2\nexec sleep 30');
+    const run = clone({ url: 'x', parent, name: 'copy', git, killAfterMs: 200 });
+    await waitFor(() => run.progress.length > 0 || undefined, 'the first progress event');
+    const signals = groupSignals();
+    const cancelledAt = Date.now();
+    run.cancel();
+    run.cancel();
+    expect(await run.done).toEqual({ error: CLONE_CANCELLED });
+    expect(Date.now() - cancelledAt).toBeGreaterThanOrEqual(150);
+    expect(signals()).toEqual(['SIGTERM', 'SIGKILL']);
+    expect(readdirSync(parent)).toEqual([]);
+  });
+
+  it('does not send SIGKILL after a cancelled git has already exited', async () => {
+    const parent = tempDir('ide-clone-parent-');
+    const git = fakeGit(tempDir('ide-fake-git-'), 'for last; do :; done\nmkdir -p "$last"\necho "Receiving objects:  10% (1/10)" >&2\nexec sleep 30');
+    const run = clone({ url: 'x', parent, name: 'copy', git, killAfterMs: 100 });
+    await waitFor(() => run.progress.length > 0 || undefined, 'the first progress event');
+    const signals = groupSignals();
+    run.cancel();
+    await run.done;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    expect(signals()).toEqual(['SIGTERM']);
   });
 });

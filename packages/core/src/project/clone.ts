@@ -16,6 +16,7 @@ export interface CloneOptions {
   parent: string;
   name: string | null;
   git?: string;
+  killAfterMs?: number;
   onProgress: (progress: CloneProgress) => void;
 }
 
@@ -41,12 +42,23 @@ export function parseCloneProgress(line: string): CloneProgress | null {
   return match && phase ? { phase, percent: Number(match[2]) } : null;
 }
 
-export function startClone({ url, parent, name, git = 'git', onProgress }: CloneOptions): CloneHandle {
+export function startClone({ url, parent, name, git = 'git', killAfterMs = KILL_AFTER_MS, onProgress }: CloneOptions): CloneHandle {
   let cancelled = false;
+  let exited = false;
+  let killTimer: NodeJS.Timeout | undefined;
   let child: ChildProcess | undefined;
   const cancel = (): void => {
     cancelled = true;
-    if (child?.pid) killGroup(child.pid, 'SIGTERM');
+    if (exited || killTimer || !child?.pid) return;
+    const pid = child.pid;
+    killGroup(pid, 'SIGTERM');
+    killTimer = setTimeout(() => killGroup(pid, 'SIGKILL'), killAfterMs);
+    killTimer.unref();
+  };
+  // A process group id is only ours while the child is alive: afterwards the pid may belong to someone else.
+  const markExited = (): void => {
+    exited = true;
+    clearTimeout(killTimer);
   };
   return { done: run(), cancel };
 
@@ -59,11 +71,16 @@ export function startClone({ url, parent, name, git = 'git', onProgress }: Clone
     if (cancelled) return { error: CLONE_CANCELLED };
 
     // Own process group, so that cancelling takes ssh and the other helpers of git down with it.
-    const proc = spawn(git, ['clone', '--progress', '--', address, target.path], {
-      detached: true,
-      stdio: ['ignore', 'ignore', 'pipe'],
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https:ssh:git:file' },
-    });
+    let proc: ChildProcess;
+    try {
+      proc = spawn(git, ['clone', '--progress', '--', address, target.path], {
+        detached: true,
+        stdio: ['ignore', 'ignore', 'pipe'],
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https:ssh:git:file' },
+      });
+    } catch (error) {
+      return { error: gitErrorMessage(error, '') };
+    }
     child = proc;
     let tail = '';
     let lastLine = '';
@@ -86,8 +103,14 @@ export function startClone({ url, parent, name, git = 'git', onProgress }: Clone
       lines.forEach(handle);
     });
     const outcome = await new Promise<{ code: number | null; spawnError?: Error }>((resolve) => {
-      proc.once('error', (spawnError) => resolve({ code: null, spawnError }));
-      proc.once('close', (code) => resolve({ code }));
+      proc.once('error', (spawnError) => {
+        markExited();
+        resolve({ code: null, spawnError });
+      });
+      proc.once('close', (code) => {
+        markExited();
+        resolve({ code });
+      });
     });
     handle(tail);
     if (outcome.spawnError) return { error: gitErrorMessage(outcome.spawnError, '') };
@@ -107,7 +130,6 @@ function killGroup(pid: number, signal: NodeJS.Signals): void {
   try {
     process.kill(-pid, signal);
   } catch {
-    return;
+    // The group is already gone.
   }
-  if (signal === 'SIGTERM') setTimeout(() => killGroup(pid, 'SIGKILL'), KILL_AFTER_MS).unref();
 }
