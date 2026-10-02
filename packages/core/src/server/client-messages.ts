@@ -21,7 +21,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title,
+    after, revertId, changeIds, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title, parent, url,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -97,6 +97,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return path === null || typeof path === 'string' ? { type, requestId, path } : null;
     case 'project.open':
       return typeof path === 'string' && path.length > 0 && path.length <= MAX_PATH_LENGTH ? { type, requestId, path } : null;
+    case 'project.create':
+      return isBoundedString(parent, MAX_PATH_LENGTH) && isBoundedString(name, MAX_NAME_LENGTH) ? { type, requestId, parent, name } : null;
+    case 'project.clone':
+      return isBoundedString(url, MAX_URL_LENGTH) && isBoundedString(parent, MAX_PATH_LENGTH) && (name === null || isBoundedString(name, MAX_NAME_LENGTH))
+        ? { type, requestId, url, parent, name }
+        : null;
+    case 'project.clone.cancel':
+    case 'project.close':
+      return { type, requestId };
     case 'history.diff':
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
     case 'revert.undo':
@@ -134,6 +143,8 @@ function parsePlanAnswer(value: unknown): PlanAnswer | null {
 
 const MAX_CONFIRM_FILES = 5000;
 const MAX_PATH_LENGTH = 4096;
+const MAX_URL_LENGTH = 2048;
+const MAX_NAME_LENGTH = 1024;
 const MAX_ID_LENGTH = 100;
 
 const isImageList = (value: unknown): value is ChatImage[] =>
@@ -143,6 +154,8 @@ const isImageList = (value: unknown): value is ChatImage[] =>
 const isEffort = (value: unknown): value is EffortLevel => EFFORT_LEVELS.includes(value as EffortLevel);
 
 const isInteger = (value: unknown): value is number => Number.isInteger(value);
+
+const isBoundedString = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 
 const isTerminalId = (value: unknown): value is string => typeof value === 'string' && TERMINAL_ID.test(value);
 

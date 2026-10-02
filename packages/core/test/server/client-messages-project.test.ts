@@ -63,3 +63,68 @@ describe('parseClientMessage project.open', () => {
     expect(parse({ type: 'project.open', requestId: {}, path: '/x' })).toBeNull();
   });
 });
+
+describe('parseClientMessage project.create', () => {
+  const valid = { type: 'project.create', requestId: 'r1', parent: '/work', name: 'app' };
+
+  it('accepts a parent and a name', () => {
+    expect(parse(valid)).toEqual(valid);
+  });
+
+  it('rejects a missing or non-string parent, name or requestId', () => {
+    for (const field of ['parent', 'name', 'requestId']) {
+      expect(parse({ ...valid, [field]: undefined })).toBeNull();
+      expect(parse({ ...valid, [field]: 1 })).toBeNull();
+    }
+  });
+
+  it('rejects an empty parent or name', () => {
+    expect(parse({ ...valid, parent: '' })).toBeNull();
+    expect(parse({ ...valid, name: '' })).toBeNull();
+  });
+
+  it('bounds the lengths of parent (4096) and name (1024)', () => {
+    expect(parse({ ...valid, parent: '/'.repeat(4096) })).not.toBeNull();
+    expect(parse({ ...valid, parent: '/'.repeat(4097) })).toBeNull();
+    expect(parse({ ...valid, name: 'a'.repeat(1024) })).not.toBeNull();
+    expect(parse({ ...valid, name: 'a'.repeat(1025) })).toBeNull();
+  });
+});
+
+describe('parseClientMessage project.clone', () => {
+  const valid = { type: 'project.clone', requestId: 'r1', url: 'https://h/o/r.git', parent: '/work', name: 'r' };
+
+  it('accepts a url, a parent and a name', () => {
+    expect(parse(valid)).toEqual(valid);
+  });
+
+  it('accepts a null name meaning "derive it from the url"', () => {
+    expect(parse({ ...valid, name: null })).toEqual({ ...valid, name: null });
+  });
+
+  it('rejects a missing name', () => {
+    const { name: _name, ...rest } = valid;
+    expect(parse(rest)).toBeNull();
+  });
+
+  it('rejects a missing, empty or non-string url, parent or requestId', () => {
+    for (const field of ['url', 'parent', 'requestId']) {
+      expect(parse({ ...valid, [field]: undefined })).toBeNull();
+      expect(parse({ ...valid, [field]: 1 })).toBeNull();
+    }
+    expect(parse({ ...valid, url: '' })).toBeNull();
+  });
+
+  it('bounds the url at 2048 characters', () => {
+    expect(parse({ ...valid, url: 'u'.repeat(2048) })).not.toBeNull();
+    expect(parse({ ...valid, url: 'u'.repeat(2049) })).toBeNull();
+  });
+});
+
+describe('parseClientMessage project.clone.cancel and project.close', () => {
+  it.each(['project.clone.cancel', 'project.close'])('%s needs only a requestId', (type) => {
+    expect(parse({ type, requestId: 'r1' })).toEqual({ type, requestId: 'r1' });
+    expect(parse({ type })).toBeNull();
+    expect(parse({ type, requestId: 1 })).toBeNull();
+  });
+});

@@ -10,6 +10,7 @@ export * from './settings';
 export * from './plans';
 export * from './history';
 export * from './project';
+export * from './project-name';
 export * from './terminal';
 
 export type Lang = 'typescript' | 'python';
