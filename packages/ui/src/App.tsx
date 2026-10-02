@@ -8,6 +8,7 @@ import { dialogEvent, eventFilePaths } from './history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from './history/history-state';
 import { WatchdogDialog } from './history/WatchdogDialog';
 import { DiffPanel } from './history/DiffPanel';
+import { projectPathOf } from './history/project-path';
 import { ReviewMode } from './history/ReviewMode';
 import { ReviewPanel } from './history/ReviewPanel';
 import { reviewSections, sectionFiles } from './history/review-model';
@@ -320,7 +321,9 @@ export function App() {
     dispatch({ type: 'select', id: path });
   };
   const showPathsOnMap = (paths: string[]): void => {
-    const owners = new Set(snapshot?.files.filter((file) => paths.includes(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
+    const toProject = projectPathOf(snapshot);
+    const wanted = new Set(paths.map(toProject));
+    const owners = new Set(snapshot?.files.filter((file) => wanted.has(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
     if (owners.size > 0) focusComponents([...owners]);
   };
   const reviewFiles = useMemo(() => sectionFiles(reviewSections(hist.history, plans.plans)).length, [hist.history, plans.plans]);

@@ -1,6 +1,7 @@
 import type {
   ChangeView, CheckpointView, FileDiff, HistoryPatch, HistoryView, MapSnapshot, PlanView, RollbackPreview, SummaryView, WatchdogEventView,
 } from '@ide/protocol';
+import { projectPathOf } from './project-path';
 
 export interface HistoryState {
   history: HistoryView;
@@ -101,14 +102,19 @@ const activeStep = (h: HistoryView, change: ChangeView): boolean =>
 
 function ownChanges(h: HistoryView, snapshot: MapSnapshot | null, nodeId: string): ChangeView[] {
   const files = nodeFiles(snapshot, nodeId);
-  return h.changes.filter((c) => files.has(c.path));
+  const toProject = projectPathOf(snapshot);
+  return h.changes.flatMap((c) => {
+    const path = toProject(c.path);
+    return files.has(path) ? [path === c.path ? c : { ...c, path }] : [];
+  });
 }
 
 export function nodeChanges(h: HistoryView, snapshot: MapSnapshot | null, nodeId: string): NodeChanges {
   const files = nodeFiles(snapshot, nodeId);
   const changes = ownChanges(h, snapshot, nodeId);
   const latest = latestByPath(changes);
-  const pendingPaths = new Set(h.events.filter(isOpen).flatMap((e) => e.changes.map((c) => c.path)));
+  const toProject = projectPathOf(snapshot);
+  const pendingPaths = new Set(h.events.filter(isOpen).flatMap((e) => e.changes.map((c) => toProject(c.path))));
   const touched = [...files].filter((path) => latest.has(path) || pendingPaths.has(path)).sort();
   let added = 0;
   let removed = 0;
@@ -126,7 +132,8 @@ export function nodeChanges(h: HistoryView, snapshot: MapSnapshot | null, nodeId
 export function changeIndex(h: HistoryView, snapshot: MapSnapshot | null): Map<string, NodeChanges> {
   const index = new Map<string, NodeChanges>();
   if (h.changes.length === 0 && h.events.length === 0) return index;
-  const ids = [...(snapshot?.components.map((c) => c.id) ?? []), ...new Set(h.changes.map((c) => c.path))];
+  const toProject = projectPathOf(snapshot);
+  const ids = [...(snapshot?.components.map((c) => c.id) ?? []), ...new Set(h.changes.map((c) => toProject(c.path)))];
   for (const id of ids) {
     const found = nodeChanges(h, snapshot, id);
     if (found.files.length > 0 || found.states.length > 0) index.set(id, found);
