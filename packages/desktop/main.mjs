@@ -19,7 +19,7 @@ const UI_ORIGIN = `http://localhost:${UI_PORT}`;
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const arg = process.argv.slice(2).find((a) => !a.startsWith('-'));
 // pnpm runs the script from packages/desktop; INIT_CWD is where the user typed the command.
-const project = arg ? resolve(process.env.INIT_CWD ?? process.cwd(), arg) : repo;
+const project = arg ? resolve(process.env.INIT_CWD ?? process.cwd(), arg) : null;
 const token = randomBytes(24).toString('base64url');
 
 const children = [];
@@ -64,7 +64,7 @@ app.on('window-all-closed', () => app.quit());
 
 // Awaiting ready at top level deadlocks Electron's ESM entry: the app only becomes ready after the module finishes.
 app.whenReady().then(async () => {
-  run('node', ['--watch', '--import', 'tsx', 'packages/core/src/main.ts', '--project', project, '--port', String(CORE_PORT), '--allow-origin', UI_ORIGIN], repo, {
+  run('node', ['--watch', '--import', 'tsx', 'packages/core/src/main.ts', ...(project ? ['--project', project] : []), '--port', String(CORE_PORT), '--allow-origin', UI_ORIGIN], repo, {
     IDE_CORE_TOKEN: token,
     IDE_AUTO_RESUME: '1',
   });

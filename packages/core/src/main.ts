@@ -24,6 +24,7 @@ import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
 import { listDirectories } from './project/browse';
 import { spawnSuccessor } from './project/handover';
+import { startLauncher } from './project/launcher';
 import { RecentProjects } from './project/recent';
 import { takeLaunchToken } from './project/token';
 import { projectBusy, successorArgs, validateProjectPath } from './project/switch';
@@ -35,7 +36,7 @@ import { TerminalService } from './terminal/terminal-service';
 
 const { values } = parseArgs({
   options: {
-    project: { type: 'string', multiple: true, default: ['.'] },
+    project: { type: 'string', multiple: true, default: [] },
     port: { type: 'string', default: '4317' },
     ui: { type: 'string' },
     'allow-origin': { type: 'string', multiple: true, default: [] },
@@ -53,6 +54,26 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
   process.exit(1);
 }
 
+const home = resolve(values['ide-home'] ?? defaultIdeHome());
+const token = values['token-stdin'] ? readFileSync(0, 'utf8').trim() || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
+
+if (values.project.length === 0) {
+  const launcher = await startLauncher({
+    port,
+    token,
+    staticDir: values.ui ? resolve(values.ui) : undefined,
+    allowedOrigins: values['allow-origin'],
+    home,
+    handover: (root, boundPort) => spawnSuccessor(successorArgs(process.argv.slice(2), root, boundPort), token),
+  });
+  console.log('IDE core: no project open');
+  if (values.ui) console.log(`  open: http://127.0.0.1:${launcher.port}/#token=${token}`);
+  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => void launcher.close());
+  await launcher.finished;
+  process.exit(0);
+}
+
 const projectArg = resolve(values.project.at(-1) ?? '.');
 let root: string;
 try {
@@ -63,7 +84,6 @@ try {
   process.exit(1);
 }
 const projectName = basename(root);
-const home = resolve(values['ide-home'] ?? defaultIdeHome());
 
 const lock = acquireCoreLock(projectDir(home, root));
 if (!lock.acquired) {
@@ -71,7 +91,6 @@ if (!lock.acquired) {
   console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
   process.exit(1);
 }
-const token = values['token-stdin'] ? readFileSync(0, 'utf8').trim() || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
 const recent = new RecentProjects(home);
 recent.add(root);
 
@@ -260,6 +279,13 @@ try {
         if (error !== null || 'error' in target) return;
         recent.add(target.root);
         const args = successorArgs(process.argv.slice(2), target.root, running.port);
+        afterClose = () => spawnSuccessor(args, token);
+        closing ??= shutdown();
+        return;
+      }
+      case 'project.close': {
+        reply({ type: 'project.close.result', requestId: message.requestId, error: null });
+        const args = successorArgs(process.argv.slice(2), null, running.port);
         afterClose = () => spawnSuccessor(args, token);
         closing ??= shutdown();
         return;

@@ -15,7 +15,7 @@
     "build:watch": "pnpm --filter @ide/ui exec vite build --watch",
     "desktop": "pnpm --filter @ide/desktop start",
     "dev:ui":"pnpm --filter @ide/ui exec vite",
-    "start": "pnpm --filter @ide/ui build && node --import tsx packages/core/src/main.ts --ui packages/ui/dist"
+    "start": "pnpm --filter @ide/ui build && node --import tsx packages/core/src/main.ts --project . --ui packages/ui/dist"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",
