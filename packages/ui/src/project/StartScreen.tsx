@@ -1,4 +1,5 @@
-import { useState, type Dispatch } from 'react';
+import { useEffect, useRef, useState, type Dispatch, type Ref, type RefObject } from 'react';
+import { flushSync } from 'react-dom';
 import { projectNameFromUrl, validateProjectName, type ClientMessage, type ProjectInfo } from '@ide/protocol';
 import { Icon, type IconName } from '../layout/Icon';
 import type { ConnectionStatus } from '../net/socket';
@@ -17,11 +18,20 @@ interface FormProps {
 
 export function StartScreen({ info, status, browse, start, dispatchStart, send }: Omit<FormProps, 'busy'> & { info: ProjectInfo; status: ConnectionStatus }) {
   const [dialog, setDialog] = useState(false);
+  const openRow = useRef<HTMLButtonElement>(null);
   const busy = isWorking(start) || isOpening(browse.state) || dialog;
   const toggle = (view: StartView): void => dispatchStart({ type: 'view', view: start.view === view ? 'home' : view });
   const open = (path: string): void => {
     const requestId = crypto.randomUUID();
     if (send({ type: 'project.open', requestId, path })) browse.dispatch({ type: 'open', requestId });
+  };
+  const closeDialog = (): void => {
+    // The Open row is disabled while the dialog is up: re-enable it before handing focus back to it.
+    flushSync(() => {
+      setDialog(false);
+      browse.dispatch({ type: 'reset' });
+    });
+    openRow.current?.focus();
   };
   const now = Date.now();
   const form = { browse, start, dispatchStart, send, busy };
@@ -38,7 +48,7 @@ export function StartScreen({ info, status, browse, start, dispatchStart, send }
           <div className="start-actions">
             <ActionRow icon="plus" title="Create" hint="A new folder with an empty git repository" expanded={start.view === 'create'} disabled={busy} onClick={() => toggle('create')} />
             {start.view === 'create' && <CreateForm {...form} />}
-            <ActionRow icon="folder" title="Open" hint="An existing folder on this machine" disabled={busy} onClick={() => { dispatchStart({ type: 'view', view: 'home' }); setDialog(true); }} />
+            <ActionRow ref={openRow} icon="folder" title="Open" hint="An existing folder on this machine" opensDialog disabled={busy} onClick={() => { dispatchStart({ type: 'view', view: 'home' }); setDialog(true); }} />
             <ActionRow icon="git-branch" title="Clone" hint="A git repository from a URL" expanded={start.view === 'clone'} disabled={busy} onClick={() => toggle('clone')} />
             {start.view === 'clone' && <CloneForm {...form} />}
           </div>
@@ -54,7 +64,7 @@ export function StartScreen({ info, status, browse, start, dispatchStart, send }
                   <button className="recent-row start-recent-row" disabled={busy} onClick={() => open(project.path)} title={project.path}>
                     <b>{project.name}</b>
                     <span className="mono muted">{project.path}</span>
-                    <span className="muted">{formatAgo(now, project.openedAt)}</span>
+                    <span className="start-recent-ago muted">{formatAgo(now, project.openedAt)}</span>
                   </button>
                 </li>
               ))}
@@ -64,22 +74,27 @@ export function StartScreen({ info, status, browse, start, dispatchStart, send }
         </aside>
       </main>
       {dialog && (
-        <OpenProjectDialog info={info} controller={browse} send={send} onClose={() => { setDialog(false); browse.dispatch({ type: 'reset' }); }} />
+        <OpenProjectDialog info={info} controller={browse} send={send} onClose={closeDialog} />
       )}
     </div>
   );
 }
 
-function ActionRow({ icon, title, hint, expanded, disabled, onClick }: {
+function ActionRow({ ref, icon, title, hint, expanded, opensDialog, disabled, onClick }: {
+  ref?: Ref<HTMLButtonElement>;
   icon: IconName;
   title: string;
   hint: string;
   expanded?: boolean;
+  opensDialog?: boolean;
   disabled: boolean;
   onClick: () => void;
 }) {
   return (
-    <button type="button" className={`start-action${expanded ? ' on' : ''}`} aria-expanded={expanded} disabled={disabled} onClick={onClick}>
+    <button
+      ref={ref} type="button" className={`start-action${expanded ? ' on' : ''}`} aria-expanded={expanded}
+      aria-haspopup={opensDialog ? 'dialog' : undefined} disabled={disabled} onClick={onClick}
+    >
       <Icon name={icon} size={18} />
       <span className="start-action-title">{title}</span>
       <span className="start-action-hint muted">{hint}</span>
@@ -89,13 +104,19 @@ function ActionRow({ icon, title, hint, expanded, disabled, onClick }: {
 
 function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
   const [name, setName] = useState('');
+  const [sent, setSent] = useState<string | null>(null);
+  const input = useRefocusOnError(start.error);
   const parent = browse.state.path;
   const problem = name.trim() === '' ? null : validateProjectName(name);
-  const ready = !busy && parent !== null && name.trim() !== '' && problem === null;
+  const target = parent !== null && name.trim() !== '' && problem === null ? joinPath(parent, name.trim()) : null;
+  const ready = !busy && target !== null;
   const submit = (): void => {
     if (!ready || parent === null) return;
     const requestId = crypto.randomUUID();
-    if (send({ type: 'project.create', requestId, parent, name: name.trim() })) dispatchStart({ type: 'begin', kind: 'create', requestId });
+    if (send({ type: 'project.create', requestId, parent, name: name.trim() })) {
+      setSent(target);
+      dispatchStart({ type: 'begin', kind: 'create', requestId });
+    }
   };
   // Not a <form>: the folder browser inside has its own, and forms cannot nest.
   return (
@@ -103,7 +124,7 @@ function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
       <label className="start-field">
         <span className="start-label">Name</span>
         <input
-          className="start-input mono" autoFocus value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit(); }}
+          ref={input} className="start-input mono" autoFocus value={name} onChange={(event) => setName(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') submit(); }}
           aria-label="Project name" placeholder="my-project" spellCheck={false} disabled={busy}
         />
       </label>
@@ -111,11 +132,11 @@ function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
         <span className="start-label">Location</span>
         <FolderBrowser state={browse.state} dispatch={browse.dispatch} send={send} disabled={busy} start={browse.state.path} />
       </div>
-      {parent !== null && name.trim() !== '' && <p className="start-target mono muted">Creates {joinPath(parent, name.trim())}</p>}
+      {target !== null && <p className="start-target mono muted">Creates {target}</p>}
       {problem && <p className="problem" role="alert">{problem}</p>}
-      {start.error && <p className="problem" role="alert">{start.error}</p>}
+      {start.error && sent === target && <p className="problem" role="alert">{start.error}</p>}
       <div className="modal-actions">
-        {start.work?.kind === 'create' && <span className="muted">Creating and opening…</span>}
+        <span className="muted" role="status">{start.work?.kind === 'create' ? 'Creating and opening…' : ''}</span>
         <button type="button" className="primary" disabled={!ready} onClick={submit}>Create</button>
       </div>
     </div>
@@ -125,15 +146,23 @@ function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
 function CloneForm({ browse, start, dispatchStart, send, busy }: FormProps) {
   const [url, setUrl] = useState('');
   const [typedName, setTypedName] = useState('');
+  const [sent, setSent] = useState<string | null>(null);
+  const input = useRefocusOnError(start.error);
   const parent = browse.state.path;
   const name = typedName.trim() === '' ? projectNameFromUrl(url) : typedName.trim();
   const problem = name === '' ? null : validateProjectName(name);
+  const target = parent !== null && name !== '' && problem === null ? joinPath(parent, name) : null;
+  const attempt = `${url.trim()} -> ${target}`;
   const work = start.work?.kind === 'clone' ? start.work : null;
-  const ready = !busy && parent !== null && url.trim() !== '' && name !== '' && problem === null;
+  const progress = work ? `${work.phase ? PHASE_LABEL[work.phase] : 'Starting…'}${work.percent !== null ? ` ${work.percent}%` : ''}` : '';
+  const ready = !busy && url.trim() !== '' && target !== null;
   const submit = (): void => {
     if (!ready || parent === null) return;
     const requestId = crypto.randomUUID();
-    if (send({ type: 'project.clone', requestId, url: url.trim(), parent, name })) dispatchStart({ type: 'begin', kind: 'clone', requestId });
+    if (send({ type: 'project.clone', requestId, url: url.trim(), parent, name })) {
+      setSent(attempt);
+      dispatchStart({ type: 'begin', kind: 'clone', requestId });
+    }
   };
   const onEnter = (event: React.KeyboardEvent): void => {
     if (event.key === 'Enter') submit();
@@ -143,7 +172,7 @@ function CloneForm({ browse, start, dispatchStart, send, busy }: FormProps) {
       <label className="start-field">
         <span className="start-label">Repository URL</span>
         <input
-          className="start-input mono" autoFocus value={url} onChange={(event) => setUrl(event.target.value)} onKeyDown={onEnter}
+          ref={input} className="start-input mono" autoFocus value={url} onChange={(event) => setUrl(event.target.value)} onKeyDown={onEnter}
           aria-label="Repository URL" placeholder="https://github.com/org/repo.git" spellCheck={false} disabled={busy}
         />
       </label>
@@ -158,19 +187,36 @@ function CloneForm({ browse, start, dispatchStart, send, busy }: FormProps) {
         <span className="start-label">Location</span>
         <FolderBrowser state={browse.state} dispatch={browse.dispatch} send={send} disabled={busy} start={browse.state.path} />
       </div>
-      {parent !== null && name !== '' && <p className="start-target mono muted">Clones into {joinPath(parent, name)}</p>}
+      {target !== null && <p className="start-target mono muted">Clones into {target}</p>}
       {problem && <p className="problem" role="alert">{problem}</p>}
-      {start.error && <p className="problem" role="alert">{start.error}</p>}
-      {work && (
-        <div className="clone-progress" role="status">
-          <span>{work.phase ? PHASE_LABEL[work.phase] : 'Starting…'}{work.percent !== null ? ` ${work.percent}%` : ''}</span>
-          <button type="button" onClick={() => send({ type: 'project.clone.cancel', requestId: work.requestId })}>Cancel</button>
-          <div className={`progress${work.percent === null ? ' indeterminate' : ''}`}><i style={{ width: `${work.percent ?? 0}%` }} /></div>
-        </div>
-      )}
+      {start.error && sent === attempt && <p className="problem" role="alert">{start.error}</p>}
+      {/* Progress and Cancel go beside Clone, not above it: a second click on Clone must not land on Cancel. */}
       <div className="modal-actions">
+        {work && (
+          <>
+            <div className="clone-progress">
+              <span>{progress}</span>
+              <div
+                className={`progress${work.percent === null ? ' indeterminate' : ''}`} role="progressbar" aria-label="Clone progress"
+                aria-valuemin={0} aria-valuemax={100} aria-valuenow={work.percent ?? undefined} aria-valuetext={progress}
+              >
+                <i style={{ width: `${work.percent ?? 0}%` }} />
+              </div>
+            </div>
+            <button type="button" onClick={() => send({ type: 'project.clone.cancel', requestId: work.requestId })}>Cancel</button>
+          </>
+        )}
         <button type="button" className="primary" disabled={!ready} onClick={submit}>Clone</button>
       </div>
     </div>
   );
+}
+
+/** Returns a ref for the form's first field and focuses it when a request fails: the disabled controls dropped focus to the page. */
+function useRefocusOnError(error: string | null): RefObject<HTMLInputElement | null> {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (error) ref.current?.focus();
+  }, [error]);
+  return ref;
 }

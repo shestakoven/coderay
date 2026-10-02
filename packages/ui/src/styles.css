@@ -378,9 +378,12 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .open-project ul { list-style: none; margin: 0; padding: 0; }
 .recent-row { display: flex; gap: 10px; align-items: baseline; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; }
 .recent-row:hover:not(:disabled), .dir-row:hover:not(:disabled) { background: var(--raised); }
+.recent .recent-row b { flex: 0 1 auto; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent .recent-row .mono { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; }
 .path-row { display: flex; gap: 6px; }
 .path-row input { flex: 1; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-1); padding: 4px 8px; }
-.dirs { max-height: 260px; overflow: auto; margin-top: 8px !important; border: 1px solid var(--border); border-radius: var(--r-1); }
+.path-row input:disabled { opacity: 0.45; }
+.dirs { list-style: none; max-height: 260px; overflow: auto; margin: 8px 0 0 !important; padding: 0; border: 1px solid var(--border); border-radius: var(--r-1); }
 .dir-row { display: flex; gap: 8px; align-items: center; width: 100%; padding: 4px 8px; border: 0; background: none; text-align: left; }
 .dir-empty { padding: 8px; }
 
@@ -807,24 +810,28 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .start-lead { margin: 4px 0 20px; }
 .start-actions { display: flex; flex-direction: column; gap: 2px; }
 .start-action { display: grid; grid-template-columns: 18px auto minmax(0, 1fr); align-items: center; column-gap: 12px; width: 100%; padding: 8px 10px; border: 1px solid transparent; border-radius: var(--r-1); background: none; text-align: left; }
-.start-action:hover:not(:disabled) { background: var(--raised); }
+/* Hover is the raised fill only: the accent border is the expanded row's mark. */
+.start-action:not(.on):hover:not(:disabled) { background: var(--raised); border-color: transparent; }
 .start-action.on { background: var(--selection); border-color: var(--accent); }
 .start-action-title { font-weight: 600; }
 .start-action-hint { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.start-form { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 12px 30px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-2); }
+.start-form { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 12px 28px; padding: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-2); }
 .start-field { display: flex; flex-direction: column; gap: 4px; }
 .start-label { font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-.start-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-1); padding: 5px 8px; font: inherit; }
+.start-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-1); padding: 4px 8px; font-size: inherit; }
 .start-input:disabled { opacity: 0.45; }
 .start-target { margin: 0; font-size: 12px; word-break: break-all; }
-.start-form .dirs { max-height: 180px; list-style: none; margin: 0; padding: 0; }
+.start-form .dirs { height: 180px; }
 .start-form .modal-actions { margin-top: 0; align-items: center; }
-.clone-progress { display: grid; grid-template-columns: 1fr auto; gap: 6px 12px; align-items: center; font-variant-numeric: tabular-nums; }
-.clone-progress .progress { grid-column: 1 / -1; }
+.clone-progress { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-variant-numeric: tabular-nums; }
 .start-recent h2 { margin: 0 0 8px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
-.start-recent ul { list-style: none; margin: 0; padding: 0; }
-.start-recent-row { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 12px; align-items: baseline; }
-.start-recent-row .mono { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
-.close-project { margin-right: auto; color: var(--muted); }
+.start-recent ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.start-recent-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; grid-template-areas: 'name ago' 'path path'; gap: 2px 12px; align-items: baseline; }
+.start-recent-row b { grid-area: name; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.start-recent-row .mono { grid-area: path; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; font-size: 12px; }
+/* Long paths lose their start, not the folders next to the project: rtl moves the ellipsis left, the LRMs keep the slashes in place. */
+.start-recent-row .mono::before, .start-recent-row .mono::after, .recent .recent-row .mono::before, .recent .recent-row .mono::after { content: '\200e'; }
+.start-recent-ago { grid-area: ago; font-size: 12px; font-variant-numeric: tabular-nums; }
+button.close-project { margin-right: auto; color: var(--muted); }
 .close-project:hover:not(:disabled) { color: var(--fg); }
-@media (max-width: 960px) { .start-body { grid-template-columns: minmax(0, 1fr); gap: 32px; padding-top: 6vh; } }
+@media (max-width: 800px) { .start-body { grid-template-columns: minmax(0, 520px); gap: 32px; padding-top: 6vh; } }

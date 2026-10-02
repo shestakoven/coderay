@@ -27,7 +27,7 @@ export function FolderBrowser({ state, dispatch, send, disabled, start }: {
     <>
       <form className="path-row" onSubmit={(event) => { event.preventDefault(); if (typed.trim()) list(typed.trim()); }}>
         <button type="button" disabled={state.parent === null || disabled} onClick={() => state.parent && list(state.parent)} title="Parent folder" aria-label="Parent folder">↑</button>
-        <input value={typed} onChange={(event) => setTyped(event.target.value)} aria-label="Folder path" spellCheck={false} className="mono" />
+        <input value={typed} onChange={(event) => setTyped(event.target.value)} aria-label="Folder path" spellCheck={false} className="mono" disabled={disabled} />
         <button type="submit" disabled={disabled}>Go</button>
       </form>
       {state.error && <p className="problem" role="alert">{state.error}</p>}
