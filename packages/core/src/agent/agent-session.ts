@@ -108,6 +108,7 @@ export class AgentSession {
   private items = new Map<string, ChatItem>();
   private tasks = new Map<string, TaskView>();
   private mcpServers: McpServerState[] = [];
+  private skills: string[] = [];
   private permissionMode: string | null = null;
   private usage: UsageView = EMPTY_USAGE;
   private process: ClaudeProcess | null = null;
@@ -234,6 +235,7 @@ export class AgentSession {
       items: [...this.items.values()].sort((a, b) => a.seq - b.seq),
       tasks: [...this.tasks.values()],
       mcpServers: this.mcpServers,
+      skills: this.skills,
       usage: this.usage,
     };
   }
@@ -543,6 +545,7 @@ export class AgentSession {
     this.items = new Map();
     this.tasks = new Map();
     this.mcpServers = [];
+    this.skills = [];
     this.permissionMode = null;
     this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
@@ -556,6 +559,7 @@ export class AgentSession {
     this.session = session;
     this.turns = new Map(history.turns.map((turn) => [turn.id, turn]));
     this.mcpServers = [];
+    this.skills = [];
     this.permissionMode = null;
     this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
@@ -769,8 +773,10 @@ export class AgentSession {
         this.session = updated;
         this.persist(() => store.saveSession(updated));
         this.mcpServers = change.mcpServers;
+        this.skills = change.skills;
         patch.session = sessionView(updated, this.permissionMode);
         patch.mcpServers = change.mcpServers;
+        patch.skills = change.skills;
       }
     }
     this.emit({ type: 'session.patch', patch });

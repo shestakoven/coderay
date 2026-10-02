@@ -10,7 +10,7 @@ const MODEL_CHOICE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,63}$/;
 
 export const isModelChoice = (value: string): boolean => MODEL_CHOICE.test(value);
 
-const SUMMARY_FIELDS = ['command', 'file_path', 'notebook_path', 'description', 'pattern', 'url', 'query', 'prompt'];
+const SUMMARY_FIELDS = ['skill', 'command', 'file_path', 'notebook_path', 'description', 'pattern', 'url', 'query', 'prompt'];
 const MAX_SUMMARY = 200;
 
 export function summarizeToolInput(input: unknown, root: string): string {

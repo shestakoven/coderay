@@ -39,7 +39,7 @@ describe('chat filter state', () => {
     const f = filter();
     const set = chatReducer(initialChatState, { type: 'filter', filter: f });
     expect(set.filter).toBe(f);
-    const snap = chatReducer(set, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE } });
+    const snap = chatReducer(set, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE } });
     expect(snap.filter).toBe(f);
     expect(chatReducer(snap, { type: 'filter', filter: null }).filter).toBeNull();
   });

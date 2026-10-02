@@ -64,7 +64,7 @@ describe('usageMeters', () => {
 });
 
 describe('chatReducer usage', () => {
-  const snapshot = (value: UsageView) => chatReducer(initialChatState, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: value } });
+  const snapshot = (value: UsageView) => chatReducer(initialChatState, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: value } });
 
   it('takes the usage from a snapshot and replaces it from a patch', () => {
     const before = snapshot(usage({ contextTokens: 1 }));

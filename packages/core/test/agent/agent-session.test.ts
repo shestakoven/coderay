@@ -171,6 +171,49 @@ describe('AgentSession', () => {
     expect(h.session.state().mcpServers).toEqual([{ name: 'spike', status: 'connected' }]);
   });
 
+  it('keeps the skills claude lists in its init', async () => {
+    const h = await harness('skills-init');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
+  });
+
+  it('lists no skills when claude reports none', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.session.state().skills).toEqual([]);
+  });
+
+  it('sends clients the skills of an init in a session patch', async () => {
+    const h = await harness('skills-init');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const patched = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.skills ? [message.patch.skills] : []));
+    expect(patched).toEqual([['repo-probe', 'superpowers:brainstorming']]);
+  });
+
+  it('forgets the skills on New session and sends the empty list in the snapshot', async () => {
+    const h = await harness('skills-init');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect(h.session.state().skills).toHaveLength(2);
+    h.broadcasts.length = 0;
+    await h.session.newSession();
+    const snapshot = h.broadcasts.find((message) => message.type === 'session.snapshot');
+    expect([h.session.state().skills, snapshot?.type === 'session.snapshot' ? snapshot.state.skills : null]).toEqual([[], []]);
+  });
+
+  it('lists the skills again once the next claude after New session reports them', async () => {
+    const h = await harness('skills-init');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    await h.session.newSession();
+    h.session.send('hello again');
+    await waitFor(() => closedTurns(h).length === 1 && h.session.state().skills.length === 2, 'skills reported by the second claude');
+    expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
+  });
+
   it('sends clients a snapshot for a new session and then the chat items as patches', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
@@ -493,7 +536,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     await h.session.newSession();
-    expect(h.session.state()).toEqual({ session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE });
+    expect(h.session.state()).toEqual({ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE });
     h.session.send('hello again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'second claude spawned');
     expect(flag(argvs[1], '--session-id')).not.toBe(flag(argvs[0], '--session-id'));

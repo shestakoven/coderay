@@ -12,7 +12,7 @@ export type AssistantBlock =
   | { kind: 'tool_use'; id: string; name: string; input: unknown };
 
 export type StreamEvent =
-  | { type: 'init'; sessionId: string; model: string | null; cliVersion: string | null; permissionMode: string | null; mcpServers: McpServerState[] }
+  | { type: 'init'; sessionId: string; model: string | null; cliVersion: string | null; permissionMode: string | null; mcpServers: McpServerState[]; skills: string[] }
   | { type: 'mode'; permissionMode: string }
   | { type: 'assistant'; parentToolUseId: string | null; blocks: AssistantBlock[] }
   | { type: 'user'; parentToolUseId: string | null; toolResults: ToolResultBlock[] }
@@ -92,6 +92,7 @@ function parseSystem(event: Json): StreamEvent {
       cliVersion: text(event.claude_code_version),
       permissionMode: text(event.permissionMode),
       mcpServers: servers.map((server) => ({ name: text(server.name) ?? '?', status: text(server.status) ?? 'unknown' })),
+      skills: Array.isArray(event.skills) ? event.skills.flatMap((skill) => text(skill) ?? []) : [],
     };
   }
   if (subtype === 'task_started') {

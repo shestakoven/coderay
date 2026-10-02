@@ -13,6 +13,8 @@ import { ModelControls } from './ModelControls';
 import { addAttachments, imageFiles, type Attachment } from './attachments';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
+import { matchSkills, skillCommand, slashQuery } from './skills';
+import { SkillMenu, SkillMenuEmpty } from './SkillMenu';
 
 const RECOVERED = "recovered from claude's transcript";
 
@@ -39,6 +41,9 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   const [attachProblem, setAttachProblem] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
+  const composer = useRef<HTMLTextAreaElement>(null);
+  const [skillIndex, setSkillIndex] = useState(0);
+  const [skillsDismissed, setSkillsDismissed] = useState(false);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const end = useRef<HTMLDivElement>(null);
   const groups = turnGroups(chat);
@@ -77,6 +82,19 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     setAttachProblem(result.problem);
   };
   const canSubmit = draft.trim() !== '' || attachments.length > 0;
+  const query = slashQuery(draft);
+  const skillMatches = query === null ? [] : matchSkills(chat.skills, query);
+  const skillMenu = query !== null && !skillsDismissed && (chat.skills.length === 0 || skillMatches.length > 0);
+  const skillActive = Math.min(skillIndex, Math.max(skillMatches.length - 1, 0));
+  const changeDraft = (text: string): void => {
+    setDraft(text);
+    setSkillIndex(0);
+    setSkillsDismissed(false);
+  };
+  const pickSkill = (skill: string): void => {
+    changeDraft(skillCommand(skill));
+    composer.current?.focus();
+  };
   const submit = (): void => {
     if (!canSubmit) return;
     const images = attachments.map(({ mediaType, data }) => ({ mediaType, data }));
@@ -88,7 +106,29 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     }
   };
   const onKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>): void => {
-    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+    const composing = event.nativeEvent.isComposing || event.keyCode === 229;
+    if (skillMenu && !composing) {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setSkillsDismissed(true);
+        return;
+      }
+      const chosen = skillMatches[skillActive];
+      if (chosen !== undefined) {
+        if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+          event.preventDefault();
+          setSkillIndex((skillActive + (event.key === 'ArrowDown' ? 1 : skillMatches.length - 1)) % skillMatches.length);
+          return;
+        }
+        // A fully typed skill name sends; Enter completes only a partial one.
+        if (event.key === 'Tab' || (event.key === 'Enter' && !event.shiftKey && chosen !== query)) {
+          event.preventDefault();
+          pickSkill(chosen);
+          return;
+        }
+      }
+    }
+    if (event.key !== 'Enter' || event.shiftKey || composing) return;
     event.preventDefault();
     submit();
   };
@@ -166,11 +206,15 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           </div>
         )}
         {attachProblem && <div className="attach-problem">{attachProblem}</div>}
+        {skillMenu && (skillMatches.length > 0
+          ? <SkillMenu skills={skillMatches} active={skillActive} onPick={pickSkill} onHover={setSkillIndex} />
+          : <SkillMenuEmpty />)}
         <div className="composer-box">
         <textarea
+          ref={composer}
           rows={3}
           value={draft}
-          onChange={(event) => setDraft(event.target.value)}
+          onChange={(event) => changeDraft(event.target.value)}
           onKeyDown={onKeyDown}
           onPaste={(event) => {
             const files = imageFiles(event.clipboardData.files);
@@ -187,6 +231,15 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           }} />
           <button className="composer-action" onClick={() => fileInput.current?.click()} title="Attach images" aria-label="Attach images">
             <Icon name="paperclip" size={18} />
+          </button>
+          <button
+            className="composer-action"
+            onClick={() => { changeDraft('/'); composer.current?.focus(); }}
+            disabled={draft !== '' && query === null}
+            title={draft !== '' && query === null ? 'Clear the message to pick a skill' : 'Skills (type / to search)'}
+            aria-label="Skills"
+          >
+            <Icon name="skill" size={18} />
           </button>
           <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
           <span className="spacer" />
@@ -229,8 +282,8 @@ function Item({ item, chat, send, onFocusTargets }: {
   const label = decisionLabel(item.decision);
   const row = (
     <>
-      <span className="tool-status">{STATUS_MARK[item.status]}</span> <b>{item.tool}</b>
-      {label && <span className={`decision ${item.decision}`}> · {label}</span>}{item.recovered && <span className="muted"> · {RECOVERED}</span>} <span className="muted">{item.summary}</span>
+      <span className="tool-status">{STATUS_MARK[item.status]}</span> <b className={item.tool === 'Skill' ? 'skill-call' : undefined}>{item.tool === 'Skill' ? 'skill' : item.tool}</b>
+      {label && <span className={`decision ${item.decision}`}> · {label}</span>}{item.recovered && <span className="muted"> · {RECOVERED}</span>} <span className="muted">{item.tool === 'Skill' ? `/${item.summary}` : item.summary}</span>
     </>
   );
   return (

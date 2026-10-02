@@ -196,7 +196,7 @@ describe('server', () => {
   });
 
   it('sends greeting messages right after the map snapshot on connect', async () => {
-    const empty = { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE };
+    const empty = { session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE };
     const svr = await startServer({ port: 0, token: TOKEN, snapshot: () => snapshot(1), greeting: () => [{ type: 'session.snapshot', state: empty }] });
     onTestFinished(() => svr.close());
     const { messages } = await connect({}, svr.port);

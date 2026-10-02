@@ -417,6 +417,22 @@ describe('AgentSession.switchSession', () => {
     expect([h.session.state().mcpServers, current(h).permissionMode]).toEqual([[], null]);
   });
 
+  it('forgets the skills of the chat it leaves until the next claude reports them', async () => {
+    const h = await harness('skills-init');
+    const { a } = await twoChats(h);
+    expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
+    await h.session.switchSession(a.id);
+    expect(h.session.state().skills).toEqual([]);
+  });
+
+  it('sends clients an empty skills list in the snapshot of the chat it switches to', async () => {
+    const h = await harness('skills-init');
+    const { a } = await twoChats(h);
+    await h.session.switchSession(a.id);
+    const snapshot = lastSnapshot(h);
+    expect(snapshot?.type === 'session.snapshot' && snapshot.state.skills).toEqual([]);
+  });
+
   it('does nothing when the chat is already open', async () => {
     const h = await harness('multi-turn');
     const { b } = await twoChats(h);
@@ -509,7 +525,7 @@ describe('AgentSession.start with several chats', () => {
     const { home, root, store } = seededStore();
     store.setMeta('activeSessionId', '');
     const h = await harness('multi-turn', { home, root, store });
-    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE }, null]);
+    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE }, null]);
   });
 
   it('opens no chat when the active chat was ended', async () => {

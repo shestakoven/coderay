@@ -161,6 +161,7 @@ export interface SessionState {
   items: ChatItem[];
   tasks: TaskView[];
   mcpServers: McpServerState[];
+  skills: string[];
   usage: UsageView;
 }
 
@@ -170,6 +171,7 @@ export interface SessionPatch {
   items?: ChatItem[];
   tasks?: TaskView[];
   mcpServers?: McpServerState[];
+  skills?: string[];
   usage?: UsageView;
 }
 

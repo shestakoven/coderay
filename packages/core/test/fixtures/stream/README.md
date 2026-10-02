@@ -6,7 +6,7 @@ Provenance of `../transcripts/crash-gap.jsonl`: curated from the transcript shap
 - a stream-json event as `claude` 2.1.281 prints it, trimmed to the fields the IDE reads plus `type`, `subtype` and `session_id`;
 - a directive for the fake, listed below.
 
-Trimming keeps a recording's field names and the order of the events it keeps. It never adds a field or an event the recording does not have. Dropped events are named in the provenance column. `init` keeps `cwd`, `session_id`, `model`, `claude_code_version`, `mcp_servers` and `permissionMode`; its `tools` list is dropped because the IDE does not read it. Real ids are replaced by readable ones (`toolu_fx_…`, `task_fx_…`, `req_fx_…`), and the session id by `$SESSION`.
+Trimming keeps a recording's field names and the order of the events it keeps. It never adds a field or an event the recording does not have. Dropped events are named in the provenance column. `init` keeps `cwd`, `session_id`, `model`, `claude_code_version`, `mcp_servers`, `permissionMode` and `skills`; its `tools` list is dropped because the IDE does not read it. Real ids are replaced by readable ones (`toolu_fx_…`, `task_fx_…`, `req_fx_…`), and the session id by `$SESSION`.
 
 | Directive | Effect |
 |---|---|

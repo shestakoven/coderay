@@ -9,7 +9,7 @@ function tracker(options: TrackerOptions = {}): TurnTracker {
   return new TurnTracker({ now: () => 1000, newId: () => `id${++id}`, ...options });
 }
 
-const init: StreamEvent = { type: 'init', sessionId: 's1', model: 'haiku', cliVersion: '2.1.281', permissionMode: 'bypassPermissions', mcpServers: [] };
+const init: StreamEvent = { type: 'init', sessionId: 's1', model: 'haiku', cliVersion: '2.1.281', permissionMode: 'bypassPermissions', mcpServers: [], skills: [] };
 const text = (value: string, parentToolUseId: string | null = null): StreamEvent =>
   ({ type: 'assistant', parentToolUseId, blocks: [{ kind: 'text', text: value }] });
 const toolUse = (id: string, name = 'Bash', parentToolUseId: string | null = null): StreamEvent =>
@@ -91,6 +91,15 @@ describe('TurnTracker', () => {
   it('opens no turn at an init that arrives while a turn is running', () => {
     const { turns } = run(tracker(), [init, init, result('success', 'task-notification')]);
     expect(turns.map((turn) => [turn.kind, turn.closedAt === null])).toEqual([['agent-initiated', false]]);
+  });
+
+  it('reports the skills of an init in its init change', () => {
+    const changes = tracker().event({ ...init, skills: ['wiki', 'superpowers:brainstorming'] });
+    expect(changes.flatMap((change) => (change.kind === 'init' ? [change.skills] : []))).toEqual([['wiki', 'superpowers:brainstorming']]);
+  });
+
+  it('reports no skills in the init change of an init without any', () => {
+    expect(tracker().event(init).flatMap((change) => (change.kind === 'init' ? [change.skills] : []))).toEqual([[]]);
   });
 
   it('closes a waiting user turn at a result that came without an init', () => {

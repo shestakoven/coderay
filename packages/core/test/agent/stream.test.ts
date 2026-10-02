@@ -8,10 +8,39 @@ describe('parseStreamLine', () => {
     const event = line({
       type: 'system', subtype: 'init', session_id: 's1', model: 'claude-haiku-4-5-20251001', claude_code_version: '2.1.281',
       permissionMode: 'bypassPermissions', tools: ['Bash'], mcp_servers: [{ name: 'docs', status: 'connected', source: 'dynamic' }],
+      skills: ['wiki', 'superpowers:brainstorming'],
     });
     expect(parseStreamLine(event)).toEqual({
       type: 'init', sessionId: 's1', model: 'claude-haiku-4-5-20251001', cliVersion: '2.1.281', permissionMode: 'bypassPermissions',
-      mcpServers: [{ name: 'docs', status: 'connected' }],
+      mcpServers: [{ name: 'docs', status: 'connected' }], skills: ['wiki', 'superpowers:brainstorming'],
+    });
+  });
+
+  describe('init skills', () => {
+    const init = (extra: object) => line({ type: 'system', subtype: 'init', session_id: 's1', ...extra });
+    const skillsOf = (extra: object) => {
+      const event = parseStreamLine(init(extra));
+      return event?.type === 'init' ? event.skills : null;
+    };
+
+    it('lists the skill names in the order claude reports them', () => {
+      expect(skillsOf({ skills: ['zeta', 'plugin:alpha', 'beta'] })).toEqual(['zeta', 'plugin:alpha', 'beta']);
+    });
+
+    it('lists no skills when init has no skills field', () => {
+      expect(skillsOf({})).toEqual([]);
+    });
+
+    it('lists no skills when the skills field is not an array', () => {
+      expect(['wiki', null, 7, true, { wiki: true }].map((skills) => skillsOf({ skills }))).toEqual([[], [], [], [], []]);
+    });
+
+    it('drops the entries that are not strings', () => {
+      expect(skillsOf({ skills: ['wiki', 3, null, { name: 'x' }, ['y'], false, 'plugin:one'] })).toEqual(['wiki', 'plugin:one']);
+    });
+
+    it('lists no skills for an empty array', () => {
+      expect(skillsOf({ skills: [] })).toEqual([]);
     });
   });
 

@@ -15,12 +15,12 @@ const tool = (id: string, seq: number, turnId: string | null, parentToolUseId: s
 const task = (id: string, kind: TaskKind, endedAt: number | null = null): TaskView =>
   ({ id, toolUseId: null, kind, description: id, status: endedAt === null ? 'running' : 'completed', startedAt: 1, endedAt });
 const chat = (partial: Partial<SessionState>) =>
-  chatReducer(initialChatState, { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE, ...partial } });
+  chatReducer(initialChatState, { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE, ...partial } });
 
 describe('chatReducer', () => {
   it('replaces the whole chat on a snapshot', () => {
     const before = chat({ turns: [turn('t1', 'user')], items: [message('m1', 1, 't1', 'old')] });
-    const after = chatReducer(before, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE } });
+    const after = chatReducer(before, { type: 'snapshot', state: { session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE } });
     expect([after.session, Object.keys(after.turns), Object.keys(after.items)]).toEqual([null, [], []]);
   });
 
@@ -29,6 +29,47 @@ describe('chatReducer', () => {
     const after = chatReducer(before, { type: 'patch', patch: { turns: [turn('t1', 'user')], items: [tool('b1', 1, 't1'), message('m2', 2, 't1', 'done')] } });
     expect(after.turns.t1?.closedAt).toBe(3);
     expect(Object.values(after.items).map((item) => (item.kind === 'tool' ? item.status : item.kind === 'message' ? item.text : ''))).toEqual(['ok', 'done']);
+  });
+});
+
+describe('chatReducer skills', () => {
+  const patch = (state: ReturnType<typeof chat>, p: SessionPatch) => chatReducer(state, { type: 'patch', patch: p });
+
+  it('starts with no skills', () => {
+    expect(initialChatState.skills).toEqual([]);
+  });
+
+  it('takes the skills from a snapshot', () => {
+    expect(chat({ skills: ['wiki', 'superpowers:brainstorming'] }).skills).toEqual(['wiki', 'superpowers:brainstorming']);
+  });
+
+  it('replaces the skills on a snapshot, including with an empty list', () => {
+    const before = chat({ skills: ['wiki'] });
+    const next = chatReducer(before, { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], skills: ['review'], usage: EMPTY_USAGE } });
+    const cleared = chatReducer(next, { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE } });
+    expect([next.skills, cleared.skills]).toEqual([['review'], []]);
+  });
+
+  it('replaces the skills with the ones in a patch', () => {
+    expect(patch(chat({ skills: ['wiki'] }), { skills: ['review', 'p:deploy'] }).skills).toEqual(['review', 'p:deploy']);
+  });
+
+  it('clears the skills with an empty list in a patch', () => {
+    expect(patch(chat({ skills: ['wiki'] }), { skills: [] }).skills).toEqual([]);
+  });
+
+  it('keeps the skills on a patch that has none', () => {
+    expect(patch(chat({ skills: ['wiki'] }), { turns: [turn('t1', 'user')] }).skills).toEqual(['wiki']);
+  });
+
+  it('keeps the skills on a patch that only carries the usage or the MCP servers', () => {
+    const before = chat({ skills: ['wiki'] });
+    expect([patch(before, { usage: EMPTY_USAGE }).skills, patch(before, { mcpServers: [{ name: 'docs', status: 'connected' }] }).skills]).toEqual([['wiki'], ['wiki']]);
+  });
+
+  it('keeps the MCP servers on a patch that only carries skills', () => {
+    const before = chat({ mcpServers: [{ name: 'docs', status: 'connected' }] });
+    expect(patch(before, { skills: ['wiki'] }).mcpServers).toEqual([{ name: 'docs', status: 'connected' }]);
   });
 });
 
@@ -46,7 +87,7 @@ describe('chatReducer draft', () => {
   });
 
   it('clears the draft on a snapshot', () => {
-    const after = chatReducer(streaming(), { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], usage: EMPTY_USAGE } });
+    const after = chatReducer(streaming(), { type: 'snapshot', state: { session, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE } });
     expect(after.draft).toBe('');
   });
 

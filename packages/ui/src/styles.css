@@ -436,6 +436,14 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .composer-box { display: flex; flex-direction: column; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 8px 6px; transition: border-color 0.12s; }
 .composer-box:focus-within { border-color: var(--accent); }
 .composer-box textarea { border: 0; outline: 0; background: transparent; resize: none; padding: 2px 4px; line-height: 1.45; max-height: 40vh; field-sizing: content; min-height: 3.2em; }
+.composer { position: relative; }
+.skill-menu { position: absolute; z-index: 15; left: 10px; right: 10px; bottom: calc(100% - 6px); max-height: 240px; overflow: auto; margin: 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.skill-menu-empty { padding: 8px 10px; font-size: 12px; }
+.skill-row { display: flex; align-items: baseline; gap: 8px; padding: 5px 8px; border-radius: var(--r-1); cursor: pointer; font-family: var(--font-mono); font-size: 12px; }
+.skill-row.on { background: var(--selection); }
+.skill-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.skill-plugin { margin-left: auto; font-size: 11px; white-space: nowrap; }
+.tool-row b.skill-call { color: var(--accent-hover); }
 .composer-usage { padding: 0 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 .bg-tasks { flex-basis: 100%; font-size: 11px; color: var(--muted); }
 .bg-tasks-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; margin-left: -6px; border: 0; background: transparent; color: var(--muted); border-radius: 6px; font: inherit; cursor: pointer; }

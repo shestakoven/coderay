@@ -1,0 +1,4 @@
+{"fake":"await-user"}
+{"type":"system","subtype":"init","cwd":"/fake/project","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.281","skills":["repo-probe","superpowers:brainstorming"]}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
+{"type":"result","subtype":"success","is_error":false,"result":"OK","session_id":"$SESSION"}
