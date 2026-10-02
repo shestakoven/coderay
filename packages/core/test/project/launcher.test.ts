@@ -6,7 +6,7 @@ import WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '@ide/protocol';
 import { projectDir } from '../../src/home';
 import { acquireCoreLock } from '../../src/lock';
-import { startLauncher } from '../../src/project/launcher';
+import { FLUSH_MS, startLauncher } from '../../src/project/launcher';
 import { RecentProjects } from '../../src/project/recent';
 import { tempDir, waitFor } from '../helpers';
 import { fakeGit } from './fake-git';
@@ -203,5 +203,48 @@ describe('launcher project.clone', () => {
     expect(readdirSync(parent)).toEqual(['one']);
     await launcher.close();
     expect(readdirSync(parent)).toEqual([]);
+  });
+});
+
+describe('launcher close during a handover', () => {
+  it('does not hand over when it is closed while the reply is still flushing', async () => {
+    const dir = tempDir('ide-launcher-proj-');
+    const { send, next, handover, launcher } = await launch();
+    const flushes: Array<() => void> = [];
+    const realSetTimeout = globalThis.setTimeout;
+    const timer = vi.spyOn(globalThis, 'setTimeout').mockImplementation(((callback: () => void, ms?: number) => {
+      if (ms !== FLUSH_MS) return realSetTimeout(callback, ms);
+      flushes.push(callback);
+      return 0;
+    }) as unknown as typeof setTimeout);
+    onTestFinished(() => timer.mockRestore());
+    send({ type: 'project.open', requestId: 'o1', path: dir });
+    expect(await next('project.open.result', 'o1')).toMatchObject({ error: null });
+    expect(flushes).toHaveLength(1);
+    const closed = launcher.close();
+    flushes[0]?.();
+    await closed;
+    await launcher.finished;
+    await new Promise((resolve) => realSetTimeout(resolve, 100));
+    expect(handover).not.toHaveBeenCalled();
+  });
+
+  it('waits for a handover that is already running before it finishes', async () => {
+    const dir = tempDir('ide-launcher-proj-');
+    let release!: () => void;
+    const settled = new Promise<void>((resolve) => { release = resolve; });
+    const { send, next, handover, launcher } = await launch({ handover: () => settled });
+    send({ type: 'project.open', requestId: 'o1', path: dir });
+    expect(await next('project.open.result', 'o1')).toMatchObject({ error: null });
+    await waitFor(() => handover.mock.calls.length > 0 || undefined, 'the handover to start');
+    const done = { closed: false, finished: false };
+    const closed = launcher.close().then(() => { done.closed = true; });
+    void launcher.finished.then(() => { done.finished = true; });
+    await new Promise((resolve) => setTimeout(resolve, 150));
+    expect(done).toEqual({ closed: false, finished: false });
+    release();
+    await closed;
+    await launcher.finished;
+    expect(handover).toHaveBeenCalledTimes(1);
   });
 });

@@ -125,6 +125,20 @@ test('opens a recent project', async ({ page }) => {
   await expect(page.getByText('core connected')).toBeVisible();
 });
 
+test('an error from a recent project shows beside the list and collapses the open form', async ({ page }) => {
+  launcher = await startLauncher();
+  const project = tempFolder();
+  writeFileSync(join(launcher.home, 'recent-projects.json'), JSON.stringify({ version: 1, projects: [{ path: project, name: 'recent-gone', openedAt: Date.now() }] }));
+  await page.goto(launcher.url);
+  await action(page, 'Create').click();
+  await expect(page.getByLabel('Project name')).toBeVisible();
+  rmSync(project, { recursive: true });
+  await page.getByRole('button', { name: /recent-gone/ }).click();
+  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.getByLabel('Project name')).toHaveCount(0);
+  await expect(page.locator('.start-recent').getByRole('alert')).toBeVisible();
+});
+
 test('the folder list and the Create button work again after the Open dialog was cancelled', async ({ page }) => {
   launcher = await startLauncher();
   await page.goto(launcher.url);

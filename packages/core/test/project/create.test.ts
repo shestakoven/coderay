@@ -88,6 +88,12 @@ describe('createProject', () => {
     expect(readdirSync(parent)).toEqual([]);
   });
 
+  it('reports the fatal: line of git init, not the hint that follows it', async () => {
+    const parent = tempDir('ide-create-');
+    const git = fakeGit(tempDir('ide-fake-git-'), 'echo "fatal: cannot mkdir .git" >&2\necho "hint: try again" >&2\nexit 128');
+    expect(await createProject({ parent, name: 'app', git })).toEqual({ error: 'fatal: cannot mkdir .git' });
+  });
+
   it('keeps a pre-existing empty folder when git init fails', async () => {
     const parent = tempDir('ide-create-');
     mkdirSync(join(parent, 'app'));

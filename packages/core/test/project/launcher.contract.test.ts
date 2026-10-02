@@ -107,7 +107,7 @@ function slowCloneGit(bin: string): string {
 function gatedInitGit(bin: string): string {
   return fakeGit(bin, [
     `echo started > "${bin}/started"`,
-    `while [ ! -f "${bin}/release" ]; do sleep 0.05; done`,
+    `i=0; while [ ! -f "${bin}/release" ]; do i=$((i+1)); [ $i -gt 200 ] && exit 1; sleep 0.05; done`,
     'exit 0',
   ].join('\n'));
 }

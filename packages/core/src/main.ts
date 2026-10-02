@@ -24,7 +24,7 @@ import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
 import { listDirectories } from './project/browse';
 import { spawnSuccessor } from './project/handover';
-import { startLauncher } from './project/launcher';
+import { startLauncher, type RunningLauncher } from './project/launcher';
 import { RecentProjects } from './project/recent';
 import { takeLaunchToken } from './project/token';
 import { projectBusy, successorArgs, validateProjectPath } from './project/switch';
@@ -58,19 +58,30 @@ const home = resolve(values['ide-home'] ?? defaultIdeHome());
 const token = values['token-stdin'] ? readFileSync(0, 'utf8').trim() || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
 
 if (values.project.length === 0) {
-  const launcher = await startLauncher({
-    port,
-    token,
-    staticDir: values.ui ? resolve(values.ui) : undefined,
-    allowedOrigins: values['allow-origin'],
-    home,
-    handover: (root, boundPort) => spawnSuccessor(successorArgs(process.argv.slice(2), root, boundPort), token),
-  });
+  let launcher: RunningLauncher;
+  try {
+    launcher = await startLauncher({
+      port,
+      token,
+      staticDir: values.ui ? resolve(values.ui) : undefined,
+      allowedOrigins: values['allow-origin'],
+      home,
+      handover: (root, boundPort) => spawnSuccessor(successorArgs(process.argv.slice(2), root, boundPort), token),
+    });
+  } catch (error) {
+    console.error(`IDE core failed to start: ${(error as Error).message}`);
+    process.exit(1);
+  }
   console.log('IDE core: no project open');
   if (values.ui) console.log(`  open: http://127.0.0.1:${launcher.port}/#token=${token}`);
   for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => void launcher.close());
-  await launcher.finished;
+  try {
+    await launcher.finished;
+  } catch (error) {
+    console.error(`IDE core could not open the project: ${(error as Error).message}`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -375,6 +386,8 @@ try {
         if (firstInterrupt && Date.now() - firstInterrupt > 1000) process.exit(130);
         firstInterrupt ||= Date.now();
       }
+      // A stop request during a project switch or close means the user wants out: no successor must outlive it.
+      afterClose = undefined;
       closing ??= shutdown();
     });
   }

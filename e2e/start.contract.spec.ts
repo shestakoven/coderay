@@ -33,7 +33,7 @@ const folders = (page: Page) => page.getByRole('list', { name: 'Folders' });
 // The form first lists the home folder; typing before that listing lands loses the typed path (see the test below).
 async function chooseFolder(page: Page, path: string): Promise<void> {
   const field = page.getByRole('textbox', { name: 'Folder path' });
-  await expect(field).toHaveValue(homedir());
+  await expect(field).toHaveValue(launcher!.userHome);
   await field.fill(path);
   await page.getByRole('button', { name: 'Go', exact: true }).click();
   await expect(folders(page).getByRole('button', { name: MARKER, exact: true })).toBeVisible();

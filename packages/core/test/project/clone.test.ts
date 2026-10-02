@@ -142,13 +142,13 @@ describe('startClone input checks', () => {
 });
 
 describe('startClone with a fake git', () => {
-  it('runs git clone --progress -- <url> <target> with prompts off and unsafe transports blocked', async () => {
+  it('runs git clone --progress -- <url> <target> with prompts off, unsafe transports blocked and English output', async () => {
     const parent = tempDir('ide-clone-parent-');
     const out = join(tempDir('ide-clone-out-'), 'record');
-    const git = fakeGit(tempDir('ide-fake-git-'), `for last; do :; done\nmkdir -p "$last"\nprintf '%s\\n' "$@" > "${out}"\nprintf '%s %s\\n' "$GIT_TERMINAL_PROMPT" "$GIT_ALLOW_PROTOCOL" >> "${out}"`);
+    const git = fakeGit(tempDir('ide-fake-git-'), `for last; do :; done\nmkdir -p "$last"\nprintf '%s\\n' "$@" > "${out}"\nprintf '%s %s %s\\n' "$GIT_TERMINAL_PROMPT" "$GIT_ALLOW_PROTOCOL" "$LC_ALL" >> "${out}"`);
     const result = await clone({ url: '  https://h/o/r.git  ', parent, name: 'copy', git }).done;
     expect(result).toEqual({ root: join(parent, 'copy') });
-    expect(readFileSync(out, 'utf8').split('\n')).toEqual(['clone', '--progress', '--', 'https://h/o/r.git', join(parent, 'copy'), '0 https:ssh:git:file', '']);
+    expect(readFileSync(out, 'utf8').split('\n')).toEqual(['clone', '--progress', '--', 'https://h/o/r.git', join(parent, 'copy'), '0 https:ssh:git:file C', '']);
   });
 
   it('reports progress, one event per change, including updates separated by carriage returns', async () => {
@@ -171,6 +171,30 @@ describe('startClone with a fake git', () => {
     const git = fakeGit(tempDir('ide-fake-git-'), 'for last; do :; done\nmkdir -p "$last"\necho "fatal: Authentication failed" >&2\nexit 128');
     expect(await clone({ url: 'x', parent, name: 'copy', git }).done).toEqual({ error: 'fatal: Authentication failed' });
     expect(readdirSync(parent)).toEqual([]);
+  });
+
+  it('reports the fatal line of a failed ssh clone, not the advice that follows it', async () => {
+    const parent = tempDir('ide-clone-parent-');
+    const stderr = [
+      'Cloning into copy...',
+      'git@host: Permission denied (publickey).',
+      'fatal: Could not read from remote repository.',
+      '',
+      'Please make sure you have the correct access rights',
+      'and the repository exists.',
+    ].join('\\n');
+    const git = fakeGit(tempDir('ide-fake-git-'), `for last; do :; done\nmkdir -p "$last"\nprintf '${stderr}\\n' >&2\nexit 128`);
+    expect(await clone({ url: 'git@host:o/r.git', parent, name: 'copy', git }).done).toEqual({ error: 'fatal: Could not read from remote repository.' });
+    expect(readdirSync(parent)).toEqual([]);
+  });
+
+  it('prefers the last fatal: or error: line, and falls back to the last line when there is none', async () => {
+    const parent = tempDir('ide-clone-parent-');
+    const failWith = (stderr: string) => fakeGit(tempDir('ide-fake-git-'), `for last; do :; done\nmkdir -p "$last"\nprintf '${stderr}' >&2\nexit 1`);
+    expect(await clone({ url: 'x', parent, name: 'a', git: failWith('fatal: first\\nerror: second\\nhint: trailing\\n') }).done).toEqual({ error: 'error: second' });
+    expect(await clone({ url: 'x', parent, name: 'b', git: failWith('Cloning into b...\\nsomething broke\\n') }).done).toEqual({ error: 'something broke' });
+    expect(await clone({ url: 'x', parent, name: 'c', git: failWith('  fatal: indented\\n  after\\n') }).done).toEqual({ error: 'fatal: indented' });
+    expect(await clone({ url: 'x', parent, name: 'd', git: failWith('Fatal: capitalised\\nlast\\n') }).done).toEqual({ error: 'last' });
   });
 
   it('cancels a running clone, waits for git to exit and removes the partial folder', async () => {
@@ -212,12 +236,12 @@ describe('startClone with a fake git', () => {
   it('does not send SIGKILL after a cancelled git has already exited', async () => {
     const parent = tempDir('ide-clone-parent-');
     const git = fakeGit(tempDir('ide-fake-git-'), 'for last; do :; done\nmkdir -p "$last"\necho "Receiving objects:  10% (1/10)" >&2\nexec sleep 30');
-    const run = clone({ url: 'x', parent, name: 'copy', git, killAfterMs: 100 });
+    const run = clone({ url: 'x', parent, name: 'copy', git, killAfterMs: 500 });
     await waitFor(() => run.progress.length > 0 || undefined, 'the first progress event');
     const signals = groupSignals();
     run.cancel();
     await run.done;
-    await new Promise((resolve) => setTimeout(resolve, 300));
+    await new Promise((resolve) => setTimeout(resolve, 800));
     expect(signals()).toEqual(['SIGTERM']);
   });
 });

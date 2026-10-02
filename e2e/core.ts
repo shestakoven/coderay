@@ -18,8 +18,11 @@ export interface Core {
 export interface Launcher {
   url: string;
   home: string;
+  userHome: string;
   stop(): Promise<void>;
 }
+
+const userHomeOf = (base: string): string => join(base, 'user-home');
 
 function prepareHome(base: string): { home: string; bin: string } {
   const home = join(base, 'home');
@@ -34,9 +37,12 @@ function prepareHome(base: string): { home: string; bin: string } {
 }
 
 async function spawnCore(base: string, args: string[], env: NodeJS.ProcessEnv): Promise<{ child: ChildProcess; url: string; exited: Promise<void> }> {
+  // The folder browser and the start screen start from the user's home: a failing test must never write into the real one.
+  const userHome = userHomeOf(base);
+  mkdirSync(userHome, { recursive: true });
   const child = spawn(process.execPath, ['--import', 'tsx', join(REPO, 'packages/core/src/main.ts'), ...args], {
     cwd: REPO,
-    env: { ...process.env, ...env },
+    env: { ...process.env, HOME: userHome, ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
@@ -157,6 +163,7 @@ export async function startLauncher(): Promise<Launcher> {
   return {
     url: core.url,
     home,
+    userHome: userHomeOf(base),
     stop: async () => {
       core.child.kill('SIGTERM');
       await core.exited;

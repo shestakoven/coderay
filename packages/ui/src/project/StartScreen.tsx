@@ -61,7 +61,7 @@ export function StartScreen({ info, status, browse, start, dispatchStart, send }
             <ul>
               {info.recent.map((project) => (
                 <li key={project.path}>
-                  <button className="recent-row start-recent-row" disabled={busy} onClick={() => open(project.path)} title={project.path}>
+                  <button className="recent-row start-recent-row" disabled={busy} onClick={() => { dispatchStart({ type: 'view', view: 'home' }); open(project.path); }} title={project.path}>
                     <b>{project.name}</b>
                     <span className="mono muted">{project.path}</span>
                     <span className="start-recent-ago muted">{formatAgo(now, project.openedAt)}</span>
@@ -200,7 +200,7 @@ function CloneForm({ browse, start, dispatchStart, send, busy }: FormProps) {
                 className={`progress${work.percent === null ? ' indeterminate' : ''}`} role="progressbar" aria-label="Clone progress"
                 aria-valuemin={0} aria-valuemax={100} aria-valuenow={work.percent ?? undefined} aria-valuetext={progress}
               >
-                <i style={{ width: `${work.percent ?? 0}%` }} />
+                <i style={work.percent === null ? undefined : { width: `${work.percent}%` }} />
               </div>
             </div>
             <button type="button" onClick={() => send({ type: 'project.clone.cancel', requestId: work.requestId })}>Cancel</button>

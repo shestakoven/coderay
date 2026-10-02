@@ -1,6 +1,6 @@
 import { spawn, type ChildProcess } from 'node:child_process';
 import { projectNameFromUrl, type ClonePhase } from '@ide/protocol';
-import { gitErrorMessage } from './git';
+import { gitErrorMessage, isGitFailureLine } from './git';
 import { discardTarget, prepareTarget, type ProjectResult } from './target';
 
 export const CLONE_CANCELLED = 'Clone cancelled.';
@@ -76,7 +76,7 @@ export function startClone({ url, parent, name, git = 'git', killAfterMs = KILL_
       proc = spawn(git, ['clone', '--progress', '--', address, target.path], {
         detached: true,
         stdio: ['ignore', 'ignore', 'pipe'],
-        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https:ssh:git:file' },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_ALLOW_PROTOCOL: 'https:ssh:git:file', LC_ALL: 'C' },
       });
     } catch (error) {
       return { error: gitErrorMessage(error, '') };
@@ -84,6 +84,7 @@ export function startClone({ url, parent, name, git = 'git', killAfterMs = KILL_
     child = proc;
     let tail = '';
     let lastLine = '';
+    let failureLine = '';
     let last: CloneProgress | undefined;
     const handle = (line: string): void => {
       const text = line.trim();
@@ -91,6 +92,7 @@ export function startClone({ url, parent, name, git = 'git', killAfterMs = KILL_
       const progress = parseCloneProgress(text);
       if (!progress) {
         lastLine = text;
+        if (isGitFailureLine(text)) failureLine = text;
         return;
       }
       if (last?.phase === progress.phase && last.percent === progress.percent) return;
@@ -120,7 +122,7 @@ export function startClone({ url, parent, name, git = 'git', killAfterMs = KILL_
     }
     if (outcome.code !== 0) {
       discardTarget(target);
-      return { error: lastLine || `git clone exited with code ${outcome.code}.` };
+      return { error: failureLine || lastLine || `git clone exited with code ${outcome.code}.` };
     }
     return { root: target.path };
   }

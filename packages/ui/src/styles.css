@@ -832,6 +832,6 @@ button:not(:disabled):hover { border-color: var(--accent); }
 /* Long paths lose their start, not the folders next to the project: rtl moves the ellipsis left, the LRMs keep the slashes in place. */
 .start-recent-row .mono::before, .start-recent-row .mono::after, .recent .recent-row .mono::before, .recent .recent-row .mono::after { content: '\200e'; }
 .start-recent-ago { grid-area: ago; font-size: 12px; font-variant-numeric: tabular-nums; }
-button.close-project { margin-right: auto; color: var(--muted); }
-.close-project:hover:not(:disabled) { color: var(--fg); }
+button.close-project { margin-right: auto; color: var(--fg); }
+.close-project:hover:not(:disabled) { text-decoration: underline; }
 @media (max-width: 800px) { .start-body { grid-template-columns: minmax(0, 520px); gap: 32px; padding-top: 6vh; } }

@@ -9,7 +9,7 @@ import { projectBusy, validateProjectPath } from './switch';
 import type { ProjectResult } from './target';
 
 // Lets the reply leave before the sockets are closed.
-const FLUSH_MS = 50;
+export const FLUSH_MS = 50;
 const BUSY = 'Another create or clone is already running.';
 
 export interface LauncherOptions {
@@ -32,6 +32,8 @@ export async function startLauncher(options: LauncherOptions): Promise<RunningLa
   const recent = new RecentProjects(options.home);
   let working = false;
   let handingOver = false;
+  let closeRequested = false;
+  let handed: Promise<void> | undefined;
   let clone: { requestId: string; handle: CloneHandle } | undefined;
   let closing: Promise<void> | undefined;
   let finish!: () => void;
@@ -43,27 +45,31 @@ export async function startLauncher(options: LauncherOptions): Promise<RunningLa
   // The owner awaits `finished`; a failure nobody awaits must not crash the process on top of the log line.
   finished.catch(() => {});
 
-  const hand = async (root: string): Promise<void> => {
+  const hand = (root: string): void => {
     handingOver = true;
     try {
       recent.add(root);
     } catch {
       // The recent list is cosmetic: a failed write must not block the handover.
     }
-    try {
-      await new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
-      await running.close();
-      await options.handover(root, running.port);
-      finish();
-    } catch (error) {
-      console.error('launcher: handover failed', error);
-      fail(error);
-    }
+    handed = (async () => {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, FLUSH_MS));
+        // A close that arrived before this point wins; one that arrives later waits for the token to reach the successor.
+        if (closeRequested) return;
+        await running.close();
+        await options.handover(root, running.port);
+        finish();
+      } catch (error) {
+        console.error('launcher: handover failed', error);
+        fail(error);
+      }
+    })();
   };
 
   const settle = (result: ProjectResult, replyError: (error: string | null) => void): void => {
     replyError('error' in result ? result.error : null);
-    if (!('error' in result)) void hand(result.root);
+    if (!('error' in result)) hand(result.root);
   };
 
   const handle = (message: ClientMessage, reply: (message: ServerMessage) => void): void => {
@@ -79,7 +85,7 @@ export async function startLauncher(options: LauncherOptions): Promise<RunningLa
         const target = validateProjectPath(message.path);
         const error = working ? BUSY : 'error' in target ? target.error : projectBusy(options.home, target.root);
         reply({ type: 'project.open.result', requestId: message.requestId, error });
-        if (error === null && !('error' in target)) void hand(target.root);
+        if (error === null && !('error' in target)) hand(target.root);
         return;
       }
       case 'project.create': {
@@ -139,8 +145,10 @@ export async function startLauncher(options: LauncherOptions): Promise<RunningLa
     port: running.port,
     finished,
     close: () => (closing ??= (async () => {
+      closeRequested = true;
       clone?.handle.cancel();
       await clone?.handle.done;
+      await handed;
       await running.close();
       finish();
     })()),
