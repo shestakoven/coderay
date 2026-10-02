@@ -1,7 +1,9 @@
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { successorArgs, validateProjectPath } from '../../src/project/switch';
+import { projectDir } from '../../src/home';
+import { acquireCoreLock } from '../../src/lock';
+import { projectBusy, successorArgs, validateProjectPath } from '../../src/project/switch';
 import { tempDir } from '../helpers';
 
 describe('successorArgs', () => {
@@ -99,5 +101,33 @@ describe('validateProjectPath', () => {
     writeFileSync(join(root, 'f'), 'x');
     symlinkSync(join(root, 'f'), join(root, 'link'));
     expect(validateProjectPath(join(root, 'link'))).toHaveProperty('error');
+  });
+});
+
+describe('successorArgs without a project', () => {
+  it('appends only the port when the new root is null', () => {
+    expect(successorArgs([], null, 5)).toEqual(['--port', '5']);
+  });
+
+  it('drops every --project form and keeps the other flags', () => {
+    const argv = ['--ui', 'dist', '--project', '/old', '--project=/older', '--port', '1', '--ide-home', '/h'];
+    expect(successorArgs(argv, null, 9)).toEqual(['--ui', 'dist', '--ide-home', '/h', '--port', '9']);
+  });
+});
+
+describe('projectBusy', () => {
+  it('is null for a project nobody serves, again and again (the probe releases its lock)', () => {
+    const home = tempDir('ide-busy-');
+    expect(projectBusy(home, '/work/app')).toBeNull();
+    expect(projectBusy(home, '/work/app')).toBeNull();
+  });
+
+  it('names the holder while another core serves the project, and frees up afterwards', () => {
+    const home = tempDir('ide-busy-');
+    const held = acquireCoreLock(projectDir(home, '/work/app'));
+    expect(projectBusy(home, '/work/app')).toBe(`That project is already open in another IDE core (pid ${process.pid}).`);
+    expect(projectBusy(home, '/work/other')).toBeNull();
+    held.release();
+    expect(projectBusy(home, '/work/app')).toBeNull();
   });
 });

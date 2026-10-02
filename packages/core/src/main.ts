@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -24,9 +23,10 @@ import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
 import { listDirectories } from './project/browse';
+import { spawnSuccessor } from './project/handover';
 import { RecentProjects } from './project/recent';
 import { takeLaunchToken } from './project/token';
-import { successorArgs, validateProjectPath } from './project/switch';
+import { projectBusy, successorArgs, validateProjectPath } from './project/switch';
 import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
 import { startServer, type RunningServer } from './server/server';
@@ -255,23 +255,12 @@ try {
       case 'project.open': {
         const target = validateProjectPath(message.path);
         let error = 'error' in target ? target.error : target.root === root ? 'That project is already open.' : null;
-        if (error === null && !('error' in target)) {
-          const probe = acquireCoreLock(projectDir(home, target.root));
-          if (probe.acquired) probe.release();
-          else error = `That project is already open in another IDE core (pid ${probe.holder}).`;
-        }
+        if (error === null && !('error' in target)) error = projectBusy(home, target.root);
         reply({ type: 'project.open.result', requestId: message.requestId, error });
         if (error !== null || 'error' in target) return;
         recent.add(target.root);
         const args = successorArgs(process.argv.slice(2), target.root, running.port);
-        afterClose = async () => {
-          const child = spawn(process.execPath, [...process.execArgv, process.argv[1] ?? '', ...args, '--token-stdin'], {
-            detached: true,
-            stdio: ['pipe', 'inherit', 'inherit'],
-          });
-          await new Promise<void>((resolve) => child.stdin.end(token, () => resolve()));
-          child.unref();
-        };
+        afterClose = () => spawnSuccessor(args, token);
         closing ??= shutdown();
         return;
       }
