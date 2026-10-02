@@ -1,8 +1,4 @@
 import {
-  Background,
-  ControlButton,
-  Controls,
-  MiniMap,
   ReactFlow,
   useEdgesState,
   useNodesState,
@@ -13,12 +9,14 @@ import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useEffect, useMemo, useRef, useState, type Dispatch } from 'react';
 import { focusEdges, type MapEdge } from './edge-focus';
 import { markCounts } from '../history/dialog-state';
-import { Icon } from '../layout/Icon';
+import { MapBackground, MapControls } from './canvas';
 import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { dimsNode } from '../plan/plan-state';
 import { PromptPopover } from '../plan/PromptPopover';
 import { mapAnchor } from '../plan/prompt-text';
 import { fitKey, layoutBounds, layoutGraph, type Bounds, type MapFlowNode } from './layout';
+import { LayoutMenu } from './LayoutMenu';
+import { loadLayout, saveLayout, type LayoutSettings } from './layout-settings';
 import type { MapAction, MapState } from './map-state';
 import { nodeTypes } from './nodes';
 import { graphSignature, visibleGraph } from './visible-graph';
@@ -31,6 +29,11 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
   const [nodes, setNodes, onNodesChange] = useNodesState<MapFlowNode>([]);
   const [hovered, setHovered] = useState<string | null>(null);
   const [edges, setEdges, onEdgesChange] = useEdgesState<MapEdge>([]);
+  const [layout, setLayout] = useState(() => loadLayout(window.localStorage));
+  const changeLayout = (next: LayoutSettings) => {
+    setLayout(next);
+    saveLayout(window.localStorage, next);
+  };
   const graph = useMemo(
     () => (state.snapshot ? visibleGraph(state.snapshot, state.expanded, overlay.marks.ghosts, true) : null),
     [state.snapshot, state.expanded, overlay.marks.ghosts],
@@ -79,7 +82,7 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
   useEffect(() => {
     if (!graph) return;
     let cancelled = false;
-    layoutGraph(graph, state.expanded, elk).then(
+    layoutGraph(graph, state.expanded, elk, layout).then(
       (layout) => {
         if (cancelled) return;
         setNodes(layout.nodes);
@@ -90,7 +93,10 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
     return () => {
       cancelled = true;
     };
-  }, [signature, setNodes, setEdges]);
+  }, [signature, layout, setNodes, setEdges]);
+
+  const { fitBounds } = useReactFlow();
+  const layoutKey = `${layout.direction}/${layout.algorithm}/${layout.density}/${layout.detail}`;
 
   return (
     <PendingCountsContext.Provider value={pendingCounts}>
@@ -115,15 +121,13 @@ export function MapView({ state, dispatch }: { state: MapState; dispatch: Dispat
         colorMode="dark"
         proOptions={{ hideAttribution: true }}
       >
-        <Background />
-        <Controls showInteractive={false} showZoom={false} showFitView={false}>
-          <FitButton bounds={bounds} />
-        </Controls>
-        <MiniMap pannable zoomable />
-        <FitOnNewComponents fitKey={key} bounds={bounds} />
+        <MapBackground />
+        <MapControls disabled={!bounds} onFit={() => bounds && void fitBounds(bounds, { padding: FIT_PADDING })} />
+        <FitOnNewComponents fitKey={`${key}|${layoutKey}`} bounds={bounds} />
         <CenterOnFocus />
         <PromptPopover nodeId={promptNode} />
       </ReactFlow>
+      <LayoutMenu settings={layout} onChange={changeLayout} />
     </div>
     </PendingCountsContext.Provider>
   );
@@ -150,20 +154,4 @@ function FitOnNewComponents({ fitKey: key, bounds }: { fitKey: string; bounds: B
     void fitBounds(bounds, { padding: FIT_PADDING });
   }, [key, bounds, fitBounds]);
   return null;
-}
-
-function FitButton({ bounds }: { bounds: Bounds | null }) {
-  const { fitBounds } = useReactFlow();
-  return (
-    <ControlButton
-      title="Fit View"
-      aria-label="Fit View"
-      disabled={!bounds}
-      onClick={() => {
-        if (bounds) void fitBounds(bounds, { padding: FIT_PADDING });
-      }}
-    >
-      <Icon name="maximize" size={22} />
-    </ControlButton>
-  );
 }

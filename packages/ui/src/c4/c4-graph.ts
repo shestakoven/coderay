@@ -1,6 +1,8 @@
 import type { Edge, Node } from '@xyflow/react';
 import type { ELK, ElkNode } from 'elkjs/lib/elk-api.js';
 import type { C4Container, C4Model, ExternalKind, MapSnapshot } from '@ide/protocol';
+import type { Direction } from '../map/layout-settings';
+import { c4Spacing, DEFAULT_C4_LAYOUT, type C4Layout } from './c4-layout';
 
 export const OWN_COMPONENT_CARDS = 14;
 
@@ -19,6 +21,7 @@ export type C4NodeData = {
   external?: boolean;
   dim?: boolean;
   root?: boolean;
+  direction?: Direction;
 };
 
 export type C4FlowNode = Node<C4NodeData, Exclude<C4Kind, 'group'> | 'c4group'>;
@@ -269,6 +272,7 @@ const sizeOf = (node: VisibleNode) => (node.data.slim ? SLIM : node.kind === 'co
 export async function layoutC4(
   graph: { nodes: VisibleNode[]; edges: VisibleEdge[] },
   elk: ELK,
+  layout: C4Layout = DEFAULT_C4_LAYOUT,
 ): Promise<{ nodes: C4FlowNode[]; edges: Edge<C4EdgeData>[] }> {
   const children = new Map<string, VisibleNode[]>();
   for (const n of graph.nodes) if (n.parentId) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n]);
@@ -308,10 +312,10 @@ export async function layoutC4(
     id: 'root',
     layoutOptions: {
       'elk.algorithm': 'layered',
-      'elk.direction': 'RIGHT',
+      'elk.direction': layout.direction,
       'elk.partitioning.activate': 'true',
-      'elk.spacing.nodeNode': '26',
-      'elk.layered.spacing.nodeNodeBetweenLayers': '110',
+      'elk.spacing.nodeNode': String(c4Spacing(layout.density).node),
+      'elk.layered.spacing.nodeNodeBetweenLayers': String(c4Spacing(layout.density).layer),
       'elk.layered.nodePlacement.strategy': 'NETWORK_SIMPLEX',
     },
     children: top.map((n) => ({
@@ -327,7 +331,7 @@ export async function layoutC4(
   for (const n of top) {
     const p = position.get(n.id);
     const box = boxes.get(n.id) ?? sizeOf(n);
-    nodes.push({ id: n.id, type: n.kind === 'group' ? 'c4group' : n.kind, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, width: box.width, height: box.height, data: n.data });
+    nodes.push({ id: n.id, type: n.kind === 'group' ? 'c4group' : n.kind, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, width: box.width, height: box.height, data: { ...n.data, direction: layout.direction } });
     for (const kid of children.get(n.id) ?? []) {
       const r = inner.get(kid.id)!;
       nodes.push({ id: kid.id, type: kid.kind === 'group' ? 'c4group' : kid.kind, parentId: n.id, extent: 'parent', position: { x: r.x, y: r.y }, width: r.width, height: r.height, data: kid.data });
@@ -339,6 +343,7 @@ export async function layoutC4(
       id: e.id,
       source: e.from,
       target: e.to,
+      type: layout.edgeStyle,
       label: e.protocols.join(' · '),
       className: e.protocols.includes('imports') || e.protocols.includes('starts') ? 'c4-import' : '',
       animated: true,

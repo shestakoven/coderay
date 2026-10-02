@@ -1,6 +1,7 @@
 import { MarkerType, type Node } from '@xyflow/react';
 import type { MapEdge } from './edge-focus';
 import type { ELK, ElkNode } from 'elkjs/lib/elk-api.js';
+import { DEFAULT_LAYOUT, elkOptions, NODE_SIZES, type Detail, type Direction, type EdgeStyle, type LayoutSettings } from './layout-settings';
 import type { VisibleEdge, VisibleGraph, VisibleNode } from './visible-graph';
 
 export type MapNodeData = {
@@ -12,14 +13,13 @@ export type MapNodeData = {
   parseError?: boolean;
   ghost?: boolean;
   expanded: boolean;
+  direction: Direction;
+  detail: Detail;
 };
 
 export type MapFlowNode = Node<MapNodeData, 'component' | 'file'>;
 
-export const NODE_SIZE = {
-  component: { width: 240, height: 72 },
-  file: { width: 170, height: 34 },
-};
+export const NODE_SIZE = NODE_SIZES.normal;
 
 export interface Bounds {
   x: number;
@@ -47,21 +47,13 @@ export function fitKey(nodes: MapFlowNode[]): string {
     .join('\n');
 }
 
-const ROOT_OPTIONS = {
-  'elk.algorithm': 'layered',
-  'elk.direction': 'RIGHT',
-  'elk.hierarchyHandling': 'INCLUDE_CHILDREN',
-  'elk.spacing.nodeNode': '32',
-  'elk.layered.spacing.nodeNodeBetweenLayers': '90',
-  'elk.layered.crossingMinimization.strategy': 'LAYER_SWEEP',
-  'elk.layered.considerModelOrder.strategy': 'NONE',
-};
-
 export async function layoutGraph(
   graph: VisibleGraph,
   expanded: ReadonlySet<string>,
   elk: ELK,
+  settings: LayoutSettings = DEFAULT_LAYOUT,
 ): Promise<{ nodes: MapFlowNode[]; edges: MapEdge[] }> {
+  const sizes = NODE_SIZES[settings.detail];
   const childrenOf = new Map<string, VisibleNode[]>();
   for (const node of graph.nodes) {
     if (node.parentId) childrenOf.set(node.parentId, [...(childrenOf.get(node.parentId) ?? []), node]);
@@ -71,12 +63,12 @@ export async function layoutGraph(
     if (children?.length) {
       return { id: node.id, layoutOptions: { 'elk.padding': '[top=64,left=12,bottom=12,right=12]' }, children: children.map(toElk) };
     }
-    return { id: node.id, ...NODE_SIZE[node.kind] };
+    return { id: node.id, ...sizes[node.kind] };
   };
 
   const laidOut = await elk.layout({
     id: 'root',
-    layoutOptions: ROOT_OPTIONS,
+    layoutOptions: elkOptions(settings),
     children: graph.nodes.filter((n) => !n.parentId).map(toElk),
     edges: graph.edges.map((e) => ({ id: e.id, sources: [e.to], targets: [e.from] })),
   });
@@ -102,6 +94,8 @@ export async function layoutGraph(
         parseError: node.parseError,
         ghost: node.ghost,
         expanded: expanded.has(node.id),
+        direction: settings.direction,
+        detail: settings.detail,
       },
     });
     for (const child of elkNode.children ?? []) visit(child, node.id);
@@ -110,13 +104,13 @@ export async function layoutGraph(
 
   return {
     nodes,
-    edges: mergeOpposite(graph.edges),
+    edges: mergeOpposite(graph.edges, settings.edgeStyle),
   };
 }
 
 const ARROW = { type: MarkerType.ArrowClosed, width: 7, height: 7, markerUnits: 'userSpaceOnUse' };
 
-function mergeOpposite(edges: VisibleEdge[]): MapEdge[] {
+function mergeOpposite(edges: VisibleEdge[], edgeStyle: EdgeStyle): MapEdge[] {
   const byId = new Map(edges.map((e) => [e.id, e]));
   const merged: MapEdge[] = [];
   for (const e of edges) {
@@ -124,7 +118,7 @@ function mergeOpposite(edges: VisibleEdge[]): MapEdge[] {
     if (back && e.from > e.to) continue;
     merged.push({
       id: e.id,
-      type: 'smoothstep',
+      type: edgeStyle,
       source: e.from,
       target: e.to,
       data: { weight: e.weight + (back?.weight ?? 0) },

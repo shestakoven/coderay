@@ -1,6 +1,7 @@
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { describe, expect, it } from 'vitest';
 import { fitKey, layoutBounds, layoutGraph, NODE_SIZE } from '../src/map/layout';
+import { DEFAULT_LAYOUT, LAYOUT_CHOICES, NODE_SIZES } from '../src/map/layout-settings';
 import { visibleGraph } from '../src/map/visible-graph';
 import { demoSnapshot } from './snapshot';
 
@@ -55,6 +56,31 @@ describe('layoutGraph', () => {
     };
     const { nodes } = await layoutGraph(graph, new Set(), elk);
     expect(nodes.find((n) => n.id === 'types')!.position.x).toBeLessThan(nodes.find((n) => n.id === 'app')!.position.x);
+  });
+
+  it('flows dependencies downward, sizes nodes by detail and applies the edge style', async () => {
+    const graph = {
+      nodes: [
+        { id: 'app', kind: 'component' as const, label: 'app' },
+        { id: 'types', kind: 'component' as const, label: 'types' },
+      ],
+      edges: [{ id: 'app->types', from: 'app', to: 'types', weight: 1 }],
+    };
+    const { nodes, edges } = await layoutGraph(graph, new Set(), elk, { ...DEFAULT_LAYOUT, direction: 'DOWN', detail: 'compact', edgeStyle: 'straight' });
+    const types = nodes.find((n) => n.id === 'types')!;
+    const app = nodes.find((n) => n.id === 'app')!;
+    expect(types.position.y).toBeLessThan(app.position.y);
+    expect(types.width).toBe(NODE_SIZES.compact.component.width);
+    expect(app.data.direction).toBe('DOWN');
+    expect(edges.every((e) => e.type === 'straight')).toBe(true);
+  });
+
+  it('lays out with every algorithm', async () => {
+    for (const algorithm of LAYOUT_CHOICES.algorithm) {
+      const { nodes } = await layoutGraph(visibleGraph(demoSnapshot(), expanded), expanded, elk, { ...DEFAULT_LAYOUT, algorithm });
+      expect(nodes.length, algorithm).toBeGreaterThan(0);
+      expect(nodes.every((n) => Number.isFinite(n.position.x) && Number.isFinite(n.position.y)), algorithm).toBe(true);
+    }
   });
 
   it('sizes an expanded component to contain its files', async () => {

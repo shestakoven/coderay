@@ -1,6 +1,4 @@
 import {
-  Background,
-  Controls,
   Handle,
   Position,
   ReactFlow,
@@ -25,8 +23,13 @@ import { PromptPopover } from '../plan/PromptPopover';
 import { promptTarget } from '../plan/prompt-text';
 import { StepBadges } from '../plan/StepBadges';
 import { DetailsAside } from '../layout/DetailsSlot';
+import { MapBackground, MapControls } from '../map/canvas';
+import { LayoutMenu } from '../map/LayoutMenu';
+import { DEFAULT_LAYOUT, handlePositions, type LayoutSettings } from '../map/layout-settings';
+import { loadC4Layout, saveC4Layout, type C4Layout } from './c4-layout';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
+const C4_LAYOUT_FIELDS: (keyof LayoutSettings)[] = ['direction', 'edgeStyle', 'density'];
 
 const ICONS: Record<string, string> = {
   person: '<circle cx="8" cy="5" r="3" fill="currentColor"/><path d="M2 15c0-3.3 2.7-5 6-5s6 1.7 6 5z" fill="currentColor"/>',
@@ -62,6 +65,8 @@ const NodePlansContext = createContext<Map<string, NodePlan>>(new Map());
 interface NodeChange { states: NodeState[]; added: number; removed: number; files: number }
 const NodeChangesContext = createContext<Map<string, NodeChange>>(new Map());
 
+const POSITION = { left: Position.Left, right: Position.Right, top: Position.Top, bottom: Position.Bottom };
+
 function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
   const plan = useContext(NodePlansContext).get(id);
   const pending = useContext(PendingCountsContext).get(id);
@@ -70,7 +75,7 @@ function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
   const planLine = plan && !data.expanded ? `${plan.line}${plan.creates ? ` · +${plan.creates} new` : ''}` : null;
   return (
     <div className={cls} style={{ ['--acc' as string]: data.accent }}>
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={POSITION[handlePositions(data.direction ?? 'RIGHT').target]} />
       {plan && <StepBadges steps={plan.steps} />}
       {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}
       <div className="c4-title">
@@ -81,7 +86,7 @@ function C4Card({ id, data, selected }: NodeProps<C4FlowNode>) {
       <div className="c4-sub">{data.subtitle}</div>
       {changed && <div className="c4-detail change-line">+{changed.added} {'\u2212'}{changed.removed} {'\u00b7'} {changed.files} file{changed.files === 1 ? '' : 's'}</div>}
       {planLine ? <div className="c4-detail c4-plan-line">{planLine}</div> : data.detail && <div className="c4-detail">{data.detail}</div>}
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={POSITION[handlePositions(data.direction ?? 'RIGHT').source]} />
     </div>
   );
 }
@@ -93,6 +98,14 @@ const expandable = (node: C4FlowNode) => node.type === 'c4group' || node.type ==
 
 export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Model }) {
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [layout, setLayout] = useState<C4Layout>(() => loadC4Layout(window.localStorage));
+  const changeLayout = (next: C4Layout) => {
+    needFit.current = true;
+    moved.current.clear();
+    setMovedCount(0);
+    setLayout(next);
+    saveC4Layout(window.localStorage, next);
+  };
   const [root, setRoot] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number; id: string } | null>(null);
   const [selection, setSelection] = useState<Selection>(null);
@@ -101,7 +114,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
   const moved = useRef(new Map<string, { x: number; y: number }>());
   const [movedCount, setMovedCount] = useState(0);
   const [resetKey, setResetKey] = useState(0);
-  const { fitBounds, setCenter, getZoom } = useReactFlow();
+  const { fitBounds, fitView, setCenter, getZoom } = useReactFlow();
   // Fit every new layout until the user moves, drags or opens something.
   const needFit = useRef(true);
   const graph = useMemo(() => (root ? c4RootGraph(snapshot, model, root, expanded) : c4Graph(snapshot, model, expanded)), [snapshot, model, expanded, root]);
@@ -118,7 +131,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
 
   useEffect(() => {
     let cancelled = false;
-    layoutC4(graph, elk).then(
+    layoutC4(graph, elk, layout).then(
       (layout) => {
         if (cancelled) return;
         setNodes(layout.nodes.map((n) => (!n.parentId && moved.current.has(n.id) ? { ...n, position: moved.current.get(n.id)! } : n)));
@@ -147,7 +160,7 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
     return () => {
       cancelled = true;
     };
-  }, [signature, resetKey, setNodes, setEdges, fitBounds, setCenter, getZoom]);
+  }, [signature, layout, resetKey, setNodes, setEdges, fitBounds, setCenter, getZoom]);
 
   const focus = useMemo(() => focusOf(selection, nodes, edges), [selection, nodes, edges]);
   const overlay = usePlanOverlay();
@@ -284,10 +297,11 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
         colorMode="dark"
         proOptions={{ hideAttribution: true }}
       >
-        <Background gap={24} />
-        <Controls showInteractive={false} />
+        <MapBackground />
+        <MapControls onFit={() => void fitView({ padding: 0.08 })} />
         <PromptPopover nodeId={promptNode} />
       </ReactFlow>
+      <LayoutMenu settings={{ ...DEFAULT_LAYOUT, ...layout }} fields={C4_LAYOUT_FIELDS} onChange={(next) => changeLayout({ direction: next.direction, density: next.density, edgeStyle: next.edgeStyle })} />
       <div className="c4-toolbar">
         {root && (
           <span className="c4-crumbs">

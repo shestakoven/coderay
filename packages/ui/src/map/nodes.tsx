@@ -2,9 +2,17 @@ import { Handle, Position, useStore, type NodeProps } from '@xyflow/react';
 import { useContext } from 'react';
 import { nodeStateClass } from '../history/history-state';
 import { changeLine } from '../history/timeline-state';
+import { Icon } from '../layout/Icon';
 import { PendingCountsContext, usePlanOverlay } from '../plan/overlay';
 import { StepBadges } from '../plan/StepBadges';
 import type { MapFlowNode } from './layout';
+import { handlePositions, type Direction } from './layout-settings';
+
+const POSITION = { left: Position.Left, right: Position.Right, top: Position.Top, bottom: Position.Bottom };
+const handleSides = (direction: Direction) => {
+  const sides = handlePositions(direction);
+  return { target: POSITION[sides.target], source: POSITION[sides.source] };
+};
 
 const classes = (...names: (string | false | undefined)[]) => names.filter(Boolean).join(' ');
 
@@ -19,10 +27,11 @@ export function ComponentNode({ id, data, selected }: NodeProps<MapFlowNode>) {
   const changed = changes.get(id);
   const zoom = useStore(farZoom);
   return (
-    <div style={zoom < 1 ? ({ '--zoom': zoom } as React.CSSProperties) : undefined} className={classes('node', 'component', zoom < 1 && 'far', changed && nodeStateClass(changed.states), highlight.has(id) && 'highlight', data.expanded && 'expanded', data.stale && 'stale', mark && 'in-plan', selected && 'selected')}>
-      <Handle type="target" position={Position.Left} />
+    <div style={zoom < 1 ? ({ '--zoom': zoom } as React.CSSProperties) : undefined} className={classes('node', 'component', `detail-${data.detail}`, zoom < 1 && 'far', changed && nodeStateClass(changed.states), highlight.has(id) && 'highlight', data.expanded && 'expanded', data.stale && 'stale', mark && 'in-plan', selected && 'selected')}>
+      <Handle type="target" position={handleSides(data.direction).target} />
       {mark && <StepBadges steps={mark.steps} />}
       {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}
+      <span className="node-caret"><Icon name={data.expanded ? 'chevron-down' : 'chevron-right'} size={18} /></span>
       <div className="title">{data.label}</div>
       {data.summary && (
         <div className="summary" title={data.summary}>
@@ -30,7 +39,7 @@ export function ComponentNode({ id, data, selected }: NodeProps<MapFlowNode>) {
         </div>
       )}
       <div className="meta">
-        {data.fileCount} files {data.expanded ? '▾' : '▸'}
+        {data.fileCount} {data.fileCount === 1 ? 'file' : 'files'}
         {mark && (
           <span className="plan-meta">
             {' · '}
@@ -40,7 +49,7 @@ export function ComponentNode({ id, data, selected }: NodeProps<MapFlowNode>) {
         )}
         {changed && <span className="change-line"> · {changeLine(changed)}</span>}
       </div>
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={handleSides(data.direction).source} />
     </div>
   );
 }
@@ -52,7 +61,7 @@ export function FileNode({ id, data, selected }: NodeProps<MapFlowNode>) {
   const changed = changes.get(id);
   return (
     <div className={classes('node', 'file', changed && nodeStateClass(changed.states), highlight.has(id) && 'highlight', data.parseError && 'error', data.ghost && 'ghost', steps.length > 0 && 'in-plan', selected && 'selected')}>
-      <Handle type="target" position={Position.Left} />
+      <Handle type="target" position={handleSides(data.direction).target} />
       <StepBadges steps={steps} compact />
       {pending && <span className="pending-badge" title="Waiting for your answer">{pending}</span>}
       <div className="title">
@@ -61,7 +70,7 @@ export function FileNode({ id, data, selected }: NodeProps<MapFlowNode>) {
         {data.label}
         {changed && <span className="change-line"> {changeLine(changed)}</span>}
       </div>
-      <Handle type="source" position={Position.Right} />
+      <Handle type="source" position={handleSides(data.direction).source} />
     </div>
   );
 }
