@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -6,6 +6,7 @@ import { join, resolve } from 'node:path';
 const REPO = resolve(import.meta.dirname, '..');
 const FAKE_CLAUDE = join(REPO, 'packages/core/test/fake-claude/fake-claude.mjs');
 const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
+const stream = (scenario: string): string => join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`);
 
 export interface Core {
   url: string;
@@ -14,12 +15,14 @@ export interface Core {
   stop(): Promise<void>;
 }
 
-export async function startCore(scenario: string): Promise<Core> {
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
-  const root = join(base, 'project');
+export interface Launcher {
+  url: string;
+  home: string;
+  stop(): Promise<void>;
+}
+
+function prepareHome(base: string): { home: string; bin: string } {
   const home = join(base, 'home');
-  cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
-  execFileSync('git', ['init', '-q'], { cwd: root });
   mkdirSync(MODELS_CACHE, { recursive: true });
   mkdirSync(home, { recursive: true });
   symlinkSync(MODELS_CACHE, join(home, 'models'));
@@ -27,16 +30,15 @@ export async function startCore(scenario: string): Promise<Core> {
   const bin = join(base, 'bin');
   mkdirSync(bin);
   writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
-  const record = join(base, 'fake-claude-record.jsonl');
-  const child = spawn(
-    process.execPath,
-    ['--import', 'tsx', join(REPO, 'packages/core/src/main.ts'), '--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
-    {
-      cwd: REPO,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`) },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    },
-  );
+  return { home, bin };
+}
+
+async function spawnCore(base: string, args: string[], env: NodeJS.ProcessEnv): Promise<{ child: ChildProcess; url: string; exited: Promise<void> }> {
+  const child = spawn(process.execPath, ['--import', 'tsx', join(REPO, 'packages/core/src/main.ts'), ...args], {
+    cwd: REPO,
+    env: { ...process.env, ...env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
   const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
   const url = await new Promise<string>((resolveUrl, reject) => {
     let output = '';
@@ -64,13 +66,64 @@ export async function startCore(scenario: string): Promise<Core> {
     child.stderr?.on('data', read);
     void exited.then(() => fail('the core exited'));
   });
+  return { child, url, exited };
+}
+
+const listeners = (port: string): string[] => {
+  try {
+    return execFileSync('lsof', ['-ti', `tcp:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').filter(Boolean);
+  } catch {
+    return [];
+  }
+};
+
+// A project switch or close leaves a detached successor on the port; it is not the child we spawned.
+async function stopSuccessor(url: string): Promise<void> {
+  const port = new URL(url).port;
+  for (const pid of listeners(port)) process.kill(Number(pid), 'SIGTERM');
+  for (let attempt = 0; attempt < 100 && listeners(port).length > 0; attempt += 1) await new Promise((r) => setTimeout(r, 100));
+}
+
+export async function startCore(scenario: string): Promise<Core> {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
+  const root = join(base, 'project');
+  cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  const { home, bin } = prepareHome(base);
+  const record = join(base, 'fake-claude-record.jsonl');
+  const core = await spawnCore(
+    base,
+    ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario) },
+  );
   return {
-    url,
+    url: core.url,
     record,
     file: (rel) => readFileSync(join(root, rel), 'utf8'),
     stop: async () => {
-      child.kill('SIGTERM');
-      await exited;
+      core.child.kill('SIGTERM');
+      await core.exited;
+      await stopSuccessor(core.url);
+      rmSync(base, { recursive: true, force: true });
+    },
+  };
+}
+
+export async function startLauncher(): Promise<Launcher> {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
+  const { home, bin } = prepareHome(base);
+  const core = await spawnCore(
+    base,
+    ['--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: stream('text-then-wait') },
+  );
+  return {
+    url: core.url,
+    home,
+    stop: async () => {
+      core.child.kill('SIGTERM');
+      await core.exited;
+      await stopSuccessor(core.url);
       rmSync(base, { recursive: true, force: true });
     },
   };
