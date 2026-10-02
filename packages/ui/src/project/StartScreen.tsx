@@ -17,7 +17,7 @@ interface FormProps {
 
 export function StartScreen({ info, status, browse, start, dispatchStart, send }: Omit<FormProps, 'busy'> & { info: ProjectInfo; status: ConnectionStatus }) {
   const [dialog, setDialog] = useState(false);
-  const busy = isWorking(start) || isOpening(browse.state);
+  const busy = isWorking(start) || isOpening(browse.state) || dialog;
   const toggle = (view: StartView): void => dispatchStart({ type: 'view', view: start.view === view ? 'home' : view });
   const open = (path: string): void => {
     const requestId = crypto.randomUUID();
@@ -38,7 +38,7 @@ export function StartScreen({ info, status, browse, start, dispatchStart, send }
           <div className="start-actions">
             <ActionRow icon="plus" title="Create" hint="A new folder with an empty git repository" expanded={start.view === 'create'} disabled={busy} onClick={() => toggle('create')} />
             {start.view === 'create' && <CreateForm {...form} />}
-            <ActionRow icon="folder" title="Open" hint="An existing folder on this machine" disabled={busy} onClick={() => setDialog(true)} />
+            <ActionRow icon="folder" title="Open" hint="An existing folder on this machine" disabled={busy} onClick={() => { dispatchStart({ type: 'view', view: 'home' }); setDialog(true); }} />
             <ActionRow icon="git-branch" title="Clone" hint="A git repository from a URL" expanded={start.view === 'clone'} disabled={busy} onClick={() => toggle('clone')} />
             {start.view === 'clone' && <CloneForm {...form} />}
           </div>
