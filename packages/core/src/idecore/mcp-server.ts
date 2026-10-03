@@ -3,6 +3,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { MapSnapshot } from '@ide/protocol';
+import { PLAN_FLOW_EDGE_STATES, PLAN_FLOW_FILE_OPS, PLAN_FLOW_NODE_KINDS, PLAN_FLOW_NODE_STATES } from '@ide/protocol';
 import { z } from 'zod';
 import type { SearchOutcome } from '../map/map-service';
 import type { PlanService } from '../plans/plan-service';
@@ -18,6 +19,8 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const PROPOSE_DESCRIPTION = [
   'Show your plan to the user on the IDE map before you change project files, and wait for the answer.',
   'Each step has a key, a title, a rationale and targets. A target is {"componentId": "<id from the system prompt>"} or {"path": "<project path>"}, with "op": "modify", "create" or "delete".',
+  'Also send "flow" when the change adds or rewires parts: nodes {id, title, sub, kind, state, steps, files} and edges {from, to, label, state, step} that draw what the plan builds, like client → POST /users → UserService → User → users table.',
+  'A node is "existing", "modify", "create" or "delete"; an edge is "existing", "new" or "removed"; "steps" and "step" are step keys. Use 5 to 12 nodes, one per responsibility, and label every new edge with what travels along it.',
   'Returns {"status": "approved" | "changes_requested" | "rejected", "feedback"?: "..."}.',
   'To change an approved plan, call it again with the whole plan and keep the active and done steps.',
 ].join(' ');
@@ -25,9 +28,20 @@ const PROPOSE_DESCRIPTION = [
 const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time.';
 
 const target = z.object({ componentId: z.string().optional(), path: z.string().optional(), op: z.enum(['modify', 'create', 'delete']) });
+const flowNode = z.object({
+  id: z.string(),
+  title: z.string(),
+  sub: z.string().optional(),
+  kind: z.enum(PLAN_FLOW_NODE_KINDS),
+  state: z.enum(PLAN_FLOW_NODE_STATES),
+  steps: z.array(z.string()).optional(),
+  files: z.array(z.object({ op: z.enum(PLAN_FLOW_FILE_OPS), path: z.string(), note: z.string().optional() })).optional(),
+});
+const flowEdge = z.object({ from: z.string(), to: z.string(), label: z.string().optional(), state: z.enum(PLAN_FLOW_EDGE_STATES), step: z.string().optional() });
 const proposeInput = {
   goal: z.string(),
   steps: z.array(z.object({ key: z.string(), title: z.string(), rationale: z.string(), targets: z.array(target) })),
+  flow: z.object({ nodes: z.array(flowNode), edges: z.array(flowEdge).optional() }).optional(),
 };
 const stepInput = { key: z.string(), phase: z.enum(['start', 'done']) };
 

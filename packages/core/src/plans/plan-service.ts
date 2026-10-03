@@ -5,6 +5,7 @@ import type { PlanGate } from '../gate/scope-guard';
 import { isRecord } from '../json';
 import type { PlanRecord, Store } from '../store/store';
 import { freezeScope, ownerIndex, type ReviewResult } from './freeze';
+import { flowNotes } from './plan-flow';
 import { parsePlanInput, type ComponentRef } from './plan-input';
 
 export const PLAN_DEADLINE_MS = 3_540_000;
@@ -96,11 +97,13 @@ export class PlanService {
       const feedback = `Superseded by version ${version}.`;
       this.settle(older, 'superseded', feedback, { status: 'rejected', feedback });
     }
-    const review = this.rejectPause && reviewed.review.auto ? { auto: false, notes: [REJECT_PAUSE_NOTE, ...reviewed.review.notes] } : reviewed.review;
+    const scope = freezeScope(input.steps, this.options.root, components);
+    const base = this.rejectPause && reviewed.review.auto ? { auto: false, notes: [REJECT_PAUSE_NOTE, ...reviewed.review.notes] } : reviewed.review;
+    const review = base.auto ? base : { ...base, notes: [...base.notes, ...flowNotes(input.flow, input.steps, scope)] };
     const record: PlanRecord = {
       id, version, goal: input.goal, status: 'proposed', approvedBy: null, steps: input.steps,
-      scope: freezeScope(input.steps, this.options.root, components), owners: reviewed.owners, review,
-      feedback: null, flow: null, proposedAt: this.now(), decidedAt: null,
+      scope, owners: reviewed.owners, review, flow: input.flow,
+      feedback: null, proposedAt: this.now(), decidedAt: null,
     };
     this.records.push(record);
     if (!this.states.has(id)) this.states.set(id, new Map());

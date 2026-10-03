@@ -1,7 +1,8 @@
 import { isAbsolute, relative, sep } from 'node:path';
-import type { PlanStep, PlanTarget, TargetOp } from '@ide/protocol';
+import type { PlanFlow, PlanStep, PlanTarget, TargetOp } from '@ide/protocol';
 import { realTarget } from '../gate/paths';
 import { isRecord } from '../json';
+import { parsePlanFlow } from './plan-flow';
 
 export interface ComponentRef {
   id: string;
@@ -13,6 +14,7 @@ export interface ComponentRef {
 export interface PlanInput {
   goal: string;
   steps: PlanStep[];
+  flow: PlanFlow | null;
 }
 
 const OPS: readonly string[] = ['modify', 'create', 'delete'];
@@ -57,7 +59,9 @@ export function parsePlanInput(raw: unknown, root: string, components: Component
     keys.add(key);
     steps.push({ key, order: index + 1, title, rationale: text(value.rationale) ?? '', targets });
   }
-  return { goal, steps };
+  const flow = parsePlanFlow(raw.flow, keys, (path) => projectPath(path, root));
+  if (typeof flow === 'string') return flow;
+  return { goal, steps, flow };
 }
 
 function parseTarget(value: unknown, key: string, root: string, byId: Map<string, ComponentRef>): PlanTarget | string {
