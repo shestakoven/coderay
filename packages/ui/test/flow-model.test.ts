@@ -16,6 +16,12 @@ const nodeIn = (flow: PlanFlow, id: string): PlanFlowNode => {
   return found;
 };
 
+const edgeIn = (flow: PlanFlow, index: number): PlanFlowEdge => {
+  const found = flow.edges[index];
+  if (!found) throw new Error(`no edge ${index}`);
+  return found;
+};
+
 const node = (id: string, steps: string[], overrides: Partial<PlanFlowNode> = {}): PlanFlowNode => (
   { id, title: id, sub: '', kind: 'module', state: 'existing', steps, files: [], ...overrides }
 );
@@ -163,14 +169,14 @@ describe('edgePhase', () => {
   });
 
   it('is none for an existing edge without a step, in a waiting plan and in a running one', () => {
-    const existing = flowIn(userPlan()).edges[6];
+    const existing = edgeIn(flowIn(userPlan()), 6);
     expect(existing).toMatchObject({ from: 'session', to: 'db', state: 'existing' });
     expect([userPlan(), withProgress(userPlan(), 2), withProgress(userPlan(), 5)].map((plan) => edgePhase(plan, existing))).toEqual(['none', 'none', 'none']);
   });
 
   it('follows the step of a removed edge too', () => {
     const plan = withProgress(limitPlan(), 2);
-    const removed = flowIn(plan).edges[1];
+    const removed = edgeIn(flowIn(plan), 1);
     expect(removed).toMatchObject({ from: 'auth', to: 'routes', state: 'removed', step: 'limiter' });
     expect(edgePhase(plan, removed)).toBe('active');
   });
