@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_C4_LAYOUT, loadC4Layout, saveC4Layout } from '../src/c4/c4-layout';
+import { DEFAULT_PREFS, loadPrefs, savePrefs } from '../src/history/review-store';
+import { initialPanels, loadPanels, savePanels } from '../src/layout/panel-state';
+import { DEFAULT_SIZES, loadSizes, saveSizes } from '../src/layout/sizes';
 import { DEFAULT_LAYOUT, loadLayout, saveLayout } from '../src/map/layout-settings';
 import { DEFAULT_FLOW_DIRECTION, loadFlowDirection, saveFlowDirection } from '../src/plan-flow/flow-settings';
 
@@ -89,6 +93,35 @@ describe('flow direction', () => {
     saveLayout(other, { ...DEFAULT_LAYOUT, direction: 'DOWN' });
     expect(loadFlowDirection(other)).toBe('RIGHT');
     expect(loadLayout(other).direction).toBe('DOWN');
+  });
+
+  it('does not overwrite any other setting kept in the same storage', () => {
+    const storage = memory();
+    saveLayout(storage, { ...DEFAULT_LAYOUT, direction: 'LEFT' });
+    saveC4Layout(storage, { ...DEFAULT_C4_LAYOUT, direction: 'UP' });
+    saveSizes(storage, { ...DEFAULT_SIZES, left: DEFAULT_SIZES.left + 7 });
+    savePanels(storage, { ...initialPanels, bottom: true });
+    savePrefs(storage, { ...DEFAULT_PREFS, mode: 'split' });
+    const before = {
+      layout: loadLayout(storage),
+      c4: loadC4Layout(storage),
+      sizes: loadSizes(storage),
+      panels: loadPanels(storage),
+      prefs: loadPrefs(storage),
+    };
+    expect(before.layout.direction).toBe('LEFT');
+    expect(before.c4.direction).toBe('UP');
+    expect(before.panels.bottom).toBe(true);
+    expect(before.prefs.mode).toBe('split');
+
+    saveFlowDirection(storage, 'RIGHT');
+
+    expect(loadFlowDirection(storage)).toBe('RIGHT');
+    expect(loadLayout(storage)).toEqual(before.layout);
+    expect(loadC4Layout(storage)).toEqual(before.c4);
+    expect(loadSizes(storage)).toEqual(before.sizes);
+    expect(loadPanels(storage)).toEqual(before.panels);
+    expect(loadPrefs(storage)).toEqual(before.prefs);
   });
 
   it('does not take the map layout direction as its own', () => {

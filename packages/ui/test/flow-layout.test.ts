@@ -83,6 +83,26 @@ const misordered = (flow: PlanFlow, positions: Positions, direction: Direction):
     .filter((e) => !flowsForward(direction, at(positions, e.from), at(positions, e.to)))
     .map((e) => `${e.from} -> ${e.to}`);
 
+const separation = (a: Point, b: Point): number => {
+  const gapX = Math.max(a.x - (b.x + FLOW_NODE_SIZE.width), b.x - (a.x + FLOW_NODE_SIZE.width));
+  const gapY = Math.max(a.y - (b.y + FLOW_NODE_SIZE.height), b.y - (a.y + FLOW_NODE_SIZE.height));
+  return Math.max(gapX, gapY);
+};
+const minSeparation = (positions: Positions): number => {
+  const entries = [...positions.values()];
+  return Math.min(...entries.flatMap((a, i) => entries.slice(i + 1).map((b) => separation(a, b))));
+};
+const linkGap = (direction: Direction, source: Point, target: Point): number => {
+  switch (direction) {
+    case 'RIGHT': return target.x - (source.x + FLOW_NODE_SIZE.width);
+    case 'LEFT': return source.x - (target.x + FLOW_NODE_SIZE.width);
+    case 'DOWN': return target.y - (source.y + FLOW_NODE_SIZE.height);
+    case 'UP': return source.y - (target.y + FLOW_NODE_SIZE.height);
+  }
+};
+const minLinkGap = (flow: PlanFlow, positions: Positions, direction: Direction): number =>
+  Math.min(...directedEdges(flow).map((e) => linkGap(direction, at(positions, e.from), at(positions, e.to))));
+
 const nowOf = (flow: PlanFlow): PlanFlow => {
   const kept = new Set(existingIds(flow));
   return { nodes: flow.nodes.filter((n) => kept.has(n.id)), edges: flow.edges.filter((e) => e.state !== 'new' && kept.has(e.from) && kept.has(e.to)) };
@@ -101,6 +121,18 @@ describe('test helpers', () => {
     expect(sorted(onCycle(cyclic))).toEqual(['a', 'b']);
     expect(onCycle(userFlow()).size).toBe(0);
     expect(onCycle(limitFlow()).size).toBe(0);
+  });
+});
+
+describe('spacing helpers', () => {
+  it('measure the clear space between cards, along the flow and in any direction', () => {
+    const { width, height } = FLOW_NODE_SIZE;
+    expect(minSeparation(points({ a: [0, 0], b: [width + 30, 0], c: [0, height + 50] }))).toBe(30);
+    expect(minSeparation(points({ a: [0, 0], b: [width + 30, height + 50] }))).toBe(50);
+    expect(linkGap('DOWN', { x: 0, y: 0 }, { x: 5, y: height + 70 })).toBe(70);
+    expect(linkGap('UP', { x: 0, y: height + 70 }, { x: 5, y: 0 })).toBe(70);
+    expect(linkGap('RIGHT', { x: 0, y: 0 }, { x: width + 90, y: 5 })).toBe(90);
+    expect(linkGap('LEFT', { x: width + 90, y: 0 }, { x: 0, y: 5 })).toBe(90);
   });
 });
 
@@ -210,6 +242,44 @@ describe('layoutFlow direction', () => {
     for (const direction of ['RIGHT', 'LEFT'] as const) {
       const { plan } = await layoutFlow(elk, flow, direction);
       expect(span(plan, 'x'), direction).toBeGreaterThanOrEqual(3 * FLOW_NODE_SIZE.width);
+    }
+  });
+});
+
+describe('layoutFlow spacing', () => {
+  const MIN_CARD_GAP = 16;
+  const MIN_LINK_ROOM = 48;
+
+  it('leaves a visible gap between cards in both layouts, in every direction', async () => {
+    for (const [name, makeFlow] of FIXTURES) {
+      for (const direction of DIRECTIONS) {
+        const { plan, now } = await layoutFlow(elk, makeFlow(), direction);
+        expect(minSeparation(plan), `${name} plan ${direction}`).toBeGreaterThanOrEqual(MIN_CARD_GAP);
+        expect(minSeparation(now), `${name} now ${direction}`).toBeGreaterThanOrEqual(MIN_CARD_GAP);
+      }
+    }
+  });
+
+  it('leaves room for the link label between a source and its target, in every direction', async () => {
+    for (const [name, makeFlow] of FIXTURES) {
+      const flow = makeFlow();
+      for (const direction of DIRECTIONS) {
+        const { plan, now } = await layoutFlow(elk, flow, direction);
+        expect(minLinkGap(flow, plan, direction), `${name} plan ${direction}`).toBeGreaterThanOrEqual(MIN_LINK_ROOM);
+        expect(minLinkGap(nowOf(flow), now, direction), `${name} now ${direction}`).toBeGreaterThanOrEqual(MIN_LINK_ROOM);
+      }
+    }
+  });
+
+  it('spaces opposite directions alike, so flipping the direction does not reshape the diagram', async () => {
+    for (const [name, makeFlow] of FIXTURES) {
+      const flow = makeFlow();
+      for (const [forward, backward] of [['DOWN', 'UP'], ['RIGHT', 'LEFT']] as const) {
+        const a = (await layoutFlow(elk, flow, forward)).plan;
+        const b = (await layoutFlow(elk, flow, backward)).plan;
+        expect(minLinkGap(flow, b, backward), `${name} ${backward} link gap`).toBeCloseTo(minLinkGap(flow, a, forward), 6);
+        expect(minSeparation(b), `${name} ${backward} card gap`).toBeCloseTo(minSeparation(a), 6);
+      }
     }
   });
 });
