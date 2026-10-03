@@ -10,6 +10,11 @@ describe('systemPrompt', () => {
     expect(prompt.split('\n').slice(-3)).toEqual(['Components of this project (id — name):', '- auth — Auth', '- billing — Billing']);
   });
 
+  it('tells the agent to send a flow with the plan, whichever optional tools are on', () => {
+    expect([systemPrompt([]), systemPrompt([], true, true), systemPrompt([], false, false)].map((prompt) => prompt.includes('send a "flow"')))
+      .toEqual([true, true, true]);
+  });
+
   it('tells the agent to mark every step done and never calls done optional', () => {
     const prompt = systemPrompt([]);
     expect(prompt).toContain('when it is finished, call it with "phase": "done"');

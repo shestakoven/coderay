@@ -15,6 +15,10 @@ import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
 const SECRET = 'agent-secret';
 const components: ComponentRef[] = [{ id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts'], globs: [] }];
 const small = { goal: 'Fix app', steps: [{ key: 'edit', title: 'Edit', rationale: 'bug', targets: [{ path: 'src/app.ts', op: 'modify' }] }] };
+const flow = {
+  nodes: [{ id: 'app', title: 'App', sub: 'Module', kind: 'module', state: 'modify', steps: ['edit'], files: [{ op: '~', path: 'src/app.ts', note: 'fix' }] }],
+  edges: [],
+};
 const big = { goal: 'Rework app', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ componentId: 'app', op: 'modify' }] }] };
 
 async function setup() {
@@ -73,6 +77,22 @@ describe('idecore', () => {
     const client = await connect((await setup()).port);
     const result = await client.callTool({ name: 'propose_plan', arguments: small });
     expect([result.isError ?? false, JSON.parse(text(result))]).toEqual([false, { status: 'approved' }]);
+  });
+
+  it('accepts a flow with the plan and keeps it on the approved plan', async () => {
+    const { plans, port } = await setup();
+    const client = await connect(port);
+    const result = await client.callTool({ name: 'propose_plan', arguments: { ...small, flow } });
+    expect([result.isError ?? false, JSON.parse(text(result)), plans.plans().at(-1)?.flow]).toEqual([false, { status: 'approved' }, flow]);
+  });
+
+  it('returns a flow naming a step the plan does not have as a tool error and stores no plan', async () => {
+    const { plans, port } = await setup();
+    const client = await connect(port);
+    const result = await client.callTool({ name: 'propose_plan', arguments: { ...small, flow: { ...flow, nodes: [{ ...flow.nodes[0]!, steps: ['nope'] }] } } });
+    expect([result.isError, text(result)]).toEqual([true, expect.stringMatching(/^IDE: /)]);
+    for (const mention of ['nope', 'edit']) expect(text(result)).toContain(mention);
+    expect(plans.plans()).toEqual([]);
   });
 
   it('holds a bigger plan until the user approves it', async () => {

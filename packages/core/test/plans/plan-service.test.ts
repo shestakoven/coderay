@@ -1,6 +1,6 @@
 import { execFileSync } from 'node:child_process';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { PlanView, Policy } from '@ide/protocol';
+import type { PlanFlow, PlanView, Policy } from '@ide/protocol';
 import { covers } from '../../src/gate/scope';
 import { reviewPlan } from '../../src/plans/freeze';
 import type { ComponentRef } from '../../src/plans/plan-input';
@@ -550,5 +550,96 @@ describe('PlanService', () => {
     const { service } = await setup();
     expect(await service.propose({ goal: 'g', steps: [{ key: 'k', title: 't', targets: [{ componentId: 'nope', op: 'modify' }] }] }))
       .toEqual({ ok: false, error: 'IDE: step "k" names an unknown component "nope". Valid component ids: app (App), lib (Lib).' });
+  });
+
+  describe('plan flow', () => {
+    const flowFor = (key: string, path: string): PlanFlow => ({
+      nodes: [
+        { id: 'api', title: 'API', sub: 'Endpoint', kind: 'endpoint', state: 'existing', steps: [], files: [] },
+        { id: 'svc', title: 'Service', sub: 'Service · run()', kind: 'service', state: 'modify', steps: [key], files: [{ op: '~', path, note: 'run' }] },
+      ],
+      edges: [{ from: 'api', to: 'svc', label: 'run(data)', state: 'new', step: key }],
+    });
+    const more = { key: 'more', title: 'More', rationale: '', targets: [{ componentId: 'lib', op: 'modify' }] };
+    const FILES_NOTE = /^the flow lists .*src\/extra\.ts.*which no step targets$/;
+
+    const baselineNotes = async (plan: object): Promise<string[]> => {
+      const { service } = await setup();
+      void service.propose(plan);
+      return (await waiting(service)).review.notes;
+    };
+
+    it('exposes the flow of an automatically approved plan', async () => {
+      const { service } = await setup();
+      expect(await service.propose({ ...small, flow: flowFor('edit', 'src/app.ts') })).toEqual({ ok: true, value: { status: 'approved' } });
+      expect(latest(service)?.flow).toEqual(flowFor('edit', 'src/app.ts'));
+    });
+
+    it('exposes the flow of a plan that waits for the user', async () => {
+      const { service } = await setup();
+      void service.propose({ ...big, flow: flowFor('a', 'src/app.ts') });
+      expect((await waiting(service)).flow).toEqual(flowFor('a', 'src/app.ts'));
+    });
+
+    it('keeps the flow after a restart', async () => {
+      const { service, restart } = await setup();
+      await service.propose({ ...small, flow: flowFor('edit', 'src/app.ts') });
+      expect(restart().plans().at(-1)?.flow).toEqual(flowFor('edit', 'src/app.ts'));
+    });
+
+    it('appends the flow notes after the review notes of a plan that waits for the user', async () => {
+      const base = await baselineNotes(big);
+      expect(base.length).toBeGreaterThan(0);
+      const { service } = await setup();
+      void service.propose({ ...big, flow: flowFor('a', 'src/extra.ts') });
+      expect((await waiting(service)).review.notes).toEqual([...base, expect.stringMatching(FILES_NOTE)]);
+    });
+
+    it('adds no notes to a waiting plan whose flow matches its steps', async () => {
+      const base = await baselineNotes(big);
+      const { service } = await setup();
+      const flow: PlanFlow = { nodes: [
+        { id: 'app', title: 'App', sub: '', kind: 'module', state: 'modify', steps: ['a'], files: [{ op: '~', path: 'src/app.ts' }] },
+        { id: 'lib', title: 'Lib', sub: '', kind: 'module', state: 'modify', steps: ['b'], files: [{ op: '~', path: 'src/lib/util.ts' }] },
+      ], edges: [] };
+      void service.propose({ ...big, flow });
+      const plan = await waiting(service);
+      expect([plan.flow, plan.review.notes]).toEqual([flow, base]);
+    });
+
+    it('leaves the notes of an automatically approved plan untouched', async () => {
+      const { service: plain } = await setup();
+      await plain.propose(small);
+      const { service } = await setup();
+      await service.propose({ ...small, flow: flowFor('edit', 'src/extra.ts') });
+      expect(latest(service)).toMatchObject({ status: 'approved', approvedBy: 'auto', flow: flowFor('edit', 'src/extra.ts'), review: latest(plain)!.review });
+    });
+
+    it('keeps the flow when the user expands the plan', async () => {
+      const { service } = await setup();
+      await service.propose({ ...small, flow: flowFor('edit', 'src/app.ts') });
+      service.step({ key: 'edit', phase: 'start' });
+      const expanded = service.expand([{ rel: 'src/other.ts', exists: true, dir: false }]);
+      expect([expanded.version, expanded.flow, latest(service)?.flow]).toEqual([2, flowFor('edit', 'src/app.ts'), flowFor('edit', 'src/app.ts')]);
+    });
+
+    it('gives each version its own flow, and a version sent without one has none', async () => {
+      const { service } = await setup();
+      const steps = [...small.steps, more];
+      await service.propose({ ...small, flow: flowFor('edit', 'src/app.ts') });
+      void service.propose({ ...small, steps, flow: flowFor('more', 'src/lib/util.ts') });
+      await waitFor(() => latest(service)?.version === 2, 'version 2');
+      void service.propose({ ...small, steps });
+      await waitFor(() => latest(service)?.version === 3, 'version 3');
+      expect(service.plans().map((plan) => plan.flow)).toEqual([flowFor('edit', 'src/app.ts'), flowFor('more', 'src/lib/util.ts'), null]);
+    });
+
+    it('refuses an invalid flow with its error and stores no plan', async () => {
+      const { service } = await setup();
+      const result = await service.propose({ ...small, flow: flowFor('nope', 'src/app.ts') });
+      expect(result).toEqual({ ok: false, error: expect.stringMatching(/^IDE: /) });
+      for (const mention of ['nope', 'edit']) expect(result).toMatchObject({ error: expect.stringContaining(mention) });
+      expect(service.plans()).toEqual([]);
+    });
   });
 });
