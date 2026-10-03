@@ -36,16 +36,17 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
   const target = useMemo(() => (layouts === null ? null : positionsFor(layouts, view)), [layouts, view]);
   const positions = useTweened(target);
 
+  const visible = useMemo(() => flow.nodes.filter((node) => view === 'plan' || node.state !== 'create').map((node) => ({ id: node.id })), [flow, view]);
+
   const shownView = useRef(view);
   useEffect(() => {
     if (shownView.current === view) return;
     shownView.current = view;
-    const visible = flow.nodes.filter((node) => view === 'plan' || node.state !== 'create').map((node) => ({ id: node.id }));
     const timer = setTimeout(() => void fitView({ ...FIT, nodes: visible, duration: 480 }), 30);
     return () => clearTimeout(timer);
-  }, [view, flow, fitView]);
+  }, [view, visible, fitView]);
 
-  const selectedNode = flow.nodes.find((node) => node.id === selected) ?? null;
+  const selectedNode = flow.nodes.find((node) => node.id === selected && (view === 'plan' || node.state !== 'create')) ?? null;
   const focus = focusSet(flow, pickFocus(hoverStep, hoverNode, selectedNode?.id ?? null));
   const kinds = useMemo(() => new Map(flow.nodes.map((node) => [node.id, node.kind])), [flow]);
 
@@ -56,6 +57,7 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
       position: positions?.get(node.id) ?? { x: 0, y: 0 },
       width: FLOW_NODE_SIZE.width,
       height: FLOW_NODE_SIZE.height,
+      style: view === 'now' && node.state === 'create' ? { pointerEvents: 'none' } : undefined,
       data: {
         node, view, phase: nodePhase(plan, node), badges: stepBadges(plan, node), direction,
         hot: focus?.nodes.has(node.id) ?? false, dim: focus !== null && !focus.nodes.has(node.id), selected: selectedNode?.id === node.id,
@@ -86,7 +88,7 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
     <>
       <ReactFlow
         fitView
-        fitViewOptions={FIT}
+        fitViewOptions={{ ...FIT, nodes: visible }}
         nodes={nodes as Node[]}
         edges={edges as Edge[]}
         nodeTypes={nodeTypes}
@@ -102,7 +104,7 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
         onPaneClick={() => setSelected(null)}
       >
         <MapBackground />
-        <MapControls onFit={() => void fitView(FIT)} />
+        <MapControls onFit={() => void fitView({ ...FIT, nodes: visible })} />
       </ReactFlow>
       {selectedNode && <FlowDetails plan={plan} flow={flow} node={selectedNode} view={view} onClose={() => setSelected(null)} />}
     </>

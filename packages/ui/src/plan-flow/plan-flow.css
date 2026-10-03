@@ -50,7 +50,6 @@
 .pf-card.st-create { border: 1px dashed var(--plan); background: color-mix(in srgb, var(--plan) 14%, var(--surface)); }
 .pf-card.st-delete { border: 1px dashed var(--error); background: color-mix(in srgb, var(--error) 8%, var(--surface)); }
 .pf-card.st-delete .pf-title { text-decoration: line-through; text-decoration-color: var(--error); color: var(--muted); }
-.pf-card.hidden { opacity: 0; transform: scale(0.94); pointer-events: none; }
 .pf-card.dim { opacity: 0.3; }
 .pf-card:hover { border-color: var(--accent-hover); }
 .pf-card.selected { outline: 2px solid var(--accent-hover); outline-offset: 2px; }
@@ -60,6 +59,7 @@
 .pf-card.run-done.st-create, .pf-card.run-done.st-modify { border: 1px solid var(--ok); background: color-mix(in srgb, var(--ok) 8%, var(--surface)); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 30%, transparent); }
 .pf-card.run-done.st-create .pf-tag, .pf-card.run-done.st-modify .pf-tag { color: var(--ok); background: rgba(115, 201, 145, 0.14); }
 .pf-card.run-done.st-delete { opacity: 0.28; }
+.pf-card.hidden { opacity: 0; transform: scale(0.94); pointer-events: none; }
 @keyframes pf-glow { 0%, 100% { box-shadow: 0 0 0 1px var(--plan), 0 0 10px rgba(53, 116, 240, 0.25); } 50% { box-shadow: 0 0 0 1px var(--plan), 0 0 24px rgba(53, 116, 240, 0.6); } }
 
 /* Links: quiet existing, bright dashed new, red dotted removed */
@@ -71,9 +71,9 @@
 .pf-edge.ed-new.run-done { stroke: var(--ok); stroke-dasharray: none; animation: none; }
 .pf-edge.ed-removed { stroke: var(--error); stroke-dasharray: 2 5; stroke-opacity: 0.75; stroke-width: 1.6; }
 .pf-edge.ed-removed.run-done { stroke-opacity: 0.1; }
-.pf-edge.hidden { opacity: 0; }
 .pf-edge.dim { opacity: 0.12; }
 .pf-edge.hot.ed-existing { stroke-opacity: 1; stroke: var(--fg); }
+.pf-edge.hidden { opacity: 0; }
 @keyframes pf-flow { to { stroke-dashoffset: -26; } }
 
 .pf-elabel { position: absolute; pointer-events: none; padding: 1px 7px; border-radius: 9px; background: var(--canvas); border: 1px solid var(--border); color: var(--muted); font-family: var(--font-mono); font-size: 9.5px; white-space: nowrap; transition: opacity 0.25s; }
