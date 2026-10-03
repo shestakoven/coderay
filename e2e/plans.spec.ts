@@ -64,7 +64,7 @@ test('plan flow: the view opens for a waiting plan, Now hides the new parts, app
   await caller.hover();
   await expect(greeter).toHaveClass(/dim/);
   await expect(greeter).toHaveAttribute('data-hidden', 'true');
-  await greeter.evaluate((el) => Promise.all(el.getAnimations().map((animation) => animation.finished.catch(() => undefined))));
+  await greeter.evaluate((el) => Promise.all(el.getAnimations().map((animation: { finished: Promise<unknown> }) => animation.finished.catch(() => undefined))));
   await expect(greeter).toHaveCSS('opacity', '0');
   await page.getByRole('button', { name: 'After the plan' }).click();
   await expect(greeter).toHaveAttribute('data-hidden', 'false');
