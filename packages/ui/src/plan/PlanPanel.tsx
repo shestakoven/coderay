@@ -5,13 +5,14 @@ import { badgeText, classifyTargets, planTitle } from './plan-state';
 const OP_MARK = { modify: '~', create: '+', delete: '−' } as const;
 const STATUS_ICON = { pending: '○', active: '●', done: '✓' } as const;
 
-export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusStep }: {
+export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusStep, onHoverStep }: {
   plan: PlanView;
   snapshot: MapSnapshot | null;
   open: boolean;
   onToggle?: () => void;
   onAnswer: (answer: PlanAnswer) => void;
   onFocusStep: (index: number) => void;
+  onHoverStep?: (key: string | null) => void;
 }) {
   const [changing, setChanging] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -34,7 +35,7 @@ export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusSte
           <div className="plan-goal">{plan.goal}</div>
           <ol className="plan-steps">
             {plan.steps.map((step, index) => (
-              <StepRow key={step.key} step={step} n={index + 1} plan={plan} snapshot={snapshot} onFocus={() => onFocusStep(index)} />
+              <StepRow key={step.key} step={step} n={index + 1} plan={plan} snapshot={snapshot} onFocus={() => onFocusStep(index)} onHover={onHoverStep} />
             ))}
           </ol>
           <Note plan={plan} />
@@ -96,12 +97,13 @@ function Note({ plan }: { plan: PlanView }) {
   return null;
 }
 
-function StepRow({ step, n, plan, snapshot, onFocus }: {
+function StepRow({ step, n, plan, snapshot, onFocus, onHover }: {
   step: PlanStepView;
   n: number;
   plan: PlanView;
   snapshot: MapSnapshot | null;
   onFocus: () => void;
+  onHover?: (key: string | null) => void;
 }) {
   const component = (id: string) => snapshot?.components.find((candidate) => candidate.id === id);
   const groups = new Map<string, string[]>();
@@ -117,7 +119,7 @@ function StepRow({ step, n, plan, snapshot, onFocus }: {
     else add(component(target.owner)?.name ?? target.owner, `${op} ${target.path.slice(target.path.lastIndexOf('/') + 1)}`);
   }
   return (
-    <li className={`plan-step ${step.status}`}>
+    <li className={`plan-step ${step.status}`} onMouseEnter={() => onHover?.(step.key)} onMouseLeave={() => onHover?.(null)}>
       <button className="plan-step-head" onClick={onFocus} title="Show on the map">
         <span className={`step-badge ${step.status}`}>{badgeText({ n, status: step.status })}</span>
         <span className="plan-step-title">{step.title}</span>

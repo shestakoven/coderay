@@ -23,6 +23,9 @@ import { PlanDock } from './plan/PlanDock';
 import { chimeKey, finishedWorking, playChime, playDone, type Activity } from './plan/chime';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, waitsForUser } from './plan/plan-state';
 import { C4View } from './c4/C4View';
+import { PlanFlowView } from './plan-flow/PlanFlowView';
+import { flowOf } from './plan-flow/flow-model';
+import { availableModes, MODE_LABEL, resolveMode, type MapMode } from './plan-flow/map-mode';
 import { describeMapStatus, describeProgress } from './map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from './net/socket';
 import { hashToken, launchToken } from './net/token';
@@ -305,8 +308,20 @@ export function App() {
   };
   const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, changes, highlight, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
-  const [componentsView, setComponentsView] = useState(false);
-  const showC4 = snapshot !== null && c4 !== null && !componentsView;
+  const flowPlan = flowOf(shown) === null ? null : shown;
+  const modeInput = { hasC4: c4 !== null, hasFlow: flowPlan !== null };
+  const [preferredMode, setPreferredMode] = useState<MapMode | null>(null);
+  const modes = availableModes(modeInput);
+  const mode = resolveMode(preferredMode, modeInput);
+  const showC4 = snapshot !== null && c4 !== null && mode === 'c4';
+  const [hoverStep, setHoverStep] = useState<string | null>(null);
+  const waitingFlowKey = shown !== null && shown.status === 'proposed' && shown.flow !== null ? `${shown.id}@${shown.version}` : null;
+  useEffect(() => {
+    if (waitingFlowKey !== null) setPreferredMode('flow');
+  }, [waitingFlowKey]);
+  useEffect(() => {
+    setHoverStep(null);
+  }, [planKey]);
   const selectComponent = (id: string): void => {
     if (!showC4) dispatch({ type: 'select', id });
     focusComponents([id]);
@@ -365,10 +380,11 @@ export function App() {
               <button key={key} role="tab" aria-selected={panels.leftTab === key && panels.left} className={panels.leftTab === key && panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'left-tab', tab: key })}>{label}</button>
             ))}
           </div>
-          {c4 && (
+          {modes.length > 1 && (
             <span className="view-switch">
-              <button className={!componentsView ? 'on' : ''} onClick={() => setComponentsView(false)}>C4</button>
-              <button className={componentsView ? 'on' : ''} onClick={() => setComponentsView(true)}>Components</button>
+              {modes.map((candidate) => (
+                <button key={candidate} className={mode === candidate ? 'on' : ''} onClick={() => setPreferredMode(candidate)}>{MODE_LABEL[candidate]}</button>
+              ))}
             </span>
           )}
           <span className="topbar-spacer" />
@@ -412,12 +428,16 @@ export function App() {
                 <ReactFlowProvider>
                   <C4View snapshot={snapshot} model={c4} />
                 </ReactFlowProvider>
+              ) : mode === 'flow' && flowPlan?.flow ? (
+                <ReactFlowProvider>
+                  <PlanFlowView plan={flowPlan} flow={flowPlan.flow} hoverStep={hoverStep} />
+                </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>
                   <MapView state={state} dispatch={dispatch} />
                 </ReactFlowProvider>
               )}
-              {!showC4 && mapDetails}
+              {mode === 'components' && mapDetails}
             </PlanOverlayContext.Provider>
             {reviewMode && (
               <ReviewMode
@@ -455,7 +475,7 @@ export function App() {
                   prompts={pendingPrompts(plans.prompts)}
                   dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
                   planDock={shown && waitsForUser(shown) && (
-                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} />
+                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} onHoverStep={setHoverStep} />
                   )}
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
@@ -472,6 +492,7 @@ export function App() {
                   open
                   onAnswer={answerPlan}
                   onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])}
+                  onHoverStep={setHoverStep}
                 />
               ) : (
                 <div className="empty muted">{shown ? 'The plan is waiting for your answer above the chat.' : 'No plan yet. When the agent proposes one, it appears above the chat and on the map.'}</div>
