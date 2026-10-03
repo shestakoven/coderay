@@ -17,6 +17,7 @@ export function useTweened(target: Positions | null, ms = 480): Positions | null
       setValue(target);
       return;
     }
+    if (from === target) return;
     const start = performance.now();
     let frame = 0;
     const tick = (now: number) => {
