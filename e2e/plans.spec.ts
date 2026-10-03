@@ -33,3 +33,45 @@ test('a pre-execution prompt: an out-of-plan write waits at its node until Allow
   await expect(page.getByText('allowed by you')).toBeVisible();
   await expect.poll(() => core?.file('src/other.ts')).toBe("export const other = 'hello';\n");
 });
+
+test('plan flow: the view opens for a waiting plan, Now hides the new parts, approval turns the parts green', async ({ page }) => {
+  core = await startCore('gate-flow-plan');
+  await page.goto(core.url);
+  await sendMessage(page, 'fix them');
+  const panel = page.getByTestId('plan-panel');
+  await expect(panel).toContainText('Plan v1 · waiting for you');
+  await expect(page.getByTestId('plan-flow')).toBeVisible();
+
+  const greeter = page.getByTestId('flow-node-greeter');
+  const app = page.getByTestId('flow-node-app');
+  await expect(greeter).toHaveAttribute('data-state', 'create');
+  await expect(greeter).toHaveAttribute('data-phase', 'proposed');
+  await expect(greeter).toHaveAttribute('data-hidden', 'false');
+
+  await page.getByRole('button', { name: 'Now', exact: true }).click();
+  await expect(greeter).toHaveAttribute('data-hidden', 'true');
+  await expect(app).toHaveAttribute('data-hidden', 'false');
+  await app.hover();
+  await expect(greeter).toHaveCSS('opacity', '0');
+  await page.getByRole('button', { name: 'After the plan' }).click();
+  await expect(greeter).toHaveAttribute('data-hidden', 'false');
+
+  await app.click();
+  await expect(page.getByTestId('flow-details')).toContainText('src/app.ts');
+  await expect(page.getByTestId('flow-details')).toContainText('format(name)');
+
+  await panel.getByRole('button', { name: 'Approve' }).click();
+  await expect(panel).toContainText('Plan v1 · done');
+  await expect(app).toHaveAttribute('data-phase', 'done');
+  await expect(greeter).toHaveAttribute('data-phase', 'done');
+});
+
+test('plan flow: a plan without a flow has no Plan flow button and no view switch', async ({ page }) => {
+  core = await startCore('gate-big-plan');
+  await page.goto(core.url);
+  await sendMessage(page, 'fix them');
+  await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · waiting for you');
+  await expect(page.getByRole('button', { name: 'Plan flow' })).toHaveCount(0);
+  await expect(page.getByTestId('plan-flow')).toHaveCount(0);
+  await expect(page.locator('.view-switch')).toHaveCount(0);
+});
