@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { openStore, SCHEMA_V1, SCHEMA_V2, type PromptRecord, type SessionRecord, type ToolEventRecord } from '../../src/store/store';
 import type { GateEventRecord, PlanRecord, ToolDecisionRecord } from '../../src/store/store';
-import type { ChangeView, WatchdogEventView } from '@ide/protocol';
+import type { ChangeView, PlanFlow, WatchdogEventView } from '@ide/protocol';
 import { DatabaseSync } from '../../src/store/sqlite';
 import { tempDir } from '../helpers';
 
@@ -208,6 +208,159 @@ describe('openStore', () => {
 
     expect(userVersion).toBe(1);
     expect(plansTable).toEqual([]);
+  });
+});
+
+const flow: PlanFlow = {
+  nodes: [
+    {
+      id: 'route', title: 'POST /users', sub: 'Endpoint · create()', kind: 'endpoint', state: 'existing', steps: [],
+      files: [{ op: '~', path: 'app/routes/users.py', note: 'create_user' }],
+    },
+    {
+      id: 'service', title: 'UserService', sub: 'Service · create_user()', kind: 'service', state: 'create', steps: ['edit'],
+      files: [{ op: '+', path: 'app/services/user_service.py', note: 'create_user' }, { op: '-', path: 'app/old_service.py' }],
+    },
+  ],
+  edges: [{ from: 'route', to: 'service', label: 'create_user(data)', state: 'new', step: 'edit' }],
+};
+
+const otherFlow: PlanFlow = {
+  nodes: [{ id: 'db', title: 'UserTable', sub: 'Store', kind: 'store', state: 'modify', steps: ['edit'], files: [] }],
+  edges: [],
+};
+
+describe('plan flow storage', () => {
+  it('returns a plan saved with a flow deeply equal, with empty step lists and optional fields kept as saved', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow });
+    const [saved] = store.plans('s1').plans;
+    expect(saved?.flow).toStrictEqual(flow);
+    expect(saved?.flow?.nodes[0]?.steps).toStrictEqual([]);
+    expect(saved?.flow?.nodes[1]?.files[1]).toStrictEqual({ op: '-', path: 'app/old_service.py' });
+  });
+
+  it('returns the rest of the plan unchanged next to its flow', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow });
+    expect(store.plans('s1').plans).toEqual([{ ...plan, flow }]);
+  });
+
+  it('returns flow null, not undefined, for a plan saved without a flow', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow: null });
+    const [saved] = store.plans('s1').plans;
+    expect(saved?.flow).toBeNull();
+    expect(Object.keys(saved ?? {})).toContain('flow');
+  });
+
+  it('keeps an empty flow distinct from no flow', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow: { nodes: [], edges: [] } });
+    expect(store.plans('s1').plans[0]?.flow).toStrictEqual({ nodes: [], edges: [] });
+  });
+
+  it('replaces the flow when the same plan version is saved again with a different flow', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow });
+    store.savePlan('s1', { ...plan, flow: otherFlow });
+    expect(store.plans('s1').plans).toEqual([{ ...plan, flow: otherFlow }]);
+  });
+
+  it('clears the flow when the same plan version is saved again with null', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow });
+    store.savePlan('s1', { ...plan, flow: null });
+    expect(store.plans('s1').plans[0]?.flow).toBeNull();
+  });
+
+  it('adds a flow to a plan version saved without one', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow: null });
+    store.savePlan('s1', { ...plan, flow });
+    expect(store.plans('s1').plans[0]?.flow).toStrictEqual(flow);
+  });
+
+  it('keeps its own flow for each version of a plan', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, version: 1, flow });
+    store.savePlan('s1', { ...plan, version: 2, flow: otherFlow });
+    store.savePlan('s1', { ...plan, version: 3, flow: null });
+    expect(store.plans('s1').plans.map((saved) => [saved.version, saved.flow])).toStrictEqual([[1, flow], [2, otherFlow], [3, null]]);
+  });
+
+  it('leaves the other version of a plan alone when one version changes its flow', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, version: 1, flow });
+    store.savePlan('s1', { ...plan, version: 2, flow });
+    store.savePlan('s1', { ...plan, version: 2, flow: otherFlow });
+    expect(store.plans('s1').plans.map((saved) => [saved.version, saved.flow])).toStrictEqual([[1, flow], [2, otherFlow]]);
+  });
+
+  it('round-trips quotes, backslashes, newlines and unicode in flow text unchanged', () => {
+    const text = 'He said "hi" and \'bye\'\nline two\ttabbed \\ back\\slash; DROP TABLE plans; -- Сервис 日本語 🚀  ';
+    const tricky: PlanFlow = {
+      nodes: [{
+        id: 'n"1', title: text, sub: `${text}\r\n`, kind: 'module', state: 'modify', steps: ['edit'],
+        files: [{ op: '~', path: 'src/a "b" ü/файл 🚀.ts', note: text }],
+      }],
+      edges: [],
+    };
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.savePlan('s1', { ...plan, flow: tricky });
+    expect(store.plans('s1').plans[0]?.flow).toStrictEqual(tricky);
+    expect(store.plans('s1').plans).toHaveLength(1);
+  });
+
+  describe('a history written at schema version 5', () => {
+    const schemaFiveHistory = (): string => {
+      const dir = tempDir('ide-store-');
+      const first = openStore(dir);
+      first.saveSession(session('s1', 1));
+      first.savePlan('s1', plan);
+      first.close();
+      const db = new DatabaseSync(join(dir, 'history.sqlite'));
+      db.exec('ALTER TABLE plans DROP COLUMN flow');
+      db.exec('PRAGMA user_version = 5');
+      db.close();
+      return dir;
+    };
+
+    it('opens and keeps its plan row with flow null', () => {
+      const store = freshStore(schemaFiveHistory());
+      expect(store.plans('s1').plans).toStrictEqual([{ ...plan, flow: null }]);
+    });
+
+    it('accepts a flow on the next save of that plan', () => {
+      const store = freshStore(schemaFiveHistory());
+      store.savePlan('s1', { ...plan, flow });
+      expect(store.plans('s1').plans).toStrictEqual([{ ...plan, flow }]);
+    });
+
+    it('accepts a flow on a plan saved after opening it', () => {
+      const store = freshStore(schemaFiveHistory());
+      store.savePlan('s1', { ...plan, id: 'plan-2', flow });
+      expect(store.plans('s1').plans.map((saved) => [saved.id, saved.flow])).toStrictEqual([['plan-1', null], ['plan-2', flow]]);
+    });
+
+    it('moves to schema version 6', () => {
+      const dir = schemaFiveHistory();
+      freshStore(dir).close();
+      const check = new DatabaseSync(join(dir, 'history.sqlite'));
+      const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
+      check.close();
+      expect(version).toBe(6);
+    });
   });
 });
 
