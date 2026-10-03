@@ -15,7 +15,7 @@ const plan = (o: Partial<PlanView> = {}): PlanView => ({
     { key: 'a', order: 1, title: 'API', rationale: '', status: 'done', targets: [] },
     { key: 'b', order: 2, title: 'DB', rationale: '', status: 'active', targets: [] },
   ],
-  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, proposedAt: 1, decidedAt: 2, ...o,
+  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 1, decidedAt: 2, ...o,
 });
 const summary = (o: Partial<SummaryView> = {}): SummaryView => ({ key: 'k', scope: 'step', ref: 'p1/a', text: 'did a', pending: false, ...o });
 const keys = (groups: ReviewGroup[]): string[] => groups.map((g) => g.key);

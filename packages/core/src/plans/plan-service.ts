@@ -100,7 +100,7 @@ export class PlanService {
     const record: PlanRecord = {
       id, version, goal: input.goal, status: 'proposed', approvedBy: null, steps: input.steps,
       scope: freezeScope(input.steps, this.options.root, components), owners: reviewed.owners, review,
-      feedback: null, proposedAt: this.now(), decidedAt: null,
+      feedback: null, flow: null, proposedAt: this.now(), decidedAt: null,
     };
     this.records.push(record);
     if (!this.states.has(id)) this.states.set(id, new Map());
@@ -455,7 +455,7 @@ export class PlanService {
       id: record.id, version: record.version, goal: record.goal, status: record.status, approvedBy: record.approvedBy,
       steps: record.steps.map((step) => ({ ...step, status: states?.get(step.key) ?? 'pending' })),
       scope: record.scope, owners: record.owners, review: record.review, feedback: record.feedback,
-      proposedAt: record.proposedAt, decidedAt: record.decidedAt,
+      flow: record.flow, proposedAt: record.proposedAt, decidedAt: record.decidedAt,
     };
   }
 }

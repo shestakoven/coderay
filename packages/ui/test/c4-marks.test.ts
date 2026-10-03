@@ -27,7 +27,7 @@ const plan: PlanView = {
     { key: 'b', order: 2, title: 'B', rationale: '', status: 'pending', targets: [{ componentId: 'folder:src/db', op: 'modify' }] },
   ],
   scope: { paths: [], globs: [] }, owners: { 'src/api/a.ts': 'folder:src/api', 'src/api/new.ts': 'folder:src/api' },
-  review: { auto: false, notes: [] }, feedback: null, proposedAt: 1, decidedAt: null,
+  review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 1, decidedAt: null,
 };
 
 const marks = planMarks(plan, demoSnapshot());

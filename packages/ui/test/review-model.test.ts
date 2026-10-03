@@ -13,7 +13,7 @@ const step = (key: string, order: number, o: Record<string, unknown> = {}) => ({
 const plan = (o: Partial<PlanView> = {}): PlanView => ({
   id: 'p1', version: 1, goal: 'g', status: 'approved', approvedBy: 'user-card',
   steps: [step('a', 1, { title: 'API' }), step('b', 2, { title: 'DB' })],
-  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, proposedAt: 1, decidedAt: 2, ...o,
+  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 1, decidedAt: 2, ...o,
 });
 const restored = (...changes: ChangeView[]): RevertFile[] => [...new Set(changes.map((c) => c.path))].map((path) => ({ path, outcome: 'restored', reason: null }));
 const revert = (changes: ChangeView[], o: Partial<RevertRecordView> = {}): RevertRecordView => ({

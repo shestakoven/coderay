@@ -22,7 +22,7 @@ const change = (path: string, o: Partial<ChangeView> = {}): ChangeView => ({
 const plan = (o: Partial<PlanView> = {}): PlanView => ({
   id: 'p1', version: 1, goal: 'Make greetings friendlier', status: 'approved', approvedBy: 'user-card',
   steps: [{ key: 's1', order: 1, title: 'Fix the greeting', rationale: 'The greeting is too curt', targets: [{ path: 'src/a.ts', op: 'modify' }, { path: '.env', op: 'modify' }], status: 'active' }],
-  scope: { paths: [], globs: [] }, owners: {}, review: {} as PlanView['review'], feedback: null, proposedAt: 1, decidedAt: null, ...o,
+  scope: { paths: [], globs: [] }, owners: {}, review: {} as PlanView['review'], feedback: null, flow: null, proposedAt: 1, decidedAt: null, ...o,
 });
 
 const file = (path: string, names: [string, boolean][] = []): IndexedFile =>

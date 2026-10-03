@@ -28,7 +28,7 @@ const plan: PlanRecord = {
   id: 'plan-1', version: 1, goal: 'Fix the bug', status: 'approved', approvedBy: 'auto',
   steps: [{ key: 'edit', order: 1, title: 'Edit app', rationale: 'the bug is there', targets: [{ path: 'src/app.ts', op: 'modify' }] }],
   scope: { paths: ['src/app.ts'], globs: [] }, owners: { 'src/app.ts': 'app' }, review: { auto: true, notes: ['1 file in App'] },
-  feedback: null, proposedAt: 10, decidedAt: 10,
+  feedback: null, flow: null, proposedAt: 10, decidedAt: 10,
 };
 
 const decision: ToolDecisionRecord = {
@@ -184,9 +184,9 @@ describe('openStore', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('PRAGMA user_version = 6');
+    db.exec('PRAGMA user_version = 7');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 6, newer than this IDE understands (5)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 7, newer than this IDE understands (6)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
@@ -248,7 +248,7 @@ describe('history tables (schema 3)', () => {
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     const step = check.prepare("SELECT status, cycle FROM step_states WHERE plan_id = 'p'").get();
     check.close();
-    expect(version).toBe(5);
+    expect(version).toBe(6);
     expect(step).toEqual({ status: 'done', cycle: 0 });
   });
 

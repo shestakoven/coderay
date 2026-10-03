@@ -67,7 +67,7 @@ const chatWith = (turns: TurnView[], tasks: TaskView[]): ChatState =>
 const step: PlanStepView = { key: 'a', order: 1, title: 'A', rationale: '', status: 'done', targets: [] };
 const plan: PlanView = {
   id: 'p1', version: 2, goal: 'g', status: 'approved', approvedBy: 'user-card', steps: [step], scope: { paths: [], globs: [] }, owners: {},
-  review: { auto: false, notes: [] }, feedback: null, proposedAt: 1, decidedAt: 2,
+  review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 1, decidedAt: 2,
 };
 
 describe('canOfferRollback', () => {

@@ -14,7 +14,7 @@ const plan = (overrides: Partial<PlanView> = {}): PlanView => ({
   ],
   scope: { paths: [], globs: [] },
   owners: { 'src/api/a.ts': 'folder:src/api', 'src/api/new.ts': 'folder:src/api', 'README.md': null },
-  review: { auto: false, notes: [] }, feedback: null, proposedAt: 1, decidedAt: 2,
+  review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 1, decidedAt: 2,
   ...overrides,
 });
 

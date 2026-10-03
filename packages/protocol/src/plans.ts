@@ -37,6 +37,45 @@ export interface PlanReview {
   notes: string[];
 }
 
+export const PLAN_FLOW_NODE_KINDS = ['actor', 'endpoint', 'schema', 'service', 'module', 'model', 'store', 'external', 'test'] as const;
+export const PLAN_FLOW_NODE_STATES = ['existing', 'modify', 'create', 'delete'] as const;
+export const PLAN_FLOW_EDGE_STATES = ['existing', 'new', 'removed'] as const;
+export const PLAN_FLOW_FILE_OPS = ['+', '~', '-'] as const;
+
+export type PlanFlowNodeKind = (typeof PLAN_FLOW_NODE_KINDS)[number];
+export type PlanFlowNodeState = (typeof PLAN_FLOW_NODE_STATES)[number];
+export type PlanFlowEdgeState = (typeof PLAN_FLOW_EDGE_STATES)[number];
+export type PlanFlowFileOp = (typeof PLAN_FLOW_FILE_OPS)[number];
+
+export interface PlanFlowFile {
+  op: PlanFlowFileOp;
+  path: string;
+  note?: string;
+}
+
+export interface PlanFlowNode {
+  id: string;
+  title: string;
+  sub: string;
+  kind: PlanFlowNodeKind;
+  state: PlanFlowNodeState;
+  steps: string[];
+  files: PlanFlowFile[];
+}
+
+export interface PlanFlowEdge {
+  from: string;
+  to: string;
+  label: string;
+  state: PlanFlowEdgeState;
+  step?: string;
+}
+
+export interface PlanFlow {
+  nodes: PlanFlowNode[];
+  edges: PlanFlowEdge[];
+}
+
 export interface PlanView {
   id: string;
   version: number;
@@ -48,6 +87,7 @@ export interface PlanView {
   owners: Record<string, string | null>;
   review: PlanReview;
   feedback: string | null;
+  flow: PlanFlow | null;
   proposedAt: number;
   decidedAt: number | null;
 }

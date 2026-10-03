@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   EFFORT_LEVELS,
-  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type FrozenScope, type GatePromptView, type PlanReview,
+  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type FrozenScope, type GatePromptView, type PlanFlow, type PlanReview,
   type PlanStatus, type PlanStep, type PromptAnswer, type PromptBody, type PromptStatus, type RevertRecordView, type SessionStatus, type StepStatus,
   type TaskKind, type TaskView, type ToolDecision, type ToolStatus, type TurnKind, type TurnView, type WatchdogEventView,
 } from '@ide/protocol';
@@ -66,6 +66,7 @@ export interface PlanRecord {
   scope: FrozenScope;
   owners: Record<string, string | null>;
   review: PlanReview;
+  flow: PlanFlow | null;
   feedback: string | null;
   proposedAt: number;
   decidedAt: number | null;
@@ -313,8 +314,12 @@ ALTER TABLE sessions ADD COLUMN title TEXT;
 ALTER TABLE sessions ADD COLUMN title_manual INTEGER NOT NULL DEFAULT 0;
 `;
 
+const SCHEMA_V6 = `
+ALTER TABLE plans ADD COLUMN flow TEXT;
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6];
 
 const CHAT_TITLE_LENGTH = 60;
 const NEW_CHAT_TITLE = 'New chat';
@@ -418,6 +423,11 @@ const toPrompt = (row: Row): PromptRecord => ({
   ts: Number(row.ts),
 });
 
+const parseFlow = (value: unknown): PlanFlow | null => {
+  const text = optText(value);
+  return text === null ? null : (JSON.parse(text) as PlanFlow);
+};
+
 const toPlan = (row: Row): PlanRecord => ({
   id: String(row.id),
   version: Number(row.version),
@@ -428,6 +438,7 @@ const toPlan = (row: Row): PlanRecord => ({
   scope: JSON.parse(String(row.scope)) as FrozenScope,
   owners: JSON.parse(String(row.owners)) as Record<string, string | null>,
   review: JSON.parse(String(row.review)) as PlanReview,
+  flow: parseFlow(row.flow),
   feedback: optText(row.feedback),
   proposedAt: Number(row.proposed_at),
   decidedAt: optNumber(row.decided_at),
@@ -583,10 +594,10 @@ export function openStore(dir: string): Store {
     VALUES (:sessionId, :requestId, :seq, :turnId, :parentToolUseId, :body, :status, :answer, :ts)
     ON CONFLICT (session_id, request_id) DO UPDATE SET status = excluded.status, answer = excluded.answer`);
   const upsertPlan = db.prepare(`
-    INSERT INTO plans (session_id, id, version, goal, status, approved_by, steps, scope, owners, review, feedback, proposed_at, decided_at)
-    VALUES (:sessionId, :id, :version, :goal, :status, :approvedBy, :steps, :scope, :owners, :review, :feedback, :proposedAt, :decidedAt)
+    INSERT INTO plans (session_id, id, version, goal, status, approved_by, steps, scope, owners, review, flow, feedback, proposed_at, decided_at)
+    VALUES (:sessionId, :id, :version, :goal, :status, :approvedBy, :steps, :scope, :owners, :review, :flow, :feedback, :proposedAt, :decidedAt)
     ON CONFLICT (id, version) DO UPDATE SET status = excluded.status, approved_by = excluded.approved_by, steps = excluded.steps,
-      scope = excluded.scope, owners = excluded.owners, review = excluded.review, feedback = excluded.feedback, decided_at = excluded.decided_at`);
+      scope = excluded.scope, owners = excluded.owners, review = excluded.review, flow = excluded.flow, feedback = excluded.feedback, decided_at = excluded.decided_at`);
   const upsertStepState = db.prepare(`
     INSERT INTO step_states (plan_id, key, status) VALUES (:planId, :key, :status)
     ON CONFLICT (plan_id, key) DO UPDATE SET status = excluded.status`);
@@ -714,7 +725,7 @@ export function openStore(dir: string): Store {
       upsertPlan.run({
         sessionId, id: plan.id, version: plan.version, goal: plan.goal, status: plan.status, approvedBy: plan.approvedBy,
         steps: JSON.stringify(plan.steps), scope: JSON.stringify(plan.scope), owners: JSON.stringify(plan.owners),
-        review: JSON.stringify(plan.review), feedback: plan.feedback, proposedAt: plan.proposedAt, decidedAt: plan.decidedAt,
+        review: JSON.stringify(plan.review), flow: plan.flow === null ? null : JSON.stringify(plan.flow), feedback: plan.feedback, proposedAt: plan.proposedAt, decidedAt: plan.decidedAt,
       });
     },
     saveStepState(planId, key, status) {

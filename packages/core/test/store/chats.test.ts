@@ -30,7 +30,7 @@ describe('schema 4 migration', () => {
     first.setMeta('keep', 'me');
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; PRAGMA user_version = 3');
+    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE plans DROP COLUMN flow; PRAGMA user_version = 3');
     db.close();
 
     const store = freshStore(dir);
@@ -44,7 +44,7 @@ describe('schema 4 migration', () => {
     const check = new DatabaseSync(join(dir, 'history.sqlite'));
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     check.close();
-    expect(version).toBe(5);
+    expect(version).toBe(6);
   });
 
   it('reads a session row written by an older IDE, with no model or effort, as the defaults', () => {
@@ -295,7 +295,7 @@ describe('deleting a chat that has a plan', () => {
     id: 'plan-1', version: 1, goal: 'Fix the bug', status: 'approved', approvedBy: 'auto',
     steps: [{ key: 'edit', order: 1, title: 'Edit app', rationale: 'the bug is there', targets: [{ path: 'src/app.ts', op: 'modify' }] }],
     scope: { paths: ['src/app.ts'], globs: [] }, owners: { 'src/app.ts': 'app' }, review: { auto: true, notes: [] },
-    feedback: null, proposedAt: 10, decidedAt: 10,
+    feedback: null, flow: null, proposedAt: 10, decidedAt: 10,
   };
   const decision: ToolDecisionRecord = {
     toolUseId: 'toolu_1', decision: 'allow', planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE: allowed', decidedAt: 11,

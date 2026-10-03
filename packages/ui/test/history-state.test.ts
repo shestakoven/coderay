@@ -23,7 +23,7 @@ const plan = (o: Partial<PlanView> = {}): PlanView => ({
     { key: 'a', order: 1, title: 'API', rationale: 'why a', status: 'done', targets: [] },
     { key: 'b', order: 2, title: 'DB', rationale: '', status: 'active', targets: [] },
   ],
-  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, proposedAt: 1, decidedAt: 2, ...o,
+  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 1, decidedAt: 2, ...o,
 });
 const checkpoint = (o: Partial<CheckpointView> = {}): CheckpointView => ({ planId: 'p1', stepKey: 'a', cycle: 0, before: 1, after: 2, startedAt: 1, sealedAt: 2, ...o });
 const withHistory = (history: HistoryView): HistoryState => ({ ...initialHistoryState, history });
