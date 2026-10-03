@@ -20,8 +20,8 @@ export function FlowDetails({ plan, flow, node, view, onClose }: { plan: PlanVie
       {why && <p className="pf-detail-why">{why}</p>}
       {node.files.length > 0 && (
         <ul className="pf-files">
-          {node.files.map((file) => (
-            <li key={file.path}>
+          {node.files.map((file, index) => (
+            <li key={index}>
               <b className={OP_CLASS[file.op]}>{file.op}</b>
               <span className="pf-path">{file.path}</span>
               {file.note && <span className="pf-note">{file.note}</span>}
@@ -33,8 +33,8 @@ export function FlowDetails({ plan, flow, node, view, onClose }: { plan: PlanVie
         <>
           <div className="pf-detail-label">Connections</div>
           <ul className="pf-links">
-            {links.map(({ edge, other, outgoing }) => (
-              <li key={`${edge.from}>${edge.to}`} className={edge.state}>
+            {links.map(({ edge, other, outgoing }, index) => (
+              <li key={index} className={edge.state}>
                 <span>{outgoing ? '→' : '←'} {other.title}</span>
                 <span className="pf-note">{edge.label}</span>
               </li>

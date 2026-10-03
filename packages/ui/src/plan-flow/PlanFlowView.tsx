@@ -1,15 +1,16 @@
-import { MarkerType, ReactFlow, useReactFlow, type Edge, type Node } from '@xyflow/react';
+import { getViewportForBounds, MarkerType, ReactFlow, useReactFlow, useStoreApi, type Edge, type Node } from '@xyflow/react';
 import type { PlanFlow, PlanView } from '@ide/protocol';
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { MapBackground, MapControls } from '../map/canvas';
 import { LayoutMenu } from '../map/LayoutMenu';
 import { DEFAULT_LAYOUT, type Direction } from '../map/layout-settings';
+import type { Bounds } from '../map/layout';
 import { FlowCard, type FlowCardData, type FlowCardNode } from './FlowCard';
 import { FlowDetails } from './FlowDetails';
 import { FlowLink, type FlowLinkData, type FlowLinkEdge } from './FlowLink';
-import { layoutFlow, positionsFor, type FlowLayouts, FLOW_NODE_SIZE } from './flow-layout';
+import { boundsOf, layoutFlow, positionsFor, type FlowLayouts, FLOW_NODE_SIZE } from './flow-layout';
 import { edgePhase, focusSet, nodePhase, pickFocus, stepBadges, summarize, type FlowView } from './flow-model';
 import { loadFlowDirection, saveFlowDirection } from './flow-settings';
 import { EDGE_COLOR } from './flow-style';
@@ -24,11 +25,23 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
   const [layouts, setLayouts] = useState<FlowLayouts | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [hoverNode, setHoverNode] = useState<string | null>(null);
-  const { fitView } = useReactFlow();
+  const { setViewport } = useReactFlow();
+  const store = useStoreApi();
+  // fitBounds takes a single numeric padding, FIT is asymmetric.
+  const fitTo = useCallback(
+    (bounds: Bounds, duration?: number) => {
+      const { width, height, minZoom, maxZoom } = store.getState();
+      void setViewport(getViewportForBounds(bounds, width, height, minZoom, maxZoom, FIT.padding), { duration });
+    },
+    [store, setViewport],
+  );
 
   useEffect(() => {
     let live = true;
-    void layoutFlow(elk, flow, direction).then((next) => live && setLayouts(next));
+    layoutFlow(elk, flow, direction).then(
+      (next) => live && setLayouts(next),
+      (error: unknown) => console.error('plan flow layout failed', error),
+    );
     return () => { live = false; };
     // The canvas is keyed by plan version and direction, so the flow of this mount never changes.
   }, []);
@@ -37,14 +50,14 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
   const positions = useTweened(target);
 
   const visible = useMemo(() => flow.nodes.filter((node) => view === 'plan' || node.state !== 'create').map((node) => ({ id: node.id })), [flow, view]);
+  const destination = useMemo(() => (target === null ? null : boundsOf(target, visible.map((node) => node.id))), [target, visible]);
 
   const shownView = useRef(view);
   useEffect(() => {
     if (shownView.current === view) return;
     shownView.current = view;
-    const timer = setTimeout(() => void fitView({ ...FIT, nodes: visible, duration: 480 }), 30);
-    return () => clearTimeout(timer);
-  }, [view, visible, fitView]);
+    if (destination) fitTo(destination, 480);
+  }, [view, destination, fitTo]);
 
   const selectedNode = flow.nodes.find((node) => node.id === selected && (view === 'plan' || node.state !== 'create')) ?? null;
   const focus = focusSet(flow, pickFocus(hoverStep, hoverNode, selectedNode?.id ?? null));
@@ -69,7 +82,8 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
   const edges: FlowLinkEdge[] = useMemo(
     () => flow.edges.map((edge, index) => {
       const phase = edgePhase(plan, edge);
-      const color = edge.state === 'removed' ? EDGE_COLOR.removed : edge.state === 'new' ? (phase === 'done' ? EDGE_COLOR.done : EDGE_COLOR.new) : EDGE_COLOR.existing;
+      const shown = view === 'now' ? 'existing' : edge.state;
+      const color = shown === 'removed' ? EDGE_COLOR.removed : shown === 'new' ? (phase === 'done' ? EDGE_COLOR.done : EDGE_COLOR.new) : EDGE_COLOR.existing;
       return {
         id: `e${index}`,
         source: edge.from,
@@ -104,7 +118,7 @@ function Canvas({ plan, flow, view, direction, hoverStep }: { plan: PlanView; fl
         onPaneClick={() => setSelected(null)}
       >
         <MapBackground />
-        <MapControls onFit={() => void fitView({ ...FIT, nodes: visible })} />
+        <MapControls disabled={!destination} onFit={() => destination && fitTo(destination)} />
       </ReactFlow>
       {selectedNode && <FlowDetails plan={plan} flow={flow} node={selectedNode} view={view} onClose={() => setSelected(null)} />}
     </>

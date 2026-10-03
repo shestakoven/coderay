@@ -1,6 +1,7 @@
 import type { PlanFlow } from '@ide/protocol';
 import type { ELK } from 'elkjs/lib/elk-api.js';
 import type { Direction } from '../map/layout-settings';
+import type { Bounds } from '../map/layout';
 import { nowFlow, type FlowView } from './flow-model';
 
 export const FLOW_NODE_SIZE = { width: 216, height: 82 } as const;
@@ -38,4 +39,14 @@ export async function layoutFlow(elk: ELK, flow: PlanFlow, direction: Direction)
 export function positionsFor(layouts: FlowLayouts, view: FlowView): Positions {
   if (view === 'plan') return layouts.plan;
   return new Map([...layouts.plan].map(([id, position]) => [id, layouts.now.get(id) ?? position]));
+}
+
+export function boundsOf(positions: Positions, ids: readonly string[]): Bounds | null {
+  const points = ids.flatMap((id) => positions.get(id) ?? []);
+  if (points.length === 0) return null;
+  const left = Math.min(...points.map((point) => point.x));
+  const top = Math.min(...points.map((point) => point.y));
+  const right = Math.max(...points.map((point) => point.x)) + FLOW_NODE_SIZE.width;
+  const bottom = Math.max(...points.map((point) => point.y)) + FLOW_NODE_SIZE.height;
+  return { x: left, y: top, width: right - left, height: bottom - top };
 }

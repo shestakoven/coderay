@@ -63,15 +63,15 @@
 @keyframes pf-glow { 0%, 100% { box-shadow: 0 0 0 1px var(--plan), 0 0 10px rgba(53, 116, 240, 0.25); } 50% { box-shadow: 0 0 0 1px var(--plan), 0 0 24px rgba(53, 116, 240, 0.6); } }
 
 /* Links: quiet existing, bright dashed new, red dotted removed */
-.pf-edge { fill: none; transition: opacity 0.25s, stroke 0.25s; }
+.pf-edge { fill: none; opacity: var(--fade, 1); transition: opacity 0.25s, stroke 0.25s; }
 .pf-edge.ed-existing { stroke: var(--muted); stroke-opacity: 0.5; stroke-width: 1.4; }
 .pf-edge.ed-new { stroke: var(--accent-hover); stroke-width: 2; stroke-dasharray: 7 6; animation: pf-flow 0.9s linear infinite; }
 .pf-edge.ed-new.test { stroke: var(--muted); stroke-dasharray: 2 5; animation: none; stroke-width: 1.6; }
-.pf-edge.ed-new.run-pending { animation: none; stroke-opacity: 0.45; }
+.pf-edge.ed-new.run-pending { animation: none; --fade: 0.45; }
 .pf-edge.ed-new.run-done { stroke: var(--ok); stroke-dasharray: none; animation: none; }
 .pf-edge.ed-removed { stroke: var(--error); stroke-dasharray: 2 5; stroke-opacity: 0.75; stroke-width: 1.6; }
-.pf-edge.ed-removed.run-done { stroke-opacity: 0.1; }
-.pf-edge.dim { opacity: 0.12; }
+.pf-edge.ed-removed.run-done { --fade: 0.1; }
+.pf-edge.dim { opacity: calc(var(--fade, 1) * 0.12); }
 .pf-edge.hot.ed-existing { stroke-opacity: 1; stroke: var(--fg); }
 .pf-edge.hidden { opacity: 0; }
 @keyframes pf-flow { to { stroke-dashoffset: -26; } }
@@ -104,3 +104,9 @@
 .pf-links li .pf-note { grid-column: auto; font-family: var(--font-mono); font-size: 10px; }
 .pf-links li.new { color: var(--accent-hover); }
 .pf-links li.removed { color: var(--error); text-decoration: line-through; }
+
+@media (prefers-reduced-motion: reduce) {
+  .pf-edge.ed-new { animation: none; }
+  .pf-card.run-active { animation: none; box-shadow: 0 0 0 1px var(--plan), 0 0 24px rgba(53, 116, 240, 0.6); }
+  .pf-card, .pf-edge, .pf-elabel { transition: none; }
+}
