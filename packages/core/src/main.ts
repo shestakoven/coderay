@@ -61,6 +61,7 @@ const { values } = parseArgs({
 const exitWithParent = values['exit-with-parent'];
 const HUB_OWNS_PROJECTS = 'This core runs inside the IDE hub: open and close projects through the hub.';
 const PARENT_GONE_DEADLINE_MS = 10_000;
+const SHUTDOWN_DEADLINE_MS = 30_000;
 
 const port = Number(values.port);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -484,21 +485,35 @@ try {
   terminals.onMessage((message) => running.broadcast(message));
 
   const shutdown = async (): Promise<void> => {
+    // Every step has its own limit, yet one that never settles must not keep a stopped core alive.
+    let step = 'the agent terminal';
+    setTimeout(() => {
+      console.error(`IDE core: the shutdown is stuck at ${step}; exiting anyway.`);
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS).unref();
     login.cancel();
     // The agent, in the chat or in its terminal, stops before the watcher, so its last writes are still judged.
     await terminals.close(AGENT_TERMINAL_ID);
     agent.terminalClosed();
     const closingTerminals = terminals.closeAll();
+    step = 'the agent and the watcher';
     await rt.close();
     progress.stop();
     classifier?.stop();
+    step = 'the deploy watch';
     await deployWatch?.close();
     const stopping = mapService?.stop();
+    step = 'the models';
     await models.close();
+    step = 'the map';
     await stopping;
+    step = 'the indexer';
     await indexer?.stop();
+    step = 'the terminals';
     await closingTerminals;
+    step = 'the server';
     await running.close();
+    step = 'the successor';
     store.close();
     lock.release();
     await afterClose?.();

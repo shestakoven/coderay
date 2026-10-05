@@ -406,4 +406,15 @@ describe('HTTP routes', () => {
     });
     expect([(await post(running.port, '/hook', 'evil.example')).status, called]).toEqual([401, false]);
   });
+
+  it('closes without waiting for a request a route holds, and the request fails', async () => {
+    let arrived = false;
+    const running = await routed(() => {
+      arrived = true;
+    });
+    const outcome = post(running.port, '/hook').then(() => 'answered', () => 'failed');
+    await waitFor(() => arrived, 'the request reached the route');
+    const closed = await Promise.race([running.close().then(() => 'closed'), new Promise((resolve) => setTimeout(() => resolve('still open'), 2000))]);
+    expect([closed, await outcome]).toEqual(['closed', 'failed']);
+  });
 });
