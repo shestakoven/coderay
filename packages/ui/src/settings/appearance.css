@@ -1,0 +1,16 @@
+/* Local display preferences, set on <html> by applyAppearance */
+
+[data-density='compact'] .topbar { height: 30px; }
+[data-density='compact'] .statusbar { height: 20px; }
+[data-density='compact'] .tree-row { min-height: 21px; }
+[data-density='compact'] .tl-item { min-height: 22px; }
+[data-density='compact'] .chat-header { min-height: 32px; }
+[data-density='compact'] .right-panel .chat-header { min-height: 34px; }
+[data-density='compact'] .review-head { min-height: 24px; }
+[data-density='compact'] .timeline-bar { padding-top: 2px; padding-bottom: 2px; }
+
+[data-canvas-dots='off'] .react-flow__background { display: none; }
+
+[data-motion='reduce'] *, [data-motion='reduce'] *::before, [data-motion='reduce'] *::after {
+  animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important;
+}

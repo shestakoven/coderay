@@ -111,27 +111,6 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 .settings-header { display: flex; justify-content: space-between; align-items: center; }
 .settings h2 { font-size: calc(15px * var(--fs-scale, 1)); margin: 0; }
 .settings h3 { font-size: calc(13px * var(--fs-scale, 1)); margin: 16px 0 6px; color: var(--muted); }
-.server { border-bottom: 1px solid var(--line); padding: 4px 0; }
-.server-row { display: flex; gap: 10px; align-items: baseline; }
-.server-row .actions { margin-left: auto; white-space: nowrap; display: flex; gap: 6px; }
-.server .entry { background: var(--bg); border-radius: 5px; padding: 6px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; }
-.server-status.ready { color: var(--ok); }
-.server-status.unapproved, .server-status.missing-env, .server-status.shadowed { color: var(--warn); }
-.server .badge.source { background: var(--raised); color: var(--muted); }
-.account-choice { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-.account-choice input { margin: 0; accent-color: var(--accent); }
-.account-remove.confirm { color: var(--error); }
-.account-add { margin-top: 8px; }
-.accounts > .muted { margin-bottom: 6px; }
-.accounts .server-row { align-items: center; min-height: 28px; }
-.account-login { display: grid; gap: 8px; margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
-.account-login-row { display: flex; gap: 6px; align-items: center; }
-.account-code { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; }
-.banner { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 10px; margin: 8px 0; border-radius: 6px; background: var(--selection); }
-.banner.warn { background: #3a2f14; color: var(--warn); }
-.entry-editor { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
-.entry-editor label { display: grid; gap: 3px; color: var(--muted); }
-.entry-editor input, .entry-editor select, .entry-editor textarea { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; }
 
 /* C4 map (POC) — Dark product tokens */
 .c4 {
@@ -261,12 +240,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .decision.hook-missing, .decision.hook-pending { color: var(--error); }
 
 .chip.mode select { background: none; color: var(--text); border: none; font: inherit; }
-.policy-levels { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-.policy-level { display: flex; flex-direction: column; gap: 8px; }
-.policy-level h4 { margin: 0; font-size: calc(12px * var(--fs-scale, 1)); }
-.policy-level label { display: flex; flex-direction: column; gap: 3px; font-size: calc(12px * var(--fs-scale, 1)); }
-.policy-level textarea, .policy-level input, .policy-level select { background: var(--bg); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 3px 6px; font: inherit; }
-.policy-level .inherit { flex-direction: row; gap: 4px; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
 
 .watchdog { border: 1px solid var(--warn); border-radius: 6px; margin: 6px 10px; padding: 8px; display: flex; flex-direction: column; gap: 6px; max-height: 55vh; overflow: auto; flex-shrink: 0; }
 .watchdog h3 { margin: 0; font-size: calc(13px * var(--fs-scale, 1)); color: var(--warn); }

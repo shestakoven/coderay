@@ -1,231 +1,398 @@
-import { useEffect, useState } from 'react';
-import type { ClientMessage, McpLevel, McpServerState, McpServerView, McpTransport, SettingsView } from '@ide/protocol';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { ClientMessage, McpServerState, PolicyLevel, SettingsView } from '@ide/protocol';
+import { Icon } from '../layout/Icon';
 import { AccountsSection } from './AccountsSection';
-import { PolicySection } from './PolicySection';
-import { emptyForm, entryFromForm, formFromServer, type EntryForm } from './entry-form';
+import { APPEARANCE_BLOCKS, AppearanceBlock } from './AppearanceBlocks';
+import { applyAppearance, loadAppearance, saveAppearance, systemReducesMotion, type Appearance } from './appearance';
+import { ClaudeCodeServersBlock, McpServersBlock, claudeRows } from './McpBlocks';
+import {
+  BLOCKS, CATEGORIES, blocksOf, categoryOf, countByCategory, matchBlocks, type BlockId, type CategoryId,
+} from './categories';
+import { Banner, Kbd, Setting } from './controls';
+import { POLICY_BLOCKS, PolicyBlock } from './PolicyBlocks';
+import { ScopeSwitch } from './PolicyControls';
+import { usePolicyDrafts } from './policy-drafts';
+import { policyFromForm } from './policy-form';
+import { useRequests, useToasts, type SettingsResult } from './requests';
+import { SaveBar, Toasts } from './SaveBar';
+import { loadCategory, loadScope, localStorageOrUndefined, saveCategory, saveScope } from './storage';
+import './settings.css';
 
-export interface SettingsResult {
-  requestId: string;
-  error: string | null;
+export type { SettingsResult } from './requests';
+
+const FOCUSABLE = 'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), [tabindex]:not([tabindex="-1"])';
+
+interface KeyEventLike {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  shiftKey: boolean;
+  target: EventTarget | null;
+  preventDefault: () => void;
+  stopPropagation: () => void;
 }
 
-const LEVELS: { level: McpLevel; title: string }[] = [
-  { level: 'ide', title: 'IDE level — every project (~/.ide/mcp.json)' },
-  { level: 'project', title: 'Project level — committed (.ide/mcp.json)' },
-];
+const typing = (target: EventTarget | null): boolean => {
+  const element = target as HTMLElement | null;
+  return element !== null && (/^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName) || element.isContentEditable);
+};
 
-type TextField = 'name' | 'command' | 'args' | 'env' | 'url' | 'headers' | 'timeout';
-
-export function SettingsPanel({ settings, lastResult, sessionServers, send, onClose }: {
+export function SettingsPanel({ settings, lastResult, sessionServers, send, onClose, initialCategory, projectName }: {
   settings: SettingsView | null;
   lastResult: SettingsResult | null;
   sessionServers: McpServerState[];
   send: (message: ClientMessage) => boolean;
   onClose: () => void;
+  initialCategory?: CategoryId;
+  projectName?: string;
 }) {
-  const [form, setForm] = useState<EntryForm | null>(null);
-  const [previousName, setPreviousName] = useState<string | null>(null);
-  const [formError, setFormError] = useState<string | null>(null);
-  const [panelError, setPanelError] = useState<string | null>(null);
-  const [awaiting, setAwaiting] = useState<{ requestId: string; fromForm: boolean; needsRestart: boolean } | null>(null);
-  const [changed, setChanged] = useState(false);
-  const edits = settings?.externalEdits;
+  const storage = useMemo(localStorageOrUndefined, []);
+  const [category, setCategory] = useState<CategoryId>(() => initialCategory ?? loadCategory(storage));
+  const [scope, setScope] = useState<PolicyLevel>(() => loadScope(storage));
+  const [query, setQuery] = useState('');
+  const [closing, setClosing] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [restartPending, setRestartPending] = useState(false);
+  const [appearance, setAppearance] = useState<Appearance>(() => loadAppearance(storage));
+  const [attempt, setAttempt] = useState(0);
+  const [slow, setSlow] = useState(false);
+  const root = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  const opener = useRef<Element | null>(null);
+  const { toasts, notify, dismiss } = useToasts();
+  const { busy, run } = useRequests(send, lastResult, notify);
+  const drafts = usePolicyDrafts(settings?.policy ?? null);
+  const changes = drafts?.changes ?? [];
 
   useEffect(() => {
-    if (!awaiting || lastResult?.requestId !== awaiting.requestId) return;
-    setAwaiting(null);
-    if (lastResult.error === null) {
-      if (awaiting.needsRestart) setChanged(true);
-      if (awaiting.fromForm) setForm(null);
-    } else if (awaiting.fromForm) {
-      setFormError(lastResult.error);
-    } else {
-      setPanelError(lastResult.error);
-    }
-  }, [lastResult, awaiting]);
-
-  const request = (message: ClientMessage & { requestId: string }, fromForm: boolean, needsRestart = true): void => {
-    setPanelError(null);
-    if (send(message)) setAwaiting({ requestId: message.requestId, fromForm, needsRestart });
-  };
-  const edit = (level: McpLevel, server: McpServerView | null): void => {
-    setForm(server ? formFromServer(server) : emptyForm(level));
-    setPreviousName(server?.name ?? null);
-    setFormError(null);
-  };
-  const save = (): void => {
-    if (!form) return;
-    const result = entryFromForm(form);
-    if ('error' in result) {
-      setFormError(result.error);
+    opener.current = document.activeElement;
+    root.current?.querySelector<HTMLElement>('.sw-tab.on')?.focus();
+    return () => (opener.current as HTMLElement | null)?.focus?.();
+  }, []);
+  useEffect(() => {
+    if (settings) {
+      setSlow(false);
       return;
     }
-    request({ type: 'mcp.save', requestId: crypto.randomUUID(), level: form.level, name: form.name.trim(), entry: result.entry, previousName }, true);
+    const timer = setTimeout(() => setSlow(true), 4000);
+    return () => clearTimeout(timer);
+  }, [settings, attempt]);
+  useEffect(() => saveCategory(storage, category), [storage, category]);
+  useEffect(() => saveScope(storage, scope), [storage, scope]);
+  useEffect(() => {
+    if (changes.length === 0) setClosing(false);
+  }, [changes.length]);
+
+  const choose = (id: CategoryId): void => {
+    setCategory(id);
+    setQuery('');
   };
-  const liveStatus = (name: string): string => sessionServers.find((server) => server.name === name)?.status ?? '—';
-  const claudeCode = settings?.claudeCodeServers ?? [];
-  const known = new Set(['idecore', ...(settings?.servers ?? []).map((server) => server.name), ...claudeCode.map((server) => server.name)]);
-  const external: { name: string; source: string; type: string | null }[] = settings
-    ? [...claudeCode, ...sessionServers.filter((server) => !known.has(server.name)).map((server) => ({ name: server.name, source: 'plugin', type: null }))]
-    : [];
+
+  const requestClose = (): void => (changes.length > 0 ? setClosing(true) : onClose());
+
+  const saveAll = useCallback((): void => {
+    if (!drafts || saving) return;
+    const levels = drafts.dirtyLevels;
+    const payloads = levels.map((level) => ({ level, result: policyFromForm(drafts.forms[level]) }));
+    const invalid = payloads.find((entry) => 'error' in entry.result);
+    if (invalid && 'error' in invalid.result) {
+      setSaveError(invalid.result.error);
+      return;
+    }
+    setSaveError(null);
+    setSaving(true);
+    const queue = payloads.flatMap((entry) => ('policy' in entry.result ? [{ level: entry.level, policy: entry.result.policy }] : []));
+    const step = (index: number): void => {
+      const item = queue[index];
+      if (!item) {
+        setSaving(false);
+        notify('ok', 'Settings saved');
+        return;
+      }
+      const sent = run(
+        { type: 'policy.save', requestId: crypto.randomUUID(), level: item.level, policy: item.policy },
+        { onSettled: (error) => (error === null ? step(index + 1) : setSaving(false)) },
+      );
+      if (!sent) setSaving(false);
+    };
+    step(0);
+  }, [drafts, saving, run, notify]);
+
+  const policyError = useMemo(() => {
+    if (!drafts) return null;
+    for (const level of drafts.dirtyLevels) {
+      const result = policyFromForm(drafts.forms[level]);
+      if ('error' in result) return result.error;
+    }
+    return saveError;
+  }, [drafts, saveError]);
+
+  const policyView = settings?.policy ?? null;
+  const edits = settings?.externalEdits;
+  const unapproved = settings?.servers.filter((server) => server.status === 'unapproved').length ?? 0;
+  const attention: Record<CategoryId, number> = {
+    agent: policyView && (policyView.externalEdits.ide || policyView.externalEdits.project) ? 1 : 0,
+    paths: 0,
+    mcp: unapproved + (edits && (edits.ideServers || edits.trust) ? 1 : 0),
+    accounts: 0,
+    appearance: 0,
+  };
+
+  const searching = query.trim() !== '';
+  const hasClaudeRows = settings !== null && claudeRows(settings, sessionServers).length > 0;
+  const matched = useMemo(() => matchBlocks(query, {
+    'mcp-servers': (settings?.servers ?? []).map((server) => server.name),
+    'claude-code-servers': (settings?.claudeCodeServers ?? []).map((server) => server.name),
+    accounts: (settings?.accounts.accounts ?? []).map((account) => account.email),
+  }).filter((block) => block.id !== 'claude-code-servers' || hasClaudeRows), [query, settings, hasClaudeRows]);
+  const counts = countByCategory(matched);
+  const visible: BlockId[] = searching ? matched.map((block) => block.id) : blocksOf(category).map((block) => block.id).filter((id) => id !== 'claude-code-servers' || hasClaudeRows);
+  const showsPolicy = visible.some((id) => POLICY_BLOCKS.includes(id));
+  const page = categoryOf(category);
+
+  const changeAppearance = (next: Appearance): void => {
+    setAppearance(next);
+    saveAppearance(storage, next);
+    applyAppearance(document.documentElement, next);
+  };
+
+  const renderBlock = (id: BlockId): ReactNode => {
+    if (POLICY_BLOCKS.includes(id)) {
+      if (!policyView || !drafts) return null;
+      return <PolicyBlock key={id} id={id} view={policyView} drafts={drafts} scope={scope} onScope={setScope} />;
+    }
+    if (id === 'accounts') {
+      const block = BLOCKS.find((candidate) => candidate.id === id)!;
+      return (
+        <Setting key={id} id={id} title={block.title} help={block.help}>
+          {settings && (
+            <AccountsSection
+              view={settings.accounts}
+              busy={busy}
+              onRequest={(message) => run(message, { okText: message.type === 'account.select' ? 'Account switched' : message.type === 'account.remove' ? 'Account removed' : undefined })}
+            />
+          )}
+        </Setting>
+      );
+    }
+    if (id === 'mcp-servers' || id === 'claude-code-servers') {
+      const block = BLOCKS.find((candidate) => candidate.id === id)!;
+      if (!settings) return null;
+      return (
+        <Setting key={id} id={id} title={block.title} help={block.help}>
+          {id === 'mcp-servers' ? (
+            <McpServersBlock
+              settings={settings}
+              sessionServers={sessionServers}
+              busy={busy}
+              run={run}
+              restartPending={restartPending}
+              onChanged={() => setRestartPending(true)}
+              onRestart={() => { send({ type: 'session.restart' }); setRestartPending(false); notify('ok', 'Session restarting'); }}
+            />
+          ) : <ClaudeCodeServersBlock settings={settings} sessionServers={sessionServers} />}
+        </Setting>
+      );
+    }
+    if (APPEARANCE_BLOCKS.includes(id)) {
+      return <AppearanceBlock key={id} id={id} value={appearance} systemReducesMotion={systemReducesMotion()} onChange={changeAppearance} />;
+    }
+    return null;
+  };
+
+  const renderBlocks = (ids: BlockId[]): ReactNode =>
+    ids.length > 0 && ids.every((id) => APPEARANCE_BLOCKS.includes(id)) ? <div className="sw-group">{ids.map(renderBlock)}</div> : ids.map(renderBlock);
+
+  const policyBanners = policyView && (policyView.externalEdits.ide || policyView.externalEdits.project) ? (
+    <Banner
+      tone="warn"
+      title="A policy file changed outside Settings"
+      actions={<button type="button" className="sw-btn" disabled={busy} onClick={() => run({ type: 'policy.confirm-external-edits', requestId: crypto.randomUUID(), hashes: policyView.hashes }, { okText: 'Policy edits confirmed' })}>Confirm the edits</button>}
+    >
+      It is ignored until you confirm it: the all-projects level falls back to the defaults, this project to the all-projects level. The file now says:
+      {policyView.edited.ide !== null && <pre>All projects: {policyView.edited.ide}</pre>}
+      {policyView.edited.project !== null && <pre>This project: {policyView.edited.project}</pre>}
+    </Banner>
+  ) : null;
+
+  const handleKey = (event: KeyEventLike): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      if (closing) setClosing(false);
+      else if (searching) {
+        setQuery('');
+        search.current?.blur();
+      } else requestClose();
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's') {
+      event.preventDefault();
+      if (changes.length > 0 && policyError === null) saveAll();
+      return;
+    }
+    if (event.key === '/' && !typing(event.target) && !event.metaKey && !event.ctrlKey) {
+      event.preventDefault();
+      search.current?.focus();
+      return;
+    }
+    if (event.key === 'Tab' && root.current) {
+      const items = [...root.current.querySelectorAll<HTMLElement>(FOCUSABLE)];
+      const first = items[0];
+      const last = items[items.length - 1];
+      if (!root.current.contains(document.activeElement)) {
+        event.preventDefault();
+        first?.focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    }
+    event.stopPropagation();
+  };
+
+  const latestKey = useRef(handleKey);
+  latestKey.current = handleKey;
+  useEffect(() => {
+    // Focus falls to <body> when the focused control unmounts; the shortcuts must still work then.
+    const onDocumentKey = (event: globalThis.KeyboardEvent): void => {
+      if (!root.current?.contains(event.target as Node)) latestKey.current(event);
+    };
+    document.addEventListener('keydown', onDocumentKey);
+    return () => document.removeEventListener('keydown', onDocumentKey);
+  }, []);
+
+  const onRailKey = (event: KeyboardEvent<HTMLElement>): void => {
+    const index = CATEGORIES.findIndex((item) => item.id === category);
+    const next = event.key === 'ArrowDown' ? index + 1 : event.key === 'ArrowUp' ? index - 1 : event.key === 'Home' ? 0 : event.key === 'End' ? CATEGORIES.length - 1 : null;
+    if (next === null) return;
+    event.preventDefault();
+    const target = CATEGORIES[(next + CATEGORIES.length) % CATEGORIES.length]!;
+    choose(target.id);
+    requestAnimationFrame(() => root.current?.querySelector<HTMLElement>(`#sw-tab-${target.id}`)?.focus());
+  };
+
+  const loading = settings === null;
+  const title = searching ? 'Search' : page.label;
+  const intro = searching
+    ? matched.length === 0 ? 'No setting matches.' : `${matched.length} ${matched.length === 1 ? 'setting matches' : 'settings match'} “${query.trim()}”.`
+    : page.intro;
 
   return (
-    <div className="modal" onClick={onClose}>
-      <div className="settings" onClick={(event) => event.stopPropagation()}>
-        <header className="settings-header">
-          <h2>Settings</h2>
-          <button onClick={onClose}>Close</button>
-        </header>
-        {settings && edits && (edits.ideServers || edits.trust) && (
-          <div className="banner warn">
-            <div>
-              {[edits.ideServers && '~/.ide/mcp.json', edits.trust && '~/.ide/trust.json'].filter(Boolean).join(' and ')} changed outside Settings.
-              The affected servers stay off until you confirm. Review the entries below first.
-              {edits.trustApproves.length > 0 && <div>Confirming approves these project servers: {edits.trustApproves.join(', ')}.</div>}
-              {edits.trust && <div>Confirming keeps only the approvals listed above and removes every other approval in ~/.ide/trust.json, including other projects'; those servers must be approved again.</div>}
+    <div className="sw-backdrop" onMouseDown={(event) => event.target === event.currentTarget && requestClose()}>
+      <div ref={root} className="sw" role="dialog" aria-modal="true" aria-label="Settings" tabIndex={-1} onKeyDown={handleKey}>
+        <nav className="sw-rail" aria-label="Settings categories">
+          <div className="sw-rail-title"><b>Settings</b>{projectName && <span title={projectName}>{projectName}</span>}</div>
+          <div className="sw-tabs" role="tablist" aria-orientation="vertical" onKeyDown={onRailKey}>
+            {CATEGORIES.map((item) => {
+              const on = !searching && item.id === category;
+              const count = searching ? counts[item.id] : attention[item.id];
+              return (
+                <button
+                  key={item.id}
+                  id={`sw-tab-${item.id}`}
+                  type="button"
+                  role="tab"
+                  aria-selected={on}
+                  aria-controls="sw-page"
+                  tabIndex={item.id === category ? 0 : -1}
+                  title={item.label}
+                  className={`sw-tab${on ? ' on' : ''}${searching && counts[item.id] === 0 ? ' dim' : ''}`}
+                  onClick={() => choose(item.id)}
+                >
+                  <Icon name={item.icon} size={16} />
+                  <span className="sw-tab-label">{item.label}</span>
+                  {count > 0 && <span className={`sw-tab-count${searching ? '' : ' warn'}`} aria-label={searching ? `${count} matches` : `${count} to review`}>{count}</span>}
+                </button>
+              );
+            })}
+          </div>
+          <div className="sw-rail-foot">
+            <span><Kbd>⌘</Kbd><Kbd>,</Kbd> open anywhere</span>
+            <span><Kbd>/</Kbd> search</span>
+            <span><Kbd>esc</Kbd> close</span>
+          </div>
+        </nav>
+        <main className="sw-main" id="sw-page" role="tabpanel" aria-labelledby={`sw-tab-${category}`}>
+          <header className="sw-head">
+            <div className="sw-title">
+              <h2>{title}</h2>
+              <p>{intro}</p>
             </div>
-            <button
-              disabled={awaiting !== null}
-              onClick={() => request({ type: 'mcp.confirm-external-edits', requestId: crypto.randomUUID(), fileHashes: settings.fileHashes }, false)}
-            >
-              Confirm the edits
-            </button>
-          </div>
-        )}
-        {changed && (
-          <div className="banner">
-            <span>Changes apply when the session restarts.</span>
-            <button
-              onClick={() => {
-                send({ type: 'session.restart' });
-                setChanged(false);
-              }}
-            >
-              Restart session
-            </button>
-          </div>
-        )}
-        {panelError && <p className="problem">{panelError}</p>}
-        {settings && <AccountsSection view={settings.accounts} busy={awaiting !== null} onRequest={(message) => request(message, false, false)} />}
-        <h3>MCP servers</h3>
-        {LEVELS.map(({ level, title }) => (
-          <section key={level}>
-            <h3>{title}</h3>
-            {(settings?.servers ?? []).filter((server) => server.level === level).map((server) => (
-              <div key={server.name} className="server">
-                <div className="server-row">
-                  <b>{server.name}</b>
-                  <span className={`server-status ${server.status}`}>{server.status}{server.reason ? `: ${server.reason}` : ''}</span>
-                  <span className="muted">session: {liveStatus(server.name)}</span>
-                  <span className="actions">
-                    {server.level === 'project' && server.status === 'unapproved' && !edits?.trust && (
-                      <button
-                        disabled={awaiting !== null}
-                        onClick={() => request({ type: 'mcp.approve', requestId: crypto.randomUUID(), name: server.name, entryHash: server.entryHash }, false)}
-                      >
-                        Approve as shown
-                      </button>
-                    )}
-                    <button onClick={() => edit(level, server)}>Edit</button>
-                    <button
-                      disabled={awaiting !== null}
-                      onClick={() => request({ type: 'mcp.remove', requestId: crypto.randomUUID(), level, name: server.name }, false)}
-                    >
-                      Remove
-                    </button>
-                  </span>
-                </div>
-                <details open={server.status === 'unapproved'}>
-                  <summary className="muted">entry</summary>
-                  <pre className="entry">{JSON.stringify(server.entry, null, 2)}</pre>
-                </details>
+            <label className="sw-search">
+              <Icon name="search" size={14} />
+              <input
+                ref={search}
+                value={query}
+                placeholder="Search settings"
+                aria-label="Search settings"
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              {searching ? (
+                <button type="button" className="sw-clear" aria-label="Clear search" onClick={() => { setQuery(''); search.current?.focus(); }}><Icon name="close" size={12} /></button>
+              ) : <Kbd>/</Kbd>}
+            </label>
+            <button type="button" className="sw-close" aria-label="Close settings" title="Close (Esc)" onClick={requestClose}><Icon name="close" size={16} /></button>
+          </header>
+          {showsPolicy && (
+            <div className="sw-scope-row">
+              <ScopeSwitch scope={scope} onChange={setScope} />
+              <span className="sw-scope-note">
+                {scope === 'project' ? `Values for ${projectName ?? 'this project'}. Anything you leave alone follows All projects.` : 'The defaults every project starts from. A project can override them.'}
+              </span>
+            </div>
+          )}
+          <div className="sw-scroll">
+            {loading ? (
+              <div className="sw-page">
+                {slow && (
+                  <Banner
+                    tone="error"
+                    title="Settings did not load"
+                    actions={<button type="button" className="sw-btn" onClick={() => { send({ type: 'settings.get' }); setSlow(false); setAttempt(attempt + 1); }}>Try again</button>}
+                  >
+                    The core has not answered yet. Check that it is running, then try again.
+                  </Banner>
+                )}
+                <div className="sw-skeleton" aria-busy="true"><i /><i className="block" /><i className="block" /></div>
               </div>
-            ))}
-            <button onClick={() => edit(level, null)}>Add server</button>
-          </section>
-        ))}
-        {external.length > 0 && (
-          <section>
-            <h3>From Claude Code</h3>
-            <div className="muted">Loaded by Claude Code itself. Edit them with <code>claude mcp</code>.</div>
-            {external.map((server) => (
-              <div key={server.name} className="server">
-                <div className="server-row">
-                  <b>{server.name}</b>
-                  <span className="badge source">{server.source}</span>
-                  {server.type && <span className="muted">{server.type}</span>}
-                  <span className="muted">session: {liveStatus(server.name)}</span>
-                </div>
+            ) : searching && matched.length === 0 ? (
+              <div className="sw-page">
+                <p className="sw-empty">Nothing matches “{query.trim()}”. Try a shorter word, or <button type="button" className="sw-link" onClick={() => setQuery('')}>clear the search</button>.</p>
               </div>
-            ))}
-          </section>
-        )}
-        {settings && (
-          <PolicySection
-            view={settings.policy}
-            busy={awaiting !== null}
-            onSave={(level, policy) => request({ type: 'policy.save', requestId: crypto.randomUUID(), level, policy }, false, false)}
-            onConfirm={(hashes) => request({ type: 'policy.confirm-external-edits', requestId: crypto.randomUUID(), hashes }, false, false)}
-          />
-        )}
-        {settings?.problems.map((problem, index) => <p key={index} className="problem">{problem}</p>)}
-        {form && (
-          <EntryEditor
-            form={form}
-            error={formError}
-            saving={awaiting?.fromForm === true}
-            busy={awaiting !== null}
-            onChange={setForm}
-            onSave={save}
-            onCancel={() => setForm(null)}
-          />
-        )}
-      </div>
-    </div>
-  );
-}
-
-function EntryEditor({ form, error, saving, busy, onChange, onSave, onCancel }: {
-  form: EntryForm;
-  error: string | null;
-  saving: boolean;
-  busy: boolean;
-  onChange: (form: EntryForm) => void;
-  onSave: () => void;
-  onCancel: () => void;
-}) {
-  const field = (key: TextField) => ({
-    value: form[key],
-    onChange: (event: { target: { value: string } }) => onChange({ ...form, [key]: event.target.value } as EntryForm),
-  });
-  return (
-    <div className="entry-editor">
-      <h3>{form.level === 'ide' ? 'IDE-level server' : 'Project-level server'}</h3>
-      <label>Name <input {...field('name')} /></label>
-      <label>
-        Transport
-        <select value={form.type} onChange={(event) => onChange({ ...form, type: event.target.value as McpTransport })}>
-          <option value="stdio">stdio</option>
-          <option value="http">http</option>
-        </select>
-      </label>
-      {form.type === 'stdio' ? (
-        <>
-          <label>Command <input {...field('command')} /></label>
-          <label>Arguments, one per line <textarea rows={3} {...field('args')} /></label>
-          <label>Environment, NAME=value per line (write secrets as {'${VAR}'}) <textarea rows={3} {...field('env')} /></label>
-        </>
-      ) : (
-        <>
-          <label>URL <input {...field('url')} /></label>
-          <label>Headers, "Name: value" per line (write secrets as {'${VAR}'}) <textarea rows={3} {...field('headers')} /></label>
-        </>
-      )}
-      <label>Timeout in ms (optional) <input {...field('timeout')} /></label>
-      {error && <p className="problem">{error}</p>}
-      <div className="composer-actions">
-        <button onClick={onCancel}>Cancel</button>
-        <button onClick={onSave} disabled={busy}>{saving ? 'Saving…' : 'Save'}</button>
+            ) : (
+              <div className="sw-page">
+                {showsPolicy && policyBanners}
+                {searching
+                  ? CATEGORIES.filter((item) => counts[item.id] > 0).map((item) => (
+                      <div key={item.id} className="sw-results-group">
+                        <h3 className="sw-results-title"><Icon name={item.icon} size={14} /> {item.label}</h3>
+                        {renderBlocks(matched.filter((block) => block.category === item.id).map((block) => block.id))}
+                      </div>
+                    ))
+                  : renderBlocks(visible)}
+              </div>
+            )}
+          </div>
+          <div className="sw-dock">
+            <Toasts toasts={toasts} onDismiss={dismiss} />
+            {changes.length > 0 && (
+              <SaveBar
+                changes={changes}
+                saving={saving}
+                error={policyError}
+                closing={closing}
+                onSave={saveAll}
+                onDiscard={() => { drafts?.discard(); setSaveError(null); }}
+                onKeepEditing={() => setClosing(false)}
+                onDiscardAndClose={onClose}
+              />
+            )}
+          </div>
+        </main>
       </div>
     </div>
   );

@@ -223,6 +223,8 @@ export function App() {
     send({ type: 'settings.get' });
     setSettingsOpen(true);
   };
+  const openSettingsRef = useRef(openSettings);
+  openSettingsRef.current = openSettings;
   const toReview = (settings?.servers.filter((server) => server.status === 'unapproved').length ?? 0)
     + (settings?.externalEdits.ideServers || settings?.externalEdits.trust ? 1 : 0)
     + (settings?.policy.externalEdits.ide || settings?.policy.externalEdits.project ? 1 : 0);
@@ -245,6 +247,11 @@ export function App() {
   const resetSize = (panel: SizedPanel): void => setSizes((current) => ({ ...current, [panel]: DEFAULT_SIZES[panel] }));
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key === ',') {
+        event.preventDefault();
+        openSettingsRef.current();
+        return;
+      }
       if (event.ctrlKey && event.key === '`') {
         event.preventDefault();
         toggleTerminalRef.current();
@@ -403,7 +410,7 @@ export function App() {
             <button className={panels.left ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'left' })} title="Project panel" aria-pressed={panels.left}><Icon name="panel-left" size={20} /></button>
             <button className={panels.right ? 'on' : ''} onClick={() => dispatchPanels({ type: 'toggle', panel: 'right' })} title="Agent and details" aria-pressed={panels.right}><Icon name="panel-right" size={20} /></button>
             <button className={panels.focus ? 'on' : ''} onClick={() => dispatchPanels({ type: 'focus' })} title="Focus: map only (F)" aria-pressed={panels.focus}><Icon name="maximize" size={20} /></button>
-            <button className="with-badge" onClick={openSettings} title="Settings">
+            <button className="with-badge" onClick={openSettings} title="Settings (⌘,)">
               <Icon name="settings" size={20} />
               {toReview > 0 && <b>{toReview}</b>}
             </button>
@@ -542,6 +549,7 @@ export function App() {
             sessionServers={chat.mcpServers}
             send={send}
             onClose={() => setSettingsOpen(false)}
+            projectName={snapshot?.projectName ?? projectInfo?.name}
           />
         )}
       </div>

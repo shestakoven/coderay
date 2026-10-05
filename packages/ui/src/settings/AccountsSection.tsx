@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { AccountsView, ClientMessage } from '@ide/protocol';
+import { Icon } from '../layout/Icon';
 
 export function AccountsSection({ view, busy, onRequest }: {
   view: AccountsView;
@@ -28,31 +29,35 @@ export function AccountsSection({ view, busy, onRequest }: {
   const cancel = (): void => send({ type: 'account.login.cancel', requestId: crypto.randomUUID() });
 
   return (
-    <section className="accounts">
-      <h3>Accounts</h3>
-      <div className="muted">
-        Active: {active.label}. A switch applies to every project from the next agent start and begins a fresh Claude conversation.
-      </div>
-      <div role="radiogroup" aria-label="Claude account">
-        {rows.map((row) => (
-          <div key={row.id ?? 'system'} className="server">
-            <div className="server-row">
-              <label className="account-choice">
+    <div className="sw-accounts accounts">
+      <p className="sw-account-note">
+        {active.label} is active. A switch applies to every project from the next agent start and begins a fresh Claude conversation.
+      </p>
+      <div role="radiogroup" aria-label="Claude account" className="sw-list">
+        {rows.map((row) => {
+          const on = view.activeId === row.id;
+          return (
+            <div key={row.id ?? 'system'} className={`sw-account${on ? ' on' : ''}`}>
+              <label className="account-choice sw-account-choice">
                 <input
                   type="radio"
                   name="claude-account"
-                  checked={view.activeId === row.id}
+                  checked={on}
                   disabled={busy}
                   onChange={() => send({ type: 'account.select', requestId: crypto.randomUUID(), id: row.id })}
                 />
+                <span className="sw-avatar" aria-hidden="true" data-initial={row.id === null ? undefined : row.label.charAt(0).toUpperCase()}>
+                  {row.id === null && <Icon name="terminal" size={14} />}
+                </span>
                 <b>{row.label}</b>
               </label>
-              {row.id === null && <span className="muted">claude's default sign-in</span>}
-              {view.activeId === row.id && <span className="badge source">active</span>}
+              {row.id === null && <span className="muted sw-account-sub">claude's default sign-in</span>}
+              {on && <span className="sw-tag sw-active">active</span>}
               {row.id !== null && (
-                <span className="actions">
+                <span className="sw-account-actions">
                   <button
-                    className={`account-remove${confirming === row.id ? ' confirm' : ''}`}
+                    type="button"
+                    className={`sw-btn ghost account-remove${confirming === row.id ? ' confirm' : ''}`}
                     disabled={busy}
                     title={confirming === row.id ? 'Click again to sign this account out and delete its credentials' : 'Remove this account'}
                     onClick={() => remove(row.id)}
@@ -62,28 +67,32 @@ export function AccountsSection({ view, busy, onRequest }: {
                 </span>
               )}
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      {login.state === 'idle' && <button className="account-add" disabled={busy} onClick={start}>Add account</button>}
+      {login.state === 'idle' && (
+        <div>
+          <button type="button" className="sw-btn account-add" disabled={busy} onClick={start}><Icon name="plus" size={14} /> Add account</button>
+        </div>
+      )}
       {login.state === 'waiting' && (
-        <div className="account-login">
-          <div className="account-login-row">
-            <button className="primary" disabled={login.url === null} onClick={() => login.url && window.open(login.url, '_blank', 'noopener')}>
+        <div className="sw-login">
+          <div className="sw-login-row">
+            <button type="button" className="sw-btn primary" disabled={login.url === null} onClick={() => login.url && window.open(login.url, '_blank', 'noopener')}>
               Open sign-in page
             </button>
             {login.url === null && <span className="muted"><span className="bg-tasks-spin" aria-hidden="true">⟳</span> Starting claude…</span>}
           </div>
-          <div className="muted">Your browser opens automatically. If it shows a code, paste it here.</div>
+          <p className="sw-field-help">Your browser opens automatically. If it shows a code, paste it here.</p>
           <form
-            className="account-login-row"
+            className="sw-login-row"
             onSubmit={(event) => {
               event.preventDefault();
               submit();
             }}
           >
             <input
-              className="account-code"
+              className="account-code sw-code"
               value={code}
               onChange={(event) => setCode(event.target.value)}
               placeholder="Code from the sign-in page"
@@ -91,23 +100,23 @@ export function AccountsSection({ view, busy, onRequest }: {
               autoComplete="off"
               spellCheck={false}
             />
-            <button type="submit" disabled={busy || code.trim() === ''}>Submit</button>
-            <button type="button" onClick={cancel}>Cancel</button>
+            <button type="submit" className="sw-btn primary" disabled={busy || code.trim() === ''}>Submit</button>
+            <button type="button" className="sw-btn ghost" onClick={cancel}>Cancel</button>
           </form>
         </div>
       )}
       {login.state === 'checking' && (
-        <div className="account-login account-login-row">
+        <div className="sw-login sw-login-row">
           <span className="muted"><span className="bg-tasks-spin" aria-hidden="true">⟳</span> Checking account…</span>
-          <button onClick={cancel}>Cancel</button>
+          <button type="button" className="sw-btn ghost" onClick={cancel}>Cancel</button>
         </div>
       )}
       {login.state === 'error' && (
-        <div className="account-login account-login-row">
-          <span className="problem">{login.error}</span>
-          <button disabled={busy} onClick={start}>Retry</button>
+        <div className="sw-login sw-login-row">
+          <span className="sw-error">{login.error}</span>
+          <button type="button" className="sw-btn" disabled={busy} onClick={start}>Retry</button>
         </div>
       )}
-    </section>
+    </div>
   );
 }
