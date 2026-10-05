@@ -22,7 +22,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title, parent, url, code,
+    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, data, images, title, parent, url, code,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -74,6 +74,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isTerminalId(id) && typeof data === 'string' && data.length <= MAX_TERMINAL_INPUT ? { type, id, data } : null;
     case 'terminal.close':
       return isTerminalId(id) ? { type, id } : null;
+    case 'hub.activate':
+      return isBoundedString(id, MAX_ID_LENGTH) ? { type, id } : null;
+    case 'hub.order':
+      return Array.isArray(ids) && ids.length <= MAX_HUB_IDS && ids.every((item) => isBoundedString(item, MAX_ID_LENGTH)) ? { type, ids } : null;
   }
   if (typeof requestId !== 'string') return null;
   switch (type) {
@@ -115,6 +119,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return id === null || isAccountId(id) ? { type, requestId, id } : null;
     case 'account.remove':
       return isAccountId(id) ? { type, requestId, id } : null;
+    case 'hub.close':
+    case 'hub.restart':
+      return isBoundedString(id, MAX_ID_LENGTH) ? { type, requestId, id } : null;
     case 'history.diff':
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
     case 'revert.undo':
@@ -156,6 +163,7 @@ const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 1024;
 const MAX_ID_LENGTH = 100;
 const MAX_CODE_LENGTH = 4096;
+const MAX_HUB_IDS = 100;
 
 const isImageList = (value: unknown): value is ChatImage[] =>
   Array.isArray(value) && value.length > 0 && value.length <= MAX_CHAT_IMAGES && value.every((item) =>

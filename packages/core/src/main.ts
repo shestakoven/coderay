@@ -10,6 +10,8 @@ import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
+import { startHub, type RunningHub } from './hub/hub';
+import { followParent } from './hub/parent';
 import { Indexer } from './indexer/indexer';
 import { createCAdapter, createCppAdapter } from './lang/c-family';
 import { createCSharpAdapter } from './lang/csharp';
@@ -17,6 +19,7 @@ import { createPythonAdapter } from './lang/python';
 import { createSwiftAdapter } from './lang/swift';
 import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
+import { descendants, isAlive, signal as sendSignal } from './os-process';
 import { MapService } from './map/map-service';
 import { buildSnapshot } from './map/snapshot';
 import { IdentifierClassifier } from './c4/classify';
@@ -51,8 +54,13 @@ const { values } = parseArgs({
     claude: { type: 'string', default: 'claude' },
     'no-map-mcp': { type: 'boolean', default: false },
     'no-agent-search': { type: 'boolean', default: false },
+    hub: { type: 'boolean', default: false },
+    'exit-with-parent': { type: 'boolean', default: false },
   },
 });
+const exitWithParent = values['exit-with-parent'];
+const HUB_OWNS_PROJECTS = 'This core runs inside the IDE hub: open and close projects through the hub.';
+const PARENT_GONE_DEADLINE_MS = 10_000;
 
 const port = Number(values.port);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -61,7 +69,50 @@ if (!Number.isInteger(port) || port < 0 || port > 65535) {
 }
 
 const home = resolve(values['ide-home'] ?? defaultIdeHome());
-const token = values['token-stdin'] ? readFileSync(0, 'utf8').trim() || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
+if (exitWithParent) {
+  // Once the hub is gone its ends of stdout and stderr are closed too; a log line must not crash the shutdown.
+  for (const stream of [process.stdout, process.stderr]) stream.on('error', () => {});
+}
+// Set once project mode can shut down in order; before that a vanished hub means a plain exit.
+let stopForParent: (() => void) | undefined;
+const leaveWithParent = (): void => {
+  // With the hub gone nobody sweeps what this core started and its own shutdown leaves behind (an agent's background jobs).
+  const tree = descendants(process.pid);
+  process.once('exit', () => {
+    for (const pid of tree) if (isAlive(pid)) sendSignal(pid, 'SIGKILL');
+  });
+  // process.exit, unlike a signal, runs the 'exit' handlers: this sweep and the lock release.
+  if (!stopForParent) process.exit(1);
+  setTimeout(() => process.exit(1), PARENT_GONE_DEADLINE_MS).unref();
+  stopForParent();
+};
+const stdinToken = exitWithParent ? await followParent(process.stdin, leaveWithParent) : values['token-stdin'] ? readFileSync(0, 'utf8').trim() : '';
+const token = values['token-stdin'] ? stdinToken || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
+
+if (values.hub) {
+  let hub: RunningHub;
+  try {
+    hub = await startHub({
+      port,
+      token,
+      staticDir: values.ui ? resolve(values.ui) : undefined,
+      allowedOrigins: values['allow-origin'],
+      home,
+      projects: values.project.map((path) => resolve(path)),
+      child: { claude: values.claude, noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'] },
+    });
+  } catch (error) {
+    console.error(`IDE core failed to start: ${(error as Error).message}`);
+    process.exit(1);
+  }
+  console.log(`IDE core: hub · IDE home: ${home}`);
+  if (values.ui) console.log(`  open: http://127.0.0.1:${hub.port}/#token=${token}`);
+  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+  await new Promise<void>((resolveStop) => {
+    for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => void hub.close().then(resolveStop));
+  });
+  process.exit(0);
+}
 
 if (values.project.length === 0) {
   let launcher: RunningLauncher;
@@ -108,6 +159,8 @@ if (!lock.acquired) {
   console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
   process.exit(1);
 }
+// An exit that skips the shutdown (the hub vanishing during startup, a second Ctrl+C) must not leave the lock behind.
+process.once('exit', () => lock.release());
 const recent = new RecentProjects(home);
 recent.add(root);
 
@@ -322,6 +375,10 @@ try {
         reply({ type: 'fs.list.result', requestId: message.requestId, ...listDirectories(message.path, homedir()) });
         return;
       case 'project.open': {
+        if (exitWithParent) {
+          reply({ type: 'project.open.result', requestId: message.requestId, error: HUB_OWNS_PROJECTS });
+          return;
+        }
         const target = validateProjectPath(message.path);
         let error = 'error' in target ? target.error : target.root === root ? 'That project is already open.' : null;
         if (error === null && !('error' in target)) error = projectBusy(home, target.root);
@@ -334,6 +391,10 @@ try {
         return;
       }
       case 'project.close': {
+        if (exitWithParent) {
+          reply({ type: 'project.close.result', requestId: message.requestId, error: HUB_OWNS_PROJECTS });
+          return;
+        }
         reply({ type: 'project.close.result', requestId: message.requestId, error: null });
         const args = successorArgs(process.argv.slice(2), null, running.port);
         afterClose = () => spawnSuccessor(args, token);
@@ -419,6 +480,11 @@ try {
     await afterClose?.();
     process.exit(0);
   };
+  const stop = (): void => {
+    // A stop request during a project switch or close means the user wants out: no successor must outlive it.
+    afterClose = undefined;
+    closing ??= shutdown();
+  };
   let firstInterrupt = 0;
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) {
     process.on(signal, () => {
@@ -426,16 +492,18 @@ try {
         if (firstInterrupt && Date.now() - firstInterrupt > 1000) process.exit(130);
         firstInterrupt ||= Date.now();
       }
-      // A stop request during a project switch or close means the user wants out: no successor must outlive it.
-      afterClose = undefined;
-      closing ??= shutdown();
+      stop();
     });
   }
+  stopForParent = stop;
 
   console.log(`IDE core: ${root}`);
   console.log(`  agent: ${values.claude} · control mode ${policy.effective().mode} · IDE home: ${home}`);
-  if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
-  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+  // Under the hub these addresses would carry this core's token next to the hub's origin; the hub hands them to the UI instead.
+  if (!exitWithParent) {
+    if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
+    for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+  }
 
   progress.set({ indexing: { indexed: 0 } });
   const adapters = await Promise.all([
