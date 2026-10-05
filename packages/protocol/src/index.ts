@@ -1,4 +1,5 @@
 import type { HistoryClientMessage, HistoryServerMessage } from './history';
+import type { HubClientMessage, HubServerMessage } from './hub';
 import type { PlanClientMessage, PlanServerMessage } from './plans';
 import type { ProjectClientMessage, ProjectServerMessage } from './project';
 import type { TerminalClientMessage, TerminalServerMessage } from './terminal';
@@ -9,6 +10,7 @@ export * from './session';
 export * from './settings';
 export * from './plans';
 export * from './history';
+export * from './hub';
 export * from './project';
 export * from './project-name';
 export * from './terminal';
@@ -170,6 +172,7 @@ export type ServerMessage =
   | PlanServerMessage
   | HistoryServerMessage
   | ProjectServerMessage
+  | HubServerMessage
   | TerminalServerMessage;
 
 export type ClientMessage =
@@ -178,5 +181,6 @@ export type ClientMessage =
   | PlanClientMessage
   | HistoryClientMessage
   | ProjectClientMessage
+  | HubClientMessage
   | TerminalClientMessage
   | { type: 'map.regroup' };
