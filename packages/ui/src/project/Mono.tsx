@@ -7,7 +7,7 @@ export function Mono({ name, root, kind, size = 18 }: { name: string; root: stri
   return (
     <span className="pmono" style={{ '--h': projectHue(root), '--sz': `${size}px` } as CSSProperties}>
       {projectLetter(name)}
-      {kind !== undefined && kind !== 'idle' && <i className="badge" />}
+      {kind !== undefined && kind !== 'idle' && <i className="pm-badge" />}
     </span>
   );
 }

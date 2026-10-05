@@ -18,7 +18,8 @@ export function Tooltips() {
         return;
       }
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => {
+      // Once one tooltip is up, moving to the next control swaps it at once instead of waiting again.
+      const show = () => {
         tip.replaceChildren();
         const text = document.createElement('div');
         text.textContent = target.dataset.tip ?? '';
@@ -41,7 +42,9 @@ export function Tooltips() {
         tip.style.left = `${x}px`;
         tip.style.top = `${below + tip.offsetHeight > window.innerHeight - 8 ? rect.top - tip.offsetHeight - 8 : below}px`;
         tip.classList.add('on');
-      }, 420);
+      };
+      if (tip.classList.contains('on')) show();
+      else timer = window.setTimeout(show, 420);
     };
     document.addEventListener('mouseover', over);
     document.addEventListener('mousedown', hide);

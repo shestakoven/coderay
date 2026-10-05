@@ -142,6 +142,16 @@ export function App() {
     if (notice && background) notify(id, notice.title, notice.body, notice.kind);
     else dispatchNotices({ type: 'status', projectId: id, kind: next.kind });
   }, [notify]);
+  const coreStates = useRef<Record<string, string>>({});
+  useEffect(() => {
+    for (const project of projects.projects) {
+      const before = coreStates.current[project.id];
+      coreStates.current[project.id] = project.state;
+      if (before === 'running' && project.state === 'failed' && (project.id !== projects.activeId || !document.hasFocus())) {
+        notify(project.id, `${tabLabels(projects.projects)[project.id] ?? project.name} stopped`, project.error ?? 'The IDE core stopped.', 'error');
+      }
+    }
+  }, [projects.projects, projects.activeId, notify]);
   const onBadge = useCallback((id: string, count: number) => setBadges((current) => (current[id] === count ? current : { ...current, [id]: count })), []);
 
   const activate = useCallback((id: string) => {
@@ -240,7 +250,7 @@ export function App() {
     document.title = shownName ? `${shownName} · AI Control IDE` : 'AI Control IDE';
   }, [shownName]);
 
-  const info: ProjectInfo = useMemo(() => ({ root: activeProject(projects)?.root ?? null, name: activeProject(projects)?.name ?? '', home: projects.home, recent: projects.recent }), [projects]);
+  const info: ProjectInfo = useMemo(() => ({ root: activeProject(projects)?.root ?? null, name: activeProject(projects)?.name ?? '', home: projects.home, recent: projects.recent.filter((item) => !projects.projects.some((project) => project.root === item.path)) }), [projects]);
 
   if (!token) {
     return <div className="no-token">Open the address the IDE core printed when it started: it carries this launch's access token.</div>;
