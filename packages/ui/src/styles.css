@@ -576,8 +576,9 @@ body.resizing .resizer { pointer-events: auto; }
 .chat-header .agent-view button:hover:not(.on) { color: var(--fg); }
 .chat-header .agent-view button.on { background: var(--raised); color: var(--fg); }
 .chat-header .agent-view button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
-.agent-terminal { position: relative; flex: 1; min-height: 0; background: var(--bg); }
-.agent-terminal-host { position: absolute; inset: 0; padding: 8px 4px 6px 10px; }
+/* FitAddon measures the host's computed size, so the gutter is an inset, not padding; overflow stays inside so .right-body never toggles a scrollbar */
+.agent-terminal { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg); }
+.agent-terminal-host { position: absolute; inset: 8px 4px 6px 10px; }
 .agent-terminal-host .xterm { height: 100%; }
 .agent-terminal-host .xterm-viewport { background-color: transparent !important; }
 .agent-terminal-state { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }

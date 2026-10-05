@@ -7,7 +7,11 @@ export const TERMINAL_ID = /^[A-Za-z0-9_-]{1,64}$/;
 export const MAX_TERMINAL_INPUT = 65536;
 
 const KILL_GRACE_MS = 2000;
-const HIDDEN_ENV = [LAUNCH_TOKEN_ENV, 'CLAUDECODE'];
+// The PTY is its own xterm: programs must not take it for the terminal (or tmux) the core was started from.
+const HIDDEN_ENV = [
+  LAUNCH_TOKEN_ENV, 'CLAUDECODE', 'TMUX', 'TMUX_PANE', 'TERM_PROGRAM', 'TERM_PROGRAM_VERSION', 'TERM_SESSION_ID',
+  'LC_TERMINAL', 'LC_TERMINAL_VERSION', 'ITERM_SESSION_ID', 'ITERM_PROFILE',
+];
 
 export interface PtyProcess {
   onData(listener: (data: string) => void): unknown;
