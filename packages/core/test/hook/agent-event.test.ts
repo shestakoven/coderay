@@ -22,6 +22,23 @@ function run(configPath: string, input: string): Promise<{ code: number | null; 
   });
 }
 
+// Writes the payload piece by piece with a pause between, so that the script reads each piece as a chunk of its own.
+function runInChunks(configPath: string, chunks: Buffer[]): Promise<{ code: number | null; stdout: string }> {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [AGENT_EVENT_SCRIPT, configPath], { stdio: ['pipe', 'pipe', 'ignore'] });
+    let stdout = '';
+    child.stdout.setEncoding('utf8').on('data', (chunk: string) => (stdout += chunk));
+    child.on('close', (code) => resolve({ code, stdout }));
+    void (async () => {
+      for (const [index, chunk] of chunks.entries()) {
+        if (index > 0) await new Promise((r) => setTimeout(r, 400));
+        await new Promise<void>((written) => child.stdin.write(chunk, () => written()));
+      }
+      child.stdin.end();
+    })();
+  });
+}
+
 function config(url: string): string {
   const path = join(tempDir('ide-hook-'), 'hook.json');
   writeFileSync(path, JSON.stringify({ url, secret: 's3cret', sessionId: 's1' }));
@@ -105,5 +122,47 @@ describe('agent-event hook script', () => {
     writeFileSync(bad, 'not json');
     expect((await run(bad, JSON.stringify(EVENT))).code).toBe(0);
     expect(seen.req).toBeUndefined();
+  });
+
+  describe('a multi-byte character that is split between two chunks of the payload', () => {
+    const send = async (event: object, cuts: (bytes: Buffer) => number[]) => {
+      const seen: Seen = {};
+      const bytes = Buffer.from(JSON.stringify(event));
+      const points = [0, ...cuts(bytes), bytes.length];
+      const chunks = points.slice(1).map((end, index) => bytes.subarray(points[index], end));
+      expect((await runInChunks(config(await core(204, '', seen)), chunks)).code).toBe(0);
+      return JSON.parse(seen.body ?? 'null') as { event: { prompt: string } };
+    };
+    const inside = (bytes: Buffer, text: string, offset: number) => bytes.indexOf(Buffer.from(text)) + offset;
+
+    it.each([['a two-byte letter', 'привет', 1], ['a three-byte character', '世界', 1], ['a three-byte character, after two bytes', '世界', 2]])(
+      'arrives whole when the cut is inside %s',
+      async (_name, text, offset) => {
+        const prompt = `fix ${text} now`;
+        const { event } = await send({ ...EVENT, prompt }, (bytes) => [inside(bytes, text, offset)]);
+        expect(event.prompt).toBe(prompt);
+      },
+    );
+
+    it.each([1, 2, 3])('arrives whole when the cut is after %i byte(s) of a four-byte character', async (offset) => {
+      const prompt = 'ok 😀 done';
+      const { event } = await send({ ...EVENT, prompt }, (bytes) => [inside(bytes, '😀', offset)]);
+      expect(event.prompt).toBe(prompt);
+    });
+
+    it('arrives whole when a four-byte character is cut at every byte', async () => {
+      const prompt = 'ok 😀 done';
+      const { event } = await send({ ...EVENT, prompt }, (bytes) => [1, 2, 3].map((offset) => inside(bytes, '😀', offset)));
+      expect(event.prompt).toBe(prompt);
+    });
+
+    it('arrives whole when the cut at 64 KB, the size a pipe hands over at most, falls inside a character', async () => {
+      const prefix = '{"hook_event_name":"UserPromptSubmit","session_id":"claude-1","prompt":"';
+      const filler = 'a'.repeat(65536 - Buffer.byteLength(prefix) - 1);
+      const prompt = `${filler}世界 and the rest of the prompt`;
+      const { event } = await send({ ...EVENT, prompt }, () => [65536]);
+      expect(event.prompt).toBe(prompt);
+      expect(event.prompt).not.toContain('\ufffd');
+    });
   });
 });

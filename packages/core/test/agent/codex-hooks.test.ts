@@ -31,7 +31,7 @@ describe('parseHookEvent on Codex hooks', () => {
     [AT.bashEnd, 'the end of a shell call, whose output is a plain string', { type: 'tool-end', toolUseId: CALL.bash, status: 'ok', agentId: null, launched: null }],
     [AT.spawnStart, 'the start of spawn_agent', { type: 'tool-start', toolUseId: CALL.spawn, tool: 'spawn_agent', input: SPAWN_INPUT, agentId: null }],
     [AT.spawnEnd, 'the end of spawn_agent, which names the new agent in a JSON string', { type: 'tool-end', toolUseId: CALL.spawn, status: 'ok', agentId: null, launched: { id: SUBAGENT, kind: 'subagent' } }],
-    [AT.subagentStart, 'the start of the subagent', { type: 'subagent-start', agentId: SUBAGENT }],
+    [AT.subagentStart, 'the start of the subagent, with its type', { type: 'subagent-start', agentId: SUBAGENT, agentType: 'default' }],
     [AT.subagentPrompt, 'the prompt the subagent gets, which is not the user', null],
     [AT.waitStart, 'the start of waiting for the subagent, a call of the main agent', { type: 'tool-start', toolUseId: CALL.wait, tool: 'multi_agent_v1wait_agent', input: at(AT.waitStart).tool_input, agentId: null }],
     [AT.subBashStart, 'the start of a call of the subagent', { type: 'tool-start', toolUseId: CALL.subBash, tool: 'Bash', input: { command: 'echo sub' }, agentId: SUBAGENT }],

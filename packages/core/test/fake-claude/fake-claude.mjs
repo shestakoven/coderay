@@ -45,7 +45,7 @@ let ignoringSigterm = false;
 let reapHooked = false;
 let wake = () => {};
 
-record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null, hookNames: Object.keys(settings?.hooks ?? {}).sort() });
 
 createInterface({ input: process.stdin })
   .on('line', (line) => {

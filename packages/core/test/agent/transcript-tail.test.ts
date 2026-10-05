@@ -194,4 +194,71 @@ describe('TranscriptTail', () => {
     await quiet();
     expect(first.lines).toEqual(['from the second']);
   });
+
+  describe('when asked to follow another file', () => {
+    it('reports the lines the old file got since the last poll before it switches, without waiting for a poll', () => {
+      const first = follower('');
+      const second = join(tempDir('ide-transcript-'), 'other.jsonl');
+      writeFileSync(second, 'already there\n');
+      first.tail.follow(first.path);
+      appendFileSync(first.path, 'just before the switch\nand another\n');
+      first.tail.follow(second);
+      expect(first.lines).toEqual(['just before the switch', 'and another']);
+    });
+
+    it('reports those lines before the lines of the new file, which it then follows from its end', async () => {
+      const first = follower('');
+      const second = join(tempDir('ide-transcript-'), 'other.jsonl');
+      writeFileSync(second, 'already there\n');
+      first.tail.follow(first.path);
+      appendFileSync(first.path, 'from the old file\n');
+      first.tail.follow(second);
+      appendFileSync(second, 'from the new file\n');
+      await waitFor(() => first.lines.length === 2, 'both lines');
+      await quiet();
+      expect(first.lines).toEqual(['from the old file', 'from the new file']);
+    });
+
+    it('does not report a line of the old file that is still being written when it switches', async () => {
+      const first = follower('');
+      const second = join(tempDir('ide-transcript-'), 'other.jsonl');
+      writeFileSync(second, '');
+      first.tail.follow(first.path);
+      appendFileSync(first.path, 'a whole line\nhalf a li');
+      first.tail.follow(second);
+      appendFileSync(first.path, 'ne\n');
+      await quiet();
+      expect(first.lines).toEqual(['a whole line']);
+    });
+
+    it('reports nothing more from the old file once switched', async () => {
+      const first = follower('');
+      const second = join(tempDir('ide-transcript-'), 'other.jsonl');
+      writeFileSync(second, '');
+      first.tail.follow(first.path);
+      first.tail.follow(second);
+      appendFileSync(first.path, 'too late\n');
+      await quiet();
+      expect(first.lines).toEqual([]);
+    });
+
+    it('reports nothing for the old file when it never got a line, and keeps one timer', () => {
+      vi.useFakeTimers();
+      onTestFinished(() => {
+        vi.useRealTimers();
+      });
+      const first = follower('');
+      first.tail.follow(first.path);
+      first.tail.follow(join(tempDir('ide-transcript-'), 'other.jsonl'));
+      expect([first.lines, vi.getTimerCount()]).toEqual([[], 1]);
+    });
+
+    it('does not read anything when asked to follow the same file again', () => {
+      const first = follower('');
+      first.tail.follow(first.path);
+      appendFileSync(first.path, 'not read yet\n');
+      first.tail.follow(first.path);
+      expect(first.lines).toEqual([]);
+    });
+  });
 });

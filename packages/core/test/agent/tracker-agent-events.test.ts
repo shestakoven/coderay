@@ -11,7 +11,8 @@ function tracker(): TurnTracker {
 }
 
 const prompt = (text: string, task: TaskNotice | null = null): AgentEvent => ({ type: 'prompt', text, task });
-const toolStart = (toolUseId: string, tool = 'Bash', agentId: string | null = null): AgentEvent => ({ type: 'tool-start', toolUseId, tool, input: {}, agentId });
+const toolStart = (toolUseId: string, tool = 'Bash', agentId: string | null = null, input: unknown = {}): AgentEvent => ({ type: 'tool-start', toolUseId, tool, input, agentId });
+const subagentStart = (agentId: string, agentType = 'general-purpose'): AgentEvent => ({ type: 'subagent-start', agentId, agentType });
 const toolEnd = (toolUseId: string, status: 'ok' | 'error' = 'ok', agentId: string | null = null, launched: { id: string; kind: 'shell' | 'subagent' } | null = null): AgentEvent =>
   ({ type: 'tool-end', toolUseId, status, agentId, launched });
 const turnEnd = (lastMessage: string | null = 'Done.', options: { failed?: boolean; running?: string[] | null } = {}): AgentEvent =>
@@ -128,31 +129,104 @@ describe('TurnTracker.agentEvent', () => {
       expect(tools.find((tool) => tool.toolUseId === 'toolu_r')).toMatchObject({ parentToolUseId: 'toolu_ag' });
     });
 
-    it('places the calls of a foreground subagent under the newest Agent call that has no subagent', () => {
+    const parentsOf = (tools: { toolUseId: string; parentToolUseId: string | null }[], ids: string[]) =>
+      ids.map((id) => tools.find((tool) => tool.toolUseId === id)?.parentToolUseId);
+
+    it('places the calls of a foreground subagent under the Agent call it started from', () => {
+      const { tools } = feed(tracker(), [prompt('go'), toolStart('toolu_a', 'Agent'), subagentStart('ag1'), toolStart('toolu_x', 'Read', 'ag1')]);
+      expect(parentsOf(tools, ['toolu_x'])).toEqual(['toolu_a']);
+    });
+
+    it('places the calls of parallel foreground subagents under the Agent calls in the order of the calls', () => {
       const { tools } = feed(tracker(), [
-        prompt('go'), toolStart('toolu_a', 'Agent'), toolStart('toolu_b', 'Agent'),
-        { type: 'subagent-start', agentId: 'ag1' }, { type: 'subagent-start', agentId: 'ag2' },
+        prompt('go'), toolStart('toolu_a', 'Agent'), toolStart('toolu_b', 'Agent'), toolStart('toolu_c', 'Agent'),
+        subagentStart('ag1'), subagentStart('ag2'), subagentStart('ag3'),
+        toolStart('toolu_x', 'Read', 'ag1'), toolStart('toolu_y', 'Read', 'ag2'), toolStart('toolu_z', 'Read', 'ag3'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x', 'toolu_y', 'toolu_z'])).toEqual(['toolu_a', 'toolu_b', 'toolu_c']);
+    });
+
+    it('gives a subagent the oldest Agent call of its type, though an older call of another type waits', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'),
+        toolStart('toolu_a', 'Agent', null, { subagent_type: 'Explore' }), toolStart('toolu_b', 'Agent', null, { subagent_type: 'general-purpose' }),
+        subagentStart('ag1', 'general-purpose'), subagentStart('ag2', 'Explore'),
         toolStart('toolu_x', 'Read', 'ag1'), toolStart('toolu_y', 'Read', 'ag2'),
       ]);
-      expect(['toolu_x', 'toolu_y'].map((id) => tools.find((tool) => tool.toolUseId === id)?.parentToolUseId)).toEqual(['toolu_b', 'toolu_a']);
+      expect(parentsOf(tools, ['toolu_x', 'toolu_y'])).toEqual(['toolu_b', 'toolu_a']);
+    });
+
+    it('gives two subagents of one type their calls oldest first', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'),
+        toolStart('toolu_a', 'Agent', null, { subagent_type: 'Explore' }), toolStart('toolu_b', 'Agent', null, { subagent_type: 'Explore' }),
+        subagentStart('ag1', 'Explore'), subagentStart('ag2', 'Explore'),
+        toolStart('toolu_x', 'Read', 'ag1'), toolStart('toolu_y', 'Read', 'ag2'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x', 'toolu_y'])).toEqual(['toolu_a', 'toolu_b']);
+    });
+
+    it('gives a subagent the oldest free call when no call names its type', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'),
+        toolStart('toolu_a', 'Agent', null, { subagent_type: 'Explore' }), toolStart('toolu_b', 'Agent', null, { description: 'no type' }),
+        subagentStart('ag1', 'Plan'), subagentStart('ag2', 'Plan'),
+        toolStart('toolu_x', 'Read', 'ag1'), toolStart('toolu_y', 'Read', 'ag2'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x', 'toolu_y'])).toEqual(['toolu_a', 'toolu_b']);
+    });
+
+    it('skips a call that already has a subagent, whatever its type', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'),
+        toolStart('toolu_a', 'Agent', null, { subagent_type: 'Explore' }), toolStart('toolu_b', 'Agent', null, { subagent_type: 'Explore' }),
+        subagentStart('ag1', 'Explore'), subagentStart('ag2', 'general-purpose'),
+        toolStart('toolu_x', 'Read', 'ag1'), toolStart('toolu_y', 'Read', 'ag2'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x', 'toolu_y'])).toEqual(['toolu_a', 'toolu_b']);
+    });
+
+    it('pairs a subagent with a Task call as it does with an Agent call', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'), toolStart('toolu_a', 'Task', null, { subagent_type: 'Explore' }), toolStart('toolu_b', 'Task', null, { subagent_type: 'Plan' }),
+        subagentStart('ag1', 'Plan'), toolStart('toolu_x', 'Read', 'ag1'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x'])).toEqual(['toolu_b']);
+    });
+
+    it('pairs a subagent only with a call that starts one, not with another tool whose input names the same type', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'), toolStart('toolu_r', 'Read', null, { subagent_type: 'Explore' }), toolStart('toolu_a', 'Agent', null, { subagent_type: 'Plan' }),
+        subagentStart('ag1', 'Explore'), toolStart('toolu_x', 'Read', 'ag1'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x'])).toEqual(['toolu_a']);
+    });
+
+    it('does not pair the same subagent twice when its start is reported again', () => {
+      const { tools } = feed(tracker(), [
+        prompt('go'), toolStart('toolu_a', 'Agent'), toolStart('toolu_b', 'Agent'),
+        subagentStart('ag1'), subagentStart('ag1'), toolStart('toolu_x', 'Read', 'ag1'),
+        subagentStart('ag2'), toolStart('toolu_y', 'Read', 'ag2'),
+      ]);
+      expect(parentsOf(tools, ['toolu_x', 'toolu_y'])).toEqual(['toolu_a', 'toolu_b']);
     });
 
     it('keeps the parent of a subagent call when it ends', () => {
       const t = tracker();
-      feed(t, [prompt('go'), toolStart('toolu_a', 'Agent'), { type: 'subagent-start', agentId: 'ag1' }, toolStart('toolu_x', 'Read', 'ag1'), toolEnd('toolu_x', 'ok', 'ag1')]);
+      feed(t, [prompt('go'), toolStart('toolu_a', 'Agent'), subagentStart('ag1'), toolStart('toolu_x', 'Read', 'ag1'), toolEnd('toolu_x', 'ok', 'ag1')]);
       expect(t.endInfo('toolu_x')).toMatchObject({ parentToolUseId: 'toolu_a' });
     });
 
     it('shows the last message of a subagent under its Agent call', () => {
       const { messages } = feed(tracker(), [
-        prompt('go'), toolStart('toolu_a', 'Agent'), { type: 'subagent-start', agentId: 'ag1' }, { type: 'subagent-stop', agentId: 'ag1', lastMessage: 'Found it.' },
+        prompt('go'), toolStart('toolu_a', 'Agent'), subagentStart('ag1'), { type: 'subagent-stop', agentId: 'ag1', lastMessage: 'Found it.' },
       ]);
       expect(messages.filter((m) => m.role === 'assistant')).toMatchObject([{ text: 'Found it.', parentToolUseId: 'toolu_a' }]);
     });
 
     it('shows no message for a subagent that stopped without one', () => {
       const { messages } = feed(tracker(), [
-        prompt('go'), toolStart('toolu_a', 'Agent'), { type: 'subagent-start', agentId: 'ag1' }, { type: 'subagent-stop', agentId: 'ag1', lastMessage: null },
+        prompt('go'), toolStart('toolu_a', 'Agent'), subagentStart('ag1'), { type: 'subagent-stop', agentId: 'ag1', lastMessage: null },
       ]);
       expect(messages.filter((m) => m.role === 'assistant')).toEqual([]);
     });
@@ -189,7 +263,7 @@ describe('TurnTracker.agentEvent', () => {
 
     it('ends a background subagent when it stops', () => {
       const t = tracker();
-      feed(t, [prompt('go'), toolStart('toolu_ag', 'Agent'), toolEnd('toolu_ag', 'ok', null, { id: 'ag1', kind: 'subagent' }), { type: 'subagent-start', agentId: 'ag1' }]);
+      feed(t, [prompt('go'), toolStart('toolu_ag', 'Agent'), toolEnd('toolu_ag', 'ok', null, { id: 'ag1', kind: 'subagent' }), subagentStart('ag1')]);
       expect(feed(t, [{ type: 'subagent-stop', agentId: 'ag1', lastMessage: null }]).tasks).toMatchObject([{ id: 'ag1', endedAt: expect.any(Number) }]);
     });
 

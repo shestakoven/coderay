@@ -9,6 +9,7 @@ export interface FakeRecord {
   pid?: number;
   claudecode?: string | null;
   configDir?: string | null;
+  hookNames?: string[];
   sleeperPid?: number;
   ignoredSignal?: string;
   keepsRunning?: boolean;

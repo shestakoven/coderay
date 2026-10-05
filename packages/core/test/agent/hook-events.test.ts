@@ -134,8 +134,12 @@ describe('parseHookEvent', () => {
   });
 
   describe('SubagentStart and SubagentStop', () => {
-    it('reads the start of a subagent', () => {
-      expect(parseHookEvent(hook('SubagentStart', { agent_id: 'ag1', agent_type: 'general-purpose' }))).toEqual({ type: 'subagent-start', agentId: 'ag1' });
+    it('reads the start of a subagent with its type', () => {
+      expect(parseHookEvent(hook('SubagentStart', { agent_id: 'ag1', agent_type: 'general-purpose' }))).toEqual({ type: 'subagent-start', agentId: 'ag1', agentType: 'general-purpose' });
+    });
+
+    it('takes the type of the subagent from the payload, whatever it is', () => {
+      expect(parseHookEvent(hook('SubagentStart', { agent_id: 'ag2', agent_type: 'Explore' }))).toMatchObject({ agentId: 'ag2', agentType: 'Explore' });
     });
 
     it('reads the end of a subagent with its last message', () => {
@@ -183,6 +187,24 @@ describe('parseTranscriptLine', () => {
 
   it('reads an interruption whose content is a plain string', () => {
     expect(parseTranscriptLine(user('[Request interrupted by user]'))).toEqual([{ type: 'interrupted' }]);
+  });
+
+  it('does not take the output of a tool that starts with the marker for Esc', () => {
+    const marker = '[Request interrupted by user] is what the log says.';
+    expect(parseTranscriptLine(user([{ type: 'tool_result', tool_use_id: 'toolu_1', content: marker }]))).toEqual([]);
+    expect(parseTranscriptLine(user([{ type: 'tool_result', tool_use_id: 'toolu_1', content: [{ type: 'text', text: marker }] }]))).toEqual([]);
+    expect(parseTranscriptLine(user([{ type: 'tool_result', tool_use_id: 'toolu_1', content: marker, is_error: true }]))).toEqual([]);
+  });
+
+  it('reads the marker as a text block of its own next to the result of a tool', () => {
+    const content = [{ type: 'tool_result', tool_use_id: 'toolu_1', content: 'ok' }, { type: 'text', text: '[Request interrupted by user for tool use]' }];
+    expect(parseTranscriptLine(user(content))).toEqual([{ type: 'interrupted' }]);
+  });
+
+  it('does not take what the assistant wrote that starts with the marker for Esc', () => {
+    expect(parseTranscriptLine(assistant([{ type: 'text', text: '[Request interrupted by user] is what the log says.' }]))).toEqual([
+      { type: 'assistant-text', text: '[Request interrupted by user] is what the log says.' },
+    ]);
   });
 
   it('does not take a message that merely quotes the marker for Esc', () => {

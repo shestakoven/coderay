@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { AT, CALL, codexHooks, SUBAGENT, type RawHook } from './codex-fixture';
 import { openTerminal, snapshot, type Terminal } from './terminal-events-harness';
 
@@ -18,13 +18,29 @@ async function codexTerminal() {
   return { t, feed };
 }
 
+const ESC = '\x1b';
+const CTRL_C = '\x03';
+
+// Moves the clock the session reads forward, while time still passes by itself.
+function skewedClock() {
+  let skew = 0;
+  const real = Date.now.bind(Date);
+  const spy = vi.spyOn(Date, 'now').mockImplementation(() => real() + skew);
+  onTestFinished(() => spy.mockRestore());
+  return (ms: number) => {
+    skew += ms;
+  };
+}
+
 const callsOf = (t: Terminal) => t.items().flatMap((item) => (item.kind === 'tool' ? [[item.id, item.tool, item.status, item.parentToolUseId]] : []));
 
 describe('an agent in the terminal that is Codex, followed through its hooks', () => {
   describe('the whole recorded session', () => {
     it('makes two user turns, the first a success and the second stopped with Esc, and leaves none open', async () => {
       const { t, feed } = await codexTerminal();
-      feed(0, hooks.length - 1);
+      feed(0, AT.secondPrompt);
+      t.h.session.terminalTyped(ESC);
+      feed(AT.interrupt, hooks.length - 1);
       expect(t.turns()).toMatchObject([
         { kind: 'user', closedAt: expect.any(Number), resultSubtype: 'success' },
         { kind: 'user', closedAt: expect.any(Number), resultSubtype: 'error_during_execution' },
@@ -65,7 +81,9 @@ describe('an agent in the terminal that is Codex, followed through its hooks', (
 
     it('tells about the two prompts of the user, five results of calls and one Esc', async () => {
       const { t, feed } = await codexTerminal();
-      feed(0, hooks.length - 1);
+      feed(0, AT.secondPrompt);
+      t.h.session.terminalTyped(ESC);
+      feed(AT.interrupt, hooks.length - 1);
       expect(t.heard.userMessages).toBe(2);
       expect(t.heard.toolResults.map((info) => [info.toolUseId, info.status, info.parentToolUseId])).toEqual([
         [CALL.bash, 'ok', null], [CALL.spawn, 'ok', null], [CALL.subBash, 'ok', CALL.spawn], [CALL.wait, 'ok', null], [CALL.close, 'ok', null],
@@ -92,21 +110,74 @@ describe('an agent in the terminal that is Codex, followed through its hooks', (
   });
 
   describe('Interrupt', () => {
-    it('closes the open turn as error_during_execution and tells about the interruption', async () => {
+    const interrupted = async (key?: string) => {
       const { t, feed } = await codexTerminal();
       feed(0, AT.secondPrompt);
       expect(t.h.session.hasOpenTurn()).toBe(true);
+      if (key !== undefined) t.h.session.terminalTyped(key);
       feed(AT.interrupt);
+      return { t, feed };
+    };
+
+    it.each([['Esc', ESC], ['Ctrl+C', CTRL_C]])('closes the open turn as error_during_execution and tells about the interruption after %s was typed in the terminal', async (_name, key) => {
+      const { t } = await interrupted(key);
       expect(t.turns().at(-1)).toMatchObject({ closedAt: expect.any(Number), resultSubtype: 'error_during_execution' });
       expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([false, 1]);
     });
 
-    it('changes nothing when no turn is open', async () => {
+    it('changes nothing when nothing was typed in the terminal', async () => {
+      const { t } = await interrupted();
+      expect(t.turns().at(-1)).toMatchObject({ closedAt: null });
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it.each([['an arrow key', '\x1b[A'], ['text', 'hello'], ['Alt+Enter', '\x1b\r']])('changes nothing when only %s was typed in the terminal', async (_name, data) => {
+      const { t } = await interrupted(data);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('changes nothing when the key was typed more than 5 s before', async () => {
+      const pass = skewedClock();
+      const { t, feed } = await codexTerminal();
+      feed(0, AT.secondPrompt);
+      t.h.session.terminalTyped(ESC);
+      pass(6000);
+      feed(AT.interrupt);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('closes the turn when the key was typed within 5 s', async () => {
+      const pass = skewedClock();
+      const { t, feed } = await codexTerminal();
+      feed(0, AT.secondPrompt);
+      t.h.session.terminalTyped(ESC);
+      pass(4000);
+      feed(AT.interrupt);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([false, 1]);
+    });
+
+    it('lets one key confirm one Interrupt', async () => {
+      const { t, feed } = await interrupted(ESC);
+      feed(AT.secondPrompt);
+      feed(AT.interrupt);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 1]);
+    });
+
+    it('changes nothing when no turn is open, though a key was typed', async () => {
       const { t, feed } = await codexTerminal();
       feed(0, AT.stop);
       const before = snapshot(t);
+      t.h.session.terminalTyped(ESC);
       feed(AT.interrupt);
       expect([snapshot(t), t.heard.interrupts]).toEqual([before, 0]);
+    });
+
+    it('counts the Esc the IDE typed for a stop as the key', async () => {
+      const { t, feed } = await codexTerminal();
+      feed(0, AT.secondPrompt);
+      expect(t.h.session.stop()).toBe(true);
+      feed(AT.interrupt);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([false, 1]);
     });
   });
 

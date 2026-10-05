@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { AGENT_TERMINAL_ID } from '@ide/protocol';
 import { parseClientMessage } from '../../src/server/client-messages';
 
 const parse = (value: unknown) => parseClientMessage(JSON.stringify(value));
@@ -47,6 +48,29 @@ describe('parseClientMessage terminal.open', () => {
 
   it('drops unknown extra fields', () => {
     expect(parse({ type: 'terminal.open', id: 't', cols: 80, rows: 24, data: 'x', extra: 1 })).toEqual({ type: 'terminal.open', id: 't', cols: 80, rows: 24 });
+  });
+});
+
+describe('parseClientMessage terminal.open kind', () => {
+  const open = (fields: object) => parse({ type: 'terminal.open', cols: 80, rows: 24, ...fields });
+
+  it('accepts the agent kind for the id of the agent terminal and keeps the kind', () => {
+    expect(open({ id: AGENT_TERMINAL_ID, kind: 'agent' })).toEqual({ type: 'terminal.open', id: AGENT_TERMINAL_ID, cols: 80, rows: 24, kind: 'agent' });
+  });
+
+  it.each([['an explicit shell kind', { kind: 'shell' }], ['no kind', {}]])('rejects the id of the agent terminal with %s', (_name, fields) => {
+    expect(open({ id: AGENT_TERMINAL_ID, ...fields })).toBeNull();
+  });
+
+  it.each([['an explicit shell kind', { kind: 'shell' }], ['no kind', {}]])('still opens a shell with %s under another id, even one that looks like the id of the agent terminal', (_name, fields) => {
+    for (const id of ['t1', 'agent-2', 'agent_', 'Agent', 'agen', 'xagent']) {
+      expect(open({ id, ...fields }), id).toEqual({ type: 'terminal.open', id, cols: 80, rows: 24 });
+    }
+  });
+
+  it.each([['an unknown kind', 'other'], ['a kind that is a number', 5], ['a null kind', null], ['a kind in other case', 'Agent']])('rejects %s', (_name, kind) => {
+    expect(open({ id: 't', kind })).toBeNull();
+    expect(open({ id: AGENT_TERMINAL_ID, kind })).toBeNull();
   });
 });
 
