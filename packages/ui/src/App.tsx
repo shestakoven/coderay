@@ -188,7 +188,8 @@ export function App() {
   }, [activate]);
   const requestClose = useCallback((id: string) => {
     const kind = statusOf(id).kind;
-    if (kind === 'working' || kind === 'attention') setConfirmClose(id);
+    const running = live.current.projects.find((project) => project.id === id)?.state === 'running';
+    if (running && (kind === 'working' || kind === 'attention')) setConfirmClose(id);
     else closeProject(id);
   }, [statusOf, closeProject]);
 

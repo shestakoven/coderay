@@ -54,7 +54,7 @@ export function CloseProjectDialog({ name, kind, onConfirm, onCancel }: { name: 
       <div className="open-project" style={{ width: 'min(440px, calc(100vw - 32px))' }}>
         <div className="settings-header"><h2>Close {name}?</h2></div>
         <p className="muted" style={{ margin: '0 0 14px' }}>
-          {kind === 'working' ? 'Its agent is working. Closing the project stops it.' : 'Its agent is waiting for your answer. Closing the project drops the question.'}
+          {kind === 'working' ? 'Its agent is working. Closing the project stops it.' : kind === 'attention' ? 'Its agent is waiting for your answer. Closing the project drops the question.' : 'Closing the project stops its core.'}
         </p>
         <div className="modal-actions">
           <button onClick={onCancel} autoFocus>Keep open</button>
