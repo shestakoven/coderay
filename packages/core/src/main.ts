@@ -365,6 +365,7 @@ try {
       case 'terminal.open':
         if (message.kind === 'agent') {
           const launch = await agent.terminalLaunch();
+          if (!launch) return;
           try {
             terminals.open(AGENT_TERMINAL_ID, message.cols, message.rows, launch);
           } catch (error) {

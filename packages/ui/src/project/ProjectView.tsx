@@ -359,6 +359,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const changeAgentView = (view: AgentView): void => {
     if (view === agentView) return;
     if (view === 'terminal') {
+      dispatchChat({ type: 'dismiss-error' });
       setAgentOpening(hub.createAgent());
       return;
     }
@@ -366,8 +367,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     if (agentTab) hub.close(agentTab.id);
   };
   useEffect(() => {
-    if (agentTab !== null || chat.error !== null) setAgentOpening(false);
-  }, [agentTab, chat.error]);
+    if (agentTab !== null || chat.error !== null || chat.session?.status === 'refused') setAgentOpening(false);
+  }, [agentTab, chat.error, chat.session?.status]);
   const toggle = (panel: 'left' | 'right', label: string, keys: string) => (
     <button className={`status-toggle${panels[panel] ? ' on' : ''}`} onClick={() => dispatchPanels({ type: 'toggle', panel })} aria-pressed={panels[panel]} aria-label={label} data-tip={label} data-keys={keys}>
       <Icon name={panel === 'left' ? 'panel-left' : 'panel-right'} size={16} />
@@ -463,6 +464,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                       visible={active && showRight && panels.rightTab === 'agent'}
                       onRestart={() => {
                         if (agentTab) hub.close(agentTab.id);
+                        dispatchChat({ type: 'dismiss-error' });
                         setAgentOpening(hub.createAgent());
                       }}
                       onBack={() => changeAgentView('chat')}

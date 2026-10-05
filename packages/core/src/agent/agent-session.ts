@@ -88,6 +88,12 @@ export class SessionError extends Error {
 type ExitReason = 'restart' | 'new' | 'close';
 type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort' | 'accountId' | 'claudeSessionId' | 'conversationStarted'>>;
 
+interface LaunchFiles {
+  claude: ClaudeCommand;
+  configPath: string;
+  gateArgs: string[];
+}
+
 interface PendingPrompt {
   input: unknown;
   body: PromptBody;
@@ -611,7 +617,8 @@ export class AgentSession {
   }
 
   // The terminal view runs claude's own interface on the chat's conversation, MCP servers and hooks; the chat's process stops first.
-  async terminalLaunch(): Promise<TerminalLaunch> {
+  // Null when the IDE's hooks do not run: the session is then refused, as a chat whose canary stays silent.
+  async terminalLaunch(): Promise<TerminalLaunch | null> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
     if (!this.isIdle()) throw new SessionError('busy-terminal');
@@ -623,6 +630,18 @@ export class AgentSession {
     const files = session && this.launchFiles(session);
     if (!session || !files) throw new SessionError('no-gate');
     this.terminalOpen = true;
+    let hooksRun = false;
+    try {
+      hooksRun = await this.hooksRun(session, files);
+    } finally {
+      if (!hooksRun) this.terminalClosed();
+    }
+    if (!hooksRun) {
+      this.refused = true;
+      this.update({ status: 'refused' });
+      this.apply(this.tracker.notice(HOOK_OFF_NOTICE));
+      return null;
+    }
     return {
       kind: 'agent', title: 'claude', file: files.claude.command, cwd: session.cwd, env: files.claude.env ?? {},
       args: [...files.claude.args, ...conversationArgs(session, existsSync(this.transcript(session)), files.configPath, files.gateArgs)],
@@ -638,6 +657,24 @@ export class AgentSession {
     this.options.gate?.remove(session.id);
     if (!session.conversationStarted && existsSync(this.transcript(session))) this.update({ conversationStarted: true });
     notify(this.exitListeners);
+  }
+
+  // Interactive claude runs SessionStart only after the folder-trust dialog, so a headless claude with the same settings proves the hooks run before the terminal opens.
+  private async hooksRun(session: SessionRecord, files: LaunchFiles): Promise<boolean> {
+    const canary = this.options.gate?.canary;
+    if (!canary) return true;
+    canary.expect(session.id);
+    const probe = startClaude(
+      files.claude,
+      ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--no-session-persistence', '--strict-mcp-config', ...files.gateArgs],
+      session.cwd, () => {}, { killGraceMs: this.options.killGraceMs },
+    );
+    try {
+      const reported = await Promise.race([canary.wait(session.id, this.options.canaryMs ?? CANARY_MS), probe.exited.then(() => false)]);
+      return reported || (await canary.wait(session.id, 0));
+    } finally {
+      await probe.kill();
+    }
   }
 
   private transcriptsDir(session: SessionRecord): string {
@@ -659,7 +696,7 @@ export class AgentSession {
   }
 
   // Writes the MCP config and the gate's hook settings claude starts with; null when the hook settings could not be written.
-  private launchFiles(session: SessionRecord): { claude: ClaudeCommand; configPath: string; gateArgs: string[] } | null {
+  private launchFiles(session: SessionRecord): LaunchFiles | null {
     let gateArgs: string[] = [];
     if (this.options.gate) {
       try {
