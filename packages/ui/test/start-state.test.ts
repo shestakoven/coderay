@@ -67,6 +67,27 @@ describe('startReducer results', () => {
   });
 });
 
+describe('startReducer done', () => {
+  it('returns to the idle home view from a running clone', () => {
+    const progressed = server(working('clone'), { type: 'project.clone.progress', requestId: 'r1', phase: 'receiving', percent: 42 });
+    const s = startReducer(progressed, { type: 'done' });
+    expect(s).toEqual({ view: 'home', work: null, error: null });
+    expect(isWorking(s)).toBe(false);
+  });
+
+  it('returns to the idle home view from a running create', () => {
+    expect(startReducer(startReducer({ ...initialStart, view: 'create' }, { type: 'begin', kind: 'create', requestId: 'r1' }), { type: 'done' })).toEqual(initialStart);
+  });
+
+  it('clears an error and leaves the other view', () => {
+    expect(startReducer({ view: 'clone', work: null, error: 'fatal: nope' }, { type: 'done' })).toEqual(initialStart);
+  });
+
+  it('keeps the home view idle', () => {
+    expect(startReducer(initialStart, { type: 'done' })).toEqual(initialStart);
+  });
+});
+
 describe('PHASE_LABEL', () => {
   it('has a distinct label for every clone phase', () => {
     expect(new Set(Object.values(PHASE_LABEL)).size).toBe(5);
