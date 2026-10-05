@@ -157,7 +157,7 @@ export class TurnTracker {
       case 'subagent-stop':
         return this.subagentStopped(event.agentId, event.lastMessage);
       case 'interrupted':
-        return this.openTurns.flatMap((turn) => this.close(turn.id, 'error_during_execution', turn.kind));
+        return [...this.openTurns].flatMap((turn) => this.close(turn.id, 'error_during_execution', turn.kind));
       case 'assistant-text':
         return this.assistantText(event.text);
       default:
