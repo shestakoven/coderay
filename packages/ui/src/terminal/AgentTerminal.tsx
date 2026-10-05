@@ -10,15 +10,17 @@ export function AgentTerminal({ hub, tab, visible, onRestart, onBack }: {
 }) {
   const element = useRef<HTMLDivElement>(null);
   const id = tab?.id ?? null;
+  const generation = tab?.generation ?? 0;
 
   useEffect(() => {
     const host = element.current;
     if (!host || id === null) return;
+    host.replaceChildren();
     hub.attach(id, host);
     const observer = new ResizeObserver(() => hub.fit(id));
     observer.observe(host);
     return () => observer.disconnect();
-  }, [id, hub]);
+  }, [id, generation, hub]);
 
   useEffect(() => {
     if (!visible || id === null) return;
@@ -27,7 +29,7 @@ export function AgentTerminal({ hub, tab, visible, onRestart, onBack }: {
       hub.focus(id);
     }, 0);
     return () => clearTimeout(timer);
-  }, [visible, id, hub]);
+  }, [visible, id, generation, hub]);
 
   return (
     <div className="agent-terminal" data-testid="agent-terminal">

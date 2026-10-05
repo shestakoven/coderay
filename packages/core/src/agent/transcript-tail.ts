@@ -21,6 +21,8 @@ export class TranscriptTail {
 
   follow(path: string): void {
     if (path === this.path) return;
+    // Lines the old file got since the last poll (an Esc just before /clear) still count.
+    this.read();
     this.stop();
     this.path = path;
     this.offset = sizeOf(path);

@@ -74,7 +74,7 @@ export type RecoveredItem = RecoveredMessage | RecoveredTool;
 
 export interface RecoverTranscriptOptions { claudeSessionId: string; cwd: string; since: number; dir: string }
 
-export const defaultTranscriptsDir = (): string => join(homedir(), '.claude', 'projects');
+export const defaultTranscriptsDir = (): string => join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
 
 const slug = (cwd: string): string => {
   let real = cwd;

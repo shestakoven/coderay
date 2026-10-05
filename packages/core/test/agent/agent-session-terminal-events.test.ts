@@ -1,14 +1,15 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { SessionError } from '../../src/agent/agent-session';
 import type { ToolDecisionRecord } from '../../src/store/store';
 import { transcriptPath } from '../../src/watchdog/recovery';
 import { waitFor } from '../helpers';
-import { interrupted, openTerminal, said, snapshot, turnThatStaysOpen } from './terminal-events-harness';
-import { terminalHarness } from './terminal-harness';
+import { interrupted, openTerminal, said, snapshot, turnThatStaysOpen, type Terminal } from './terminal-events-harness';
+import { flag, terminalHarness } from './terminal-harness';
 
 const ESC = '\x1b';
+const CTRL_C = '\x03';
 const quiet = (ms = 500) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const taskNotification = (taskId: string, toolUseId: string, status = 'completed') =>
@@ -16,6 +17,28 @@ const taskNotification = (taskId: string, toolUseId: string, status = 'completed
 const decision = (toolUseId: string, kind: ToolDecisionRecord['decision']): ToolDecisionRecord => ({
   toolUseId, decision: kind, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE', decidedAt: 1,
 });
+
+// Moves the clock the session reads forward, while time still passes by itself.
+function skewedClock() {
+  let skew = 0;
+  const real = Date.now.bind(Date);
+  const spy = vi.spyOn(Date, 'now').mockImplementation(() => real() + skew);
+  onTestFinished(() => spy.mockRestore());
+  return (ms: number) => {
+    skew += ms;
+  };
+}
+
+// Appends the marker of Esc and then a line after it, and waits until that line was read: the marker was read before it.
+async function appendMarker(t: Terminal, reached: string, marker = interrupted) {
+  t.appendTranscript(marker, said(reached));
+  await waitFor(() => t.messages().some((m) => m.text === reached), `the line "${reached}" after the marker`);
+}
+
+const turnClosed = (t: Terminal, index = 0) => waitFor(() => (t.turns()[index]?.closedAt ?? null) !== null, `turn ${index} closed`);
+
+const toolResultSaying = (text: string) =>
+  JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_1', content: text }] } });
 
 describe('an agent in the terminal, followed through its hooks', () => {
   describe('a prompt and the end of the turn', () => {
@@ -203,7 +226,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
       expect(t.tool('toolu_grep')).toMatchObject({ parentToolUseId: 'toolu_fg' });
     });
 
-    it('gives each of two foreground subagents its own Agent call, the newest first', async () => {
+    it('gives each of two foreground subagents its own Agent call, the oldest first', async () => {
       const t = await openTerminal();
       t.prompt('research it twice');
       t.call('toolu_a', 'Agent', { description: 'a', prompt: 'p' });
@@ -212,7 +235,31 @@ describe('an agent in the terminal, followed through its hooks', () => {
       t.send('SubagentStart', { agent_id: 'ag2', agent_type: 'Explore' });
       t.call('toolu_x', 'Read', {}, { agent_id: 'ag1', agent_type: 'Explore' });
       t.call('toolu_y', 'Read', {}, { agent_id: 'ag2', agent_type: 'Explore' });
+      expect([t.tool('toolu_x')?.parentToolUseId, t.tool('toolu_y')?.parentToolUseId]).toEqual(['toolu_a', 'toolu_b']);
+    });
+
+    it('gives a subagent the Agent call that asked for its type, though an older call of another type waits', async () => {
+      const t = await openTerminal();
+      t.prompt('research it twice');
+      t.call('toolu_a', 'Agent', { description: 'a', prompt: 'p', subagent_type: 'Explore' });
+      t.call('toolu_b', 'Agent', { description: 'b', prompt: 'p', subagent_type: 'general-purpose' });
+      t.send('SubagentStart', { agent_id: 'ag1', agent_type: 'general-purpose' });
+      t.send('SubagentStart', { agent_id: 'ag2', agent_type: 'Explore' });
+      t.call('toolu_x', 'Read', {}, { agent_id: 'ag1', agent_type: 'general-purpose' });
+      t.call('toolu_y', 'Read', {}, { agent_id: 'ag2', agent_type: 'Explore' });
       expect([t.tool('toolu_x')?.parentToolUseId, t.tool('toolu_y')?.parentToolUseId]).toEqual(['toolu_b', 'toolu_a']);
+    });
+
+    it('shows the last message of each of two parallel subagents under its own Agent call', async () => {
+      const t = await openTerminal();
+      t.prompt('research it twice');
+      t.call('toolu_a', 'Agent', { description: 'a', prompt: 'p', subagent_type: 'Explore' });
+      t.call('toolu_b', 'Agent', { description: 'b', prompt: 'p', subagent_type: 'Plan' });
+      t.send('SubagentStart', { agent_id: 'ag1', agent_type: 'Plan' });
+      t.send('SubagentStart', { agent_id: 'ag2', agent_type: 'Explore' });
+      t.send('SubagentStop', { agent_id: 'ag1', agent_type: 'Plan', last_assistant_message: 'The plan.' });
+      t.send('SubagentStop', { agent_id: 'ag2', agent_type: 'Explore', last_assistant_message: 'It is in src/app.ts.' });
+      expect(t.messages().filter((m) => m.role === 'assistant').map((m) => [m.text, m.parentToolUseId])).toEqual([['The plan.', 'toolu_b'], ['It is in src/app.ts.', 'toolu_a']]);
     });
 
     it('shows the last message of a subagent as a message under its Agent call', async () => {
@@ -358,9 +405,12 @@ describe('an agent in the terminal, followed through its hooks', () => {
   });
 
   describe('Esc', () => {
-    it('closes the open turn as interrupted when the transcript says the user stopped it', async () => {
+    const typed = (t: Terminal, key = ESC) => t.h.session.terminalTyped(key);
+
+    it.each([['Esc', ESC], ['Ctrl+C', CTRL_C]])('closes the open turn as interrupted when the transcript says the user stopped it after %s was typed in the terminal', async (_name, key) => {
       const t = await openTerminal();
       t.prompt('refactor everything');
+      typed(t, key);
       t.appendTranscript(interrupted);
       await waitFor(() => t.turns()[0]?.closedAt !== null, 'the turn closed');
       expect(t.turns()).toMatchObject([{ closedAt: expect.any(Number), resultSubtype: 'error_during_execution' }]);
@@ -373,17 +423,154 @@ describe('an agent in the terminal, followed through its hooks', () => {
       t.startShell('toolu_sh', 'bg1');
       t.stop({ background_tasks: [{ id: 'bg1', type: 'local_bash', status: 'running' }] });
       t.prompt(taskNotification('bg1', 'toolu_sh'));
+      typed(t);
       t.appendTranscript(interrupted);
       await waitFor(() => t.turns().every((turn) => turn.closedAt !== null), 'every turn closed');
       expect(t.turns().map((turn) => [turn.kind, turn.resultSubtype])).toEqual([['user', 'success'], ['agent-initiated', 'error_during_execution']]);
       expect(t.heard.interrupts).toBe(1);
     });
 
-    it('does not take a plain message of the agent for Esc', async () => {
+    it('closes the call of the turn that was still running as the turn closes', async () => {
       const t = await openTerminal();
       t.prompt('refactor everything');
+      t.call('toolu_run', 'Bash', { command: 'make' });
+      typed(t);
+      t.appendTranscript(interrupted);
+      await waitFor(() => t.turns()[0]?.closedAt !== null, 'the turn closed');
+      expect(t.tool('toolu_run')).toMatchObject({ status: 'unfinished' });
+    });
+
+    it('changes nothing for a marker that no Esc or Ctrl+C typed in the terminal came before', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      await appendMarker(t, 'read up to here');
+      expect(t.turns()).toMatchObject([{ closedAt: null }]);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('keeps the turn open for a marker that comes more than 5 s after the key', async () => {
+      const pass = skewedClock();
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      pass(6000);
+      await appendMarker(t, 'read up to here');
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('closes the turn for a marker that comes within 5 s of the key', async () => {
+      const pass = skewedClock();
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      pass(4000);
+      t.appendTranscript(interrupted);
+      await waitFor(() => t.turns()[0]?.closedAt !== null, 'the turn closed');
+      expect(t.heard.interrupts).toBe(1);
+    });
+
+    it('lets a later key renew the 5 s the marker may take', async () => {
+      const pass = skewedClock();
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      pass(4000);
+      typed(t, CTRL_C);
+      pass(4000);
+      t.appendTranscript(interrupted);
+      await waitFor(() => t.turns()[0]?.closedAt !== null, 'the turn closed');
+      expect(t.heard.interrupts).toBe(1);
+    });
+
+    it('lets one key confirm one interrupt: a second marker after the same key changes nothing', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      t.appendTranscript(interrupted);
+      await turnClosed(t);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([false, 1]);
+      t.prompt('and now the other thing');
+      await appendMarker(t, 'second marker read');
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 1]);
+    });
+
+    it('confirms an interrupt again after another key', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      t.appendTranscript(interrupted);
+      await turnClosed(t);
+      t.prompt('and now the other thing');
+      typed(t, CTRL_C);
+      t.appendTranscript(interrupted);
+      await turnClosed(t, 1);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([false, 2]);
+    });
+
+    it.each([['an arrow key', '\x1b[A'], ['text', 'hello'], ['Alt+Enter', '\x1b\r'], ['text that ends in Esc', 'a\x1b'], ['two Ctrl+C at once', '\x03\x03'], ['nothing', '']])(
+      'does not take %s typed in the terminal for the key',
+      async (_name, data) => {
+        const t = await openTerminal();
+        t.prompt('refactor everything');
+        typed(t, data);
+        await appendMarker(t, 'read up to here');
+        expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+      },
+    );
+
+    it('tells nobody about an interrupt when no turn is open, whatever was typed', async () => {
+      const t = await openTerminal();
+      t.send('SessionStart', { source: 'startup' });
+      typed(t);
+      t.appendTranscript(interrupted);
+      await quiet(600);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts, t.turns()]).toEqual([false, 0, []]);
+    });
+
+    it('does not take the output of a tool that starts with the marker for Esc, even right after the key', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      await appendMarker(t, 'read up to here', toolResultSaying('[Request interrupted by user] is what the log says.'));
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('leaves the key for the real marker when the output of a tool only looked like one', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      await appendMarker(t, 'read up to here', toolResultSaying('[Request interrupted by user] is what the log says.'));
+      t.appendTranscript(interrupted);
+      await waitFor(() => t.turns()[0]?.closedAt !== null, 'the turn closed');
+      expect(t.heard.interrupts).toBe(1);
+    });
+
+    it('does not take a plain message of the agent for Esc, even right after the key', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
       t.appendTranscript(said('[Request interrupted by user] is what the log says.'));
       await waitFor(() => t.messages().some((m) => m.role === 'assistant'), 'the text from the transcript');
+      await quiet(300);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('does not count a marker in the lines of a subagent', async () => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      typed(t);
+      await appendMarker(t, 'read up to here', JSON.stringify({ type: 'user', isSidechain: true, message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } }));
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
+    });
+
+    it('forgets a key typed before the terminal closed, so the terminal opened anew does not confirm with it', async () => {
+      const t = await openTerminal();
+      typed(t);
+      t.h.session.terminalClosed();
+      expect(await t.h.session.terminalLaunch()).not.toBeNull();
+      const claudeId = t.state().session?.claudeSessionId as string;
+      t.h.session.hookEvent(t.ideId, { ...t.raw('UserPromptSubmit', { prompt: 'again' }), session_id: claudeId });
+      await appendMarker(t, 'read up to here');
       expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
     });
   });
@@ -407,35 +594,122 @@ describe('an agent in the terminal, followed through its hooks', () => {
       expect(t.h.session.hasOpenTurn()).toBe(true);
     });
 
-    it.each(['startup', 'resume', 'compact'])('keeps the conversation when a SessionStart after %s comes from another one', async (source) => {
-      const t = await openTerminal();
-      t.send('SessionStart', { source, session_id: 'some-other-conversation' });
-      expect(t.state().session?.claudeSessionId).toBe(t.claudeId);
-      expect(t.h.store.session(t.ideId)?.claudeSessionId).toBe(t.claudeId);
-    });
+    describe("a SessionStart, which only the terminal's own claude sends", () => {
+      const SOURCES = ['startup', 'resume', 'clear', 'compact'];
 
-    it('moves the chat to the new conversation when /clear starts one, and counts it as not started', async () => {
-      const t = await openTerminal();
-      const file = transcriptPath(t.h.transcriptsDir, t.h.root, t.claudeId);
-      mkdirSync(dirname(file), { recursive: true });
-      writeFileSync(file, `${said('hello')}\n`);
-      t.h.session.terminalClosed();
-      expect(t.h.store.session(t.ideId)?.conversationStarted).toBe(true);
-      expect(await t.h.session.terminalLaunch()).not.toBeNull();
-      const claudeId = t.state().session?.claudeSessionId as string;
-      t.h.session.hookEvent(t.ideId, { ...t.raw('SessionStart', { source: 'clear' }), session_id: 'cleared-conversation' });
-      expect(t.state().session?.claudeSessionId).toBe('cleared-conversation');
-      expect(t.h.store.session(t.ideId)).toMatchObject({ claudeSessionId: 'cleared-conversation', conversationStarted: false });
-      expect(claudeId).not.toBe('cleared-conversation');
-    });
+      it.each(SOURCES)('moves the chat to the conversation a SessionStart after %s names', async (source) => {
+        const t = await openTerminal();
+        t.send('SessionStart', { source, session_id: 'other-conversation' });
+        expect(t.state().session?.claudeSessionId).toBe('other-conversation');
+        expect(t.h.store.session(t.ideId)?.claudeSessionId).toBe('other-conversation');
+      });
 
-    it('follows the new conversation after /clear and ignores the old one', async () => {
-      const t = await openTerminal();
-      t.send('SessionStart', { source: 'clear', session_id: 'cleared-conversation' });
-      t.prompt('from the old conversation');
-      expect(t.turns()).toEqual([]);
-      t.send('UserPromptSubmit', { prompt: 'from the new one', session_id: 'cleared-conversation' });
-      expect(t.messages().map((m) => m.text)).toEqual(['from the new one']);
+      it.each(SOURCES)('counts the new conversation as not started after %s, though the old one had a transcript', async (source) => {
+        const t = await openTerminal();
+        const file = transcriptPath(t.h.transcriptsDir, t.h.root, t.claudeId);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, `${said('hello')}\n`);
+        t.h.session.terminalClosed();
+        expect(t.h.store.session(t.ideId)?.conversationStarted).toBe(true);
+        expect(await t.h.session.terminalLaunch()).not.toBeNull();
+        t.h.session.hookEvent(t.ideId, { ...t.raw('SessionStart', { source }), session_id: 'moved-conversation' });
+        expect(t.state().session?.claudeSessionId).toBe('moved-conversation');
+        expect(t.h.store.session(t.ideId)).toMatchObject({ claudeSessionId: 'moved-conversation', conversationStarted: false });
+      });
+
+      it.each([['clear', 'The conversation was cleared in the terminal'], ['resume', 'The terminal switched to another conversation']])(
+        'tells in the chat that the conversation changed when the SessionStart comes after %s',
+        async (source, text) => {
+          const t = await openTerminal();
+          t.send('SessionStart', { source, session_id: 'other-conversation' });
+          expect(t.notices().filter((notice) => notice.startsWith(text))).toHaveLength(1);
+        },
+      );
+
+      it.each(['startup', 'compact'])('says nothing in the chat when the conversation changes after %s', async (source) => {
+        const t = await openTerminal();
+        const before = t.notices();
+        t.send('SessionStart', { source, session_id: 'other-conversation' });
+        expect(t.notices()).toEqual(before);
+      });
+
+      it.each(SOURCES)('changes nothing for a SessionStart after %s of the conversation the chat is already in', async (source) => {
+        const t = await openTerminal();
+        const before = snapshot(t);
+        expect(t.send('SessionStart', { source })).toBeNull();
+        expect([snapshot(t), t.notices(), t.state().session?.claudeSessionId]).toEqual([before, [], t.claudeId]);
+      });
+
+      it.each(SOURCES)('counts the events of the new conversation after %s and not those of the old one', async (source) => {
+        const t = await openTerminal();
+        t.send('SessionStart', { source, session_id: 'new-conversation' });
+        t.prompt('from the old conversation');
+        t.call('toolu_old', 'Bash');
+        expect([t.turns(), t.tool('toolu_old')]).toEqual([[], undefined]);
+        t.send('UserPromptSubmit', { prompt: 'from the new one', session_id: 'new-conversation' });
+        t.stop({ last_assistant_message: 'x' });
+        expect([t.messages().map((m) => m.text), t.h.session.hasOpenTurn()]).toEqual([['from the new one'], true]);
+        t.send('Stop', { last_assistant_message: 'Done.', stop_hook_active: false, background_tasks: [], session_id: 'new-conversation' });
+        expect(t.h.session.hasOpenTurn()).toBe(false);
+      });
+
+      it('stops counting the new conversation once another one starts', async () => {
+        const t = await openTerminal();
+        t.send('SessionStart', { source: 'clear', session_id: 'first-new' });
+        t.send('SessionStart', { source: 'resume', session_id: 'second-new' });
+        t.send('UserPromptSubmit', { prompt: 'from the first new one', session_id: 'first-new' });
+        t.send('UserPromptSubmit', { prompt: 'from the second new one', session_id: 'second-new' });
+        expect(t.messages().map((m) => m.text)).toEqual(['from the second new one']);
+      });
+
+      it('goes on with the new conversation when the terminal is opened again', async () => {
+        const t = await openTerminal();
+        t.send('SessionStart', { source: 'resume', session_id: 'other-conversation' });
+        t.h.session.terminalClosed();
+        const launch = await t.h.session.terminalLaunch();
+        expect([flag(launch?.args, '--session-id'), launch?.args.includes('--resume')]).toEqual(['other-conversation', false]);
+      });
+
+      it('ignores a SessionStart while no terminal is open', async () => {
+        const t = await openTerminal();
+        t.h.session.terminalClosed();
+        t.send('SessionStart', { source: 'clear', session_id: 'other-conversation' });
+        expect([t.state().session?.claudeSessionId, t.notices()]).toEqual([t.claudeId, []]);
+      });
+
+      it('ignores a SessionStart that names another IDE session', async () => {
+        const t = await openTerminal();
+        t.h.session.hookEvent('another-ide-session', t.raw('SessionStart', { source: 'clear', session_id: 'other-conversation' }));
+        expect([t.state().session?.claudeSessionId, t.notices()]).toEqual([t.claudeId, []]);
+      });
+
+      it('follows the transcript the new conversation names, and no longer the old one', async () => {
+        const t = await openTerminal();
+        const next = join(t.h.transcriptsDir, 'next.jsonl');
+        writeFileSync(next, '');
+        t.prompt('refactor everything');
+        t.send('SessionStart', { source: 'clear', session_id: 'new-conversation', transcript_path: next });
+        t.send('UserPromptSubmit', { prompt: 'the new one', session_id: 'new-conversation', transcript_path: next });
+        t.h.session.terminalTyped(ESC);
+        appendFileSync(t.transcript, `${said('from the old transcript')}\n`);
+        appendFileSync(next, `${interrupted}\n`);
+        await turnClosed(t, 0);
+        await quiet(300);
+        expect(t.messages().map((m) => m.text)).not.toContain('from the old transcript');
+        expect(t.turns().at(-1)).toMatchObject({ resultSubtype: 'error_during_execution' });
+      });
+
+      it('counts an Esc written to the old transcript just before /clear, though the poll did not see it yet', async () => {
+        const t = await openTerminal();
+        const next = join(t.h.transcriptsDir, 'next.jsonl');
+        writeFileSync(next, '');
+        t.prompt('refactor everything');
+        t.h.session.terminalTyped(ESC);
+        appendFileSync(t.transcript, `${interrupted}\n`);
+        t.send('SessionStart', { source: 'clear', session_id: 'new-conversation', transcript_path: next });
+        expect(t.turns()).toMatchObject([{ closedAt: expect.any(Number), resultSubtype: 'error_during_execution' }]);
+        expect(t.heard.interrupts).toBe(1);
+      });
     });
 
     it('answers null and changes nothing for an event that names another IDE session', async () => {
@@ -507,6 +781,60 @@ describe('an agent in the terminal, followed through its hooks', () => {
       t.h.session.sendAbsorbed('stay inside src/auth');
       expect(t.result('toolu_1', 'Read')).not.toBeNull();
       expect(t.result('toolu_2', 'Read')).toBeNull();
+    });
+
+    describe('while a subagent works', () => {
+      const SUB = { agent_id: 'ag1', agent_type: 'Explore' };
+      const withSubagent = async () => {
+        const t = await openTerminal();
+        t.prompt('research it');
+        t.call('toolu_main', 'Read');
+        t.call('toolu_fg', 'Agent', { description: 'd', prompt: 'p' });
+        t.send('SubagentStart', SUB);
+        t.call('toolu_sub', 'Grep', {}, SUB);
+        t.h.session.sendAbsorbed('stay inside src/auth');
+        return t;
+      };
+
+      it("leaves an absorbed note queued when a subagent's tool step ends", async () => {
+        const t = await withSubagent();
+        expect(t.result('toolu_sub', 'Grep', {}, SUB)).toBeNull();
+      });
+
+      it("leaves an absorbed note queued when a subagent's tool step fails", async () => {
+        const t = await withSubagent();
+        expect(t.result('toolu_sub', 'Grep', {}, { ...SUB, error: 'no such file' }, 'PostToolUseFailure')).toBeNull();
+      });
+
+      it('returns the note with the next tool step of the agent itself, after steps of the subagent passed', async () => {
+        const t = await withSubagent();
+        t.result('toolu_sub', 'Grep', {}, SUB);
+        expect(t.result('toolu_main', 'Read')).toEqual({
+          hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext: expect.stringContaining('stay inside src/auth') },
+        });
+      });
+
+      it('returns the note with a failed tool step of the agent itself', async () => {
+        const t = await withSubagent();
+        t.result('toolu_sub', 'Grep', {}, SUB);
+        expect(t.result('toolu_main', 'Read', {}, { error: 'no such file' }, 'PostToolUseFailure')).toEqual({
+          hookSpecificOutput: { hookEventName: 'PostToolUseFailure', additionalContext: expect.stringContaining('stay inside src/auth') },
+        });
+      });
+
+      it("still blocks the Stop for a note that a subagent's tool step did not carry", async () => {
+        const t = await withSubagent();
+        t.result('toolu_sub', 'Grep', {}, SUB);
+        expect(t.stop()).toEqual({ decision: 'block', reason: expect.stringContaining('stay inside src/auth') });
+      });
+
+      it('gives the note once: the tool step of the agent that carried it leaves none for the next', async () => {
+        const t = await withSubagent();
+        t.result('toolu_sub', 'Grep', {}, SUB);
+        expect(t.result('toolu_main', 'Read')).not.toBeNull();
+        t.call('toolu_main2', 'Read');
+        expect(t.result('toolu_main2', 'Read')).toBeNull();
+      });
     });
 
     it('adds nothing to a PostToolUse while no note waits', async () => {
@@ -653,11 +981,32 @@ describe('an agent in the terminal, followed through its hooks', () => {
       expect(t.h.input.join('')).toBe(ESC);
     });
 
-    it.each(['stop', 'interrupt'] as const)('tells those who watch for interruptions when %s types Esc', async (method) => {
+    it.each(['stop', 'interrupt'] as const)('does not tell those who watch for interruptions when %s types Esc, since claude has not confirmed it', async (method) => {
       const t = await openTerminal();
       t.prompt('refactor everything');
       t.h.session[method]();
-      expect(t.heard.interrupts).toBe(1);
+      expect([t.heard.interrupts, t.h.session.hasOpenTurn()]).toEqual([0, true]);
+    });
+
+    it.each(['stop', 'interrupt'] as const)('counts the Esc %s typed as the key, so the marker claude writes closes the turn and is heard once', async (method) => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      t.h.session[method]();
+      t.appendTranscript(interrupted);
+      await waitFor(() => t.turns()[0]?.closedAt !== null, 'the turn closed');
+      expect(t.turns()).toMatchObject([{ resultSubtype: 'error_during_execution' }]);
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([false, 1]);
+    });
+
+    it.each(['stop', 'interrupt'] as const)('lets the Esc of %s confirm one marker only', async (method) => {
+      const t = await openTerminal();
+      t.prompt('refactor everything');
+      t.h.session[method]();
+      t.appendTranscript(interrupted);
+      await turnClosed(t);
+      t.prompt('and now the other thing');
+      await appendMarker(t, 'second marker read');
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 1]);
     });
 
     it.each(['stop', 'interrupt'] as const)('types nothing on %s when no turn runs', async (method) => {
@@ -667,6 +1016,14 @@ describe('an agent in the terminal, followed through its hooks', () => {
       t.stop();
       expect(t.h.session[method]()).toBe(false);
       expect([t.h.input, t.heard.interrupts]).toEqual([[], 0]);
+    });
+
+    it.each(['stop', 'interrupt'] as const)('does not count %s, which typed nothing because no turn ran, as a key for a marker', async (method) => {
+      const t = await openTerminal();
+      t.h.session[method]();
+      t.prompt('refactor everything');
+      await appendMarker(t, 'read up to here');
+      expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
     });
 
     it('counts the agent as alive while the terminal is open and not after it closed', async () => {

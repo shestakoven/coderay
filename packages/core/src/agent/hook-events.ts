@@ -17,7 +17,7 @@ export type AgentEvent =
   | { type: 'tool-start'; toolUseId: string; tool: string; input: unknown; agentId: string | null }
   | { type: 'tool-end'; toolUseId: string; status: 'ok' | 'error'; agentId: string | null; launched: BackgroundTask | null }
   | { type: 'turn-end'; lastMessage: string | null; failed: boolean; runningTaskIds: string[] | null }
-  | { type: 'subagent-start'; agentId: string }
+  | { type: 'subagent-start'; agentId: string; agentType: string }
   | { type: 'subagent-stop'; agentId: string; lastMessage: string | null }
   | { type: 'conversation'; claudeSessionId: string; source: string }
   | { type: 'interrupted' }
@@ -67,8 +67,10 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
         type: 'turn-end', lastMessage: str(raw.last_assistant_message), failed: raw.hook_event_name === 'StopFailure',
         runningTaskIds: Array.isArray(raw.background_tasks) ? raw.background_tasks.filter(isRecord).flatMap((task) => str(task.id) ?? []) : null,
       };
-    case 'SubagentStart':
-      return agentId && str(raw.agent_type) ? { type: 'subagent-start', agentId } : null;
+    case 'SubagentStart': {
+      const agentType = str(raw.agent_type);
+      return agentId && agentType ? { type: 'subagent-start', agentId, agentType } : null;
+    }
     case 'SubagentStop':
       return agentId && str(raw.agent_type) ? { type: 'subagent-stop', agentId, lastMessage: str(raw.last_assistant_message) } : null;
     case 'Interrupt':
@@ -129,8 +131,9 @@ export function parseTranscriptLine(line: string): AgentEvent[] {
   if (!isRecord(entry) || entry.isSidechain === true || !isRecord(entry.message)) return [];
   const content = entry.message.content;
   const blocks = Array.isArray(content) ? content.filter(isRecord) : typeof content === 'string' ? [{ type: 'text', text: content }] : [];
+  // claude writes the marker as a text block of its own; a tool's output that starts with the same words is not it.
   if (entry.type === 'user') {
-    const interrupted = blocks.some((block) => (str(block.text) ?? str(block.content) ?? '').startsWith('[Request interrupted by user'));
+    const interrupted = blocks.some((block) => block.type === 'text' && (str(block.text) ?? '').startsWith('[Request interrupted by user'));
     return interrupted ? [{ type: 'interrupted' }] : [];
   }
   if (entry.type !== 'assistant') return [];

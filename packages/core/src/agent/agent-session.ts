@@ -105,6 +105,8 @@ interface PendingPrompt {
 
 const RUN_DIR_MODE = 0o700;
 const DENIED = new Set(['deny', 'ask-denied']);
+const INTERRUPT_KEYS = new Set(['\x1b', '\x03']);
+const INTERRUPT_CONFIRM_MS = 5000;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
 
@@ -147,6 +149,7 @@ export class AgentSession {
   private terminalOpen = false;
   private readonly transcriptTail = new TranscriptTail((line) => this.agentEvents(parseTranscriptLine(line)));
   private absorbed: string[] = [];
+  private interruptKeyAt = Number.NEGATIVE_INFINITY;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -384,11 +387,11 @@ export class AgentSession {
     const session = this.session;
     if (!this.terminalOpen || !session || sessionId !== session.id) return null;
     const event = parseHookEvent(raw);
-    if (event?.type === 'conversation') {
-      if (event.source === 'clear' && event.claudeSessionId !== session.claudeSessionId) {
-        this.update({ claudeSessionId: event.claudeSessionId, conversationStarted: false });
-        this.apply(this.tracker.notice('The conversation was cleared in the terminal; the chat goes on with the new one.'));
-      }
+    // Only the terminal's claude runs the event hooks, so its SessionStart names the conversation it is in: after /clear or /resume a new one.
+    if (event?.type === 'conversation' && event.claudeSessionId !== session.claudeSessionId) {
+      this.update({ claudeSessionId: event.claudeSessionId, conversationStarted: false });
+      const moved = event.source === 'clear' ? 'The conversation was cleared in the terminal' : event.source === 'resume' ? 'The terminal switched to another conversation' : null;
+      if (moved) this.apply(this.tracker.notice(`${moved}; the chat goes on with that one.`));
     }
     if (!this.fromTerminal(raw)) return null;
     const transcriptPath = hookEventInfo(raw)?.transcriptPath;
@@ -397,7 +400,6 @@ export class AgentSession {
     return this.answerHook(event, hookEventInfo(raw)?.name ?? '');
   }
 
-  // A headless check of the hooks runs under its own claude session id; only the terminal's own session counts.
   private fromTerminal(raw: unknown): boolean {
     const claudeSessionId = (raw as { session_id?: unknown } | null)?.session_id;
     return claudeSessionId === this.session?.claudeSessionId;
@@ -415,17 +417,30 @@ export class AgentSession {
       for (const note of notes) this.apply(this.tracker.notice(note));
       return notes.length > 0 ? { hookSpecificOutput: { hookEventName: hookName, additionalContext: notes.join('\n\n') } } : null;
     }
-    if (event.type === 'tool-end' && this.absorbed.length > 0) {
+    // A subagent's tool step would take the note away from the agent it is meant for.
+    if (event.type === 'tool-end' && event.agentId === null && this.absorbed.length > 0) {
       return { hookSpecificOutput: { hookEventName: hookName, additionalContext: this.absorbed.splice(0).join('\n\n') } };
     }
     return null;
   }
 
+  // Keys typed into the agent's terminal. Only the user and the IDE type there, never the agent's tools.
+  terminalTyped(data: string): void {
+    if (INTERRUPT_KEYS.has(data)) this.interruptKeyAt = Date.now();
+  }
+
   private agentEvents(events: AgentEvent[]): void {
     for (const event of events) {
-      const interrupted = event.type === 'interrupted' && this.tracker.hasOpenTurn();
+      if (event.type === 'interrupted') {
+        // The transcript is a file the agent's tools can write: its interrupt marker counts only right after Esc or Ctrl+C.
+        if (Date.now() - this.interruptKeyAt > INTERRUPT_CONFIRM_MS) continue;
+        this.interruptKeyAt = Number.NEGATIVE_INFINITY;
+        const open = this.tracker.hasOpenTurn();
+        this.apply(this.tracker.agentEvent(event));
+        if (open) notify(this.interruptListeners);
+        continue;
+      }
       this.apply(this.tracker.agentEvent(event));
-      if (interrupted) notify(this.interruptListeners);
     }
   }
 
@@ -504,9 +519,10 @@ export class AgentSession {
   }
 
   stop(): boolean {
+    // In the terminal the interrupt counts once claude confirms it in its transcript; Esc may close a menu instead.
     if (this.terminalOpen && this.options.terminalInput && this.tracker.canInterrupt()) {
+      this.terminalTyped('\x1b');
       this.options.terminalInput('\x1b');
-      notify(this.interruptListeners);
       return true;
     }
     if (!this.process || !this.tracker.canInterrupt()) return false;
@@ -698,7 +714,7 @@ export class AgentSession {
   }
 
   // The terminal view runs claude's own interface on the chat's conversation, MCP servers and hooks; the chat's process stops first.
-  // Null when the IDE's hooks do not run: the session is then refused, as a chat whose canary stays silent.
+  // Null when the IDE's hooks do not run (the session is then refused, as a chat whose canary stays silent) or the terminal was closed meanwhile.
   async terminalLaunch(): Promise<TerminalLaunch | null> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
@@ -708,16 +724,24 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     this.syncAccount();
     const session = this.session;
-    const files = session && this.launchFiles(session, true);
-    if (!session || !files) throw new SessionError('no-gate');
+    // The headless check gets no event hooks: every event then comes from the terminal's own claude.
+    const probeFiles = session && this.launchFiles(session, false);
+    if (!session || !probeFiles) throw new SessionError('no-gate');
     this.terminalOpen = true;
     let hooksRun = false;
+    let cancelled = false;
+    let files: LaunchFiles | null = null;
     try {
-      hooksRun = await this.hooksRun(session, files);
+      hooksRun = await this.hooksRun(session, probeFiles);
+      // The terminal was closed while the hooks were checked: no claude may start outside the terminal mode.
+      cancelled = !this.terminalOpen;
+      if (hooksRun && !cancelled) files = this.launchFiles(session, true);
     } finally {
-      if (!hooksRun) this.terminalClosed();
+      if (!files) this.terminalClosed();
     }
-    if (!hooksRun) {
+    if (cancelled) return null;
+    if (hooksRun && !files) throw new SessionError('no-gate');
+    if (!files) {
       this.refused = true;
       this.update({ status: 'refused' });
       this.apply(this.tracker.notice(HOOK_OFF_NOTICE));
@@ -725,7 +749,7 @@ export class AgentSession {
     }
     return {
       kind: 'agent', title: 'claude', file: files.claude.command, cwd: session.cwd, env: files.claude.env ?? {},
-      args: [...files.claude.args, ...conversationArgs(session, existsSync(this.transcript(session)), files.configPath, files.gateArgs)],
+      args: [...files.claude.args, ...conversationArgs(session, session.conversationStarted || existsSync(this.transcript(session)), files.configPath, files.gateArgs)],
     };
   }
 
@@ -734,6 +758,7 @@ export class AgentSession {
     this.terminalOpen = false;
     this.transcriptTail.stop();
     this.absorbed = [];
+    this.interruptKeyAt = Number.NEGATIVE_INFINITY;
     this.apply(this.tracker.processExited());
     const session = this.session;
     if (!session) return;

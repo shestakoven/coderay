@@ -46,7 +46,7 @@ let ignoringSigterm = false;
 let reapHooked = false;
 let wake = () => {};
 
-record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null });
+record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null, hookNames: Object.keys(settings?.hooks ?? {}).sort() });
 
 createInterface({ input: process.stdin })
   .on('line', (line) => {
@@ -358,6 +358,10 @@ async function runSessionStartHooks() {
   }
 }
 
+// The headless check of the hooks (the only run with --no-session-persistence) can start slowly, to leave time to act while the IDE waits for it.
+if (process.env.FAKE_CLAUDE_PROBE_STARTUP_MS && argv.includes('--no-session-persistence')) await new Promise((resolve) => setTimeout(resolve, Number(process.env.FAKE_CLAUDE_PROBE_STARTUP_MS)));
+// A check that goes on running after it has reported, until it is killed: the IDE then waits for it to stop.
+if (process.env.FAKE_CLAUDE_PROBE_IGNORES_SIGTERM && argv.includes('--no-session-persistence')) process.on('SIGTERM', () => record({ ignoredSignal: 'SIGTERM' }));
 await runSessionStartHooks();
 
 let index = 0;

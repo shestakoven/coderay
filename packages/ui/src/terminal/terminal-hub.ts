@@ -8,6 +8,8 @@ export interface TerminalTab {
   kind: TerminalKind;
   title: string;
   exited: boolean;
+  // A reconnect replaces every xterm, so a view keyed on the id alone would keep the disposed one.
+  generation: number;
 }
 
 export const TERMINAL_THEME = {
@@ -47,6 +49,7 @@ export class TerminalHub {
   private readonly entries = new Map<string, Entry>();
   private readonly send: (message: ClientMessage) => boolean;
   private readonly onChange: (tabs: TerminalTab[]) => void;
+  private generation = 0;
 
   constructor(send: (message: ClientMessage) => boolean, onChange: (tabs: TerminalTab[]) => void) {
     this.send = send;
@@ -69,6 +72,7 @@ export class TerminalHub {
   restore(infos: TerminalInfo[]): void {
     for (const entry of this.entries.values()) entry.term.dispose();
     this.entries.clear();
+    this.generation += 1;
     for (const info of infos) this.add(info);
     this.changed();
   }
@@ -154,7 +158,7 @@ export class TerminalHub {
       });
     }
     if (info.scrollback) term.write(info.scrollback);
-    this.entries.set(info.id, { tab: { id: info.id, kind: info.kind, title: info.title, exited: info.exited }, term, fit, host: null });
+    this.entries.set(info.id, { tab: { id: info.id, kind: info.kind, title: info.title, exited: info.exited, generation: this.generation }, term, fit, host: null });
   }
 
   private changed(): void {

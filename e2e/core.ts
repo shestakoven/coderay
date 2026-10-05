@@ -185,7 +185,7 @@ export async function startHub(names: string[]): Promise<Hub> {
   };
 }
 
-export async function startCore(scenario: string, env: Record<string, string> = {}): Promise<Core> {
+export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}): Promise<Core> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
   const root = join(base, 'project');
   cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
