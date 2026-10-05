@@ -1,5 +1,7 @@
+import { existsSync, readFileSync } from 'node:fs';
 import { expect, test, type Page } from '@playwright/test';
 import { startCore, type Core } from './core';
+import { sendMessage } from './helpers';
 
 let core: Core | undefined;
 
@@ -106,6 +108,51 @@ test('after a reconnect the terminal view of the agent shows what it held and ta
   await page.keyboard.type('after');
   await expect(host.locator('.xterm-rows')).toContainText('beforeafter');
   await expect(host.locator('.xterm')).toHaveCount(1);
+});
+
+interface FakeStart { argv?: string[]; ignoredSignal?: string }
+const fakeRecords = (core: Core): FakeStart[] =>
+  existsSync(core.record) ? readFileSync(core.record, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as FakeStart) : [];
+
+// Chat is clicked while the terminal view says "Starting claude…"; the hook check then takes seconds more, and nothing may come of the start.
+async function expectNoTerminalAfterChatClick(page: Page, core: Core): Promise<void> {
+  const chat = page.getByRole('radio', { name: 'Chat' });
+  await chat.click();
+  await expect(chat).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('agent-terminal')).toHaveCount(0);
+
+  // A terminal that was not cancelled would open right after the check.
+  await page.waitForTimeout(8000);
+  await expect(chat).toHaveAttribute('aria-checked', 'true');
+  await expect(page.getByTestId('agent-terminal')).toHaveCount(0);
+  expect(fakeRecords(core).filter((start) => start.argv !== undefined && !start.argv.includes('-p'))).toEqual([]);
+
+  await sendMessage(page, 'hello from the chat');
+  await expect(page.locator('.msg.user')).toContainText('hello from the chat');
+  await expect(page.getByText('Looking at it.')).toBeVisible();
+  await expect(page.getByText(/The agent runs in the terminal view/)).toHaveCount(0);
+}
+
+test('Chat clicked while the terminal view still starts claude cancels the start: no terminal ever appears and the chat works', async ({ page }) => {
+  core = await startCore('text-then-wait', { FAKE_CLAUDE_PROBE_STARTUP_MS: '4000' });
+  await page.goto(core.url);
+  await expect(page.getByText('core connected')).toBeVisible();
+
+  await page.getByRole('radio', { name: 'Terminal' }).click();
+  await expect(page.getByText('Starting claude…')).toBeVisible();
+  await expectNoTerminalAfterChatClick(page, core);
+});
+
+test('Chat clicked after the hook check reported, while it is still being stopped, cancels the start just the same', async ({ page }) => {
+  core = await startCore('text-then-wait', { FAKE_CLAUDE_PROBE_IGNORES_SIGTERM: '1' });
+  await page.goto(core.url);
+  await expect(page.getByText('core connected')).toBeVisible();
+
+  await page.getByRole('radio', { name: 'Terminal' }).click();
+  await expect(page.getByText('Starting claude…')).toBeVisible();
+  const reportedCore = core;
+  await expect.poll(() => fakeRecords(reportedCore).some((start) => start.ignoredSignal === 'SIGTERM'), { timeout: 15000 }).toBe(true);
+  await expectNoTerminalAfterChatClick(page, core);
 });
 
 test('Ctrl+` toggles the bottom panel and the Terminal tab reflects it', async ({ page }) => {

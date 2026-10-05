@@ -68,6 +68,14 @@ describe('parseClientMessage terminal.open kind', () => {
     }
   });
 
+  it.each(['t1', 'agent-2', 'agent_', 'Agent', 'agen', 'xagent', 'shell1'])('rejects the agent kind under the id %s, which is not the id of the agent terminal', (id) => {
+    expect(open({ id, kind: 'agent' })).toBeNull();
+  });
+
+  it('still rejects the agent kind under an id that is not a terminal id at all', () => {
+    for (const id of ['', 'a b', 'a/b', 'a'.repeat(65), 5, null]) expect(open({ id, kind: 'agent' }), String(id)).toBeNull();
+  });
+
   it.each([['an unknown kind', 'other'], ['a kind that is a number', 5], ['a null kind', null], ['a kind in other case', 'Agent']])('rejects %s', (_name, kind) => {
     expect(open({ id: 't', kind })).toBeNull();
     expect(open({ id: AGENT_TERMINAL_ID, kind })).toBeNull();

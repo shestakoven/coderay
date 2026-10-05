@@ -243,6 +243,69 @@ describe('AgentSession terminal launch', () => {
     });
   });
 
+  describe('when the terminal is closed while the hooks are checked', () => {
+    // 'before': the check starts slowly and is still silent when the terminal is closed (its hook then finds the files gone).
+    // 'after': the check has reported and the IDE is only waiting for it to stop, which it does not do at once.
+    const closedDuringCheck = async (when: 'before' | 'after', options: Partial<Options> = {}) => {
+      const h = await terminalHarness({ hooks: 'on', canaryMs: 2000, killGraceMs: 1500, ...options });
+      if (when === 'after') h.env.FAKE_CLAUDE_PROBE_IGNORES_SIGTERM = '1';
+      else h.env.FAKE_CLAUDE_PROBE_STARTUP_MS = '1200';
+      const pending = h.session.terminalLaunch();
+      await waitFor(() => (when === 'after' ? h.ignoredSigterms() > 0 : h.spawned().length === 1), 'the check running');
+      h.session.terminalClosed();
+      return { h, launch: await pending };
+    };
+
+    describe.each(['before', 'after'] as const)('%s the hooks reported', (when) => {
+      it('returns no launch, so no terminal opens', async () => {
+        const { launch } = await closedDuringCheck(when);
+        expect(launch).toBeNull();
+      });
+
+      it('does not refuse the session, nor tell the chat that the hook did not start', async () => {
+        const { h } = await closedDuringCheck(when);
+        expect(status(h)).not.toBe('refused');
+        expect(notices(h).filter((text) => text.includes('hook did not start'))).toEqual([]);
+      });
+
+      it('leaves no gate or MCP file of the run behind', async () => {
+        const { h } = await closedDuringCheck(when);
+        expect(h.gateFiles()).toEqual([]);
+      });
+
+      it('starts no claude besides the check', async () => {
+        const { h } = await closedDuringCheck(when);
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        expect(h.spawned()).toHaveLength(1);
+      });
+
+      it('lets the chat send and start its own claude: the terminal mode is off', async () => {
+        const { h } = await closedDuringCheck(when);
+        delete h.env.FAKE_CLAUDE_PROBE_IGNORES_SIGTERM;
+        h.session.send('hi');
+        await waitFor(() => h.userMessages().length === 1, 'message delivered');
+        expect(h.spawned()).toHaveLength(2);
+      });
+
+      it('opens a terminal normally afterwards', async () => {
+        const { h } = await closedDuringCheck(when);
+        delete h.env.FAKE_CLAUDE_PROBE_IGNORES_SIGTERM;
+        delete h.env.FAKE_CLAUDE_PROBE_STARTUP_MS;
+        const launch = await h.session.terminalLaunch();
+        expect(launch).not.toBeNull();
+        expect(h.gateFiles().length).toBeGreaterThan(0);
+        expect(() => h.session.send('hi')).toThrow(new SessionError('in-terminal'));
+      });
+    });
+
+    it('does not refuse the session when the hooks never report either, since the user closed the terminal before that was known', async () => {
+      const { h, launch } = await closedDuringCheck('before', { hooks: 'off', canaryMs: 1500 });
+      expect(launch).toBeNull();
+      expect(status(h)).not.toBe('refused');
+      expect(notices(h).filter((text) => text.includes('hook did not start'))).toEqual([]);
+    });
+  });
+
   describe('after a refusal', () => {
     it('checks again on the next call and returns the launch once the hooks run', async () => {
       const h = await terminalHarness({ hooks: 'off', canaryMs: 800 });

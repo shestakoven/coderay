@@ -38,11 +38,12 @@ export interface Options {
   canaryMs: number;
   scenario?: string;
   gated?: boolean;
+  killGraceMs?: number;
   // Runs before the session starts, to leave in the store and the transcripts what an earlier run of the core left.
   seed?: (earlier: { store: Store; root: string; transcriptsDir: string }) => void;
 }
 
-export async function terminalHarness({ hooks, canaryMs, scenario = 'multi-turn', gated = true, seed }: Options) {
+export async function terminalHarness({ hooks, canaryMs, scenario = 'multi-turn', gated = true, killGraceMs, seed }: Options) {
   const home = tempDir('ide-home-');
   const root = tempDir('ide-root-');
   const store = openStore(projectDir(home, root));
@@ -68,7 +69,9 @@ export async function terminalHarness({ hooks, canaryMs, scenario = 'multi-turn'
   seed?.({ store, root, transcriptsDir });
   const session = new AgentSession({
     root, home, store, claude: { ...claude, env }, canaryMs, transcriptsDir, terminalInput: (data) => input.push(data), ...(gated ? { gate } : {}),
+    ...(killGraceMs === undefined ? {} : { killGraceMs }),
   });
+  const ignoredSigterms = () => readRecords(recordFile).filter((r) => r.ignoredSignal === 'SIGTERM').length;
   const spawned = () => readRecords(recordFile).flatMap((r) => (r.argv && r.pid ? [{ argv: r.argv, pid: r.pid, hookNames: r.hookNames ?? [] }] : []));
   onTestFinished(async () => {
     await session.close();
@@ -79,7 +82,7 @@ export async function terminalHarness({ hooks, canaryMs, scenario = 'multi-turn'
   await session.start();
   const gateFiles = () => (existsSync(runDir(home)) ? readdirSync(runDir(home)).filter((name) => /\.(settings|hook|mcp)\.json$/.test(name)) : []);
   return {
-    session, store, home, root, env, input, transcriptsDir, spawned, gateFiles, gateWrites,
+    session, store, home, root, env, input, transcriptsDir, spawned, ignoredSigterms, gateFiles, gateWrites,
     userMessages: () => readRecords(recordFile).flatMap((r) => (r.stdin?.type === 'user' ? [r.stdin] : [])),
     ping: () => fetch(`http://127.0.0.1:${server.port}/hook/alive`, {
       method: 'POST', headers: { authorization: `Bearer ${SECRET}` }, body: JSON.stringify({ sessionId: session.sessionId() }),

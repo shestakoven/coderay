@@ -1,12 +1,13 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { appendFileSync, chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { WebSocket } from 'ws';
 import { AGENT_TERMINAL_ID, type ServerMessage } from '@ide/protocol';
+import { runDir } from '../src/home';
 import { isAlive } from '../src/os-process';
-import { FAKE_CLAUDE } from './fake-claude/fake';
+import { FAKE_CLAUDE, readRecords } from './fake-claude/fake';
 import { fixture, tempDir, waitFor } from './helpers';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
@@ -20,7 +21,9 @@ const WRAPPER = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 const log = (line) => appendFileSync(process.env.WRAPPER_LOG, line + '\\n');
-if (!process.argv.includes('-p')) {
+if (process.argv.includes('-p')) {
+  log((process.argv.includes('--no-session-persistence') ? 'probe ' : 'chat ') + process.pid);
+} else {
   log('start ' + process.pid);
   for (const signal of ['SIGTERM', 'SIGHUP']) {
     process.on(signal, () => {
@@ -49,7 +52,7 @@ await import(process.env.WRAPPED_CLAUDE);
 
 type Mode = 'obedient' | 'stubborn' | 'exits' | 'turn';
 
-async function startMain(mode: Mode) {
+async function startMain(mode: Mode, extraEnv: Record<string, string> = {}) {
   const base = tempDir('main-agent-terminal-');
   const root = join(base, 'project');
   const bin = join(base, 'bin');
@@ -64,6 +67,7 @@ async function startMain(mode: Mode) {
   chmodSync(wrapper, 0o755);
   const log = join(base, 'wrapper.log');
   writeFileSync(log, '');
+  const record = join(base, 'fake-record.jsonl');
   const transcript = join(base, 'transcript.jsonl');
   writeFileSync(transcript, '');
   const child: ChildProcess = spawn(
@@ -74,8 +78,8 @@ async function startMain(mode: Mode) {
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
-        FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'),
-        WRAPPER_LOG: log, WRAPPER_MODE: mode, WRAPPER_TRANSCRIPT: transcript, WRAPPED_CLAUDE: pathToFileURL(FAKE_CLAUDE).href,
+        FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), FAKE_CLAUDE_RECORD: record,
+        WRAPPER_LOG: log, WRAPPER_MODE: mode, WRAPPER_TRANSCRIPT: transcript, WRAPPED_CLAUDE: pathToFileURL(FAKE_CLAUDE).href, ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
@@ -87,13 +91,21 @@ async function startMain(mode: Mode) {
   const lines = (): string[] => readFileSync(log, 'utf8').split('\n').filter(Boolean);
   // The pids of the claudes the terminal started, and the signals they logged.
   const started = (): number[] => lines().filter((line) => line.startsWith('start ')).map((line) => Number(line.slice(6)));
+  const pidsLogged = (kind: string): number[] => lines().filter((line) => line.startsWith(`${kind} `)).map((line) => Number(line.slice(kind.length + 1)));
+  // The headless checks of the hooks and the claudes of the chat, by pid.
+  const probes = (): number[] => pidsLogged('probe');
+  const chats = (): number[] => pidsLogged('chat');
+  // The gate and MCP files of a run, which exist only while a claude runs or is about to.
+  const runFiles = (): string[] => (existsSync(runDir(join(base, 'home'))) ? readdirSync(runDir(join(base, 'home'))).filter((name) => /\.(settings|hook|mcp)\.json$/.test(name)) : []);
+  // True once a hook check that was told to go on running after it reported has been sent SIGTERM, which is when the IDE starts waiting for it to stop.
+  const checkBeingStopped = (): boolean => readRecords(record).some((entry) => entry.ignoredSignal === 'SIGTERM');
   const signals = (): string[] => lines().filter((line) => /^SIG/.test(line));
   const prompted = (): boolean => lines().includes('prompted');
   const writeTranscript = (line: string) => appendFileSync(transcript, `${line}\n`);
   onTestFinished(async () => {
     child.kill('SIGTERM');
     await exited;
-    for (const pid of started()) if (isAlive(pid)) process.kill(pid, 'SIGKILL');
+    for (const pid of [...started(), ...pidsLogged('probe'), ...pidsLogged('chat')]) if (isAlive(pid)) process.kill(pid, 'SIGKILL');
   });
   const url = await waitFor(() => /open: (http:\/\/127\.0\.0\.1:(\d+)\/#token=(\S+))/.exec(output) ?? undefined, `the core address in:\n${output}`, 60_000);
   const socket = new WebSocket(`ws://127.0.0.1:${url[2]}/ws?token=${url[3]}`);
@@ -107,7 +119,7 @@ async function startMain(mode: Mode) {
   const send = (message: object) => socket.send(JSON.stringify(message));
   const count = (type: string) => messages.filter((message) => message.type === type).length;
   const errors = () => messages.flatMap((message) => (message.type === 'error' ? [message.message] : []));
-  return { messages, send, count, errors, started, signals, prompted, writeTranscript, exited, child };
+  return { messages, send, count, errors, started, probes, chats, runFiles, checkBeingStopped, signals, prompted, writeTranscript, exited, child };
 }
 
 type Main = Awaited<ReturnType<typeof startMain>>;
@@ -220,6 +232,61 @@ describe('main.ts and the agent terminal', { timeout: 120_000 }, () => {
       main.send({ type: 'chat.stop' });
       main.writeTranscript(MARKER);
       await waitFor(() => mentions(main, 'error_during_execution'), 'the turn closed as interrupted');
+    });
+  });
+
+  describe('a terminal closed while its hooks are checked', () => {
+    // 'before': the check starts slowly and is still silent when the terminal is closed.
+    // 'after': the check has reported and the IDE is only waiting for it to stop, which takes seconds.
+    // Either way the test waits until the check is over, and then a while longer, for what a launch that went on would do.
+    async function closedDuringCheck(when: 'before' | 'after') {
+      const main = await startMain('obedient', when === 'before' ? { FAKE_CLAUDE_PROBE_STARTUP_MS: '3000' } : { FAKE_CLAUDE_PROBE_IGNORES_SIGTERM: '1' });
+      main.send(OPEN_AGENT);
+      if (when === 'before') await waitFor(() => main.probes().length === 1, 'the hook check started');
+      else await waitFor(() => main.checkBeingStopped(), 'the hook check reported and is being stopped');
+      main.send({ type: 'terminal.close', id: AGENT_TERMINAL_ID });
+      const [probe] = main.probes() as [number];
+      await waitFor(() => !isAlive(probe), 'the hook check over', 20_000);
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+      return main;
+    }
+
+    describe.each(['before', 'after'] as const)('%s the hooks reported', (when) => {
+      it('opens no terminal and never starts the interactive claude', async () => {
+        const main = await closedDuringCheck(when);
+        expect([main.count('terminal.opened'), main.started(), main.errors()]).toEqual([0, [], []]);
+      });
+
+      it('does not refuse the session or say that the hook did not start', async () => {
+        const main = await closedDuringCheck(when);
+        const everything = JSON.stringify(main.messages);
+        expect(everything).not.toContain('hook did not start');
+        expect(everything).not.toContain('"status":"refused"');
+      });
+
+      it('removes the gate and MCP files of the run dir', async () => {
+        const main = await closedDuringCheck(when);
+        expect(main.runFiles()).toEqual([]);
+      });
+
+      it('ends the terminal mode: the chat sends, starts its own claude and meets no in-terminal error', async () => {
+        const main = await closedDuringCheck(when);
+        main.send({ type: 'chat.send', text: 'hello from the chat' });
+        await waitFor(() => main.chats().length === 1, 'the claude of the chat started');
+        await waitFor(() => main.messages.some((message) => JSON.stringify(message).includes('hello from the chat')), 'the message of the chat shown');
+        expect(main.errors()).toEqual([]);
+        expect(main.started()).toEqual([]);
+      });
+
+      it('lets a terminal open normally afterwards', async () => {
+        const main = await closedDuringCheck(when);
+        main.send(OPEN_AGENT);
+        await waitFor(() => main.count('terminal.opened') === 1 || main.errors()[0], 'the agent terminal opened', 40_000);
+        expect(main.errors()).toEqual([]);
+        await waitFor(() => main.started().length === 1, 'the claude of the terminal started');
+        main.send({ type: 'chat.send', text: 'hello from the chat' });
+        await waitFor(() => main.errors().find((message) => IN_TERMINAL.test(message)), 'the refusal to send while the terminal runs');
+      });
     });
   });
 });

@@ -182,7 +182,7 @@ export async function startHub(names: string[]): Promise<Hub> {
   };
 }
 
-export async function startCore(scenario: string): Promise<Core> {
+export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}): Promise<Core> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
   const root = join(base, 'project');
   cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
@@ -192,7 +192,7 @@ export async function startCore(scenario: string): Promise<Core> {
   const core = await spawnCore(
     base,
     ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
-    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario) },
+    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario), ...env },
   );
   return {
     url: core.url,
