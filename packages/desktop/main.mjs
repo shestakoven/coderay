@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { connect, createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, shell } from 'electron';
+import { app, BrowserWindow, Menu, shell } from 'electron';
 
 // The OS hands out a free port; a fixed one would collide with a running dev:core / dev:ui.
 const freePort = () =>
@@ -64,25 +64,34 @@ app.on('window-all-closed', () => app.quit());
 
 // Awaiting ready at top level deadlocks Electron's ESM entry: the app only becomes ready after the module finishes.
 app.whenReady().then(async () => {
-  run('node', ['--watch', '--import', 'tsx', 'packages/core/src/main.ts', ...(project ? ['--project', project] : []), '--port', String(CORE_PORT), '--allow-origin', UI_ORIGIN], repo, {
+  // The hub runs one core per open project; a core edit restarts the hub, which brings the open projects back.
+  run('node', ['--watch', '--import', 'tsx', 'packages/core/src/main.ts', '--hub', ...(project ? ['--project', project] : []), '--port', String(CORE_PORT), '--allow-origin', UI_ORIGIN], repo, {
     IDE_CORE_TOKEN: token,
     IDE_AUTO_RESUME: '1',
   });
   run('./node_modules/.bin/vite', ['--port', String(UI_PORT)], resolve(repo, 'packages/ui'), { IDE_CORE_PORT: String(CORE_PORT) });
   await Promise.all([waitForPort(CORE_PORT), waitForPort(UI_PORT)]);
 
+  // The default menu binds Cmd+W to "Close Window"; the IDE needs that key to close a project.
+  Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+    { role: 'editMenu' },
+    { label: 'View', submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
+    { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { label: 'Close Window', accelerator: 'Shift+CmdOrCtrl+W', role: 'close' }] },
+  ]));
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
     // Like PyCharm: the traffic lights sit inside the app's own top bar instead of a separate title bar.
     titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 14, y: 12 },
+    trafficLightPosition: { x: 14, y: 13 },
     webPreferences: { contextIsolation: true, nodeIntegration: false },
   });
   win.webContents.on('dom-ready', () => {
     win.webContents.insertCSS(`
+      :root { --tabs-inset: 0px; }
       header.topbar { padding-left: 84px; -webkit-app-region: drag; }
-      header.topbar :is(button, select, input, label, a) { -webkit-app-region: no-drag; }
+      header.topbar :is(button, select, input, label, a, [role='tab']) { -webkit-app-region: no-drag; }
     `);
   });
   const external = (url) => {
