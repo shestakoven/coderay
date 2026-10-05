@@ -14,7 +14,9 @@ import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
+import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
 import { parseStreamLine, type StreamEvent } from './stream';
+import { TranscriptTail } from './transcript-tail';
 import { parseUsage } from './usage';
 import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
@@ -22,7 +24,7 @@ import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 export type McpServers = Record<string, object>;
 
 export interface SessionGate {
-  write(sessionId: string): { settingsPath: string };
+  write(sessionId: string, events?: boolean): { settingsPath: string };
   remove(sessionId: string): void;
   systemPrompt(): string;
   canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
@@ -45,6 +47,8 @@ export interface AgentSessionOptions {
   killGraceMs?: number;
   gate?: SessionGate;
   canaryMs?: number;
+  // Types into the agent's terminal: Esc stops a turn, a paste and Enter send a message.
+  terminalInput?: (data: string) => void;
   transcriptsDir?: string;
   canLeave?: () => string | null;
 }
@@ -100,6 +104,9 @@ interface PendingPrompt {
 }
 
 const RUN_DIR_MODE = 0o700;
+const PASTE_SUBMIT_MS = 150;
+const DENIED = new Set(['deny', 'ask-denied']);
+const BRACKETED_PASTE = (text: string): string => `\x1b[200~${text}\x1b[201~`;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
 
@@ -140,6 +147,9 @@ export class AgentSession {
   private notes: string[] = [];
   private crashed = false;
   private terminalOpen = false;
+  private readonly transcriptTail = new TranscriptTail((line) => this.agentEvents(parseTranscriptLine(line)));
+  private absorbed: string[] = [];
+  private typed = 0;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -294,7 +304,7 @@ export class AgentSession {
   }
 
   processAlive(): boolean {
-    return this.process !== null;
+    return this.process !== null || this.terminalOpen;
   }
 
   onInterrupt(listener: () => void): () => boolean {
@@ -362,6 +372,73 @@ export class AgentSession {
     const updated: ChatItem = { ...item, decision: record.decision, targets: record.targets };
     this.items.set(updated.id, updated);
     this.emit({ type: 'session.patch', patch: { items: [updated] } });
+    if (this.terminalOpen && DENIED.has(record.decision)) this.apply(this.tracker.toolRejected(record.toolUseId));
+  }
+
+  // The gate's PreToolUse hook: the call starts before the gate decides on it.
+  toolCalled(raw: unknown): void {
+    if (!this.terminalOpen || !this.fromTerminal(raw)) return;
+    const event = parseHookEvent(raw);
+    if (event?.type === 'tool-start') this.apply(this.tracker.agentEvent(event));
+  }
+
+  // An event hook of the agent in the terminal; the answer goes back to claude as the hook's output.
+  hookEvent(sessionId: string, raw: unknown): object | null {
+    const session = this.session;
+    if (!this.terminalOpen || !session || sessionId !== session.id) return null;
+    const event = parseHookEvent(raw);
+    if (event?.type === 'conversation') {
+      if (event.source === 'clear' && event.claudeSessionId !== session.claudeSessionId) {
+        this.update({ claudeSessionId: event.claudeSessionId, conversationStarted: false });
+        this.apply(this.tracker.notice('The conversation was cleared in the terminal; the chat goes on with the new one.'));
+      }
+    }
+    if (!this.fromTerminal(raw)) return null;
+    const transcriptPath = hookEventInfo(raw)?.transcriptPath;
+    if (transcriptPath) this.transcriptTail.follow(transcriptPath);
+    if (!event || event.type === 'conversation') return null;
+    return this.answerHook(event, hookEventInfo(raw)?.name ?? '');
+  }
+
+  // A headless check of the hooks runs under its own claude session id; only the terminal's own session counts.
+  private fromTerminal(raw: unknown): boolean {
+    const claudeSessionId = (raw as { session_id?: unknown } | null)?.session_id;
+    return claudeSessionId === this.session?.claudeSessionId;
+  }
+
+  private answerHook(event: AgentEvent, hookName: string): object | null {
+    if (event.type === 'turn-end' && !event.failed && this.absorbed.length > 0) {
+      // A note that came too late for a tool step keeps the agent going instead of ending its turn.
+      return { decision: 'block', reason: this.absorbed.splice(0).join('\n\n') };
+    }
+    this.agentEvents([event]);
+    if (event.type === 'prompt' && event.task === null) {
+      if (this.typed > 0) this.typed -= 1;
+      else notify(this.userMessageListeners);
+      const notes = [...this.notes.splice(0), ...this.absorbed.splice(0)];
+      for (const note of notes) this.apply(this.tracker.notice(note));
+      return notes.length > 0 ? { hookSpecificOutput: { hookEventName: hookName, additionalContext: notes.join('\n\n') } } : null;
+    }
+    if (event.type === 'tool-end' && this.absorbed.length > 0) {
+      return { hookSpecificOutput: { hookEventName: hookName, additionalContext: this.absorbed.splice(0).join('\n\n') } };
+    }
+    return null;
+  }
+
+  private agentEvents(events: AgentEvent[]): void {
+    for (const event of events) {
+      const interrupted = event.type === 'interrupted' && this.tracker.hasOpenTurn();
+      this.apply(this.tracker.agentEvent(event));
+      if (interrupted) notify(this.interruptListeners);
+    }
+  }
+
+  private typeIntoTerminal(text: string): void {
+    const input = this.options.terminalInput;
+    if (!input) throw new SessionError('no-gate', 'The agent is not running.');
+    this.typed += 1;
+    input(BRACKETED_PASTE(text));
+    setTimeout(() => input('\r'), PASTE_SUBMIT_MS);
   }
 
   lastMessage(): string | null {
@@ -386,7 +463,12 @@ export class AgentSession {
     if (text.trim() === '' && images.length === 0) throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
-    if (this.terminalOpen) throw new SessionError('in-terminal');
+    if (this.terminalOpen) {
+      // The user writes to the terminal itself; the IDE types only its own messages there.
+      if (options.fromUser !== false || images.length > 0) throw new SessionError('in-terminal');
+      this.typeIntoTerminal(text);
+      return;
+    }
     const injected = this.tracker.hasOpenTurn();
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
@@ -419,7 +501,12 @@ export class AgentSession {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
-    if (this.terminalOpen) throw new SessionError('in-terminal');
+    if (this.terminalOpen) {
+      if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
+      this.absorbed.push(text);
+      this.apply(this.tracker.notice('IDE note sent to the agent'));
+      return;
+    }
     if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
     if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
     if (this.hookReady) this.process.write(userMessage(text, []));
@@ -428,6 +515,11 @@ export class AgentSession {
   }
 
   stop(): boolean {
+    if (this.terminalOpen && this.options.terminalInput && this.tracker.canInterrupt()) {
+      this.options.terminalInput('\x1b');
+      notify(this.interruptListeners);
+      return true;
+    }
     if (!this.process || !this.tracker.canInterrupt()) return false;
     this.process.write({ type: 'control_request', request_id: `interrupt-${randomUUID()}`, request: { subtype: 'interrupt' } });
     notify(this.interruptListeners);
@@ -627,7 +719,7 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     this.syncAccount();
     const session = this.session;
-    const files = session && this.launchFiles(session);
+    const files = session && this.launchFiles(session, true);
     if (!session || !files) throw new SessionError('no-gate');
     this.terminalOpen = true;
     let hooksRun = false;
@@ -651,6 +743,10 @@ export class AgentSession {
   terminalClosed(): void {
     if (!this.terminalOpen) return;
     this.terminalOpen = false;
+    this.transcriptTail.stop();
+    this.absorbed = [];
+    this.typed = 0;
+    this.apply(this.tracker.processExited());
     const session = this.session;
     if (!session) return;
     rmSync(this.configPath(session.id), { force: true });
@@ -695,11 +791,11 @@ export class AgentSession {
   }
 
   // Writes the MCP config and the gate's hook settings claude starts with; null when the hook settings could not be written.
-  private launchFiles(session: SessionRecord): LaunchFiles | null {
+  private launchFiles(session: SessionRecord, terminal = false): LaunchFiles | null {
     let gateArgs: string[] = [];
     if (this.options.gate) {
       try {
-        const { settingsPath } = this.options.gate.write(session.id);
+        const { settingsPath } = this.options.gate.write(session.id, terminal);
         gateArgs = ['--settings', settingsPath, '--append-system-prompt', this.options.gate.systemPrompt(), '--system-prompt-snapshot', 'off'];
       } catch (error) {
         console.error('agent: could not write the hook settings', error);
