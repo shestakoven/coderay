@@ -89,7 +89,7 @@ app.whenReady().then(async () => {
   });
   win.webContents.on('dom-ready', () => {
     win.webContents.insertCSS(`
-      :root { --tabs-inset: 0px; }
+      html:root { --tabs-inset: 0px; }
       header.topbar { padding-left: 84px; -webkit-app-region: drag; }
       header.topbar :is(button, select, input, label, a, [role='tab']) { -webkit-app-region: no-drag; }
     `);
