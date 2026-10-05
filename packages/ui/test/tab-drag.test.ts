@@ -83,7 +83,7 @@ describe('moveItem', () => {
     expect(input).toEqual(['a', 'b', 'c', 'd']);
   });
 
-  it.each([4, 10])('returns the input itself for an invalid from %d', (from) => {
+  it.each([-1, 4, 10])('returns the input itself for an invalid from %d', (from) => {
     const input = [...items];
     expect(moveItem(input, from, 1)).toBe(input);
     expect(input).toEqual(items);

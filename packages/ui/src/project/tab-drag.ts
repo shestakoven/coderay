@@ -11,6 +11,7 @@ export function shiftFor(index: number, from: number, to: number, slot: number):
 }
 
 export function moveItem<T>(items: T[], from: number, to: number): T[] {
+  if (from < 0 || from >= items.length) return items;
   const next = [...items];
   const [moved] = next.splice(from, 1);
   if (moved === undefined) return items;
