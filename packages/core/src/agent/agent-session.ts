@@ -47,7 +47,7 @@ export interface AgentSessionOptions {
   killGraceMs?: number;
   gate?: SessionGate;
   canaryMs?: number;
-  // Types into the agent's terminal: Esc stops a turn, a paste and Enter send a message.
+  // Writes to the agent's terminal; the IDE only ever sends Esc, to stop a turn.
   terminalInput?: (data: string) => void;
   transcriptsDir?: string;
   canLeave?: () => string | null;
@@ -104,9 +104,7 @@ interface PendingPrompt {
 }
 
 const RUN_DIR_MODE = 0o700;
-const PASTE_SUBMIT_MS = 150;
 const DENIED = new Set(['deny', 'ask-denied']);
-const BRACKETED_PASTE = (text: string): string => `\x1b[200~${text}\x1b[201~`;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
 
@@ -149,7 +147,6 @@ export class AgentSession {
   private terminalOpen = false;
   private readonly transcriptTail = new TranscriptTail((line) => this.agentEvents(parseTranscriptLine(line)));
   private absorbed: string[] = [];
-  private typed = 0;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -413,8 +410,7 @@ export class AgentSession {
     }
     this.agentEvents([event]);
     if (event.type === 'prompt' && event.task === null) {
-      if (this.typed > 0) this.typed -= 1;
-      else notify(this.userMessageListeners);
+      notify(this.userMessageListeners);
       const notes = [...this.notes.splice(0), ...this.absorbed.splice(0)];
       for (const note of notes) this.apply(this.tracker.notice(note));
       return notes.length > 0 ? { hookSpecificOutput: { hookEventName: hookName, additionalContext: notes.join('\n\n') } } : null;
@@ -433,13 +429,6 @@ export class AgentSession {
     }
   }
 
-  private typeIntoTerminal(text: string): void {
-    const input = this.options.terminalInput;
-    if (!input) throw new SessionError('no-gate', 'The agent is not running.');
-    this.typed += 1;
-    input(BRACKETED_PASTE(text));
-    setTimeout(() => input('\r'), PASTE_SUBMIT_MS);
-  }
 
   lastMessage(): string | null {
     const open = new Set([...this.turns.values()].filter((turn) => turn.closedAt === null).map((turn) => turn.id));
@@ -464,9 +453,9 @@ export class AgentSession {
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
     if (this.terminalOpen) {
-      // The user writes to the terminal itself; the IDE types only its own messages there.
+      // The terminal's input belongs to the user: the IDE's own message goes with the user's next one.
       if (options.fromUser !== false || images.length > 0) throw new SessionError('in-terminal');
-      this.typeIntoTerminal(text);
+      this.notes.push(text);
       return;
     }
     const injected = this.tracker.hasOpenTurn();
@@ -745,7 +734,6 @@ export class AgentSession {
     this.terminalOpen = false;
     this.transcriptTail.stop();
     this.absorbed = [];
-    this.typed = 0;
     this.apply(this.tracker.processExited());
     const session = this.session;
     if (!session) return;
