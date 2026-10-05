@@ -18,6 +18,7 @@ export interface StartState {
 export type StartAction =
   | { type: 'view'; view: StartView }
   | { type: 'begin'; kind: 'create' | 'clone'; requestId: string }
+  | { type: 'done' }
   | { type: 'server'; message: ServerMessage };
 
 export const initialStart: StartState = { view: 'home', work: null, error: null };
@@ -26,6 +27,8 @@ export function startReducer(state: StartState, action: StartAction): StartState
   switch (action.type) {
     case 'view':
       return state.work ? state : { view: action.view, work: null, error: null };
+    case 'done':
+      return initialStart;
     case 'begin':
       return { ...state, work: { kind: action.kind, requestId: action.requestId, phase: null, percent: null }, error: null };
     case 'server': {

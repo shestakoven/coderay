@@ -22,7 +22,9 @@ interface Props {
   onTab: (tab: BottomTab) => void;
   terminal: ReactNode;
   terminalCount: number;
+  leading?: ReactNode;
   trailing?: ReactNode;
+  compact?: boolean;
 }
 
 const clock = (at: number): string => new Date(at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -34,7 +36,7 @@ export function timelineSummary(items: TimelineItem[]): string {
   return [plural(count('step'), 'step'), plural(count('event') + count('gate'), 'event'), plural(count('revert'), 'revert')].join(' · ');
 }
 
-export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount, trailing }: Props) {
+export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount, leading, trailing, compact }: Props) {
   const [rollback, dispatch] = useReducer(rollbackReducer, null);
   const [undoing, setUndoing] = useState<Record<string, string>>({});
   const items = useMemo(() => timelineItems(plans, history), [plans, history]);
@@ -69,12 +71,17 @@ export function Timeline({ plans, latestPlan, history, results, chat, send, onSe
   return (
     <footer className="timeline" data-testid="timeline">
       <div className="bottom-tabs">
-        <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} title={timelineSummary(items)} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
-          <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={16} /> Timeline{items.length > 0 && <span className="tab-count">{items.length}</span>}
-        </button>
-        <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} aria-pressed={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
-          <Icon name="terminal" size={16} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
-        </button>
+        {leading}
+        {!compact && (
+          <>
+            <button className={`timeline-bar${open && tab === 'timeline' ? ' on' : ''}`} title={timelineSummary(items)} aria-pressed={open && tab === 'timeline'} aria-expanded={open && tab === 'timeline'} onClick={() => (open && tab === 'timeline' ? onToggle() : onTab('timeline'))}>
+              <Icon name={open && tab === 'timeline' ? 'chevron-down' : 'chevron-right'} size={16} /> Timeline{items.length > 0 && <span className="tab-count">{items.length}</span>}
+            </button>
+            <button className={`timeline-bar${open && tab === 'terminal' ? ' on' : ''}`} aria-pressed={open && tab === 'terminal'} onClick={() => (open && tab === 'terminal' ? onToggle() : onTab('terminal'))}>
+              <Icon name="terminal" size={16} /> Terminal{terminalCount > 0 ? ` · ${terminalCount}` : ''}
+            </button>
+          </>
+        )}
         {trailing && <div className="bottom-status">{trailing}</div>}
       </div>
       <div className="terminal-slot" hidden={!(open && tab === 'terminal')}>{terminal}</div>

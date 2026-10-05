@@ -157,8 +157,8 @@ test('closing the project returns to the start screen', async ({ page }) => {
   core = await startCore('text-then-wait');
   await page.goto(core.url);
   await expect(page.getByText('core connected')).toBeVisible();
-  await page.locator('.project-button').click();
-  await page.getByRole('button', { name: 'Close project' }).click();
+  await page.keyboard.press('ControlOrMeta+KeyP');
+  await page.getByRole('option', { name: /Close this project/ }).click();
   await expect(page.getByRole('heading', { name: 'AI Control IDE' })).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('.start-recent-row')).toHaveCount(1);
 });

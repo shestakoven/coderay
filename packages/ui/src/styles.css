@@ -35,9 +35,6 @@ html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(-
 
 .app { display: flex; flex-direction: column; height: 100%; }
 .topbar { display: flex; gap: 16px; align-items: center; padding: 8px 14px; background: var(--panel); border-bottom: 1px solid var(--line); font-size: calc(13px * var(--fs-scale, 1)); }
-.topbar .project { font-weight: 600; }
-.topbar .status { margin-left: auto; color: var(--muted); }
-.topbar .status.open { color: var(--ok); }
 .body { flex: 1; display: flex; min-height: 0; }
 .map-area { flex: 1; min-width: 0; position: relative; }
 .map { position: absolute; inset: 0; }
@@ -163,11 +160,6 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 .c4-launch { white-space: pre-wrap; word-break: break-all; background: var(--bg); border-radius: 5px; padding: 4px 6px; font-size: calc(11px * var(--fs-scale, 1)); margin: 4px 0; }
 .c4-notes { top: auto; right: auto; left: 56px; bottom: 12px; width: auto; max-width: 420px; padding: 6px 10px; }
 .c4-notes p { margin: 2px 0; }
-.view-switch { display: inline-flex; }
-.view-switch button { border-radius: 0; padding: 2px 10px; }
-.view-switch button:first-child { border-radius: 5px 0 0 5px; }
-.view-switch button:last-child { border-radius: 0 5px 5px 0; border-left: none; }
-.view-switch button.on { background: var(--selection); color: var(--fg); }
 
 .c4-card.group.external { background: var(--bg); border-style: dashed; }
 .c4-card.group.external.expanded { background: transparent; }
@@ -294,8 +286,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .app.shell { display: flex; flex-direction: column; height: 100%; }
 .topbar { gap: 12px; padding: 0 12px; height: 38px; flex: none; }
 .topbar-spacer, .statusbar-spacer { flex: 1; }
-.project-button { display: flex; gap: 6px; align-items: center; border: 0; background: none; padding: 3px 8px; }
-.project-button:hover { background: var(--raised); }
 .workspace { flex: 1; display: flex; min-height: 0; }
 .activity { width: 44px; flex: none; display: flex; flex-direction: column; align-items: center; gap: 4px; padding: 8px 0; background: var(--surface); border-right: 1px solid var(--border); }
 .activity button { position: relative; width: 32px; height: 32px; padding: 0; border: 0; background: none; color: var(--muted); border-radius: var(--r-1); font-size: calc(15px * var(--fs-scale, 1)); }
@@ -468,7 +458,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .activity button { width: 38px; height: 38px; display: grid; place-items: center; }
 .activity button.with-badge b { top: 3px; right: 3px; }
 .tree-caret { display: grid; place-items: center; width: 20px; height: 22px; }
-.project-button { gap: 6px; }
 .chat-switcher-button { gap: 4px; }
 .chat-new { display: grid; place-items: center; padding: 4px 6px; }
 .tree-row { min-height: 28px; }
@@ -620,9 +609,6 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .statusbar > span { display: inline-flex; align-items: center; height: 100%; padding: 0 4px; border-radius: var(--r-1); }
 .statusbar > span:not(.statusbar-spacer):hover { background: var(--raised); color: var(--fg); }
 .topbar { border-bottom: 1px solid var(--border); }
-.view-switch { padding: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; gap: 2px; }
-.view-switch button { border: 0; border-radius: var(--r-1) !important; background: none; color: var(--muted); }
-.view-switch button.on { background: var(--raised); color: var(--fg); }
 .timeline-bar:hover { background: var(--raised); color: var(--fg); }
 
 /* Far zoom: title only, scaled so it stays readable */
@@ -655,22 +641,10 @@ button:not(:disabled):hover { border-color: var(--accent); }
 
 /* Compact shell */
 .topbar { height: 34px; }
-.topbar-tabs { margin: 0; padding: 2px; }
-.topbar-tabs button { flex: none; padding: 2px 12px; font-size: calc(12px * var(--fs-scale, 1)); }
 .chat-header { min-height: 36px; padding: 4px 8px; }
 .tree-row { min-height: 24px; }
 .statusbar { height: 22px; }
 .timeline-bar { padding-top: 3px; padding-bottom: 3px; }
-.topbar-actions { display: flex; gap: 2px; margin-left: 4px; }
-.topbar-actions button { position: relative; display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 0; background: none; color: var(--muted); }
-.topbar-actions button:hover { background: var(--raised); color: var(--fg); }
-.topbar-actions button.on { color: var(--fg); background: var(--raised); }
-.topbar-actions .with-badge b { top: 0; right: 0; }
-.topbar-actions { display: flex; gap: 2px; margin-left: 4px; }
-.topbar-actions button { position: relative; display: grid; place-items: center; width: 28px; height: 26px; padding: 0; border: 0; background: none; color: var(--muted); }
-.topbar-actions button:hover { background: var(--raised); color: var(--fg); }
-.topbar-actions button.on { color: var(--fg); background: var(--raised); }
-.topbar-actions .with-badge b { top: 0; right: 0; }
 
 /* Status lives in the bottom tab row */
 .bottom-status { margin-left: auto; display: flex; align-items: center; gap: 12px; padding-right: 6px; color: var(--muted); font-size: calc(11.5px * var(--fs-scale, 1)); }
@@ -686,8 +660,6 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .react-flow__controls-button { width: 36px; height: 36px; background: transparent; border: 0; color: var(--muted); }
 .react-flow__controls-button:hover { background: transparent; color: var(--fg); }
 .react-flow__controls-button svg { width: 22px; height: 22px; max-width: none; max-height: none; fill: none; }
-.topbar-actions { gap: 8px; margin-left: 10px; }
-.topbar-actions button { width: 28px; height: 28px; border-radius: var(--r-1); }
 
 /* Timeline: flat rows with a status dot, actions appear on hover */
 .timeline-list { padding: 2px 6px 6px; }
@@ -729,7 +701,6 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .review-files .oop-diff { margin: 2px 0 6px 12px; max-height: 280px; }
 .tl-action.shown { opacity: 0.7; }
 .tl-action.shown:hover { opacity: 1; }
-.topbar-actions button { width: 32px; height: 30px; }
 .tl-action { min-width: 28px; height: 24px; }
 
 /* Diff: line numbers, tinted rows, wrapped text */

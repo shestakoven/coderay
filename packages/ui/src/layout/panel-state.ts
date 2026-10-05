@@ -63,10 +63,12 @@ export function panelReducer(state: PanelState, action: PanelAction): PanelState
 }
 
 const STORAGE_KEY = 'ide.panels';
+const keyOf = (scope: string | undefined): string => (scope ? `${STORAGE_KEY}.${scope}` : STORAGE_KEY);
 
-export function loadPanels(storage: Pick<Storage, 'getItem'> | undefined): PanelState {
+// A project without saved layout starts from the last layout any project used.
+export function loadPanels(storage: Pick<Storage, 'getItem'> | undefined, scope?: string): PanelState {
   try {
-    const raw = storage?.getItem(STORAGE_KEY);
+    const raw = storage?.getItem(keyOf(scope)) ?? storage?.getItem(STORAGE_KEY);
     if (!raw) return initialPanels;
     const value = JSON.parse(raw) as Partial<Visibility>;
     const flag = (key: keyof Visibility): boolean => (typeof value[key] === 'boolean' ? value[key] : initialPanels[key]);
@@ -76,10 +78,12 @@ export function loadPanels(storage: Pick<Storage, 'getItem'> | undefined): Panel
   }
 }
 
-export function savePanels(storage: Pick<Storage, 'setItem'> | undefined, state: PanelState): void {
+export function savePanels(storage: Pick<Storage, 'setItem'> | undefined, state: PanelState, scope?: string): void {
   try {
     const stored = state.focus ? (state.before ?? initialPanels) : state;
-    storage?.setItem(STORAGE_KEY, JSON.stringify({ left: stored.left, right: stored.right, bottom: stored.bottom }));
+    const value = JSON.stringify({ left: stored.left, right: stored.right, bottom: stored.bottom });
+    storage?.setItem(keyOf(scope), value);
+    if (scope) storage?.setItem(STORAGE_KEY, value);
   } catch {
     // storage can be blocked; the layout then resets on reload
   }

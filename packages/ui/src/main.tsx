@@ -1,5 +1,6 @@
 import '@xyflow/react/dist/style.css';
 import './styles.css';
+import './layout/chrome.css';
 import './plan-flow/plan-flow.css';
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';

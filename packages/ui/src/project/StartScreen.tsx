@@ -8,7 +8,7 @@ import { FolderBrowser } from './FolderBrowser';
 import { OpenProjectDialog, type OpenProjectController } from './OpenProjectDialog';
 import { formatAgo, isWorking, PHASE_LABEL, type StartAction, type StartState, type StartView } from './start-state';
 
-interface FormProps {
+export interface FormProps {
   browse: OpenProjectController;
   start: StartState;
   dispatchStart: Dispatch<StartAction>;
@@ -102,7 +102,7 @@ function ActionRow({ ref, icon, title, hint, expanded, opensDialog, disabled, on
   );
 }
 
-function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
+export function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
   const [name, setName] = useState('');
   const [sent, setSent] = useState<string | null>(null);
   const input = useRefocusOnError(start.error);
@@ -143,7 +143,7 @@ function CreateForm({ browse, start, dispatchStart, send, busy }: FormProps) {
   );
 }
 
-function CloneForm({ browse, start, dispatchStart, send, busy }: FormProps) {
+export function CloneForm({ browse, start, dispatchStart, send, busy }: FormProps) {
   const [url, setUrl] = useState('');
   const [typedName, setTypedName] = useState('');
   const [sent, setSent] = useState<string | null>(null);

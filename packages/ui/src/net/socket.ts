@@ -15,6 +15,7 @@ export function connect(
   token: string,
   onMessage: (message: ServerMessage) => void,
   onStatus: (status: ConnectionStatus) => void,
+  url?: string,
 ): Connection {
   let socket: WebSocket | undefined;
   let attempt = 0;
@@ -24,7 +25,7 @@ export function connect(
   const open = () => {
     onStatus('connecting');
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
-    socket = new WebSocket(`${scheme}://${location.host}/ws?token=${encodeURIComponent(token)}`);
+    socket = new WebSocket(`${url ?? `${scheme}://${location.host}/ws`}?token=${encodeURIComponent(token)}`);
     socket.onopen = () => {
       attempt = 0;
       onStatus('open');
