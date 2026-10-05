@@ -59,7 +59,7 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
       const toolUseId = str(raw.tool_use_id);
       if (!toolUseId) return null;
       const failed = raw.hook_event_name === 'PostToolUseFailure';
-      return { type: 'tool-end', toolUseId, status: failed ? 'error' : 'ok', agentId, launched: failed ? null : launched(raw.tool_response) };
+      return { type: 'tool-end', toolUseId, status: failed ? 'error' : 'ok', agentId, launched: failed ? null : launched(str(raw.tool_name), raw.tool_response) };
     }
     case 'Stop':
     case 'StopFailure':
@@ -82,16 +82,24 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
   }
 }
 
-// claude: a background Bash or Agent call; Codex: spawn_agent, whose output is a JSON string with the new agent's id.
-function launched(raw: unknown): BackgroundTask | null {
-  const response = typeof raw === 'string' ? parseJson(raw) : raw;
+// Only the tool that launches a task counts: any other tool's output may hold the same words.
+function launched(tool: string | null, response: unknown): BackgroundTask | null {
+  if (tool === 'spawn_agent') {
+    // Codex returns the new agent's id inside a JSON string.
+    const spawned = typeof response === 'string' ? parseJson(response) : null;
+    const id = isRecord(spawned) ? str(spawned.agent_id) : null;
+    return id ? { id, kind: 'subagent' } : null;
+  }
   if (!isRecord(response)) return null;
-  const shell = str(response.backgroundTaskId);
-  if (shell) return { id: shell, kind: 'shell' };
-  const agent = str(response.agentId);
-  if (agent && response.isAsync === true) return { id: agent, kind: 'subagent' };
-  const spawned = typeof raw === 'string' ? str(response.agent_id) : null;
-  return spawned ? { id: spawned, kind: 'subagent' } : null;
+  if (tool === 'Bash') {
+    const id = str(response.backgroundTaskId);
+    return id ? { id, kind: 'shell' } : null;
+  }
+  if (tool === 'Agent' || tool === 'Task') {
+    const id = str(response.agentId);
+    return id && response.isAsync === true ? { id, kind: 'subagent' } : null;
+  }
+  return null;
 }
 
 function parseJson(text: string): unknown {

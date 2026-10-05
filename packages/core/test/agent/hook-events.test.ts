@@ -92,6 +92,17 @@ describe('parseHookEvent', () => {
       expect(event).toMatchObject({ type: 'tool-end', launched: null });
     });
 
+    it.each([
+      ['Bash', '{"agent_id":"abc","ok":true}\n'],
+      ['Read', '{"backgroundTaskId":"bg9"}'],
+      ['Read', { backgroundTaskId: 'bg9' }],
+      ['Bash', { agentId: 'ag1', isAsync: true }],
+      ['Agent', '{"agent_id":"abc"}'],
+    ])('launches nothing when %s merely outputs a task-like id: %j', (tool, response) => {
+      const event = parseHookEvent(hook('PostToolUse', { tool_name: tool, tool_input: {}, tool_use_id: 'toolu_9', tool_response: response }));
+      expect(event).toMatchObject({ type: 'tool-end', launched: null });
+    });
+
     it.each(['PreToolUse', 'PostToolUse', 'PostToolUseFailure'])('is null for a %s without a tool use id', (name) => {
       expect(parseHookEvent(hook(name, { tool_name: 'Bash', tool_input: {} }))).toBeNull();
     });

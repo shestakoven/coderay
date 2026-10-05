@@ -1,12 +1,11 @@
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { dirname } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { ChatItem, MessageItem, SessionServerMessage, ToolItem } from '@ide/protocol';
 import { SessionError } from '../../src/agent/agent-session';
-import type { ToolEndInfo } from '../../src/agent/tracker';
 import type { ToolDecisionRecord } from '../../src/store/store';
 import { transcriptPath } from '../../src/watchdog/recovery';
-import { tempDir, waitFor } from '../helpers';
+import { waitFor } from '../helpers';
+import { interrupted, openTerminal, said, snapshot, turnThatStaysOpen } from './terminal-events-harness';
 import { terminalHarness } from './terminal-harness';
 
 const ESC = '\x1b';
@@ -14,82 +13,9 @@ const quiet = (ms = 500) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const taskNotification = (taskId: string, toolUseId: string, status = 'completed') =>
   `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n<status>${status}</status>\n<summary>Background command "sleep 5" completed</summary>\n</task-notification>`;
-const interrupted = JSON.stringify({ type: 'user', message: { role: 'user', content: [{ type: 'text', text: '[Request interrupted by user]' }] } });
-const said = (text: string) => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text }] } });
 const decision = (toolUseId: string, kind: ToolDecisionRecord['decision']): ToolDecisionRecord => ({
   toolUseId, decision: kind, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE', decidedAt: 1,
 });
-
-// A claude whose turn stays open until it is stopped.
-function turnThatStaysOpen(): string {
-  const file = join(tempDir('ide-scenario-'), 'open-turn.jsonl');
-  const init = { type: 'system', subtype: 'init', cwd: '/fake/project', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' };
-  const steps = [{ fake: 'await-user' }, init, { fake: 'sleep', ms: 60_000 }, { fake: 'await-user' }];
-  writeFileSync(file, steps.map((step) => JSON.stringify(step)).join('\n'));
-  return file;
-}
-
-const isTool = (item: ChatItem): item is ToolItem => item.kind === 'tool';
-const isMessage = (item: ChatItem): item is MessageItem => item.kind === 'message';
-
-// A terminal that is open on a chat whose hooks run, and the hook payloads of claude 2.1.289 fed to it.
-async function openTerminal(scenario?: string) {
-  const h = await terminalHarness({ hooks: 'on', canaryMs: 5000, ...(scenario ? { scenario } : {}) });
-  const launch = await h.session.terminalLaunch();
-  if (launch === null) throw new Error('the terminal did not open');
-  const ideId = h.session.sessionId() as string;
-  const claudeId = h.session.state().session?.claudeSessionId as string;
-  const transcript = join(h.transcriptsDir, 'followed.jsonl');
-  writeFileSync(transcript, '');
-
-  const heard = { userMessages: 0, turnsClosed: 0, interrupts: 0, taskEnds: [] as string[], toolResults: [] as ToolEndInfo[], broadcasts: [] as SessionServerMessage[] };
-  h.session.onUserMessage(() => {
-    heard.userMessages += 1;
-  });
-  h.session.onTurnClosed(() => {
-    heard.turnsClosed += 1;
-  });
-  h.session.onInterrupt(() => {
-    heard.interrupts += 1;
-  });
-  h.session.onTaskEnd((toolUseId) => heard.taskEnds.push(toolUseId));
-  h.session.onToolResult((info) => heard.toolResults.push(info));
-  h.session.onMessage((message) => heard.broadcasts.push(message));
-
-  const raw = (name: string, fields: object = {}) => ({
-    hook_event_name: name, session_id: claudeId, transcript_path: transcript, cwd: h.root, permission_mode: 'default', ...fields,
-  });
-  const send = (name: string, fields: object = {}) => h.session.hookEvent(ideId, raw(name, fields));
-  const call = (toolUseId: string, tool = 'Bash', input: object = {}, extra: object = {}) =>
-    h.session.toolCalled(raw('PreToolUse', { tool_name: tool, tool_input: input, tool_use_id: toolUseId, ...extra }));
-  const result = (toolUseId: string, tool = 'Bash', response: object = {}, extra: object = {}, name = 'PostToolUse') =>
-    send(name, { tool_name: tool, tool_input: {}, tool_use_id: toolUseId, tool_response: response, ...extra });
-  const t = {
-    h, ideId, claudeId, transcript, heard, raw, send, call, result,
-    prompt: (text: string) => send('UserPromptSubmit', { prompt: text }),
-    stop: (fields: object = {}) => send('Stop', { last_assistant_message: 'Done.', stop_hook_active: false, background_tasks: [], ...fields }),
-    startShell: (toolUseId: string, taskId: string) => {
-      call(toolUseId, 'Bash', { command: 'sleep 5', run_in_background: true });
-      result(toolUseId, 'Bash', { backgroundTaskId: taskId });
-    },
-    startAgent: (toolUseId: string, agentId: string) => {
-      call(toolUseId, 'Agent', { description: 'd', prompt: 'p', run_in_background: true });
-      result(toolUseId, 'Agent', { isAsync: true, agentId });
-    },
-    appendTranscript: (...lines: string[]) => appendFileSync(transcript, lines.map((line) => `${line}\n`).join('')),
-    state: () => h.session.state(),
-    items: () => h.session.state().items,
-    tool: (id: string) => h.session.state().items.filter(isTool).find((item) => item.id === id),
-    messages: () => h.session.state().items.filter(isMessage),
-    turns: () => h.session.state().turns,
-    tasks: () => h.session.state().tasks,
-    notices: () => h.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : [])),
-  };
-  return t;
-}
-
-type Terminal = Awaited<ReturnType<typeof openTerminal>>;
-const snapshot = (t: Terminal) => JSON.stringify([t.turns(), t.items(), t.tasks()]);
 
 describe('an agent in the terminal, followed through its hooks', () => {
   describe('a prompt and the end of the turn', () => {
