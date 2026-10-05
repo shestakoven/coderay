@@ -15,6 +15,17 @@ export interface Core {
   stop(): Promise<void>;
 }
 
+export interface Hub {
+  url: string;
+  // The absolute path of a scratch project, by folder name.
+  root(name: string): string;
+  // A new scratch project the hub has not opened.
+  addProject(name: string): string;
+  // Processes whose command line names the project: its project core, once the hub runs one.
+  coresOf(root: string): number[];
+  stop(): Promise<void>;
+}
+
 export interface Launcher {
   url: string;
   home: string;
@@ -125,6 +136,50 @@ async function stopSuccessor(url: string, base: string): Promise<void> {
   for (const pid of stuck) signal(pid, 'SIGKILL');
   const left = await untilGone(stuck, 30);
   if (left.length > 0) throw new Error(`the core successor did not exit: ${left.join(', ')}`);
+}
+
+const processesMatching = (text: string, except: number[] = []): number[] => {
+  try {
+    return execFileSync('pgrep', ['-f', text], { encoding: 'utf8' }).split('\n').filter(Boolean).map(Number).filter((pid) => !except.includes(pid));
+  } catch {
+    return [];
+  }
+};
+
+function scratchProject(base: string, name: string): string {
+  const root = join(base, name);
+  cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
+  execFileSync('git', ['init', '-q'], { cwd: root });
+  return root;
+}
+
+export async function startHub(names: string[]): Promise<Hub> {
+  const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
+  const roots = names.map((name) => scratchProject(base, name));
+  const { home, bin } = prepareHome(base);
+  const hub = await spawnCore(
+    base,
+    ['--hub', ...roots.flatMap((root) => ['--project', root]), '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: stream('text-then-wait') },
+  );
+  const hubPid = hub.child.pid ?? -1;
+  return {
+    url: hub.url,
+    root: (name) => join(base, name),
+    addProject: (name) => scratchProject(base, name),
+    coresOf: (root) => processesMatching(root, [hubPid]),
+    stop: async () => {
+      hub.child.kill('SIGTERM');
+      await hub.exited;
+      // The hub stops its project cores before it exits: any process left in the scratch dir is an orphan.
+      const orphans = await untilGone(processesMatching(base), 100);
+      const commands = orphans.map((pid) => commandOf(String(pid)).trim());
+      for (const pid of orphans) signal(pid, 'SIGKILL');
+      await untilGone(orphans, 30);
+      rmSync(base, { recursive: true, force: true });
+      if (orphans.length > 0) throw new Error(`project cores outlived the hub: ${commands.join('; ')}`);
+    },
+  };
 }
 
 export async function startCore(scenario: string): Promise<Core> {
