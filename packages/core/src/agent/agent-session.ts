@@ -670,8 +670,7 @@ export class AgentSession {
       session.cwd, () => {}, { killGraceMs: this.options.killGraceMs },
     );
     try {
-      const reported = await Promise.race([canary.wait(session.id, this.options.canaryMs ?? CANARY_MS), probe.exited.then(() => false)]);
-      return reported || (await canary.wait(session.id, 0));
+      return await Promise.race([canary.wait(session.id, this.options.canaryMs ?? CANARY_MS), probe.exited.then(() => false)]);
     } finally {
       await probe.kill();
     }
