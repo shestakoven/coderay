@@ -3,6 +3,7 @@ import {
   type ChatImage, type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
   type WatchdogAnswer,
 } from '@ide/protocol';
+import { isAccountId } from '../accounts/account-store';
 import { isModelChoice } from '../agent/tools';
 import { isRecord } from '../json';
 import { MAX_TERMINAL_INPUT, TERMINAL_ID } from '../terminal/terminal-service';
@@ -21,7 +22,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title, parent, url,
+    after, revertId, changeIds, stepKey, confirm, id, modelChoice, effort, cols, rows, data, images, title, parent, url, code,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -105,7 +106,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         : null;
     case 'project.clone.cancel':
     case 'project.close':
+    case 'account.login.start':
+    case 'account.login.cancel':
       return { type, requestId };
+    case 'account.login.code':
+      return typeof code === 'string' && code.length <= MAX_CODE_LENGTH && code.trim() !== '' ? { type, requestId, code: code.trim() } : null;
+    case 'account.select':
+      return id === null || isAccountId(id) ? { type, requestId, id } : null;
+    case 'account.remove':
+      return isAccountId(id) ? { type, requestId, id } : null;
     case 'history.diff':
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
     case 'revert.undo':
@@ -146,6 +155,7 @@ const MAX_PATH_LENGTH = 4096;
 const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 1024;
 const MAX_ID_LENGTH = 100;
+const MAX_CODE_LENGTH = 4096;
 
 const isImageList = (value: unknown): value is ChatImage[] =>
   Array.isArray(value) && value.length > 0 && value.length <= MAX_CHAT_IMAGES && value.every((item) =>

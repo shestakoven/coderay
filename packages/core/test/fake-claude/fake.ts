@@ -8,6 +8,7 @@ export interface FakeRecord {
   argv?: string[];
   pid?: number;
   claudecode?: string | null;
+  configDir?: string | null;
   sleeperPid?: number;
   ignoredSignal?: string;
   keepsRunning?: boolean;

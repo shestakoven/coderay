@@ -27,8 +27,15 @@ export interface FileHashes {
   trust: string;
 }
 
+export interface ClaudeCodeServerView {
+  name: string;
+  source: 'user' | 'local' | 'project';
+  type: 'stdio' | 'http' | 'sse' | 'unknown';
+}
+
 export interface McpSettingsView {
   servers: McpServerView[];
+  claudeCodeServers: ClaudeCodeServerView[];
   problems: string[];
   fileHashes: FileHashes;
   externalEdits: { ideServers: boolean; trust: boolean; trustApproves: string[] };
@@ -61,8 +68,29 @@ export interface PolicyView {
   problems: string[];
 }
 
+export interface ClaudeAccountView {
+  id: string;
+  email: string;
+  createdAt: number;
+}
+
+export type AccountLoginState = 'idle' | 'waiting' | 'checking' | 'error';
+
+export interface AccountLoginView {
+  state: AccountLoginState;
+  url: string | null;
+  error: string | null;
+}
+
+export interface AccountsView {
+  accounts: ClaudeAccountView[];
+  activeId: string | null;
+  login: AccountLoginView;
+}
+
 export interface SettingsView extends McpSettingsView {
   policy: PolicyView;
+  accounts: AccountsView;
 }
 
 export type SettingsServerMessage =
@@ -76,4 +104,9 @@ export type SettingsClientMessage =
   | { type: 'mcp.approve'; requestId: string; name: string; entryHash: string }
   | { type: 'mcp.confirm-external-edits'; requestId: string; fileHashes: FileHashes }
   | { type: 'policy.save'; requestId: string; level: PolicyLevel; policy: Partial<Policy> }
-  | { type: 'policy.confirm-external-edits'; requestId: string; hashes: PolicyHashes };
+  | { type: 'policy.confirm-external-edits'; requestId: string; hashes: PolicyHashes }
+  | { type: 'account.login.start'; requestId: string }
+  | { type: 'account.login.code'; requestId: string; code: string }
+  | { type: 'account.login.cancel'; requestId: string }
+  | { type: 'account.select'; requestId: string; id: string | null }
+  | { type: 'account.remove'; requestId: string; id: string };

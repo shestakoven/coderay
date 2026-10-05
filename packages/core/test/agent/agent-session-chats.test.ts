@@ -80,7 +80,7 @@ function longBackgroundShell(): string {
 
 const record = (id: string, startedAt: number, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
-  pid: null, launchId: null, conversationStarted: true, startedAt, ...overrides,
+  pid: null, launchId: null, conversationStarted: true, startedAt, accountId: null, ...overrides,
 });
 
 function seededStore(): { home: string; root: string; store: Store } {

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ClientMessage, McpLevel, McpServerState, McpServerView, McpTransport, SettingsView } from '@ide/protocol';
+import { AccountsSection } from './AccountsSection';
 import { PolicySection } from './PolicySection';
 import { emptyForm, entryFromForm, formFromServer, type EntryForm } from './entry-form';
 
@@ -62,6 +63,11 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
     request({ type: 'mcp.save', requestId: crypto.randomUUID(), level: form.level, name: form.name.trim(), entry: result.entry, previousName }, true);
   };
   const liveStatus = (name: string): string => sessionServers.find((server) => server.name === name)?.status ?? '—';
+  const claudeCode = settings?.claudeCodeServers ?? [];
+  const known = new Set(['idecore', ...(settings?.servers ?? []).map((server) => server.name), ...claudeCode.map((server) => server.name)]);
+  const external: { name: string; source: string; type: string | null }[] = settings
+    ? [...claudeCode, ...sessionServers.filter((server) => !known.has(server.name)).map((server) => ({ name: server.name, source: 'plugin', type: null }))]
+    : [];
 
   return (
     <div className="modal" onClick={onClose}>
@@ -100,6 +106,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
           </div>
         )}
         {panelError && <p className="problem">{panelError}</p>}
+        {settings && <AccountsSection view={settings.accounts} busy={awaiting !== null} onRequest={(message) => request(message, false, false)} />}
         <h3>MCP servers</h3>
         {LEVELS.map(({ level, title }) => (
           <section key={level}>
@@ -137,6 +144,22 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
             <button onClick={() => edit(level, null)}>Add server</button>
           </section>
         ))}
+        {external.length > 0 && (
+          <section>
+            <h3>From Claude Code</h3>
+            <div className="muted">Loaded by Claude Code itself. Edit them with <code>claude mcp</code>.</div>
+            {external.map((server) => (
+              <div key={server.name} className="server">
+                <div className="server-row">
+                  <b>{server.name}</b>
+                  <span className="badge source">{server.source}</span>
+                  {server.type && <span className="muted">{server.type}</span>}
+                  <span className="muted">session: {liveStatus(server.name)}</span>
+                </div>
+              </div>
+            ))}
+          </section>
+        )}
         {settings && (
           <PolicySection
             view={settings.policy}

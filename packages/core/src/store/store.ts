@@ -21,6 +21,7 @@ export interface SessionRecord {
   launchId: string | null;
   conversationStarted: boolean;
   startedAt: number;
+  accountId: string | null;
 }
 
 export interface MessageRecord {
@@ -318,8 +319,12 @@ const SCHEMA_V6 = `
 ALTER TABLE plans ADD COLUMN flow TEXT;
 `;
 
+const SCHEMA_V7 = `
+ALTER TABLE sessions ADD COLUMN account_id TEXT;
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7];
 
 const CHAT_TITLE_LENGTH = 60;
 const NEW_CHAT_TITLE = 'New chat';
@@ -369,6 +374,7 @@ const toSession = (row: Row): SessionRecord => ({
   launchId: optText(row.launch_id),
   conversationStarted: row.conversation_started === 1,
   startedAt: Number(row.started_at),
+  accountId: optText(row.account_id),
 });
 
 const toTurn = (row: Row): TurnView => ({
@@ -552,11 +558,11 @@ export function openStore(dir: string): Store {
   let open = true;
 
   const upsertSession = db.prepare(`
-    INSERT INTO sessions (id, claude_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at)
-    VALUES (:id, :claudeSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt)
+    INSERT INTO sessions (id, claude_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at, account_id)
+    VALUES (:id, :claudeSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt, :accountId)
     ON CONFLICT (id) DO UPDATE SET claude_session_id = excluded.claude_session_id, status = excluded.status,
       model = excluded.model, model_choice = excluded.model_choice, effort = excluded.effort, cli_version = excluded.cli_version, pid = excluded.pid,
-      launch_id = excluded.launch_id, conversation_started = excluded.conversation_started`);
+      launch_id = excluded.launch_id, conversation_started = excluded.conversation_started, account_id = excluded.account_id`);
   const listSessions = db.prepare(`
     WITH counts AS (
       SELECT session_id, MAX(ts) AS last_ts, SUM(role IN ('user', 'assistant')) AS messages FROM messages GROUP BY session_id
@@ -688,7 +694,7 @@ export function openStore(dir: string): Store {
       upsertSession.run({
         id: session.id, claudeSessionId: session.claudeSessionId, cwd: session.cwd, status: session.status,
         model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, pid: session.pid,
-        launchId: session.launchId, conversationStarted: session.conversationStarted ? 1 : 0, startedAt: session.startedAt,
+        launchId: session.launchId, conversationStarted: session.conversationStarted ? 1 : 0, startedAt: session.startedAt, accountId: session.accountId,
       });
     },
     saveTurn(sessionId, turn) {

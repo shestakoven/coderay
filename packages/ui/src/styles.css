@@ -117,6 +117,16 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 .server .entry { background: var(--bg); border-radius: 5px; padding: 6px; margin: 4px 0; white-space: pre-wrap; word-break: break-all; }
 .server-status.ready { color: var(--ok); }
 .server-status.unapproved, .server-status.missing-env, .server-status.shadowed { color: var(--warn); }
+.server .badge.source { background: var(--raised); color: var(--muted); }
+.account-choice { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.account-choice input { margin: 0; accent-color: var(--accent); }
+.account-remove.confirm { color: var(--error); }
+.account-add { margin-top: 8px; }
+.accounts > .muted { margin-bottom: 6px; }
+.accounts .server-row { align-items: center; min-height: 28px; }
+.account-login { display: grid; gap: 8px; margin-top: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.account-login-row { display: flex; gap: 6px; align-items: center; }
+.account-code { flex: 1; min-width: 0; background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: 5px; padding: 4px 6px; font: inherit; }
 .banner { display: flex; gap: 10px; align-items: center; justify-content: space-between; padding: 6px 10px; margin: 8px 0; border-radius: 6px; background: var(--selection); }
 .banner.warn { background: #3a2f14; color: var(--warn); }
 .entry-editor { display: grid; gap: 8px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }

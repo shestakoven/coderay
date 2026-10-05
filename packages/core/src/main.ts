@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import type { ClientMessage, MapSnapshot, ModelInfo, ServerMessage } from '@ide/protocol';
+import { AccountLogin } from './accounts/account-login';
+import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
@@ -17,6 +19,7 @@ import { buildSnapshot } from './map/snapshot';
 import { IdentifierClassifier } from './c4/classify';
 import { watchDeploy } from './c4/deploy';
 import { buildC4 } from './c4/model';
+import { claudeJsonPath } from './mcp/claude-code';
 import { McpRegistry } from './mcp/registry';
 import { fetchModels } from './models/catalog';
 import { removeStaleModelDirs } from './models/claude-cli';
@@ -113,7 +116,18 @@ try {
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
   let indexer: Indexer | undefined;
-  const models = createModelProvider(home);
+  const accounts = new AccountStore({ home, claude: values.claude });
+  const login = new AccountLogin({
+    accounts, claude: values.claude,
+    onChange: () => {
+      try {
+        server?.broadcast(settingsSnapshot());
+      } catch (error) {
+        console.error('IDE core: could not send the settings', error);
+      }
+    },
+  });
+  const models = createModelProvider(home, () => accounts.claudeEnv());
   const rt = createExecutionRuntime({
     root, home, store,
     policy: () => policy.effective(),
@@ -134,10 +148,12 @@ try {
   const registry = new McpRegistry({
     home, root, builtins: () => ({ idecore: rt.gate.mcpEntry() }),
     expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
+    claudeJsonPath: () => claudeJsonPath(accounts.configDir(accounts.activeId())),
   });
   const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
+    accounts,
     mcpServers: () => registry.sessionServers(),
     gate: rt.sessionGate,
     canLeave: () => rt.canLeave(),
@@ -159,7 +175,10 @@ try {
     agent.notice(`The IDE could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
   }
 
-  const settingsSnapshot = (): ServerMessage => ({ type: 'settings.snapshot', settings: { ...registry.view(), policy: policy.view() } });
+  const settingsSnapshot = (): ServerMessage => ({
+    type: 'settings.snapshot',
+    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), login: login.view() } },
+  });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
   const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats() });
@@ -171,7 +190,7 @@ try {
     }
   };
 
-  const changeSettings = (message: SettingsClientMessage): void => {
+  const changeSettings = async (message: SettingsClientMessage): Promise<void> => {
     switch (message.type) {
       case 'mcp.save':
         registry.save(message.level, message.name, message.entry, message.previousName);
@@ -191,6 +210,23 @@ try {
       case 'policy.confirm-external-edits':
         policy.confirmExternalEdits(message.hashes);
         return;
+      case 'account.login.start':
+        login.start();
+        return;
+      case 'account.login.code':
+        login.submitCode(message.code);
+        return;
+      case 'account.login.cancel':
+        login.cancel();
+        return;
+      case 'account.select':
+        await agent.changeAccount(() => accounts.setActive(message.id));
+        modelList = undefined;
+        return;
+      case 'account.remove':
+        await agent.changeAccount(() => accounts.remove(message.id));
+        modelList = undefined;
+        return;
     }
   };
 
@@ -203,7 +239,7 @@ try {
 
   let modelList: Promise<ModelInfo[]> | undefined;
   const modelCatalog = (): Promise<ModelInfo[]> => {
-    modelList ??= fetchModels({ command: values.claude, args: [] }, root).then((list) => {
+    modelList ??= fetchModels({ command: values.claude, args: [], env: accounts.claudeEnv() }, root).then((list) => {
       if (list.length === 0) modelList = undefined;
       return list;
     });
@@ -304,10 +340,10 @@ try {
       default:
         await routeClientMessage(message, {
           history: (history) => rt.history.handle(history, reply),
-          settings: (settings) => {
+          settings: async (settings) => {
             let error: string | null = null;
             try {
-              changeSettings(settings);
+              await changeSettings(settings);
             } catch (failure) {
               error = (failure as Error).message;
             }
@@ -362,6 +398,7 @@ try {
   terminals.onMessage((message) => running.broadcast(message));
 
   const shutdown = async (): Promise<void> => {
+    login.cancel();
     const closingTerminals = terminals.closeAll();
     // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
     await rt.close();

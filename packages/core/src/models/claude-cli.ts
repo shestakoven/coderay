@@ -9,6 +9,7 @@ export interface ClaudeCliOptions {
   model: string;
   runDir: string;
   claudePath?: string;
+  env?: () => Record<string, string>;
   timeoutMs?: number;
   retryDelaysMs?: number[];
   wait?: (ms: number, signal?: AbortSignal) => Promise<unknown>;
@@ -49,6 +50,7 @@ export class ClaudeCliModel implements StructuredModel {
   private readonly model: string;
   private readonly runDir: string;
   private readonly claudePath: string;
+  private readonly env: (() => Record<string, string>) | undefined;
   private readonly timeoutMs: number;
   private readonly retryDelaysMs: number[];
   private readonly wait: (ms: number, signal?: AbortSignal) => Promise<unknown>;
@@ -57,6 +59,7 @@ export class ClaudeCliModel implements StructuredModel {
     this.model = options.model;
     this.runDir = options.runDir;
     this.claudePath = options.claudePath ?? 'claude';
+    this.env = options.env;
     this.timeoutMs = options.timeoutMs ?? 300_000;
     this.retryDelaysMs = options.retryDelaysMs ?? [2000, 8000];
     this.wait = options.wait ?? ((ms, signal) => sleep(ms, undefined, { signal }));
@@ -93,7 +96,7 @@ export class ClaudeCliModel implements StructuredModel {
 
   private exec(cwd: string, prompt: string, args: string[], signal: AbortSignal | undefined): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.claudePath, args, { cwd, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      const child = spawn(this.claudePath, args, { cwd, env: { ...process.env, ...this.env?.() }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const stdout: Buffer[] = [];
       let stdoutBytes = 0;
       let stderr = '';
@@ -151,7 +154,7 @@ function errorDetail(stdout: string, stderr: string): string {
 const cancelled = (): Error => Object.assign(new Error('claude call cancelled'), { name: 'AbortError' });
 
 // The child leads its own process group, so one signal also reaches whatever it started.
-function killGroup(child: ChildProcess): void {
+export function killGroup(child: ChildProcess): void {
   try {
     process.kill(-child.pid!, 'SIGKILL');
   } catch {

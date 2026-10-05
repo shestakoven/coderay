@@ -59,7 +59,7 @@ function seedRunningSession(home: string, root: string, seed: Seed): void {
   const store = openStore(projectDir(home, root));
   store.saveSession({
     id: 'session-1', claudeSessionId: seed.claudeSessionId, cwd: root, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
-    pid: seed.pid, launchId: seed.claudeSessionId, conversationStarted: true, startedAt: 1,
+    pid: seed.pid, launchId: seed.claudeSessionId, conversationStarted: true, startedAt: 1, accountId: null,
   });
   store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
   store.close();
@@ -94,7 +94,7 @@ const pendingPrompt = (h: Harness) =>
 const controlResponse = (h: Harness) => h.stdin().find((message) => message.type === 'control_response');
 
 describe('AgentSession', () => {
-  it('spawns claude in stream-json mode with a per-session strict MCP config, the disallowed tools, bypass permissions and prompts on stdio', async () => {
+  it('spawns claude in stream-json mode with a per-session MCP config, the disallowed tools, bypass permissions and prompts on stdio', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
@@ -104,7 +104,6 @@ describe('AgentSession', () => {
       '--session-id', session?.claudeSessionId,
       '--model', 'sonnet', '--effort', 'medium',
       '--mcp-config', join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
-      '--strict-mcp-config',
       '--disallowedTools', 'SendMessage,CronCreate,CronDelete,CronList,ScheduleWakeup,RemoteTrigger,Workflow,EnterWorktree,ExitWorktree,DesignSync,PushNotification',
       '--dangerously-skip-permissions',
       '--permission-prompt-tool', 'stdio',
@@ -1134,7 +1133,7 @@ describe('AgentSession after a core crash', () => {
     const store = openStore(projectDir(home, root));
     store.saveSession({
       id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
-      pid: null, launchId: null, conversationStarted: true, startedAt: 1,
+      pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null,
     });
     store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
     store.saveMessage('session-1', { id: 'm1', seq: 1, turnId: 'turn-1', parentToolUseId: null, role: 'assistant', text: 'I will write the config.', ts: T('2026-09-30T12:00:02.000Z') });

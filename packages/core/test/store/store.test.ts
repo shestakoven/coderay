@@ -11,7 +11,7 @@ import { tempDir } from '../helpers';
 
 const session = (id: string, startedAt: number): SessionRecord => ({
   id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
-  pid: 42, launchId: `claude-${id}`, conversationStarted: false, startedAt,
+  pid: 42, launchId: `claude-${id}`, conversationStarted: false, startedAt, accountId: null,
 });
 
 const toolEvent: ToolEventRecord = {
@@ -173,7 +173,7 @@ describe('openStore', () => {
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
     db.exec('DROP TABLE plans; DROP TABLE step_states; DROP TABLE tool_decisions; DROP TABLE gate_events; PRAGMA user_version = 1;');
     db.exec('DROP TABLE changes; DROP TABLE baselines; DROP TABLE checkpoints; DROP TABLE reverts; DROP TABLE summaries; DROP TABLE meta');
-    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual');
+    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE sessions DROP COLUMN account_id');
     db.close();
     const store = freshStore(dir);
     store.savePlan('s1', plan);
@@ -184,9 +184,9 @@ describe('openStore', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('PRAGMA user_version = 7');
+    db.exec('PRAGMA user_version = 8');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 7, newer than this IDE understands (6)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 8, newer than this IDE understands (7)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
@@ -331,6 +331,7 @@ describe('plan flow storage', () => {
       first.close();
       const db = new DatabaseSync(join(dir, 'history.sqlite'));
       db.exec('ALTER TABLE plans DROP COLUMN flow');
+      db.exec('ALTER TABLE sessions DROP COLUMN account_id');
       db.exec('PRAGMA user_version = 5');
       db.close();
       return dir;
@@ -353,13 +354,13 @@ describe('plan flow storage', () => {
       expect(store.plans('s1').plans.map((saved) => [saved.id, saved.flow])).toStrictEqual([['plan-1', null], ['plan-2', flow]]);
     });
 
-    it('moves to schema version 6', () => {
+    it('moves to schema version 7', () => {
       const dir = schemaFiveHistory();
       freshStore(dir).close();
       const check = new DatabaseSync(join(dir, 'history.sqlite'));
       const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
       check.close();
-      expect(version).toBe(6);
+      expect(version).toBe(7);
     });
   });
 });
@@ -401,7 +402,7 @@ describe('history tables (schema 3)', () => {
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     const step = check.prepare("SELECT status, cycle FROM step_states WHERE plan_id = 'p'").get();
     check.close();
-    expect(version).toBe(6);
+    expect(version).toBe(7);
     expect(step).toEqual({ status: 'done', cycle: 0 });
   });
 

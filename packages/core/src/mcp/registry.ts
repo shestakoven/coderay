@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path';
 import type { FileHashes, McpEntry, McpLevel, McpServerView, McpSettingsView } from '@ide/protocol';
 import { blobHash, type ExpectWrite } from '../history/ide-writes';
 import { isRecord } from '../json';
+import { claudeJsonPath, readClaudeCodeServers } from './claude-code';
 import {
   entryHash,
   prepareEntry,
@@ -41,6 +42,7 @@ export interface McpRegistryOptions {
   builtins?: () => Record<string, McpEntry>;
   now?: () => number;
   expectWrite?: ExpectWrite;
+  claudeJsonPath?: string | (() => string);
 }
 
 const PRIVATE_FILE_MODE = 0o600;
@@ -76,8 +78,12 @@ export class McpRegistry {
 
   view(): McpSettingsView {
     const { servers, problems, externalEdits } = this.evaluate();
+    const registered = new Set(['idecore', ...servers.map((server) => server.name)]);
+    const path = this.options.claudeJsonPath;
+    const claudeCode = readClaudeCodeServers({ claudeJsonPath: typeof path === 'function' ? path() : path ?? claudeJsonPath(null), root: this.options.root });
     return {
       servers: servers.map(({ name, level, entry, entryHash: hash, status, reason }) => ({ name, level, entry, entryHash: hash, status, reason })),
+      claudeCodeServers: claudeCode.filter((server) => !registered.has(server.name)),
       problems,
       fileHashes: { ideServers: fileHash(this.idePath), trust: fileHash(this.trustPath) },
       externalEdits,

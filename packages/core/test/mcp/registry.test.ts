@@ -11,7 +11,8 @@ const docs = { type: 'http', url: 'https://docs.example/mcp' };
 function setup(env: NodeJS.ProcessEnv = {}) {
   const home = tempDir('ide-home-');
   const root = tempDir('ide-root-');
-  const registry = new McpRegistry({ home, root, env, now: () => 1000 });
+  const claudeJsonPath = join(home, 'claude.json');
+  const registry = new McpRegistry({ home, root, env, now: () => 1000, claudeJsonPath });
   const writeProjectFile = (servers: object) => {
     mkdirSync(join(root, '.ide'), { recursive: true });
     writeFileSync(join(root, '.ide', 'mcp.json'), JSON.stringify({ mcpServers: servers }));
@@ -19,7 +20,7 @@ function setup(env: NodeJS.ProcessEnv = {}) {
   const shown = (name: string) => registry.view().servers.find((server) => server.name === name);
   const approve = (name: string) => registry.approve(name, shown(name)?.entryHash ?? '');
   const confirm = () => registry.confirmExternalEdits(registry.view().fileHashes);
-  return { home, root, registry, writeProjectFile, shown, approve, confirm };
+  return { home, root, claudeJsonPath, registry, writeProjectFile, shown, approve, confirm };
 }
 
 describe('McpRegistry', () => {
@@ -352,5 +353,61 @@ describe('McpRegistry', () => {
     expect(existsSync(target)).toBe(false);
     expect(shown('docs')?.status).not.toBe('ready');
     expect(registry.sessionServers()).toEqual({});
+  });
+});
+
+describe('McpRegistry servers Claude Code loads itself', () => {
+  const byName = <T extends { name: string }>(list: T[]): T[] => [...list].sort((a, b) => a.name.localeCompare(b.name));
+  const writeJson = (path: string, value: object) => writeFileSync(path, JSON.stringify(value));
+
+  it('shows the user, local and project servers Claude Code would load', () => {
+    const { registry, root, claudeJsonPath } = setup();
+    writeJson(claudeJsonPath, { mcpServers: { linear: docs }, projects: { [root]: { mcpServers: { figma: { type: 'sse', url: 'https://f.example' } } } } });
+    writeJson(join(root, '.mcp.json'), { mcpServers: { playwright: { command: 'npx' } } });
+    expect(byName(registry.view().claudeCodeServers)).toEqual([
+      { name: 'figma', source: 'local', type: 'sse' },
+      { name: 'linear', source: 'user', type: 'http' },
+      { name: 'playwright', source: 'project', type: 'stdio' },
+    ]);
+  });
+
+  it('shows none when the Claude Code config file does not exist', () => {
+    const { registry } = setup();
+    expect(registry.view().claudeCodeServers).toEqual([]);
+  });
+
+  it('leaves out a Claude Code server named idecore', () => {
+    const { registry, root, claudeJsonPath } = setup();
+    writeJson(claudeJsonPath, { mcpServers: { idecore: docs, linear: docs } });
+    writeJson(join(root, '.mcp.json'), { mcpServers: { idecore: { command: 'npx' } } });
+    expect(registry.view().claudeCodeServers).toEqual([{ name: 'linear', source: 'user', type: 'http' }]);
+  });
+
+  it('leaves out a Claude Code server with the same name as an IDE-level server', () => {
+    const { registry, claudeJsonPath } = setup();
+    registry.save('ide', 'linear', docs, null);
+    writeJson(claudeJsonPath, { mcpServers: { linear: { command: 'npx' }, figma: docs } });
+    expect(registry.view().claudeCodeServers).toEqual([{ name: 'figma', source: 'user', type: 'http' }]);
+  });
+
+  it('leaves out a Claude Code server with the same name as a project-level server in .ide/mcp.json, even an unapproved one', () => {
+    const { registry, root, claudeJsonPath, writeProjectFile, shown } = setup();
+    writeProjectFile({ playwright: docs });
+    writeJson(join(root, '.mcp.json'), { mcpServers: { playwright: { command: 'npx' } } });
+    writeJson(claudeJsonPath, { mcpServers: { linear: docs } });
+    expect(shown('playwright')?.status).toBe('unapproved');
+    expect(registry.view().claudeCodeServers).toEqual([{ name: 'linear', source: 'user', type: 'http' }]);
+  });
+
+  it('does not hand Claude Code servers to the session', () => {
+    const { home, root } = setup();
+    const claudeJsonPath = join(home, 'claude.json');
+    const idecore = { type: 'http', url: 'http://127.0.0.1:4317/mcp', timeout: 3600000 } as const;
+    const registry = new McpRegistry({ home, root, env: {}, claudeJsonPath, builtins: () => ({ idecore }) });
+    registry.save('ide', 'docs', docs, null);
+    writeJson(claudeJsonPath, { mcpServers: { linear: docs }, projects: { [root]: { mcpServers: { figma: docs } } } });
+    writeJson(join(root, '.mcp.json'), { mcpServers: { playwright: { command: 'npx' } } });
+    expect(registry.view().claudeCodeServers.map((server) => server.name).sort()).toEqual(['figma', 'linear', 'playwright']);
+    expect(registry.sessionServers()).toEqual({ docs, idecore });
   });
 });

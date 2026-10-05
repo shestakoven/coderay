@@ -27,11 +27,19 @@ export interface SessionGate {
   canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
 }
 
+// A session runs under the Claude account it started with: claude looks --resume transcripts up in that account's config directory.
+export interface SessionAccounts {
+  activeId(): string | null;
+  configDir(id: string | null): string | null;
+  label(id: string | null): string;
+}
+
 export interface AgentSessionOptions {
   root: string;
   home: string;
   store: Store;
   claude: ClaudeCommand;
+  accounts?: SessionAccounts;
   mcpServers?: () => McpServers;
   killGraceMs?: number;
   gate?: SessionGate;
@@ -57,6 +65,7 @@ const SESSION_ERRORS = {
   'no-turn': 'The agent has no open turn to add a note to.',
   'busy-configure': 'Wait for the agent to finish or press Stop before changing the model.',
   'busy-switch': 'Wait for the agent to finish or press Stop before switching chats.',
+  'busy-account': 'Wait for the agent to finish or press Stop before switching accounts.',
   'bad-model': 'That model name is not valid.',
   'bad-effort': 'That effort level is not valid.',
   'no-chat': 'That chat does not exist.',
@@ -74,7 +83,7 @@ export class SessionError extends Error {
 }
 
 type ExitReason = 'restart' | 'new' | 'close';
-type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort'>>;
+type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort' | 'accountId' | 'claudeSessionId' | 'conversationStarted'>>;
 
 interface PendingPrompt {
   input: unknown;
@@ -192,8 +201,10 @@ export class AgentSession {
         ...history.messages.map((m) => m.ts),
         ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
       ]);
+      const configDir = this.options.accounts?.configDir(session.accountId) ?? null;
       const recovered = await recoverTranscript({
-        claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.options.transcriptsDir ?? defaultTranscriptsDir(),
+        claudeSessionId: session.claudeSessionId, cwd: session.cwd, since,
+        dir: this.options.transcriptsDir ?? (configDir === null ? defaultTranscriptsDir() : join(configDir, 'projects')),
       });
       if (recovered.unreadable) return { ids: [], unreadable: true };
       const messageIds = new Set(history.messages.map((m) => m.id));
@@ -498,8 +509,20 @@ export class AgentSession {
     if (this.process) await this.restart();
   }
 
+  // An idle claude still runs under the previous account, so it is stopped and the next message starts one under the new account.
+  async changeAccount(change: () => void | Promise<void>): Promise<void> {
+    if (this.terminating) throw new SessionError('restarting');
+    if (!this.isIdle()) throw new SessionError('busy-account');
+    await change();
+    if (this.process && this.isIdle() && this.session?.accountId !== this.activeAccount()) await this.restart();
+  }
+
   async close(): Promise<void> {
     await this.terminate('close');
+  }
+
+  private activeAccount(): string | null {
+    return this.options.accounts?.activeId() ?? null;
   }
 
   private clearRefusal(): void {
@@ -527,7 +550,7 @@ export class AgentSession {
     const session: SessionRecord = {
       id: randomUUID(), claudeSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
       modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium', cliVersion: null,
-      pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(),
+      pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(),
     };
     this.persist(() => this.options.store.saveSession(session));
     this.setActive(session.id);
@@ -583,8 +606,14 @@ export class AgentSession {
   }
 
   private spawn(): void {
+    if (!this.session) return;
+    const accountId = this.activeAccount();
+    if (this.session.accountId !== accountId) {
+      const resumable = this.session.conversationStarted;
+      this.update({ accountId, claudeSessionId: randomUUID(), conversationStarted: false });
+      if (resumable) this.apply(this.tracker.notice(`Switched to account ${this.options.accounts?.label(accountId) ?? 'System'}; Claude starts a fresh conversation.`));
+    }
     const session = this.session;
-    if (!session) return;
     let gateArgs: string[] = [];
     if (this.options.gate) {
       try {
@@ -602,7 +631,9 @@ export class AgentSession {
     const configPath = this.configPath(session.id);
     rmSync(configPath, { force: true });
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
-    const child = startClaude(this.options.claude, claudeArgs(session, configPath, gateArgs), session.cwd, (line) => this.onLine(line), {
+    const accountDir = this.options.accounts?.configDir(session.accountId) ?? null;
+    const claude = accountDir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir } };
+    const child = startClaude(claude, claudeArgs(session, configPath, gateArgs), session.cwd, (line) => this.onLine(line), {
       killGraceMs: this.options.killGraceMs,
     });
     this.process = child;
@@ -838,7 +869,7 @@ function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: str
     session.conversationStarted ? '--resume' : '--session-id', session.claudeSessionId,
     ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
     ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
-    '--mcp-config', mcpConfigPath, '--strict-mcp-config',
+    '--mcp-config', mcpConfigPath,
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
     ...gateArgs,
     '--dangerously-skip-permissions',

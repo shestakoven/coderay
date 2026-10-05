@@ -1,10 +1,13 @@
 import type { ClientMessage, HistoryClientMessage } from '@ide/protocol';
 
 export type MessageRoute = 'history' | 'settings' | 'unknown';
-export type SettingsClientMessage = Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` }>;
+export type SettingsClientMessage = Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` | `account.${string}` }>;
 
 const HISTORY = new Set(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback']);
-const SETTINGS = new Set(['mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits']);
+const SETTINGS = new Set([
+  'mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits',
+  'account.login.start', 'account.login.code', 'account.login.cancel', 'account.select', 'account.remove',
+]);
 
 export function routeOf(type: string): MessageRoute {
   if (HISTORY.has(type)) return 'history';

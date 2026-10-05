@@ -6,7 +6,7 @@ import { tempDir } from '../helpers';
 
 const session = (id: string, startedAt: number, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
   id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
-  pid: null, launchId: null, conversationStarted: false, startedAt, ...overrides,
+  pid: null, launchId: null, conversationStarted: false, startedAt, accountId: null, ...overrides,
 });
 
 let counter = 0;
@@ -30,7 +30,7 @@ describe('schema 4 migration', () => {
     first.setMeta('keep', 'me');
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE plans DROP COLUMN flow; PRAGMA user_version = 3');
+    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE plans DROP COLUMN flow; ALTER TABLE sessions DROP COLUMN account_id; PRAGMA user_version = 3');
     db.close();
 
     const store = freshStore(dir);
@@ -44,7 +44,7 @@ describe('schema 4 migration', () => {
     const check = new DatabaseSync(join(dir, 'history.sqlite'));
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     check.close();
-    expect(version).toBe(6);
+    expect(version).toBe(7);
   });
 
   it('reads a session row written by an older IDE, with no model or effort, as the defaults', () => {
