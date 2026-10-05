@@ -20,6 +20,7 @@ import { isMac, matchShortcut } from './project/shortcuts';
 import { StartScreen } from './project/StartScreen';
 import { initialStart, startReducer } from './project/start-state';
 
+const SETTLE_MS = 2500;
 type Dialog = 'open' | 'create' | 'clone' | null;
 type Menu = { kind: 'new'; anchor: MenuAnchor } | { kind: 'overflow'; anchor: MenuAnchor; ids: string[] } | null;
 
@@ -41,6 +42,7 @@ export function App() {
   const [settingsRequest, setSettingsRequest] = useState(0);
   const [badges, setBadges] = useState<Record<string, number>>({});
   const seen = useRef<Record<string, ProjectStatus>>({});
+  const born = useRef<Record<string, number>>({});
   const live = useRef(projects);
   live.current = projects;
   const dialogRef = useRef(dialog);
@@ -135,11 +137,14 @@ export function App() {
   const onStatus = useCallback((id: string, next: ProjectStatus) => {
     const previous = seen.current[id];
     seen.current[id] = next;
+    born.current[id] ??= Date.now();
     dispatchProjects({ type: 'status', id, status: next });
     const project = live.current.projects.find((candidate) => candidate.id === id);
     const background = id !== live.current.activeId || !document.hasFocus();
     const notice = project ? noticeFor(previous, next, tabLabels(live.current.projects)[id] ?? project.name) : null;
-    if (notice && background) notify(id, notice.title, notice.body, notice.kind);
+    // Right after a view connects its first snapshots arrive: a question still waiting is news, an old crash or finish is not.
+    const settling = Date.now() - (born.current[id] ?? 0) < SETTLE_MS;
+    if (notice && background && !(settling && notice.kind !== 'attention')) notify(id, notice.title, notice.body, notice.kind);
     else dispatchNotices({ type: 'status', projectId: id, kind: next.kind });
   }, [notify]);
   const coreStates = useRef<Record<string, string>>({});
@@ -166,6 +171,7 @@ export function App() {
   useEffect(() => {
     const ids = new Set(projects.projects.map((project) => project.id));
     for (const id of Object.keys(seen.current)) if (!ids.has(id)) delete seen.current[id];
+    for (const id of Object.keys(born.current)) if (!ids.has(id)) delete born.current[id];
   }, [projects.projects]);
 
   const closeProject = useCallback((id: string) => {
@@ -177,6 +183,7 @@ export function App() {
     const target = afterClose(state, id);
     if (target && target !== id && state.activeId === id) activate(target);
     control.current?.send({ type: 'hub.close', requestId: crypto.randomUUID(), id });
+    dispatchProjects({ type: 'remove', id });
     dispatchNotices({ type: 'gone', projectId: id });
   }, [activate]);
   const requestClose = useCallback((id: string) => {

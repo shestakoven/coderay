@@ -13,6 +13,8 @@ export interface ProjectsState {
   recent: RecentProject[];
   home: string;
   status: Record<string, ProjectStatus>;
+  // Closed in the UI, still stopping in the hub: hidden until the hub drops them.
+  closing: string[];
 }
 
 export type ProjectsAction =
@@ -20,9 +22,10 @@ export type ProjectsAction =
   | { type: 'legacy'; info: ProjectInfo }
   | { type: 'activate'; id: string }
   | { type: 'order'; ids: string[] }
+  | { type: 'remove'; id: string }
   | { type: 'status'; id: string; status: ProjectStatus };
 
-export const initialProjects: ProjectsState = { mode: 'pending', projects: [], activeId: null, recency: [], recent: [], home: '', status: {} };
+export const initialProjects: ProjectsState = { mode: 'pending', projects: [], activeId: null, recency: [], recent: [], home: '', status: {}, closing: [] };
 
 const sameStatus = (a: ProjectStatus | undefined, b: ProjectStatus): boolean => a !== undefined && a.kind === b.kind && a.line === b.line;
 
@@ -36,8 +39,12 @@ function settle(state: ProjectsState, projects: HubProject[], wanted: string | n
 
 export function projectsReducer(state: ProjectsState, action: ProjectsAction): ProjectsState {
   switch (action.type) {
-    case 'hub':
-      return settle({ ...state, mode: 'hub', recent: action.hub.recent, home: action.hub.home }, action.hub.projects, action.hub.activeId);
+    case 'hub': {
+      const closing = state.closing.filter((id) => action.hub.projects.some((project) => project.id === id));
+      return settle({ ...state, mode: 'hub', recent: action.hub.recent, home: action.hub.home, closing }, action.hub.projects.filter((project) => !closing.includes(project.id)), action.hub.activeId);
+    }
+    case 'remove':
+      return settle({ ...state, closing: [...state.closing, action.id] }, state.projects.filter((project) => project.id !== action.id), state.activeId === action.id ? null : state.activeId);
     case 'legacy': {
       const project: HubProject[] = action.info.root === null
         ? []
