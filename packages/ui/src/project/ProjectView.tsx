@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ClientMessage, GateAnswer, HubProject, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
 import { canSend, chatReducer, initialChatState } from '../chat/chat-state';
@@ -363,8 +363,9 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       setAgentOpening(hub.createAgent());
       return;
     }
+    // A terminal still starting has no tab yet; closing it cancels the start.
+    if (agentTab || agentOpening) hub.close(AGENT_TERMINAL_ID);
     setAgentOpening(false);
-    if (agentTab) hub.close(agentTab.id);
   };
   useEffect(() => {
     if (agentTab !== null || chat.error !== null || chat.session?.status === 'refused') setAgentOpening(false);

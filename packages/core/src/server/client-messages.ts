@@ -68,7 +68,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof eventId === 'string' ? { type, eventId } : null;
     case 'terminal.open':
       if (!isTerminalId(id) || !isInteger(cols) || !isInteger(rows)) return null;
-      if (kind === 'agent') return { type, id, cols, rows, kind };
+      if (kind === 'agent') return id === AGENT_TERMINAL_ID ? { type, id, cols, rows, kind } : null;
       return (kind === undefined || kind === 'shell') && id !== AGENT_TERMINAL_ID ? { type, id, cols, rows } : null;
     case 'terminal.resize':
       return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;

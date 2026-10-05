@@ -714,7 +714,7 @@ export class AgentSession {
   }
 
   // The terminal view runs claude's own interface on the chat's conversation, MCP servers and hooks; the chat's process stops first.
-  // Null when the IDE's hooks do not run: the session is then refused, as a chat whose canary stays silent.
+  // Null when the IDE's hooks do not run (the session is then refused, as a chat whose canary stays silent) or the terminal was closed meanwhile.
   async terminalLaunch(): Promise<TerminalLaunch | null> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
@@ -729,13 +729,17 @@ export class AgentSession {
     if (!session || !probeFiles) throw new SessionError('no-gate');
     this.terminalOpen = true;
     let hooksRun = false;
+    let cancelled = false;
     let files: LaunchFiles | null = null;
     try {
       hooksRun = await this.hooksRun(session, probeFiles);
-      if (hooksRun) files = this.launchFiles(session, true);
+      // The terminal was closed while the hooks were checked: no claude may start outside the terminal mode.
+      cancelled = !this.terminalOpen;
+      if (hooksRun && !cancelled) files = this.launchFiles(session, true);
     } finally {
       if (!files) this.terminalClosed();
     }
+    if (cancelled) return null;
     if (hooksRun && !files) throw new SessionError('no-gate');
     if (!files) {
       this.refused = true;
