@@ -153,7 +153,7 @@ export class TurnTracker {
       case 'turn-end':
         return this.turnEnded(event.lastMessage, event.failed, event.runningTaskIds);
       case 'subagent-start':
-        return this.subagentStarted(event.agentId);
+        return this.subagentStarted(event.agentId, event.agentType);
       case 'subagent-stop':
         return this.subagentStopped(event.agentId, event.lastMessage);
       case 'interrupted':
@@ -239,11 +239,14 @@ export class TurnTracker {
     return changes;
   }
 
-  // The hooks do not say which call started a synchronous subagent: it is the newest Agent call that has none yet.
-  private subagentStarted(agentId: string): Change[] {
+  // The hooks do not say which call started a synchronous subagent: subagents start in call order, so it is the oldest
+  // call of the agent's type that has none yet.
+  private subagentStarted(agentId: string, agentType: string): Change[] {
     if (this.agentTools.has(agentId)) return [];
     const taken = new Set(this.agentTools.values());
-    const tool = [...this.openTools.values()].reverse().find((open) => TASK_KINDS[open.tool] === 'subagent' && !taken.has(open.toolUseId));
+    const free = [...this.openTools.values()].filter((open) => TASK_KINDS[open.tool] === 'subagent' && !taken.has(open.toolUseId));
+    const typed = free.find((open) => (open.input as { subagent_type?: unknown } | null)?.subagent_type === agentType);
+    const tool = typed ?? free[0];
     if (tool) this.agentTools.set(agentId, tool.toolUseId);
     return [];
   }

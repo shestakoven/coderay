@@ -175,21 +175,24 @@ export class TerminalService {
     terminal.pty.resize(clamp(cols, 2, 500), clamp(rows, 1, 300));
   }
 
-  close(id: string): void {
+  // Resolves once the terminal's process is gone, or could not be stopped.
+  close(id: string): Promise<void> {
     const terminal = this.terminals.get(id);
-    if (!terminal) return;
+    if (!terminal) return Promise.resolve();
     this.terminals.delete(id);
     clearTimeout(terminal.flushTimer);
+    let dying = Promise.resolve();
     if (!terminal.exited) {
-      const dying = this.kill(terminal);
+      dying = this.kill(terminal);
       this.dying.add(dying);
       void dying.finally(() => this.dying.delete(dying));
     }
     this.emit({ type: 'terminal.closed', id });
+    return dying;
   }
 
   async closeAll(): Promise<void> {
-    for (const id of [...this.terminals.keys()]) this.close(id);
+    for (const id of [...this.terminals.keys()]) void this.close(id);
     await Promise.all(this.dying);
   }
 
@@ -202,7 +205,8 @@ export class TerminalService {
   }
 
   private async kill(terminal: Terminal): Promise<void> {
-    terminal.pty.kill('SIGHUP');
+    // claude stops its own tools on SIGTERM, as the chat's process is stopped; a shell takes SIGHUP like a closed window.
+    terminal.pty.kill(terminal.kind === 'agent' ? 'SIGTERM' : 'SIGHUP');
     if (await this.within(terminal.gone, KILL_GRACE_MS)) return;
     terminal.pty.kill('SIGKILL');
     // A process stuck in the kernel can outlive SIGKILL; the core must still be able to shut down.

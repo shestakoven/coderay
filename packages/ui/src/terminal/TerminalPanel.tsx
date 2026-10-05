@@ -42,7 +42,7 @@ export function TerminalPanel({ hub, tabs, visible }: { hub: TerminalHub; tabs: 
       </div>
       <div className="terminal-hosts">
         {tabs.map((tab) => (
-          <TerminalHost key={tab.id} id={tab.id} hub={hub} shown={current?.id === tab.id && visible} />
+          <TerminalHost key={`${tab.id}:${tab.generation}`} id={tab.id} hub={hub} shown={current?.id === tab.id && visible} />
         ))}
       </div>
     </div>

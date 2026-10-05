@@ -7,6 +7,7 @@ process.on('unhandledRejection', () => process.exit(0));
 
 const config = JSON.parse(readFileSync(process.argv[2] ?? '', 'utf8'));
 let input = '';
+process.stdin.setEncoding('utf8');
 for await (const chunk of process.stdin) input += chunk;
 try {
   const res = await fetch(new URL('event', `${config.url}/`), {

@@ -217,8 +217,9 @@ try {
   });
   session = agent;
   rt.attach(agent);
+  // A closed agent terminal ends its terminal mode once claude is gone, so the chat never runs a second claude beside it.
   terminals.onMessage((message) => {
-    if ((message.type === 'terminal.exit' || message.type === 'terminal.closed') && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
+    if (message.type === 'terminal.exit' && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
   });
   await agent.start();
   try {
@@ -378,13 +379,19 @@ try {
         terminals.open(message.id, message.cols, message.rows);
         return;
       case 'terminal.input':
+        if (message.id === AGENT_TERMINAL_ID) agent.terminalTyped(message.data);
         terminals.input(message.id, message.data);
         return;
       case 'terminal.resize':
         terminals.resize(message.id, message.cols, message.rows);
         return;
       case 'terminal.close':
-        terminals.close(message.id);
+        if (message.id !== AGENT_TERMINAL_ID) {
+          void terminals.close(message.id);
+          return;
+        }
+        await terminals.close(message.id);
+        agent.terminalClosed();
         return;
       case 'fs.list':
         reply({ type: 'fs.list.result', requestId: message.requestId, ...listDirectories(message.path, homedir()) });
@@ -478,8 +485,10 @@ try {
 
   const shutdown = async (): Promise<void> => {
     login.cancel();
+    // The agent, in the chat or in its terminal, stops before the watcher, so its last writes are still judged.
+    await terminals.close(AGENT_TERMINAL_ID);
+    agent.terminalClosed();
     const closingTerminals = terminals.closeAll();
-    // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
     await rt.close();
     progress.stop();
     classifier?.stop();
