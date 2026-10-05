@@ -138,20 +138,16 @@ export function PathList({ field, text, onChange }: { field: PathListField; text
 
   const add = (raw: string): void => {
     let list = items;
+    let firstError: { message: string; piece: string } | null = null;
     for (const piece of raw.split('\n')) {
       if (piece.trim() === '') continue;
       const result = addPattern(field, list, piece);
-      if ('error' in result) {
-        setError(result.error);
-        setDraft(piece);
-        if (list !== items) commit(list);
-        return;
-      }
-      list = result.list;
+      if ('error' in result) firstError ??= { message: result.error, piece };
+      else list = result.list;
     }
-    commit(list);
-    setDraft('');
-    setError(null);
+    if (list !== items) commit(list);
+    setError(firstError?.message ?? null);
+    setDraft(firstError?.piece ?? '');
   };
   const finishEdit = (): void => {
     if (!editing) return;

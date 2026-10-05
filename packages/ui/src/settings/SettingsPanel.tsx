@@ -259,7 +259,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
   useEffect(() => {
     // Focus falls to <body> when the focused control unmounts; the shortcuts must still work then.
     const onDocumentKey = (event: globalThis.KeyboardEvent): void => {
-      if (!root.current?.contains(event.target as Node)) latestKey.current(event);
+      if (!event.defaultPrevented && !root.current?.contains(event.target as Node)) latestKey.current(event);
     };
     document.addEventListener('keydown', onDocumentKey);
     return () => document.removeEventListener('keydown', onDocumentKey);
