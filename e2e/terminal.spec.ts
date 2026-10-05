@@ -32,11 +32,11 @@ test('the terminal runs commands in the project, survives a reload and closes', 
   await expect(page.locator('.terminal-tab')).toHaveCount(1);
 });
 
-test('Ctrl+` toggles the bottom panel and the activity bar button reflects it', async ({ page }) => {
+test('Ctrl+` toggles the bottom panel and the Terminal tab reflects it', async ({ page }) => {
   core = await startCore('gate-big-plan');
   await page.goto(core.url);
   await expect(page.getByText('core connected')).toBeVisible();
-  const button = page.getByRole('button', { name: 'Terminal (Ctrl+`)' });
+  const button = page.getByRole('button', { name: /^Terminal/ });
   await expect(button).toHaveAttribute('aria-pressed', 'false');
   await page.keyboard.press('Control+`');
   await expect(button).toHaveAttribute('aria-pressed', 'true');

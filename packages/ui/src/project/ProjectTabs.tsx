@@ -110,6 +110,7 @@ export function ProjectTabs({ projects, labels, activeId, statusOf, mac, newOpen
               key={project.id}
               role="tab"
               aria-selected={active}
+              aria-description={status.line}
               tabIndex={active ? 0 : -1}
               className={`ptab s-${status.kind}${active ? ' on' : ''}${compact ? ' compact' : ''}${dragging ? ' dragging' : ''}`}
               style={{ transform: dragging ? `translateX(${drag.dx}px)` : shift !== 0 ? `translateX(${shift}px)` : undefined } as CSSProperties}

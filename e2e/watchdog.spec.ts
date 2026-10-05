@@ -26,7 +26,7 @@ test('a watchdog dialog with revert', async ({ page }) => {
   await expect(page.locator('.node.out-of-plan')).toHaveCount(1);
   await dialog.getByRole('button', { name: 'Revert all' }).click();
   await expect.poll(() => core!.file('src/other.ts')).not.toContain('changed');
-  await page.getByTestId('timeline').getByRole('button').first().click();
+  await page.getByTestId('timeline').getByRole('button', { name: /^Timeline/ }).click();
   await expect(page.getByTestId('timeline')).toContainText('reverted');
   await expect(dialog).toHaveCount(0);
 });

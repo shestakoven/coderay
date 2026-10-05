@@ -48,8 +48,9 @@ async function create(page: Page, parent: string, name: string): Promise<void> {
 }
 
 async function closeProject(page: Page, name: string): Promise<void> {
-  await page.getByRole('banner').getByRole('button', { name, exact: true }).click();
-  await page.getByRole('button', { name: 'Close project' }).click();
+  await expect(page.getByRole('tab', { name, exact: true })).toBeVisible();
+  await page.keyboard.press('ControlOrMeta+KeyP');
+  await page.getByRole('option', { name: /Close this project/ }).click();
   await expect(startScreen(page)).toBeVisible({ timeout: 60_000 });
 }
 
@@ -104,17 +105,17 @@ test('a closed project is listed in Recent, and Recent opens the row that was cl
   await page.goto(launcher.url);
 
   await create(page, dir, alpha);
-  await expect(page.getByRole('banner').getByRole('button', { name: alpha, exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('tab', { name: alpha, exact: true })).toBeVisible({ timeout: 60_000 });
   await closeProject(page, alpha);
   await expect(recent(page).getByRole('button', { name: new RegExp(alpha) })).toBeVisible();
 
   await create(page, dir, beta);
-  await expect(page.getByRole('banner').getByRole('button', { name: beta, exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('tab', { name: beta, exact: true })).toBeVisible({ timeout: 60_000 });
   await closeProject(page, beta);
   await expect(recent(page).getByRole('button', { name: new RegExp(beta) })).toBeVisible();
   await expect(recent(page).getByRole('button', { name: new RegExp(alpha) })).toBeVisible();
 
   await recent(page).getByRole('button', { name: new RegExp(alpha) }).click();
-  await expect(page.getByRole('banner').getByRole('button', { name: alpha, exact: true })).toBeVisible({ timeout: 60_000 });
-  await expect(page.getByRole('banner').getByRole('button', { name: beta, exact: true })).toHaveCount(0);
+  await expect(page.getByRole('tab', { name: alpha, exact: true })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('tab', { name: beta, exact: true })).toHaveCount(0);
 });

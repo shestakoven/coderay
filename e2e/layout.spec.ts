@@ -45,7 +45,9 @@ test('panels resize by dragging and by keyboard, keep their size after a reload 
   expect(await width(page, '.left-panel')).toBe(284);
   expect(await width(page, '.right-panel')).toBe(400);
 
-  await page.getByRole('separator', { name: 'Resize project panel' }).dblclick();
+  // The handle is a zero-width strip with a wider hit area, so it is reached by position.
+  const handle = (await page.getByRole('separator', { name: 'Resize project panel' }).boundingBox())!;
+  await page.mouse.dblclick(handle.x, handle.y + 200);
   expect(await width(page, '.left-panel')).toBe(264);
 });
 
@@ -75,9 +77,9 @@ test('the timeline height can be resized when it is open', async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 800 });
   await page.goto(core.url);
   await expect(page.getByText('core connected')).toBeVisible();
-  await page.getByRole('button', { name: /steps/ }).click();
+  await page.getByRole('button', { name: /^Timeline/ }).click();
   const handle = page.getByRole('separator', { name: 'Resize timeline' });
-  await expect(handle).toBeVisible();
+  await expect(handle).toBeAttached();
   await handle.focus();
   await page.keyboard.press('ArrowUp');
   await expect(handle).toHaveAttribute('aria-valuenow', '216');

@@ -28,8 +28,8 @@ test('chats keep their own model and effort, and switching restores the first ch
 
   await page.locator('.chat-switcher-button').click();
   const row = page.getByRole('option').filter({ hasText: 'first chat about greetings' });
-  await expect(row).toContainText('Opus · high');
-  await row.getByRole('button').click();
+  await expect(row).toContainText(/Opus[\d. ]* · high/);
+  await row.getByRole('button', { name: 'first chat about greetings' }).click();
   await expect(page.locator('.chat-switcher-button')).toContainText('first chat about greetings');
   await expect(page.locator('.msg.user')).toContainText('first chat about greetings');
 });
