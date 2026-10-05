@@ -261,10 +261,11 @@ export function buildC4(
   const containerNames = new Set(containers.map((c) => c.name));
   for (const container of containers) {
     for (const path of closures.get(container.name) ?? []) {
-      const ecosystem = byFile.get(path)?.lang === 'python' ? 'python' : 'npm';
+      const lang = byFile.get(path)?.lang;
+      const ecosystem = lang === 'python' ? 'python' : lang === 'typescript' ? 'npm' : null;
       for (const specifier of unresolved.get(path) ?? []) {
         const name = packageOf(specifier);
-        if (!name) continue;
+        if (!name || !ecosystem) continue;
         const found = lookup({ type: 'package', ecosystem, name });
         if (!found) continue;
         const to = addExternal(found, name);

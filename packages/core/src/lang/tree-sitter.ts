@@ -5,10 +5,14 @@ import type { MapSymbol, SymbolKind } from '@ide/protocol';
 const require = createRequire(import.meta.url);
 let ready: Promise<void> | undefined;
 
-export async function loadGrammar(wasmModule: string): Promise<Language> {
+export function loadGrammar(wasmModule: string): Promise<Language> {
+  return loadGrammarFile(require.resolve(wasmModule));
+}
+
+export async function loadGrammarFile(wasmPath: string): Promise<Language> {
   ready ??= Parser.init();
   await ready;
-  return Language.load(require.resolve(wasmModule));
+  return Language.load(wasmPath);
 }
 
 export function symbolOf(name: string, kind: SymbolKind, node: Node, exported: boolean): MapSymbol {

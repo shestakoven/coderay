@@ -7,4 +7,5 @@ export interface IndexedFile {
   imports: string[];
   symbols: MapSymbol[];
   parseError: boolean;
+  provides?: string[];
 }

@@ -11,7 +11,10 @@ import { createExecutionRuntime } from './execution/runtime';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { Indexer } from './indexer/indexer';
+import { createCAdapter, createCppAdapter } from './lang/c-family';
+import { createCSharpAdapter } from './lang/csharp';
 import { createPythonAdapter } from './lang/python';
+import { createSwiftAdapter } from './lang/swift';
 import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
 import { MapService } from './map/map-service';
@@ -435,7 +438,14 @@ try {
   for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
 
   progress.set({ indexing: { indexed: 0 } });
-  const adapters = await Promise.all([createTypeScriptAdapter(root), createPythonAdapter()]);
+  const adapters = await Promise.all([
+    createTypeScriptAdapter(root),
+    createPythonAdapter(),
+    createCAdapter(),
+    createCppAdapter(),
+    createCSharpAdapter(),
+    createSwiftAdapter(),
+  ]);
   const index = new Indexer({ root, adapters, onProgress: (indexed) => progress.set({ indexing: { indexed } }) });
   indexer = index;
   await index.start();

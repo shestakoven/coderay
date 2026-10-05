@@ -13,7 +13,7 @@ export * from './project';
 export * from './project-name';
 export * from './terminal';
 
-export type Lang = 'typescript' | 'python';
+export type Lang = 'typescript' | 'python' | 'c' | 'cpp' | 'csharp' | 'swift';
 
 export type SymbolKind = 'function' | 'class' | 'interface' | 'type' | 'enum' | 'variable';
 
