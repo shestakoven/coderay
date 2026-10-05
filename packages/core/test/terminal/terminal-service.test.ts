@@ -199,7 +199,7 @@ describe('TerminalService.open spawn', () => {
   it('announces the opened terminal with an empty scrollback and exited=false', () => {
     const { service, messages } = setup();
     service.open('t', 80, 24);
-    expect(messages).toEqual([{ type: 'terminal.opened', terminal: { id: 't', title: 'zsh', exited: false, scrollback: '' } }]);
+    expect(messages).toEqual([{ type: 'terminal.opened', terminal: { id: 't', kind: 'shell', title: 'zsh', exited: false, scrollback: '' } }]);
   });
 });
 
@@ -382,7 +382,7 @@ describe('TerminalService.snapshot', () => {
     ptys[0]!.emit('hello');
     expect(service.snapshot()[0]!.scrollback).toBe('');
     vi.advanceTimersByTime(10);
-    expect(service.snapshot()).toEqual([{ id: 't', title: 'zsh', exited: false, scrollback: 'hello' }]);
+    expect(service.snapshot()).toEqual([{ id: 't', kind: 'shell', title: 'zsh', exited: false, scrollback: 'hello' }]);
   });
 
   it('flags exited terminals and keeps their scrollback', () => {
@@ -390,7 +390,7 @@ describe('TerminalService.snapshot', () => {
     service.open('t', 80, 24);
     ptys[0]!.emit('bye');
     ptys[0]!.exit(0);
-    expect(service.snapshot()).toEqual([{ id: 't', title: 'zsh', exited: true, scrollback: 'bye' }]);
+    expect(service.snapshot()).toEqual([{ id: 't', kind: 'shell', title: 'zsh', exited: true, scrollback: 'bye' }]);
   });
 
   it('omits closed terminals', () => {

@@ -22,7 +22,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, data, images, title, parent, url, code,
+    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -67,7 +67,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'watchdog.stop-agent':
       return typeof eventId === 'string' ? { type, eventId } : null;
     case 'terminal.open':
-      return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
+      if (!isTerminalId(id) || !isInteger(cols) || !isInteger(rows)) return null;
+      return kind === 'agent' ? { type, id, cols, rows, kind } : kind === undefined || kind === 'shell' ? { type, id, cols, rows } : null;
     case 'terminal.resize':
       return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
     case 'terminal.input':

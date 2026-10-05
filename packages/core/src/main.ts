@@ -3,7 +3,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { ClientMessage, MapSnapshot, ModelInfo, ServerMessage } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
 import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
@@ -216,6 +216,9 @@ try {
   });
   session = agent;
   rt.attach(agent);
+  terminals.onMessage((message) => {
+    if ((message.type === 'terminal.exit' || message.type === 'terminal.closed') && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
+  });
   await agent.start();
   try {
     await rt.start();
@@ -360,6 +363,16 @@ try {
         reply(settingsSnapshot());
         return;
       case 'terminal.open':
+        if (message.kind === 'agent') {
+          const launch = await agent.terminalLaunch();
+          try {
+            terminals.open(AGENT_TERMINAL_ID, message.cols, message.rows, launch);
+          } catch (error) {
+            agent.terminalClosed();
+            throw error;
+          }
+          return;
+        }
         terminals.open(message.id, message.cols, message.rows);
         return;
       case 'terminal.input':

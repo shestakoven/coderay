@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
   EFFORT_LEVELS, EMPTY_USAGE,
@@ -7,7 +7,8 @@ import {
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
-import { defaultTranscriptsDir, largest, recoverTranscript, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
+import type { TerminalLaunch } from '../terminal/terminal-service';
+import { defaultTranscriptsDir, largest, recoverTranscript, transcriptPath, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
@@ -69,6 +70,8 @@ const SESSION_ERRORS = {
   'bad-model': 'That model name is not valid.',
   'bad-effort': 'That effort level is not valid.',
   'no-chat': 'That chat does not exist.',
+  'busy-terminal': 'Wait for the agent to finish or press Stop before opening the terminal.',
+  'in-terminal': 'The agent runs in the terminal view. Switch back to the chat to do this.',
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -130,6 +133,7 @@ export class AgentSession {
   private pendingSends: object[] = [];
   private notes: string[] = [];
   private crashed = false;
+  private terminalOpen = false;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -201,11 +205,7 @@ export class AgentSession {
         ...history.messages.map((m) => m.ts),
         ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
       ]);
-      const configDir = this.options.accounts?.configDir(session.accountId) ?? null;
-      const recovered = await recoverTranscript({
-        claudeSessionId: session.claudeSessionId, cwd: session.cwd, since,
-        dir: this.options.transcriptsDir ?? (configDir === null ? defaultTranscriptsDir() : join(configDir, 'projects')),
-      });
+      const recovered = await recoverTranscript({ claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.transcriptsDir(session) });
       if (recovered.unreadable) return { ids: [], unreadable: true };
       const messageIds = new Set(history.messages.map((m) => m.id));
       const storedTools = new Map(history.toolEvents.map((t) => [t.toolUseId, t]));
@@ -380,6 +380,7 @@ export class AgentSession {
     if (text.trim() === '' && images.length === 0) throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
+    if (this.terminalOpen) throw new SessionError('in-terminal');
     const injected = this.tracker.hasOpenTurn();
     if (!this.session || this.session.status === 'ended') this.begin();
     if (!this.process) this.spawn();
@@ -412,6 +413,7 @@ export class AgentSession {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
+    if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
     if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
     if (this.hookReady) this.process.write(userMessage(text, []));
@@ -455,6 +457,7 @@ export class AgentSession {
   }
 
   async newSession(): Promise<void> {
+    if (this.terminalOpen) throw new SessionError('in-terminal');
     await this.terminate('new');
     this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
@@ -483,6 +486,7 @@ export class AgentSession {
     const target = this.options.store.session(id);
     if (!target) throw new SessionError('no-chat');
     if (this.terminating) throw new SessionError('restarting');
+    if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.isIdle()) throw new SessionError('busy-switch');
     const blocked = this.options.canLeave?.() ?? null;
     if (blocked !== null) throw new SessionError('busy-switch', blocked);
@@ -502,6 +506,7 @@ export class AgentSession {
     if (modelChoice !== null && !isModelChoice(modelChoice)) throw new SessionError('bad-model');
     if (effort !== null && !EFFORT_LEVELS.includes(effort)) throw new SessionError('bad-effort');
     if (this.terminating) throw new SessionError('restarting');
+    if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.isIdle()) throw new SessionError('busy-configure');
     if (!this.session || this.session.status === 'ended') this.begin();
     if (this.session?.modelChoice === modelChoice && this.session.effort === effort) return;
@@ -605,15 +610,56 @@ export class AgentSession {
     });
   }
 
-  private spawn(): void {
+  // The terminal view runs claude's own interface on the chat's conversation, MCP servers and hooks; the chat's process stops first.
+  async terminalLaunch(): Promise<TerminalLaunch> {
+    if (this.terminalOpen) throw new SessionError('in-terminal');
+    if (this.terminating) throw new SessionError('restarting');
+    if (!this.isIdle()) throw new SessionError('busy-terminal');
+    await this.terminate('close');
+    this.clearRefusal();
+    if (!this.session || this.session.status === 'ended') this.begin();
+    this.syncAccount();
+    const session = this.session;
+    const files = session && this.launchFiles(session);
+    if (!session || !files) throw new SessionError('no-gate');
+    this.terminalOpen = true;
+    return {
+      kind: 'agent', title: 'claude', file: files.claude.command, cwd: session.cwd, env: files.claude.env ?? {},
+      args: [...files.claude.args, ...conversationArgs(session, existsSync(this.transcript(session)), files.configPath, files.gateArgs)],
+    };
+  }
+
+  terminalClosed(): void {
+    if (!this.terminalOpen) return;
+    this.terminalOpen = false;
+    const session = this.session;
+    if (!session) return;
+    rmSync(this.configPath(session.id), { force: true });
+    this.options.gate?.remove(session.id);
+    if (!session.conversationStarted && existsSync(this.transcript(session))) this.update({ conversationStarted: true });
+    notify(this.exitListeners);
+  }
+
+  private transcriptsDir(session: SessionRecord): string {
+    const configDir = this.options.accounts?.configDir(session.accountId) ?? null;
+    return this.options.transcriptsDir ?? (configDir === null ? defaultTranscriptsDir() : join(configDir, 'projects'));
+  }
+
+  private transcript(session: SessionRecord): string {
+    return transcriptPath(this.transcriptsDir(session), session.cwd, session.claudeSessionId);
+  }
+
+  private syncAccount(): void {
     if (!this.session) return;
     const accountId = this.activeAccount();
-    if (this.session.accountId !== accountId) {
-      const resumable = this.session.conversationStarted;
-      this.update({ accountId, claudeSessionId: randomUUID(), conversationStarted: false });
-      if (resumable) this.apply(this.tracker.notice(`Switched to account ${this.options.accounts?.label(accountId) ?? 'System'}; Claude starts a fresh conversation.`));
-    }
-    const session = this.session;
+    if (this.session.accountId === accountId) return;
+    const resumable = this.session.conversationStarted;
+    this.update({ accountId, claudeSessionId: randomUUID(), conversationStarted: false });
+    if (resumable) this.apply(this.tracker.notice(`Switched to account ${this.options.accounts?.label(accountId) ?? 'System'}; Claude starts a fresh conversation.`));
+  }
+
+  // Writes the MCP config and the gate's hook settings claude starts with; null when the hook settings could not be written.
+  private launchFiles(session: SessionRecord): { claude: ClaudeCommand; configPath: string; gateArgs: string[] } | null {
     let gateArgs: string[] = [];
     if (this.options.gate) {
       try {
@@ -622,7 +668,7 @@ export class AgentSession {
       } catch (error) {
         console.error('agent: could not write the hook settings', error);
         this.apply(this.tracker.notice(`The IDE could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));
-        return;
+        return null;
       }
     }
     const dir = runDir(this.options.home);
@@ -633,7 +679,16 @@ export class AgentSession {
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
     const accountDir = this.options.accounts?.configDir(session.accountId) ?? null;
     const claude = accountDir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir } };
-    const child = startClaude(claude, claudeArgs(session, configPath, gateArgs), session.cwd, (line) => this.onLine(line), {
+    return { claude, configPath, gateArgs };
+  }
+
+  private spawn(): void {
+    if (!this.session) return;
+    this.syncAccount();
+    const session = this.session;
+    const files = this.launchFiles(session);
+    if (!files) return;
+    const child = startClaude(files.claude, claudeArgs(session, files.configPath, files.gateArgs), session.cwd, (line) => this.onLine(line), {
       killGraceMs: this.options.killGraceMs,
     });
     this.process = child;
@@ -727,6 +782,7 @@ export class AgentSession {
   }
 
   private async discardActive(remove: () => void): Promise<void> {
+    if (this.terminalOpen) throw new SessionError('in-terminal');
     await this.terminate('close');
     this.clearRefusal();
     remove();
@@ -866,14 +922,20 @@ function userMessage(text: string, images: ChatImage[]): object {
 function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {
   return [
     '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-    session.conversationStarted ? '--resume' : '--session-id', session.claudeSessionId,
+    ...conversationArgs(session, session.conversationStarted, mcpConfigPath, gateArgs),
+    '--permission-prompt-tool', 'stdio',
+  ];
+}
+
+function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateArgs: string[]): string[] {
+  return [
+    resume ? '--resume' : '--session-id', session.claudeSessionId,
     ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
     ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
     '--mcp-config', mcpConfigPath,
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
     ...gateArgs,
     '--dangerously-skip-permissions',
-    '--permission-prompt-tool', 'stdio',
   ];
 }
 

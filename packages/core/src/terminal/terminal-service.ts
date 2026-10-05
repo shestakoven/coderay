@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 import { basename } from 'node:path';
-import { MAX_TERMINALS, type TerminalInfo, type TerminalServerMessage } from '@ide/protocol';
+import { MAX_TERMINALS, type TerminalInfo, type TerminalKind, type TerminalServerMessage } from '@ide/protocol';
 import { LAUNCH_TOKEN_ENV } from '../project/token';
 
 export const TERMINAL_ID = /^[A-Za-z0-9_-]{1,64}$/;
@@ -27,6 +27,16 @@ export interface PtySpawnOptions {
 
 export type SpawnPty = (file: string, args: string[], options: PtySpawnOptions) => PtyProcess;
 
+// A program to run instead of the login shell.
+export interface TerminalLaunch {
+  kind: TerminalKind;
+  title: string;
+  file: string;
+  args: string[];
+  cwd: string;
+  env: Record<string, string>;
+}
+
 export interface TerminalServiceOptions {
   root: string;
   shell?: string;
@@ -39,6 +49,7 @@ export interface TerminalServiceOptions {
 
 interface Terminal {
   id: string;
+  kind: TerminalKind;
   title: string;
   pty: PtyProcess;
   exited: boolean;
@@ -98,25 +109,30 @@ export class TerminalService {
     return () => this.listeners.delete(listener);
   }
 
-  open(id: string, cols: number, rows: number): TerminalInfo {
+  open(id: string, cols: number, rows: number, launch?: TerminalLaunch): TerminalInfo {
     if (!TERMINAL_ID.test(id)) throw new Error('A terminal id is 1-64 letters, digits, "_" or "-".');
     if (this.terminals.has(id)) throw new Error(`Terminal "${id}" is already open.`);
     if (this.terminals.size >= this.maxTerminals) throw new Error(`At most ${this.maxTerminals} terminals can be open.`);
-    const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env), TERM: 'xterm-256color', COLORTERM: 'truecolor' };
+    const env: NodeJS.ProcessEnv = { ...(this.options.env ?? process.env), ...launch?.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' };
     for (const name of HIDDEN_ENV) delete env[name];
-    const pty = this.spawnPty(this.shell, ['-l'], {
+    const pty = this.spawnPty(launch?.file ?? this.shell, launch?.args ?? ['-l'], {
       name: 'xterm-256color',
       cols: clamp(cols, 2, 500),
       rows: clamp(rows, 1, 300),
-      cwd: this.options.root,
+      cwd: launch?.cwd ?? this.options.root,
       env,
     });
-    this.opened += 1;
-    const name = basename(this.shell);
+    let title = launch?.title;
+    if (title === undefined) {
+      this.opened += 1;
+      const name = basename(this.shell);
+      title = this.opened === 1 ? name : `${name} ${this.opened}`;
+    }
     let exited!: () => void;
     const terminal: Terminal = {
       id,
-      title: this.opened === 1 ? name : `${name} ${this.opened}`,
+      kind: launch?.kind ?? 'shell',
+      title,
       pty,
       exited: false,
       pending: [],
@@ -178,7 +194,7 @@ export class TerminalService {
   }
 
   private info(terminal: Terminal): TerminalInfo {
-    return { id: terminal.id, title: terminal.title, exited: terminal.exited, scrollback: terminal.scrollback.join('') };
+    return { id: terminal.id, kind: terminal.kind, title: terminal.title, exited: terminal.exited, scrollback: terminal.scrollback.join('') };
   }
 
   private async kill(terminal: Terminal): Promise<void> {

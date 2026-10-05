@@ -2,7 +2,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import type { ClientMessage, GateAnswer, HubProject, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
-import { ChatPanel } from '../chat/ChatPanel';
+import { ChatPanel, type AgentView } from '../chat/ChatPanel';
 import { canSend, chatReducer, initialChatState } from '../chat/chat-state';
 import { dialogEvent, eventFilePaths } from '../history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from '../history/history-state';
@@ -40,6 +40,7 @@ import { ComponentTree, FileTree } from '../layout/Trees';
 import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes, type SizedPanel } from '../layout/sizes';
 import { storage, typing } from '../layout/dom';
 import { TerminalPanel } from '../terminal/TerminalPanel';
+import { AgentTerminal } from '../terminal/AgentTerminal';
 import { TerminalHub, type TerminalTab } from '../terminal/terminal-hub';
 import type { ChatList } from '../chat/ChatSwitcher';
 import { deriveStatus, type ProjectStatus } from './project-status';
@@ -74,6 +75,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, project.id, (id) => loadPanels(storage(), id));
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [agentOpening, setAgentOpening] = useState(false);
   const sendRef = useRef<(message: ClientMessage) => boolean>(() => false);
   const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
@@ -351,6 +353,21 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     />
   );
   const showRight = panels.right;
+  const agentTab = terminalTabs.find((tab) => tab.kind === 'agent') ?? null;
+  const shellTabs = useMemo(() => terminalTabs.filter((tab) => tab.kind !== 'agent'), [terminalTabs]);
+  const agentView: AgentView = agentTab !== null || agentOpening ? 'terminal' : 'chat';
+  const changeAgentView = (view: AgentView): void => {
+    if (view === agentView) return;
+    if (view === 'terminal') {
+      setAgentOpening(hub.createAgent());
+      return;
+    }
+    setAgentOpening(false);
+    if (agentTab) hub.close(agentTab.id);
+  };
+  useEffect(() => {
+    if (agentTab !== null || chat.error !== null) setAgentOpening(false);
+  }, [agentTab, chat.error]);
   const toggle = (panel: 'left' | 'right', label: string, keys: string) => (
     <button className={`status-toggle${panels[panel] ? ' on' : ''}`} onClick={() => dispatchPanels({ type: 'toggle', panel })} aria-pressed={panels[panel]} aria-label={label} data-tip={label} data-keys={keys}>
       <Icon name={panel === 'left' ? 'panel-left' : 'panel-right'} size={16} />
@@ -437,6 +454,20 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
                   onFocusTargets={showPathsOnMap}
+                  view={agentView}
+                  onView={changeAgentView}
+                  terminal={(
+                    <AgentTerminal
+                      hub={hub}
+                      tab={agentTab}
+                      visible={active && showRight && panels.rightTab === 'agent'}
+                      onRestart={() => {
+                        if (agentTab) hub.close(agentTab.id);
+                        setAgentOpening(hub.createAgent());
+                      }}
+                      onBack={() => changeAgentView('chat')}
+                    />
+                  )}
                 />
               </ErrorBoundary>
             )}
@@ -475,7 +506,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
             onToggle={() => dispatchPanels({ type: 'toggle', panel: 'bottom' })}
             tab={panels.bottomTab}
             onTab={(next) => dispatchPanels({ type: 'bottom-tab', tab: next })}
-            terminalCount={terminalTabs.length}
+            terminalCount={shellTabs.length}
             compact={panels.focus}
             leading={(
               <>
@@ -496,7 +527,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 </button>
               </>
             )}
-            terminal={<TerminalPanel hub={hub} tabs={terminalTabs} visible={active && panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
+            terminal={<TerminalPanel hub={hub} tabs={shellTabs} visible={active && panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
           />
         </div>
         {settingsOpen && (

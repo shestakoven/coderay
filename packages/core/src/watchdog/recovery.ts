@@ -84,8 +84,10 @@ const slug = (cwd: string): string => {
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
+export const transcriptPath = (dir: string, cwd: string, claudeSessionId: string): string => join(dir, slug(cwd), `${claudeSessionId}.jsonl`);
+
 export async function recoverTranscript(o: RecoverTranscriptOptions): Promise<{ items: RecoveredItem[]; unreadable: boolean }> {
-  const file = join(o.dir, slug(o.cwd), `${o.claudeSessionId}.jsonl`);
+  const file = transcriptPath(o.dir, o.cwd, o.claudeSessionId);
   const entries: RecoveredItem[] = [];
   const tools = new Map<string, RecoveredTool>();
   let parsed = 0;
