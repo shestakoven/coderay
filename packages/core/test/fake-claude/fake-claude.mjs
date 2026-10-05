@@ -23,6 +23,7 @@ const record = (entry) => {
 };
 const emit = (event) => process.stdout.write(`${JSON.stringify(event).replaceAll('$SESSION', sessionId)}\n`);
 const interruptAnswer = (requestId) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { still_queued: [] } } });
+if (!argv.includes('-p') && process.stdin.isTTY) await import('./fake-claude-tui.mjs');
 const steps = readFileSync(process.env.FAKE_CLAUDE_SCENARIO, 'utf8')
   .replaceAll('$CWD', process.cwd())
   .split('\n')
