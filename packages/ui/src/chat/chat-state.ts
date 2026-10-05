@@ -50,7 +50,8 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         items: byId(action.state.items),
         tasks: byId(action.state.tasks),
         mcpServers: action.state.mcpServers,
-        skills: action.state.skills,
+        // A core started before skills existed sends none, and a dev window can outlive it.
+        skills: action.state.skills ?? [],
         usage: action.state.usage,
         draft: '',
         error: state.error,

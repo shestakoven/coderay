@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EMPTY_USAGE, type ChatItem, type SessionPatch, type SessionState, type TaskKind, type TaskView, type ToolStatus, type TurnView } from '@ide/protocol';
 import { canSend, canStop, chatReducer, childItems, decisionLabel, initialChatState, stopControl, turnGroups } from '../src/chat/chat-state';
+import { matchSkills } from '../src/chat/skills';
 
 const session = {
   id: 's1', claudeSessionId: 'c1', status: 'running' as const, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.281', permissionMode: 'bypassPermissions', startedAt: 1,
@@ -70,6 +71,20 @@ describe('chatReducer skills', () => {
   it('keeps the MCP servers on a patch that only carries skills', () => {
     const before = chat({ mcpServers: [{ name: 'docs', status: 'connected' }] });
     expect(patch(before, { skills: ['wiki'] }).mcpServers).toEqual([{ name: 'docs', status: 'connected' }]);
+  });
+
+  describe('against a core that sends no skills', () => {
+    const { skills: _skills, ...oldState } = { session, turns: [], items: [], tasks: [], mcpServers: [], skills: ['wiki'], usage: EMPTY_USAGE };
+    const oldSnapshot = (before = initialChatState) => chatReducer(before, { type: 'snapshot', state: oldState as unknown as SessionState });
+
+    it('has an empty skill list after a snapshot without the skills field', () => {
+      expect(oldSnapshot(chat({ skills: ['wiki'] })).skills).toEqual([]);
+    });
+
+    it('keeps the empty skill list on a later patch and matches nothing for the slash menu', () => {
+      const after = patch(oldSnapshot(), { turns: [turn('t1', 'user')] });
+      expect([after.skills, matchSkills(after.skills, '')]).toEqual([[], []]);
+    });
   });
 });
 
