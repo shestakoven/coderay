@@ -40,7 +40,7 @@ export interface TrackerOptions {
 // Recorded: completed and killed (task_updated), completed and stopped (task_notification); the rest cannot mean "still running".
 export const TERMINAL_TASK_STATUSES = new Set(['completed', 'killed', 'stopped', 'failed', 'error', 'cancelled']);
 
-const TASK_KINDS: Record<string, TaskKind> = { Agent: 'subagent', Task: 'subagent', Bash: 'shell', Monitor: 'monitor' };
+const TASK_KINDS: Record<string, TaskKind> = { Agent: 'subagent', Task: 'subagent', spawn_agent: 'subagent', Bash: 'shell', Monitor: 'monitor' };
 const REJECTED = "The user doesn't want to proceed with this tool use";
 const PLAN_MODE = 'plan';
 

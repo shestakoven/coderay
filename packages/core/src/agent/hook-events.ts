@@ -44,6 +44,8 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
   const agentId = str(raw.agent_id);
   switch (raw.hook_event_name) {
     case 'UserPromptSubmit': {
+      // Codex reports the prompt a subagent gets; only the main thread's prompts are the user's.
+      if (agentId) return null;
       const text = str(raw.prompt) ?? '';
       return { type: 'prompt', text, task: taskNotice(text) };
     }
@@ -69,6 +71,8 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
       return agentId && str(raw.agent_type) ? { type: 'subagent-start', agentId } : null;
     case 'SubagentStop':
       return agentId && str(raw.agent_type) ? { type: 'subagent-stop', agentId, lastMessage: str(raw.last_assistant_message) } : null;
+    case 'Interrupt':
+      return { type: 'interrupted' };
     case 'SessionStart': {
       const claudeSessionId = str(raw.session_id);
       return claudeSessionId ? { type: 'conversation', claudeSessionId, source: str(raw.source) ?? 'unknown' } : null;
@@ -78,12 +82,24 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
   }
 }
 
-function launched(response: unknown): BackgroundTask | null {
+// claude: a background Bash or Agent call; Codex: spawn_agent, whose output is a JSON string with the new agent's id.
+function launched(raw: unknown): BackgroundTask | null {
+  const response = typeof raw === 'string' ? parseJson(raw) : raw;
   if (!isRecord(response)) return null;
   const shell = str(response.backgroundTaskId);
   if (shell) return { id: shell, kind: 'shell' };
   const agent = str(response.agentId);
-  return agent && response.isAsync === true ? { id: agent, kind: 'subagent' } : null;
+  if (agent && response.isAsync === true) return { id: agent, kind: 'subagent' };
+  const spawned = typeof raw === 'string' ? str(response.agent_id) : null;
+  return spawned ? { id: spawned, kind: 'subagent' } : null;
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 // claude reports a finished background task as a prompt of its own, which starts an agent-initiated turn.
