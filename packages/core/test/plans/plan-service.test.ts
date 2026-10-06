@@ -553,6 +553,81 @@ describe('PlanService', () => {
       .toEqual({ ok: false, error: 'IDE: step "k" names an unknown component "nope". Valid component ids: app (App), lib (Lib).' });
   });
 
+  describe('after the last step is done', () => {
+    const more = { ...small, steps: [...small.steps, { key: 'more', title: 'More', rationale: '', targets: [{ componentId: 'lib', op: 'modify' }] }] };
+    const finished = async () => {
+      const s = await setup();
+      await s.service.propose(small);
+      s.service.step({ key: 'edit', phase: 'start' });
+      s.service.step({ key: 'edit', phase: 'done' });
+      return s.service;
+    };
+
+    it('accepts only a done plan: refused while a step is open, then it closes, withdraws a waiting revision and the gate closes', async () => {
+      const { service } = await setup();
+      await service.propose(small);
+      expect(() => service.answer('plan-1', 1, { kind: 'accept' })).toThrow(PlanError);
+      expect(service.gate()).toMatchObject({ state: 'approved' });
+      service.step({ key: 'edit', phase: 'start' });
+      service.step({ key: 'edit', phase: 'done' });
+      const revision = service.propose(more);
+      await waiting(service);
+      service.answer('plan-1', 1, { kind: 'accept' });
+      expect(service.plans().map((plan) => [plan.version, plan.status])).toEqual([[1, 'closed'], [2, 'withdrawn']]);
+      expect(service.plans()[0]).toMatchObject({ feedback: 'Accepted by you.' });
+      expect(await revision).toMatchObject({ ok: true, value: { status: 'rejected' } });
+      expect(service.gate()).toEqual({ state: 'closed', planId: 'plan-1' });
+    });
+
+    it('keeps the plan and its progress when a proposal keeps the done steps: next version, new step pending', async () => {
+      const service = await finished();
+      const call = service.propose(more);
+      await waiting(service);
+      service.answer('plan-1', 2, { kind: 'approve' });
+      await call;
+      expect(service.plans().map((plan) => [plan.id, plan.version, plan.status])).toEqual([['plan-1', 1, 'superseded'], ['plan-1', 2, 'approved']]);
+      expect(latest(service)?.steps.map((step) => [step.key, step.status])).toEqual([['edit', 'done'], ['more', 'pending']]);
+    });
+
+    it('starts a new plan and closes the done one when a proposal drops a done step', async () => {
+      const service = await finished();
+      const other = { goal: 'Other', steps: [{ key: 'other', title: 'Other', rationale: '', targets: [{ path: 'src/other.ts', op: 'modify' }] }] };
+      expect(await service.propose(other)).toEqual({ ok: true, value: { status: 'approved' } });
+      expect(service.plans().map((plan) => [plan.id, plan.version, plan.status, plan.feedback])).toEqual([
+        ['plan-1', 1, 'closed', 'Replaced by plan plan-2.'],
+        ['plan-2', 1, 'approved', null],
+      ]);
+      expect(service.gate()).toMatchObject({ state: 'approved', planId: 'plan-2', followUps: false });
+    });
+
+    it('approves a revision with no pending step straight to done, so edits stay open', async () => {
+      const service = await finished();
+      await service.propose({ ...small, goal: 'Fix app again' });
+      expect(service.plans().map((plan) => [plan.version, plan.status])).toEqual([[1, 'superseded'], [2, 'done']]);
+      expect(service.gate()).toMatchObject({ state: 'approved', version: 2, activeStep: null, followUps: true });
+    });
+  });
+
+  it('marks a step extra only when the first approved version did not have it', async () => {
+    const { service } = await setup();
+    const rejected = service.propose(big);
+    await waiting(service);
+    service.answer('plan-1', 1, { kind: 'changes', feedback: 'also Other' });
+    await rejected;
+    const withStep = (key: string, path: string) => ({ key, title: key, rationale: '', targets: [{ path, op: 'modify' }] });
+    const extras = () => Object.fromEntries(latest(service)!.steps.map((step) => [step.key, step.extra]));
+    const second = service.propose({ ...big, steps: [...big.steps, withStep('c', 'src/other.ts')] });
+    await waiting(service);
+    service.answer('plan-1', 2, { kind: 'approve' });
+    await second;
+    expect(extras()).toEqual({ a: false, b: false, c: false });
+    const third = service.propose({ ...big, steps: [...big.steps, withStep('c', 'src/other.ts'), withStep('d', 'src/lib/util.ts')] });
+    await waiting(service);
+    service.answer('plan-1', 3, { kind: 'approve' });
+    await third;
+    expect(extras()).toEqual({ a: false, b: false, c: false, d: true });
+  });
+
   describe('plan flow', () => {
     const flowFor = (key: string, path: string): PlanFlow => ({
       nodes: [
