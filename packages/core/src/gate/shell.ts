@@ -18,6 +18,8 @@ export interface ShellTarget {
 export interface ShellWrites {
   targets: ShellTarget[];
   allTracked: boolean;
+  // The directory each work-tree rewrite runs in; null when the command does not say.
+  rewrites: (string | null)[];
 }
 
 type Part =
@@ -47,7 +49,7 @@ interface State {
   mktemp: Set<string>;
   poisoned: Set<string>;
   targets: ShellTarget[];
-  allTracked: boolean;
+  rewrites: (string | null)[];
 }
 
 interface TargetExtra {
@@ -81,9 +83,9 @@ const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], allTracked: false };
+  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [] };
   run(command, state, 0);
-  return { targets: state.targets, allTracked: state.allTracked };
+  return { targets: state.targets, allTracked: state.rewrites.length > 0, rewrites: state.rewrites };
 }
 
 function run(script: string, state: State, depth: number): void {
@@ -508,8 +510,24 @@ function git(args: Word[], state: State): void {
   if (!word) return;
   const sub = literalText(word);
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
-  else if (WORK_TREE_REWRITES.has(sub)) state.allTracked = !(sub === 'apply' && appliesToIndexOnly(args.slice(i + 1)));
+  else if (WORK_TREE_REWRITES.has(sub)) {
+    if (!(sub === 'apply' && appliesToIndexOnly(args.slice(i + 1)))) state.rewrites.push(gitDirectory(args.slice(0, i), state));
+  }
   else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), args.slice(i + 1), state);
+}
+
+// Where git runs: the working directory moved by each -C; unknown for a repository chosen any other way.
+function gitDirectory(options: Word[], state: State): string | null {
+  let dir = cwdOf(state);
+  for (let i = 0; i < options.length; i += 1) {
+    const text = literalText(options[i]!);
+    if (text !== null && /^--(git-dir|work-tree)(=|$)/.test(text)) return null;
+    if (text !== '-C') continue;
+    const value = options[i + 1] === undefined ? null : literalText(options[i + 1]!);
+    if (value === null || (dir === null && !value.startsWith('/'))) return null;
+    dir = posix.resolve(dir ?? '/', value);
+  }
+  return dir;
 }
 
 // git xargs reads the paths from its input, so only a command that writes none of them is known to be harmless.

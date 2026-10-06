@@ -170,6 +170,33 @@ describe('shellWrites', () => {
     expect(writes('git status && git log --oneline && git commit -m "a > b"').allTracked).toBe(false);
   });
 
+  it.each([
+    ['git reset --hard', ['/p']],
+    ['cd sub && git reset --hard', ['/p/sub']],
+    ['git -C sub reset --hard', ['/p/sub']],
+    ['git -C /abs/wt checkout main', ['/abs/wt']],
+    ['git -C a -C b reset --hard', ['/p/a/b']],
+    ['git -C a -C /abs/b reset --hard', ['/abs/b']],
+    ['git -C sub reset --hard && git checkout .', ['/p/sub', '/p']],
+    ['git --work-tree w checkout .', [null]],
+    ['git --work-tree=w checkout .', [null]],
+    ['git --git-dir x -C sub reset --hard', [null]],
+    ['git --git-dir=x reset --hard', [null]],
+    ['git -C "$D" reset --hard', [null]],
+    ['cd "$D" && git reset --hard', [null]],
+    ['cd "$D" && git -C sub reset --hard', [null]],
+    ['cd "$D" && git -C /abs/wt reset --hard', ['/abs/wt']],
+    ['git status && git -C sub log', []],
+  ])('%s rewrites the work tree in %j', (command, dirs) => {
+    expect(writes(command).rewrites).toEqual(dirs);
+  });
+
+  it('keeps an earlier rewrite when a later git apply only touches the index, and the other way round', () => {
+    expect(writes('git reset --hard && git apply --cached p.patch').rewrites).toEqual(['/p']);
+    expect(writes('git apply --cached p.patch && git reset --hard').rewrites).toEqual(['/p']);
+    expect(writes('git reset --hard && git apply --cached p.patch').allTracked).toBe(true);
+  });
+
   it('does not mark git apply that only touches the index', () => {
     expect([writes('git apply --cached p.patch').allTracked, writes('git apply --cached --index p.patch').allTracked, writes('git apply p.patch').allTracked]).toEqual([false, true, true]);
   });

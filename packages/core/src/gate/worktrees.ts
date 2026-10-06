@@ -140,6 +140,15 @@ export function worktreeOf(root: string, rel: string): WorktreeHit | null {
   return { worktreeRoot: best.abs, dir: best.dir, inner };
 }
 
+// The worktree of the project's repository that a directory lies in, itself included.
+export function worktreeAt(root: string, abs: string): WorktreeHit | null {
+  const rel = relative(root, abs).split(sep).join('/');
+  if (rel === '' || rel === '..' || rel.startsWith('../') || isAbsolute(rel)) return null;
+  // Named as a file in the directory, which is how both lookups take a path.
+  const inside = `${rel}/.`;
+  return worktreeOf(root, inside) ?? discoverNestedRepo(root, inside);
+}
+
 // The path the project names a worktree file by; null for a file outside the project's part of the worktree,
 // when the project root is a subdirectory of its repository.
 export function scopeRelOf(root: string, hit: WorktreeHit): string | null {

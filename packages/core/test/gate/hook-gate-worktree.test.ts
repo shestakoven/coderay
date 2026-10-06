@@ -36,7 +36,7 @@ async function setup(mode: ControlMode = 'B') {
   });
   const decisions: ToolDecisionRecord[] = [];
   gate.onDecision((decision) => decisions.push(decision));
-  const bash = (command: string, id = 'toolu_b') => gate.evaluate({ tool_name: 'Bash', tool_input: { command }, tool_use_id: id, cwd: root }, new AbortController().signal);
+  const bash = (command: string, id = 'toolu_b', cwd = root) => gate.evaluate({ tool_name: 'Bash', tool_input: { command }, tool_use_id: id, cwd }, new AbortController().signal);
   const write = (rel: string, id = 'toolu_1') => gate.evaluate({ tool_name: 'Write', tool_input: { file_path: join(root, rel), content: 'x' }, tool_use_id: id, cwd: root }, new AbortController().signal);
   const approve = async (targets: PlanTarget[] = [{ path: 'src/app.ts', op: 'modify' }]) => {
     await plans.propose({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets }] });
@@ -154,5 +154,31 @@ describe('HookGate for a worktree inside a directory the plan covers', () => {
     gate.answer(prompt.id, 'expand-plan');
     expect((await answer)?.permissionDecision).toBe('allow');
     expect(plans.gate()).toMatchObject({ scope: { deletes: { globs: ['src/lib/**'] } } });
+  });
+});
+
+describe('HookGate for a git command that rewrites the work tree', () => {
+  it.each([
+    ['in the worktree', 'git reset --hard', WT],
+    ['named by -C relative to the project', `git -C ${WT} reset --hard`, '.'],
+    ['named by an absolute -C', 'git -C ABS reset --hard', 'src'],
+  ])('lets one that runs %s through a plan that does not cover the whole project', async (_where, command, cwd) => {
+    const { root, bash, approve } = await setup('A');
+    await approve();
+    const result = await bash(command.replace('ABS', join(root, WT)), 'toolu_b', join(root, cwd));
+    expect(result?.permissionDecision).toBe('allow');
+  });
+
+  it.each([
+    ['in the project root', 'git reset --hard', '.'],
+    ['in a directory of the project that is not a worktree', 'git reset --hard', 'src'],
+    ['next to one in the worktree', `git -C ${WT} reset --hard && git checkout .`, '.'],
+    ['in the worktree, then in the project', `git reset --hard && git -C ../.. checkout .`, WT],
+    ['against a repository that the command does not name by a directory', 'git --work-tree ../.. reset --hard', WT],
+  ])('asks for the whole project for one that runs %s', async (_where, command, cwd) => {
+    const { root, bash, approve } = await setup('A');
+    await approve();
+    const result = await bash(command, 'toolu_b', join(root, cwd));
+    expect([result?.permissionDecision, result?.permissionDecisionReason]).toEqual(['deny', expect.stringContaining('every tracked file')]);
   });
 });

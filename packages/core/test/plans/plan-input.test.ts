@@ -3,6 +3,9 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { parsePlanInput, type ComponentRef } from '../../src/plans/plan-input';
 import { tempDir, writeTree } from '../helpers';
+import { git, isolateGit, monorepoWithWorktree, projectWithWorktree } from '../worktree-fixture';
+
+isolateGit();
 
 const components: ComponentRef[] = [
   { id: 'app', name: 'App', files: ['src/app.ts'], globs: [] },
@@ -97,6 +100,43 @@ describe('parsePlanInput', () => {
     [{ goal: 'g', steps: [step([{ path: 'a', op: 'modify' }], { title: ' ' })] }, 'IDE: step "edit" needs a "title".'],
   ])('refuses %j', async (raw, error) => {
     expect(parsePlanInput(raw, await root(), components)).toBe(error);
+  });
+
+  describe('in a nested worktree of the project', () => {
+    const planned = (dir: string, path: string): string => {
+      const plan = parsePlanInput({ goal: 'g', steps: [step([{ path, op: 'modify' }])] }, dir, components);
+      return typeof plan === 'string' ? plan : (plan.steps[0]!.targets[0] as { path: string }).path;
+    };
+
+    it('names a file of the worktree by its path inside it, as the gate does, however the path is given', async () => {
+      const { root } = await projectWithWorktree();
+      const given = ['.worktrees/wt1/backend/src/a.py', join(root, '.worktrees/wt1/backend/src/a.py'), '.worktrees/wt1/backend/src/new.py'];
+      expect(given.map((path) => planned(root, path))).toEqual(['backend/src/a.py', 'backend/src/a.py', 'backend/src/new.py']);
+    });
+
+    it('names a file of a worktree created after the first path was resolved by its path inside it', async () => {
+      const { root } = await projectWithWorktree();
+      planned(root, '.worktrees/wt1/backend/src/a.py');
+      git(root, 'worktree', 'add', '-q', '.worktrees/wt2');
+      expect(planned(root, '.worktrees/wt2/backend/src/a.py')).toBe('backend/src/a.py');
+    });
+
+    it('keeps a file that is not in a worktree as it is, also one of a nested clone of the project', async () => {
+      const { root } = await projectWithWorktree({ '.gitignore': '.worktrees/\nvendor/\n' });
+      git(root, 'clone', '-q', root, 'vendor/clone1');
+      const given = ['backend/src/a.py', 'vendor/clone1/backend/src/a.py'];
+      expect(given.map((path) => planned(root, path))).toEqual(given);
+    });
+
+    it('names a file of a worktree of a larger repository by its path from the equivalent of the project root', async () => {
+      const { root } = await monorepoWithWorktree();
+      expect(planned(root, '.worktrees/wt1/packages/app/src/a.py')).toBe('src/a.py');
+    });
+
+    it('keeps the equivalent of the project root and a file beyond it as they are, never as an empty path', async () => {
+      const { root } = await monorepoWithWorktree();
+      for (const path of ['.worktrees/wt1/packages/app', '.worktrees/wt1/packages/other/x.py']) expect(planned(root, path)).toBe(path);
+    });
   });
 
   describe('flow', () => {

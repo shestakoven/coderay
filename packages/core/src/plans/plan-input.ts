@@ -1,6 +1,7 @@
 import { isAbsolute, relative, sep } from 'node:path';
 import type { PlanFlow, PlanStep, PlanTarget, TargetOp } from '@ide/protocol';
 import { realTarget } from '../gate/paths';
+import { discoverNestedRepo, scopeRelOf, worktreeOf } from '../gate/worktrees';
 import { isRecord } from '../json';
 import { parsePlanFlow } from './plan-flow';
 
@@ -29,7 +30,11 @@ const text = (value: unknown): string | null => (typeof value === 'string' && va
 export function projectPath(path: string, root: string): string | null {
   const rel = relative(root, realTarget(path, root));
   if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
-  return rel.split(sep).join('/');
+  const projectRel = rel.split(sep).join('/');
+  // The gate judges a worktree file by its path inside the worktree; the plan must name it the same way.
+  const hit = worktreeOf(root, projectRel) ?? discoverNestedRepo(root, projectRel);
+  const inner = hit ? scopeRelOf(root, hit) : null;
+  return inner ? inner : projectRel;
 }
 
 export function parsePlanInput(raw: unknown, root: string, components: ComponentRef[]): PlanInput | string {

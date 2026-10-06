@@ -11,6 +11,7 @@ import type { PlanService } from '../plans/plan-service';
 import type { GateEventRecord, GateResolution, Store, ToolDecisionRecord } from '../store/store';
 import type { Hold } from './hold';
 import { classifyPaths, expandHome, realTarget } from './paths';
+import { refreshWorktrees, worktreeAt } from './worktrees';
 import { decide, describeTargets, targetName, type ClassifiedTarget, type GuardDecision } from './scope-guard';
 import type { ToolCall } from '../watchdog/activity';
 import { shellWrites, type ShellTarget } from './shell';
@@ -307,7 +308,10 @@ export class HookGate {
     if (typeof command !== 'string') return [special('unresolved', '', 'no command in the call')];
     const env = this.options.env ?? process.env;
     const writes = shellWrites(command, input.cwd, { home, vars: { TMPDIR: env.TMPDIR, TMP: env.TMP } });
-    const found: ClassifiedTarget[] = writes.allTracked ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
+    await refreshWorktrees(this.options.root);
+    // A rewrite inside a nested worktree touches that worktree only, which is no reason to ask for the whole project.
+    const rewritesProject = writes.rewrites.some((dir) => dir === null || worktreeAt(this.options.root, realTarget(dir, '/')) === null);
+    const found: ClassifiedTarget[] = rewritesProject ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
     const landings: Landing[] = [];
     for (const target of writes.targets) {
       if (target.unresolved !== null) found.push(special('unresolved', target.word, target.unresolved));
