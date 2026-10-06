@@ -326,19 +326,19 @@ export class HookGate {
     // A history command is judged by the local files it may discard or overwrite; when git cannot say which, it may touch every tracked file.
     const found: ClassifiedTarget[] = rewritesProject || repos.includes(null) ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
     const history: HistoryCall[] = [];
-    const dirty: Landing[] = [];
+    const dirty = new Map<string, Landing>();
     for (const repo of repos) {
       if (repo === null) continue;
       const dir = this.projectDir(repo.top);
       if (dir !== null) history.push({ dir, top: repo.top, head: repo.head });
-      dirty.push(...repo.dirty.map((path) => ({ raw: path, abs: join(repo.top, path), mkdir: false, deleting: false })));
+      for (const path of repo.dirty) dirty.set(join(repo.top, path), { raw: path, abs: join(repo.top, path), mkdir: false, deleting: false });
     }
     const landings: Landing[] = [];
     for (const target of writes.targets) {
       if (target.unresolved !== null) found.push(special('unresolved', target.word, target.unresolved));
       else if (!target.temp) landings.push(...landingsOf(target));
     }
-    const uncommitted = (await this.classify(dirty, policy, home)).map((target) => ({ ...target, uncommitted: true }));
+    const uncommitted = (await this.classify([...dirty.values()], policy, home)).map((target) => ({ ...target, uncommitted: true }));
     return { targets: [...found, ...uncommitted, ...(await this.classify(landings, policy, home))], history };
   }
 
