@@ -358,7 +358,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     const owners = new Set(snapshot?.files.filter((file) => wanted.has(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
     if (owners.size > 0) focusComponents([...owners]);
   };
-  const followUps = useMemo(() => (shown ? followUpFiles(hist.history, shown.id) : []), [hist.history, shown]);
+  const followUps = useMemo(() => (shown ? followUpFiles(hist.history, plans.plans, shown.id) : []), [hist.history, plans.plans, shown]);
   const reviewFiles = useMemo(() => sectionFiles(reviewSections(hist.history, plans.plans)).length, [hist.history, plans.plans]);
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (

@@ -155,9 +155,10 @@ const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' 
 
 const byAgent = (change: ChangeView): boolean => change.origin === 'agent' || change.origin === 'agent-tool';
 
-// A write the plan covers, made once its steps ran out: stamped with the plan but with no step.
-export const isFollowUp = (change: ChangeView, planId: string): boolean =>
-  byAgent(change) && change.planId === planId && change.stepKey === null && !change.outOfPlan;
+// A write the plan covers, made once its steps ran out: stamped with a version that is done (or since accepted), but with no step.
+export const isFollowUp = (change: ChangeView, planId: string, plans: PlanView[]): boolean =>
+  byAgent(change) && change.planId === planId && change.stepKey === null && !change.outOfPlan
+  && plans.some((plan) => plan.id === planId && plan.version === change.planVersion && (plan.status === 'done' || plan.status === 'closed'));
 
 // What git wrote, one entry per git call.
 function gitCalls(changes: ChangeView[]): Map<string, ChangeView[]> {
@@ -201,7 +202,7 @@ export function changesByStep(
       const summary = h.summaries.find((s) => s.scope === 'step' && s.ref === `${plan.id}/${step.key}`) ?? null;
       groups.push({ key: `${plan.id}/${step.key}`, stepKey: step.key, title: step.title, rationale: step.rationale || null, summary, changes: own, git: false });
     }
-    const followUps = changes.filter((c) => isFollowUp(c, plan.id));
+    const followUps = changes.filter((c) => isFollowUp(c, plan.id, plans));
     if (followUps.length > 0) groups.push({ ...none, key: `${plan.id}/`, title: 'Follow-ups', changes: followUps });
   }
   const calls = [...gitCalls(changes)].map(([call, own]): StepGroup => ({ ...none, key: `git:${call}`, title: gitLabel(commandOf(call), own), changes: own, git: true }));

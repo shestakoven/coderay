@@ -135,7 +135,7 @@ describe('reviewGroups', () => {
           change({ path: 'src/stray.ts', stepKey: null, outOfPlan: true }),
         ],
       });
-      expect(reviewGroups(history, [plan()]).map((g) => [g.key, g.title, paths(g)])).toEqual([
+      expect(reviewGroups(history, [plan({ status: 'done' })]).map((g) => [g.key, g.title, paths(g)])).toEqual([
         ['outside', 'Outside the plan', ['src/stray.ts']],
         ['p1/a', 'API', ['src/a.ts']],
         ['p1/', 'Follow-ups', ['src/fix.ts']],
@@ -148,7 +148,7 @@ describe('reviewGroups', () => {
         { key: 'b', order: 2, title: 'DB', rationale: '', status: 'done' as const, targets: [], extra: true },
       ];
       const history = view({ changes: [change({ stepKey: 'a' }), change({ stepKey: 'b' }), change({ stepKey: null })] });
-      expect(reviewGroups(history, [plan({ steps })]).map((g) => [g.key, Boolean(g.extra)])).toEqual([['p1/a', false], ['p1/b', true], ['p1/', false]]);
+      expect(reviewGroups(history, [plan({ steps, status: 'done' })]).map((g) => [g.key, Boolean(g.extra)])).toEqual([['p1/a', false], ['p1/b', true], ['p1/', false]]);
     });
   });
 

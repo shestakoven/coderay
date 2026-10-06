@@ -45,9 +45,9 @@ const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryV
 // 'recorded' marks files the gate does not enforce: gitignored, repository internals and harness paths. What git wrote is not the agent's work.
 const isReviewable = (change: ChangeView): boolean => change.enforcement === 'enforced' && change.resolution !== 'reverted' && change.origin !== 'git';
 
-const followUpsOf = (changes: ChangeView[], planId: string): ChangeView[] => changes.filter((change) => isFollowUp(change, planId));
+const followUpsOf = (changes: ChangeView[], planId: string, plans: PlanView[]): ChangeView[] => changes.filter((change) => isFollowUp(change, planId, plans));
 
-export const followUpFiles = (history: HistoryView, planId: string): ReviewFile[] => files(followUpsOf(history.changes.filter(isReviewable), planId));
+export const followUpFiles = (history: HistoryView, plans: PlanView[], planId: string): ReviewFile[] => files(followUpsOf(history.changes.filter(isReviewable), planId, plans));
 
 // Out-of-plan changes come first: they are the ones that need a human decision. External changes (made outside the IDE's agent) come last.
 export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGroup[] {
@@ -66,7 +66,7 @@ export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGro
       const summary = history.summaries.find((s) => s.scope === 'step' && s.ref === `${plan.id}/${step.key}`) ?? null;
       stepGroups.push(group(`${plan.id}/${step.key}`, step.title, false, summary, own, step.extra));
     }
-    const followUps = followUpsOf(agentChanges, plan.id);
+    const followUps = followUpsOf(agentChanges, plan.id, plans);
     if (followUps.length === 0) continue;
     followUps.forEach((change) => claimed.add(change.id));
     // The empty step key cannot clash with a real step's.
