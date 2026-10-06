@@ -91,7 +91,7 @@ const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec',
 const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert']);
 // Reads write no file but --output, and run no program but what the repository's own configuration names.
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'rev-list', 'describe', 'merge-base', 'stash list', 'stash show']);
-const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'exit', 'fi', 'done', 'which']);
+const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
 // The options git takes before its command, with = after those that take a value; after any other one the IDE cannot tell which command runs.
 const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= --namespace= --config-env= --attr-source= --exec-path --bare -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs --no-replace-objects --no-advice -v --version -h --help');
 // Of those, the ones that run no program of the agent's choosing and leave refs and attributes as they are; -c only with a quiet editor or pager.
@@ -463,7 +463,8 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   if (wrapped.length === 0) return;
   const name = literalText(wrapped[0]!);
   const base = posix.basename(name ?? '');
-  if (name === null || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
+  // Only a name looked up on the PATH is the program it says: ./cat or /tmp/x/git can be anything.
+  if (name === null || name.includes('/') || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
   if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
 }
@@ -477,6 +478,10 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
   switch (name) {
     case 'cd':
       changeDirectory(args, state, maybe);
+      return;
+    case 'set':
+      // set -a exports every later assignment, set -k takes them from anywhere, and set -- or a word replaces $1 ….
+      if (!args.every((word) => /^[-+][euxo]+$|^(pipefail|errexit|nounset|xtrace)$/.test(literalText(word) ?? ''))) state.pure = false;
       return;
     case 'rm':
     case 'rmdir':
@@ -784,6 +789,8 @@ function incomingRefs(sub: string, { words: operands, flags, values }: Options):
       if (words.length < 2) return ['@{upstream}'];
       return words.slice(1).some((ref) => ref.includes(':')) ? null : words.slice(1).map((ref) => `${words[0]}/${ref}`);
     case 'rebase':
+      // With --root every commit is replayed, and the word names the branch, not an upstream.
+      if (flags.has('--root')) return [...(onto === undefined ? [] : [onto]), ...words.slice(0, 1)];
       return [onto ?? words[0] ?? '@{upstream}', ...words.slice(1, 2)];
     case 'revert':
       return words.flatMap((ref) => [ref, `${ref}^`]);
@@ -998,7 +1005,6 @@ function assign(word: Word, state: State): void {
   if (name.startsWith('GIT_')) state.gitEnv = true;
 }
 
-// An editor or pager that does nothing or only prints runs no program of the agent's choosing.
 const quiet = (name: string, value: string): boolean => QUIET_SETTINGS.has(name) && QUIET_PROGRAMS.has(value);
 
 function isPlainMktemp(body: string): boolean {
