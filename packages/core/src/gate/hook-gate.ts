@@ -349,18 +349,21 @@ export class HookGate {
     const run = createRun(realTarget(dir, '/'));
     const read = { readOnly: true, timeoutMs: STATUS_MS };
     try {
-      const [top, status, commits] = await Promise.all([
+      const [top, status, listed, commits] = await Promise.all([
         run(['rev-parse', '--show-toplevel'], read),
         run(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], read),
+        run(['ls-files', '-v', '-z'], read),
         Promise.all(incoming.map((ref) => commitOf(run, ref))),
       ]);
       const { sha, files } = parseStatus(status);
       const repoTop = top.trim();
       const added = await Promise.all(commits.filter((commit) => commit !== null).map((commit) =>
         run(sha === null ? ['ls-tree', '-r', '--name-only', '-z', commit] : ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=A', sha, commit], read)));
-      const overwritten = added.flatMap((names) => names.split('\0')).filter((path) => path !== '' && present(join(repoTop, path)));
+      const overwritten = added.flatMap((names) => names.split('\0')).flatMap((path) => (path === '' ? [] : clobbered(repoTop, path)));
       const dirty = files.flatMap((file) => (file.origPath === null ? [file.path] : [file.path, file.origPath]));
-      return { top: repoTop, head: sha, dirty: [...new Set([...dirty, ...overwritten])] };
+      // git status hides edits to a file marked --assume-unchanged (a lowercase tag), and git overwrites them.
+      const assumed = listed.split('\0').filter((entry) => /^[a-z] /.test(entry)).map((entry) => entry.slice(2));
+      return { top: repoTop, head: sha, dirty: [...new Set([...dirty, ...assumed, ...overwritten])] };
     } catch {
       return null;
     }
@@ -529,13 +532,20 @@ async function commitOf(run: GitRun, ref: string): Promise<string | null> {
   }
 }
 
-function present(abs: string): boolean {
-  try {
-    lstatSync(abs);
-    return true;
-  } catch {
-    return false;
+// What git overwrites to add path: a file or link where it needs one of the directories, or the path itself; nothing when neither is on disk.
+function clobbered(top: string, path: string): string[] {
+  const names = path.split('/');
+  for (let i = 1; i <= names.length; i += 1) {
+    const at = names.slice(0, i).join('/');
+    let directory: boolean;
+    try {
+      directory = lstatSync(join(top, at)).isDirectory();
+    } catch {
+      return [];
+    }
+    if (i === names.length || !directory) return [at];
   }
+  return [];
 }
 
 function special(kind: 'unresolved' | 'all-tracked', raw: string, why: string): ClassifiedTarget {
