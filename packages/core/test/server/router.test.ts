@@ -11,6 +11,14 @@ describe('routeOf', () => {
     expect(routeOf(type)).toBe('settings');
   });
 
+  it.each(['git.refresh', 'git.stage', 'git.branch-switch'])('routes %s to git', (type) => {
+    expect(routeOf(type)).toBe('git');
+  });
+
+  it.each(['git.snapshot', 'git.result', 'git.', 'git.nonsense'])('treats %j as unknown', (type) => {
+    expect(routeOf(type)).toBe('unknown');
+  });
+
   it.each(['history.snapshot', 'history.nonsense', 'mcp.unknown', 'policy.', 'settings.get', '', 'constructor', '__proto__'])('treats %j as unknown, never as settings', (type) => {
     expect(routeOf(type)).toBe('unknown');
   });
@@ -31,6 +39,7 @@ describe('routeClientMessage', () => {
     const calls: string[] = [];
     await routeClientMessage({ type }, {
       history: async (m) => void calls.push(`history:${m.type}`),
+      git: async (m) => void calls.push(`git:${m.type}`),
       settings: (m) => void calls.push(`settings:${m.type}`),
       unknown: (t) => void calls.push(`unknown:${t}`),
     });
@@ -39,6 +48,10 @@ describe('routeClientMessage', () => {
 
   it('sends each history message to the history handler only', async () => {
     expect(await run('step.rollback')).toEqual(['history:step.rollback']);
+  });
+
+  it('sends git messages to the git handler only', async () => {
+    expect(await run('git.commit')).toEqual(['git:git.commit']);
   });
 
   it('sends change.revert to the history handler only', async () => {
