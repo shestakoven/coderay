@@ -293,10 +293,6 @@ export class GitService {
     return run;
   }
 
-  private async hasHead(run: GitRun): Promise<boolean> {
-    return (await run(['rev-parse', '--verify', '-q', 'HEAD'], { okCodes: [1], readOnly: true })).trim() !== '';
-  }
-
   async init(): Promise<void> {
     await this.serial(async () => {
       await createRun(this.o.root, this.o.git)(['init', '-q']);
@@ -316,14 +312,8 @@ export class GitService {
     if (paths !== 'all') checkPaths(paths);
     await this.serial(async () => {
       const { run } = await this.need();
-      if (await this.hasHead(run)) {
-        if (paths === 'all') await run(['reset', '-q']);
-        else for (const batch of chunks(paths)) await run(['reset', '-q', '--', ...batch]);
-        return;
-      }
-      // With no commit there is nothing to reset to: unstaging is dropping the paths from the index.
-      const targets = paths === 'all' ? (await run(['ls-files', '-z'], { readOnly: true })).split('\0').filter(Boolean) : paths;
-      for (const batch of chunks(targets)) await run(['rm', '--cached', '-r', '-q', '--', ...batch]);
+      if (paths === 'all') await run(['reset', '-q']);
+      else for (const batch of chunks(paths)) await run(['reset', '-q', '--', ...batch]);
     });
   }
 

@@ -34,7 +34,10 @@ export function CommitBox({ status, client }: { status: GitStatus; client: GitCl
         placeholder={`Message (${isMac() ? '⌘' : 'Ctrl+'}Enter to commit)`}
         rows={3}
         value={message}
-        onChange={(event) => setMessage(event.target.value)}
+        onChange={(event) => {
+          setMessage(event.target.value);
+          setError(null);
+        }}
         onKeyDown={(event) => {
           if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
             event.preventDefault();

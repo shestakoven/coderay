@@ -158,6 +158,9 @@ kbd { display: inline-block; padding: 0 5px; border: 1px solid rgba(255, 255, 25
 .ptabs button.on::after { content: ''; position: absolute; left: 6px; right: 6px; bottom: 0; height: 2px; border-radius: 2px; background: var(--accent); }
 .ptabs .seg-dot { margin-left: 0; }
 .right-panel .ptabs { padding: 0 10px; }
+.left-panel .ptabs { padding: 0 6px; overflow-x: auto; scrollbar-width: none; }
+.left-panel .ptabs::-webkit-scrollbar { display: none; }
+.left-panel .ptabs button { flex: none; padding: 0 7px; }
 .map-view { position: absolute; left: 12px; top: 12px; z-index: 6; display: flex; gap: 2px; padding: 2px; border-radius: var(--r-2); background: var(--surface); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); }
 .map-view button { padding: 3px 11px; border: 0; border-radius: var(--r-1); background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 500; transition: background 0.12s, color 0.12s; }
 .map-view button:hover { color: var(--fg); border-color: transparent; }
