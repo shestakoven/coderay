@@ -156,6 +156,8 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
         for (const client of wss.clients) client.terminate();
         wss.close();
         http.close(() => resolveClose());
+        // A hook held by the gate waits up to an hour for the user; the core going away ends it, and the hook then blocks the call.
+        http.closeAllConnections();
       }),
   };
 }

@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { McpServerState, PromptAnswer, PromptBody, PromptStatus, TaskKind, TaskView, ToolStatus, TurnKind, TurnView } from '@ide/protocol';
 import type { MessageRecord, PromptRecord, ToolEventRecord } from '../store/store';
+import type { AgentEvent, BackgroundTask, TaskNotice } from './hook-events';
 import type { AssistantBlock, StreamEvent, ToolResultBlock } from './stream';
 
 export type Change =
@@ -39,7 +40,7 @@ export interface TrackerOptions {
 // Recorded: completed and killed (task_updated), completed and stopped (task_notification); the rest cannot mean "still running".
 export const TERMINAL_TASK_STATUSES = new Set(['completed', 'killed', 'stopped', 'failed', 'error', 'cancelled']);
 
-const TASK_KINDS: Record<string, TaskKind> = { Agent: 'subagent', Task: 'subagent', Bash: 'shell', Monitor: 'monitor' };
+const TASK_KINDS: Record<string, TaskKind> = { Agent: 'subagent', Task: 'subagent', spawn_agent: 'subagent', Bash: 'shell', Monitor: 'monitor' };
 const REJECTED = "The user doesn't want to proceed with this tool use";
 const PLAN_MODE = 'plan';
 
@@ -56,7 +57,9 @@ export class TurnTracker {
   private readonly openPrompts: Map<string, PromptRecord>;
   private readonly backgroundTasks: Map<string, TaskView>;
   private readonly toolNames = new Map<string, string>();
+  private readonly agentTools = new Map<string, string>();
   private running: string | null = null;
+  private lastText: string | null = null;
   private waitingForInit: string[] = [];
   private permissionMode: string | null = null;
 
@@ -138,6 +141,35 @@ export class TurnTracker {
     }
   }
 
+  // An agent in a terminal reports through hooks; its turns, tools and tasks become the same records as a chat's.
+  agentEvent(event: AgentEvent): Change[] {
+    switch (event.type) {
+      case 'prompt':
+        return event.task ? this.taskPrompt(event.task) : this.prompted(event.text);
+      case 'tool-start':
+        return this.toolStarted(event.toolUseId, event.tool, event.input, event.agentId);
+      case 'tool-end':
+        return this.toolEnded(event.toolUseId, event.status, event.launched);
+      case 'turn-end':
+        return this.turnEnded(event.lastMessage, event.failed, event.runningTaskIds);
+      case 'subagent-start':
+        return this.subagentStarted(event.agentId, event.agentType);
+      case 'subagent-stop':
+        return this.subagentStopped(event.agentId, event.lastMessage);
+      case 'interrupted':
+        return [...this.openTurns].flatMap((turn) => this.close(turn.id, 'error_during_execution', turn.kind));
+      case 'assistant-text':
+        return this.assistantText(event.text);
+      default:
+        return [];
+    }
+  }
+
+  // A call the gate denies never runs, so no hook reports its end.
+  toolRejected(toolUseId: string): Change[] {
+    return this.endTool(toolUseId, 'rejected');
+  }
+
   processExited(): Change[] {
     const now = this.now();
     const changes = this.closeTools(() => true, now);
@@ -159,12 +191,85 @@ export class TurnTracker {
     return changes;
   }
 
+  private prompted(text: string): Change[] {
+    if (this.running !== null) return this.injectedMessage(text);
+    return [...this.userMessage(text), ...this.startTurn()];
+  }
+
+  private taskPrompt(task: TaskNotice): Change[] {
+    const changes = this.taskNotification(task.taskId, task.status);
+    return this.running === null ? [...changes, ...this.startTurn()] : changes;
+  }
+
+  private toolStarted(toolUseId: string, name: string, input: unknown, agentId: string | null): Change[] {
+    if (this.openTools.has(toolUseId)) return [];
+    const parentToolUseId = agentId === null ? null : this.agentTools.get(agentId) ?? null;
+    return this.assistant(parentToolUseId, [{ kind: 'tool_use', id: toolUseId, name, input }]);
+  }
+
+  private toolEnded(toolUseId: string, status: 'ok' | 'error', launched: BackgroundTask | null): Change[] {
+    const tool = this.openTools.get(toolUseId);
+    const changes = this.endTool(toolUseId, status);
+    if (!tool || !launched) return changes;
+    if (launched.kind === 'subagent') this.agentTools.set(launched.id, toolUseId);
+    const input = tool.input as { description?: unknown } | null;
+    return [...changes, ...this.taskStarted(launched.id, toolUseId, typeof input?.description === 'string' ? input.description : tool.tool)];
+  }
+
+  private endTool(toolUseId: string, status: ToolStatus): Change[] {
+    const tool = this.openTools.get(toolUseId);
+    if (!tool) return [];
+    this.openTools.delete(toolUseId);
+    this.finish(tool, status);
+    return [{ kind: 'tool', tool: { ...tool, status, endedAt: this.now() } }];
+  }
+
+  private turnEnded(lastMessage: string | null, failed: boolean, runningTaskIds: string[] | null): Change[] {
+    const turn = this.openTurns.find((open) => open.id === this.running) ?? this.openTurns[0];
+    const changes: Change[] = [];
+    if (turn) {
+      if (lastMessage !== null && lastMessage.trim() !== '' && lastMessage.trim() !== this.lastText?.trim()) {
+        changes.push(this.message(turn.id, null, 'assistant', lastMessage));
+      }
+      changes.push(...this.close(turn.id, failed ? 'error' : 'success', turn.kind));
+    }
+    if (runningTaskIds !== null) {
+      for (const id of [...this.openTasks.keys()]) if (!runningTaskIds.includes(id)) changes.push(...this.endTask(id, 'completed'));
+    }
+    return changes;
+  }
+
+  // The hooks do not say which call started a synchronous subagent: subagents start in call order, so it is the oldest
+  // call of the agent's type that has none yet.
+  private subagentStarted(agentId: string, agentType: string): Change[] {
+    if (this.agentTools.has(agentId)) return [];
+    const taken = new Set(this.agentTools.values());
+    const free = [...this.openTools.values()].filter((open) => TASK_KINDS[open.tool] === 'subagent' && !taken.has(open.toolUseId));
+    const typed = free.find((open) => (open.input as { subagent_type?: unknown } | null)?.subagent_type === agentType);
+    const tool = typed ?? free[0];
+    if (tool) this.agentTools.set(agentId, tool.toolUseId);
+    return [];
+  }
+
+  private subagentStopped(agentId: string, lastMessage: string | null): Change[] {
+    const parent = this.agentTools.get(agentId) ?? null;
+    const changes: Change[] = lastMessage !== null && lastMessage.trim() !== '' ? [this.message(null, parent, 'assistant', lastMessage)] : [];
+    return [...changes, ...this.endTask(agentId, 'completed')];
+  }
+
+  private assistantText(text: string): Change[] {
+    if (this.running === null) return [];
+    this.lastText = text;
+    return [this.message(this.running, null, 'assistant', text)];
+  }
+
   private startTurn(): Change[] {
     const waiting = this.waitingForInit.shift();
     const turn = waiting === undefined ? undefined : this.openTurns.find((open) => open.id === waiting);
     const started = turn ? { ...turn, startedAt: this.now() } : this.openTurn('agent-initiated', this.now());
     if (turn) this.openTurns[this.openTurns.indexOf(turn)] = started;
     this.running = started.id;
+    this.lastText = null;
     return [{ kind: 'turn', turn: started }];
   }
 
@@ -224,12 +329,8 @@ export class TurnTracker {
   private toolResults(results: ToolResultBlock[]): Change[] {
     const changes: Change[] = [];
     for (const result of results) {
-      const tool = this.openTools.get(result.toolUseId);
-      if (!tool) continue;
-      this.openTools.delete(tool.toolUseId);
       const status = result.text.trimStart().startsWith(REJECTED) ? 'rejected' : result.isError ? 'error' : 'ok';
-      changes.push({ kind: 'tool', tool: { ...tool, status, endedAt: this.now() } });
-      this.finish(tool, status);
+      changes.push(...this.endTool(result.toolUseId, status));
     }
     return changes;
   }

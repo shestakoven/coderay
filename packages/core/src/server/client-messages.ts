@@ -1,5 +1,5 @@
 import {
-  EFFORT_LEVELS, IMAGE_MEDIA_TYPES, MAX_CHAT_IMAGES,
+  AGENT_TERMINAL_ID, EFFORT_LEVELS, IMAGE_MEDIA_TYPES, MAX_CHAT_IMAGES,
   type ChatImage, type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
   type WatchdogAnswer,
 } from '@ide/protocol';
@@ -22,7 +22,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, data, images, title, parent, url, code,
+    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -67,7 +67,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'watchdog.stop-agent':
       return typeof eventId === 'string' ? { type, eventId } : null;
     case 'terminal.open':
-      return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
+      if (!isTerminalId(id) || !isInteger(cols) || !isInteger(rows)) return null;
+      if (kind === 'agent') return id === AGENT_TERMINAL_ID ? { type, id, cols, rows, kind } : null;
+      return (kind === undefined || kind === 'shell') && id !== AGENT_TERMINAL_ID ? { type, id, cols, rows } : null;
     case 'terminal.resize':
       return isTerminalId(id) && isInteger(cols) && isInteger(rows) ? { type, id, cols, rows } : null;
     case 'terminal.input':

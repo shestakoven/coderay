@@ -199,7 +199,7 @@ describe('TerminalService.open spawn', () => {
   it('announces the opened terminal with an empty scrollback and exited=false', () => {
     const { service, messages } = setup();
     service.open('t', 80, 24);
-    expect(messages).toEqual([{ type: 'terminal.opened', terminal: { id: 't', title: 'zsh', exited: false, scrollback: '' } }]);
+    expect(messages).toEqual([{ type: 'terminal.opened', terminal: { id: 't', kind: 'shell', title: 'zsh', exited: false, scrollback: '' } }]);
   });
 });
 
@@ -382,7 +382,7 @@ describe('TerminalService.snapshot', () => {
     ptys[0]!.emit('hello');
     expect(service.snapshot()[0]!.scrollback).toBe('');
     vi.advanceTimersByTime(10);
-    expect(service.snapshot()).toEqual([{ id: 't', title: 'zsh', exited: false, scrollback: 'hello' }]);
+    expect(service.snapshot()).toEqual([{ id: 't', kind: 'shell', title: 'zsh', exited: false, scrollback: 'hello' }]);
   });
 
   it('flags exited terminals and keeps their scrollback', () => {
@@ -390,7 +390,7 @@ describe('TerminalService.snapshot', () => {
     service.open('t', 80, 24);
     ptys[0]!.emit('bye');
     ptys[0]!.exit(0);
-    expect(service.snapshot()).toEqual([{ id: 't', title: 'zsh', exited: true, scrollback: 'bye' }]);
+    expect(service.snapshot()).toEqual([{ id: 't', kind: 'shell', title: 'zsh', exited: true, scrollback: 'bye' }]);
   });
 
   it('omits closed terminals', () => {
@@ -598,6 +598,149 @@ describe('TerminalService.close', () => {
     service.close('t');
     expect(() => service.open('t', 80, 24)).not.toThrow();
     expect(ptys).toHaveLength(2);
+  });
+});
+
+const AGENT = { kind: 'agent' as const, title: 'claude', file: '/usr/bin/claude', args: ['--resume', 'x'], cwd: '/proj', env: {} };
+const settled = (promise: Promise<void>) => {
+  const state = { done: false };
+  void promise.then(() => {
+    state.done = true;
+  });
+  return state;
+};
+
+describe('TerminalService.close of an agent terminal', () => {
+  it('stops the process with SIGTERM, which claude answers by stopping its tools, and not with SIGHUP', async () => {
+    const { service, ptys } = setup();
+    service.open('agent', 80, 24, AGENT);
+    ptys[0]!.dieOn = 'SIGTERM';
+    await service.close('agent');
+    expect(ptys[0]!.kills).toEqual(['SIGTERM']);
+  });
+
+  it('stops a shell with SIGHUP next to it', async () => {
+    const { service, ptys } = setup();
+    service.open('agent', 80, 24, AGENT);
+    service.open('t', 80, 24);
+    ptys[0]!.dieOn = 'SIGTERM';
+    await Promise.all([service.close('agent'), service.close('t')]);
+    expect([ptys[0]!.kills, ptys[1]!.kills]).toEqual([['SIGTERM'], ['SIGHUP']]);
+  });
+
+  it('does not send SIGKILL when the process exits right after SIGTERM', async () => {
+    const { service, ptys } = setup();
+    service.open('agent', 80, 24, AGENT);
+    ptys[0]!.dieOn = 'SIGTERM';
+    void service.close('agent');
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(ptys[0]!.kills).toEqual(['SIGTERM']);
+  });
+
+  it('escalates to SIGKILL after 2 seconds when SIGTERM is ignored', async () => {
+    const { service, ptys } = setup();
+    service.open('agent', 80, 24, AGENT);
+    ptys[0]!.dieOn = 'SIGKILL';
+    void service.close('agent');
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(ptys[0]!.kills).toEqual(['SIGTERM']);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(ptys[0]!.kills).toEqual(['SIGTERM', 'SIGKILL']);
+  });
+
+  it('stops every terminal of the agent kind with SIGTERM on closeAll, and a shell with SIGHUP', async () => {
+    const { service, ptys } = setup();
+    service.open('agent', 80, 24, AGENT);
+    service.open('t', 80, 24);
+    ptys[0]!.dieOn = 'SIGTERM';
+    await service.closeAll();
+    expect([ptys[0]!.kills, ptys[1]!.kills]).toEqual([['SIGTERM'], ['SIGHUP']]);
+  });
+});
+
+describe('TerminalService.close promise', () => {
+  it('resolves for an id that is not open', async () => {
+    await expect(setup().service.close('nope')).resolves.toBeUndefined();
+  });
+
+  it('resolves for a terminal whose process has already exited, without killing it', async () => {
+    const { service, ptys } = setup();
+    service.open('t', 80, 24);
+    ptys[0]!.exit(0);
+    await expect(service.close('t')).resolves.toBeUndefined();
+    expect(ptys[0]!.kills).toEqual([]);
+  });
+
+  it('resolves once the process is gone after the signal', async () => {
+    const { service, ptys } = setup();
+    service.open('t', 80, 24);
+    await expect(service.close('t')).resolves.toBeUndefined();
+    expect(ptys[0]!.kills).toEqual(['SIGHUP']);
+  });
+
+  it.each([['an agent terminal', true], ['a shell', false]])('does not resolve for %s while the process still runs, though the terminal is already announced closed', async (_name, agent) => {
+    const { service, ptys, messages } = setup();
+    service.open('t', 80, 24, agent ? AGENT : undefined);
+    ptys[0]!.dieOn = null;
+    const closing = settled(service.close('t'));
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(closing.done).toBe(false);
+    expect(ofType(messages, 'terminal.closed')).toHaveLength(1);
+  });
+
+  it('resolves as soon as a process that ignored the signal exits on its own, with no SIGKILL', async () => {
+    const { service, ptys } = setup();
+    service.open('t', 80, 24);
+    ptys[0]!.dieOn = null;
+    const closing = settled(service.close('t'));
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(closing.done).toBe(false);
+    ptys[0]!.exit(0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(closing.done).toBe(true);
+    expect(ptys[0]!.kills).toEqual(['SIGHUP']);
+  });
+
+  it('resolves once SIGKILL has stopped a process that ignored the signal', async () => {
+    const { service, ptys } = setup();
+    service.open('t', 80, 24);
+    ptys[0]!.dieOn = 'SIGKILL';
+    const closing = settled(service.close('t'));
+    await vi.advanceTimersByTimeAsync(1999);
+    expect(closing.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(closing.done).toBe(true);
+    expect(ptys[0]!.kills).toEqual(['SIGHUP', 'SIGKILL']);
+  });
+
+  it('gives up after the extra wait for a process that ignores SIGKILL as well, so the core can go on', async () => {
+    const { service, ptys } = setup();
+    service.open('t', 80, 24);
+    ptys[0]!.dieOn = null;
+    const closing = settled(service.close('t'));
+    await vi.advanceTimersByTimeAsync(3999);
+    expect(closing.done).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(closing.done).toBe(true);
+    expect(ptys[0]!.kills).toEqual(['SIGHUP', 'SIGKILL']);
+  });
+
+  it('gives a second close of the same terminal nothing to wait for, since the first one took it out', async () => {
+    const { service, ptys } = setup();
+    service.open('t', 80, 24);
+    ptys[0]!.dieOn = null;
+    void service.close('t');
+    await expect(service.close('t')).resolves.toBeUndefined();
+    expect(ptys[0]!.kills).toEqual(['SIGHUP']);
+  });
+
+  it('lets the id be opened again at once, while the old process is still stopping', async () => {
+    const { service, ptys } = setup();
+    service.open('agent', 80, 24, AGENT);
+    ptys[0]!.dieOn = null;
+    const closing = settled(service.close('agent'));
+    expect(() => service.open('agent', 80, 24, AGENT)).not.toThrow();
+    expect([ptys.length, closing.done]).toEqual([2, false]);
   });
 });
 

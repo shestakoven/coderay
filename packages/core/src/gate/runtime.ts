@@ -16,6 +16,7 @@ import type { Store } from '../store/store';
 import { aliveRoute, Canary } from './canary';
 import { HookGate } from './hook-gate';
 import type { Hold } from './hold';
+import { eventRoute } from './event-route';
 import { hookRoute } from './hook-route';
 
 export const IDECORE_TIMEOUT_MS = 3_600_000;
@@ -85,10 +86,17 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     plans,
     gate,
     canary,
-    routes: [idecore, hookRoute({ secret, gate }), aliveRoute({ secret, canary })],
+    routes: [
+      idecore,
+      hookRoute({ secret, gate, observe: (body) => session?.toolCalled(body) }),
+      aliveRoute({ secret, canary }),
+      eventRoute({ secret, handle: (sessionId, event) => session?.hookEvent(sessionId, event) ?? null }),
+    ],
     mcpEntry: () => ({ type: 'http', url: url('/mcp'), headers: { Authorization: `Bearer ${secret}` }, timeout: IDECORE_TIMEOUT_MS }),
     sessionGate: {
-      write: (id) => ({ settingsPath: writeGateFiles(runDir(options.home), base(id), { url: url('/hook'), secret, sessionId: id, deadlineMs: options.hookDeadlineMs }).settingsPath }),
+      write: (id, events) => ({
+        settingsPath: writeGateFiles(runDir(options.home), base(id), { url: url('/hook'), secret, sessionId: id, deadlineMs: options.hookDeadlineMs, events }).settingsPath,
+      }),
       remove: (id) => removeGateFiles(runDir(options.home), base(id)),
       systemPrompt: () => systemPrompt(options.components(), options.map !== undefined, options.search !== undefined),
       canary,

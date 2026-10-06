@@ -328,11 +328,11 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
 
   const sessionGate: SessionGate = {
     ...gate.sessionGate,
-    write(id) {
+    write(id, events) {
       if (failure !== null) throw new Error(`the watchdog is unavailable (${failure}), so the agent was not started`);
       if (!ready) throw new Error('the watchdog is not ready yet, so the agent was not started');
       syncHold();
-      return gate.sessionGate.write(id);
+      return gate.sessionGate.write(id, events);
     },
   };
   const exposedGate: GateRuntime = { ...gate, sessionGate };

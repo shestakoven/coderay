@@ -5,7 +5,7 @@ import type { HookAnswer, HookGate } from './hook-gate';
 const MAX_HOOK_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_FAILED: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' };
 
-export function hookRoute(options: { secret: string; gate: HookGate }): HttpRoute {
+export function hookRoute(options: { secret: string; gate: HookGate; observe?: (body: unknown) => void }): HttpRoute {
   requireSecret(options.secret);
   return {
     path: '/hook',
@@ -21,6 +21,11 @@ export function hookRoute(options: { secret: string; gate: HookGate }): HttpRout
         } catch (error) {
           res.writeHead(error instanceof BodyError ? error.status : 400).end();
           return;
+        }
+        try {
+          options.observe?.(body);
+        } catch (error) {
+          console.error('gate: could not report a tool call', error);
         }
         const connection = new AbortController();
         res.on('close', () => {

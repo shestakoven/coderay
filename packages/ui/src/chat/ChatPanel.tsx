@@ -23,7 +23,9 @@ const TURN_END: Record<string, string> = { error_during_execution: 'stopped', cr
 const START_WAIT_MS = 15000;
 const BUSY = 'The agent is working: it reads your message at its next step. Enter sends.';
 
-export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock }: {
+export type AgentView = 'chat' | 'terminal';
+
+export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock, view, onView, terminal }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
@@ -36,6 +38,9 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   onFocusTargets: (paths: string[]) => void;
   dialog: ReactNode;
   planDock?: ReactNode;
+  view: AgentView;
+  onView: (view: AgentView) => void;
+  terminal: ReactNode;
 }) {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -146,7 +151,15 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
         <span className="spacer" />
-        {chat.session?.status === 'running' && <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>}
+        <div className="agent-view" role="radiogroup" aria-label="Agent view">
+          <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="The IDE's chat">
+            <Icon name="comment" size={13} />Chat
+          </button>
+          <button role="radio" aria-checked={view === 'terminal'} className={view === 'terminal' ? 'on' : undefined} onClick={() => onView('terminal')} title="Claude Code's own terminal interface: every slash command works">
+            <Icon name="terminal" size={13} />Terminal
+          </button>
+        </div>
+        {view === 'chat' && chat.session?.status === 'running' && <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>}
       </header>
       {dialog}
       {planDock}
@@ -156,7 +169,8 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           <button onClick={onClearFilter}>Clear filter</button>
         </div>
       )}
-      <div className="chat-log">
+      {view === 'terminal' && terminal}
+      <div className="chat-log" hidden={view === 'terminal'}>
         {groups.map((group) => ({ group, items: filterItems(group.items, chat.filter) })).filter(({ items }) => items.length > 0).map(({ group, items }) => (
           <div key={group.items[0]?.id} className={`turn ${group.turn?.kind ?? 'outside'}`}>
             {group.turn?.kind === 'agent-initiated' && <div className="turn-marker">↻ agent-initiated turn</div>}
@@ -187,7 +201,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
       {chat.error && (
         <button className="chat-error" onClick={onDismissError}>{chat.error} ✕</button>
       )}
-      <footer
+      {view === 'chat' && <footer
         className="composer"
         onDragOver={(event) => event.preventDefault()}
         onDrop={(event) => {
@@ -255,7 +269,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         </div>
         </div>
         <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} /><UsageMeter usage={chat.usage} /></div>
-      </footer>
+      </footer>}
     </section>
   );
 }

@@ -569,6 +569,21 @@ body.resizing .resizer { pointer-events: auto; }
 .terminal-host { position: absolute; inset: 0; padding: 4px 8px; }
 .terminal-host .xterm { height: 100%; }
 .terminal-host .xterm-viewport { background-color: transparent !important; }
+
+/* Agent view: the IDE's chat or claude's own terminal interface */
+.agent-view { display: flex; gap: 2px; padding: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; flex: none; }
+.chat-header .agent-view button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--muted); padding: 2px 8px; border-radius: var(--r-1); font-size: calc(12px * var(--fs-scale, 1)); line-height: 18px; }
+.chat-header .agent-view button:hover:not(.on) { color: var(--fg); }
+.chat-header .agent-view button.on { background: var(--raised); color: var(--fg); }
+.chat-header .agent-view button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
+/* FitAddon measures the host's computed size, so the gutter is an inset, not padding; overflow stays inside so .right-body never toggles a scrollbar */
+.agent-terminal { position: relative; flex: 1; min-height: 0; overflow: hidden; background: var(--bg); }
+.agent-terminal-host { position: absolute; inset: 8px 4px 6px 10px; }
+.agent-terminal-host .xterm { height: 100%; }
+.agent-terminal-host .xterm-viewport { background-color: transparent !important; }
+.agent-terminal-state { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); }
+.agent-terminal-exited { position: absolute; left: 10px; right: 10px; bottom: 10px; display: flex; align-items: center; gap: 8px; padding: 8px 8px 8px 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 6px 20px rgb(0 0 0 / 35%); }
+.agent-terminal-exited .spacer { flex: 1; }
 .bottom-area { flex: none; }
 .bottom-area[hidden] { display: none; }
 

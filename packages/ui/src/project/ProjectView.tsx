@@ -1,8 +1,8 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ClientMessage, GateAnswer, HubProject, MapProgress, PlanAnswer, SettingsView } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
-import { ChatPanel } from '../chat/ChatPanel';
+import { ChatPanel, type AgentView } from '../chat/ChatPanel';
 import { canSend, chatReducer, initialChatState } from '../chat/chat-state';
 import { dialogEvent, eventFilePaths } from '../history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from '../history/history-state';
@@ -40,6 +40,7 @@ import { ComponentTree, FileTree } from '../layout/Trees';
 import { clampSize, DEFAULT_SIZES, LIMITS, loadSizes, saveSizes, type PanelSizes, type SizedPanel } from '../layout/sizes';
 import { storage, typing } from '../layout/dom';
 import { TerminalPanel } from '../terminal/TerminalPanel';
+import { AgentTerminal } from '../terminal/AgentTerminal';
 import { TerminalHub, type TerminalTab } from '../terminal/terminal-hub';
 import type { ChatList } from '../chat/ChatSwitcher';
 import { deriveStatus, type ProjectStatus } from './project-status';
@@ -74,6 +75,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, project.id, (id) => loadPanels(storage(), id));
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [terminalsKnown, setTerminalsKnown] = useState(false);
+  const [agentOpening, setAgentOpening] = useState(false);
   const sendRef = useRef<(message: ClientMessage) => boolean>(() => false);
   const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
@@ -128,6 +131,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           break;
         case 'terminal.snapshot':
           hub.restore(message.terminals);
+          setTerminalsKnown(true);
           break;
         case 'terminal.opened':
           hub.opened(message.terminal);
@@ -153,6 +157,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       }
     }, (next) => {
       setConnection(next);
+      if (next !== 'open') setTerminalsKnown(false);
       if (next === 'open') link.current?.send({ type: 'models.list' });
     }, url);
     link.current = current;
@@ -351,6 +356,23 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     />
   );
   const showRight = panels.right;
+  const agentTab = terminalTabs.find((tab) => tab.kind === 'agent') ?? null;
+  const shellTabs = useMemo(() => terminalTabs.filter((tab) => tab.kind !== 'agent'), [terminalTabs]);
+  const agentView: AgentView = agentTab !== null || agentOpening ? 'terminal' : 'chat';
+  const changeAgentView = (view: AgentView): void => {
+    if (view === agentView) return;
+    if (view === 'terminal') {
+      dispatchChat({ type: 'dismiss-error' });
+      setAgentOpening(hub.createAgent());
+      return;
+    }
+    // A terminal still starting has no tab yet; closing it cancels the start.
+    if (agentTab || agentOpening) hub.close(AGENT_TERMINAL_ID);
+    setAgentOpening(false);
+  };
+  useEffect(() => {
+    if (agentTab !== null || chat.error !== null || chat.session?.status === 'refused') setAgentOpening(false);
+  }, [agentTab, chat.error, chat.session?.status]);
   const toggle = (panel: 'left' | 'right', label: string, keys: string) => (
     <button className={`status-toggle${panels[panel] ? ' on' : ''}`} onClick={() => dispatchPanels({ type: 'toggle', panel })} aria-pressed={panels[panel]} aria-label={label} data-tip={label} data-keys={keys}>
       <Icon name={panel === 'left' ? 'panel-left' : 'panel-right'} size={16} />
@@ -437,6 +459,21 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
                   onFocusTargets={showPathsOnMap}
+                  view={agentView}
+                  onView={changeAgentView}
+                  terminal={(
+                    <AgentTerminal
+                      hub={hub}
+                      tab={agentTab}
+                      visible={active && showRight && panels.rightTab === 'agent'}
+                      onRestart={() => {
+                        if (agentTab) hub.close(agentTab.id);
+                        dispatchChat({ type: 'dismiss-error' });
+                        setAgentOpening(hub.createAgent());
+                      }}
+                      onBack={() => changeAgentView('chat')}
+                    />
+                  )}
                 />
               </ErrorBoundary>
             )}
@@ -475,7 +512,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
             onToggle={() => dispatchPanels({ type: 'toggle', panel: 'bottom' })}
             tab={panels.bottomTab}
             onTab={(next) => dispatchPanels({ type: 'bottom-tab', tab: next })}
-            terminalCount={terminalTabs.length}
+            terminalCount={shellTabs.length}
             compact={panels.focus}
             leading={(
               <>
@@ -496,7 +533,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 </button>
               </>
             )}
-            terminal={<TerminalPanel hub={hub} tabs={terminalTabs} visible={active && panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
+            terminal={<TerminalPanel hub={hub} tabs={shellTabs} known={terminalsKnown} visible={active && panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
           />
         </div>
         {settingsOpen && (

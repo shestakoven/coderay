@@ -3,16 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../layout/Icon';
 import type { TerminalHub, TerminalTab } from './terminal-hub';
 
-export function TerminalPanel({ hub, tabs, visible }: { hub: TerminalHub; tabs: TerminalTab[]; visible: boolean }) {
+// known: the core has listed the terminals it runs, so an empty list means there are none.
+export function TerminalPanel({ hub, tabs, known, visible }: { hub: TerminalHub; tabs: TerminalTab[]; known: boolean; visible: boolean }) {
   const [active, setActive] = useState<string | null>(null);
   const requested = useRef(false);
   const current = tabs.find((tab) => tab.id === active) ?? tabs[0] ?? null;
 
   useEffect(() => {
-    if (!visible || tabs.length > 0 || requested.current) return;
+    if (!visible || !known || tabs.length > 0 || requested.current) return;
     requested.current = true;
     hub.create();
-  }, [visible, tabs.length, hub]);
+  }, [visible, known, tabs.length, hub]);
 
   useEffect(() => {
     if (tabs.length > 0) requested.current = false;
@@ -42,7 +43,7 @@ export function TerminalPanel({ hub, tabs, visible }: { hub: TerminalHub; tabs: 
       </div>
       <div className="terminal-hosts">
         {tabs.map((tab) => (
-          <TerminalHost key={tab.id} id={tab.id} hub={hub} shown={current?.id === tab.id && visible} />
+          <TerminalHost key={`${tab.id}:${tab.generation}`} id={tab.id} hub={hub} shown={current?.id === tab.id && visible} />
         ))}
       </div>
     </div>

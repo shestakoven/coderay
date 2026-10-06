@@ -1,12 +1,15 @@
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
 import { Terminal } from '@xterm/xterm';
-import type { ClientMessage, TerminalInfo } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type TerminalInfo, type TerminalKind } from '@ide/protocol';
 
 export interface TerminalTab {
   id: string;
+  kind: TerminalKind;
   title: string;
   exited: boolean;
+  // A reconnect replaces every xterm, so a view keyed on the id alone would keep the disposed one.
+  generation: number;
 }
 
 export const TERMINAL_THEME = {
@@ -46,6 +49,7 @@ export class TerminalHub {
   private readonly entries = new Map<string, Entry>();
   private readonly send: (message: ClientMessage) => boolean;
   private readonly onChange: (tabs: TerminalTab[]) => void;
+  private generation = 0;
 
   constructor(send: (message: ClientMessage) => boolean, onChange: (tabs: TerminalTab[]) => void) {
     this.send = send;
@@ -61,9 +65,14 @@ export class TerminalHub {
     return this.send({ type: 'terminal.open', id, cols: 80, rows: 24 }) ? id : null;
   }
 
+  createAgent(): boolean {
+    return this.send({ type: 'terminal.open', id: AGENT_TERMINAL_ID, cols: 80, rows: 24, kind: 'agent' });
+  }
+
   restore(infos: TerminalInfo[]): void {
     for (const entry of this.entries.values()) entry.term.dispose();
     this.entries.clear();
+    this.generation += 1;
     for (const info of infos) this.add(info);
     this.changed();
   }
@@ -140,8 +149,16 @@ export class TerminalHub {
     term.onData((data) => {
       this.send({ type: 'terminal.input', id: info.id, data });
     });
+    // xterm sends a plain CR for Shift+Enter; claude reads Meta+Enter (ESC CR) as a new line.
+    if (info.kind === 'agent') {
+      term.attachCustomKeyEventHandler((event) => {
+        if (event.key !== 'Enter' || !event.shiftKey || event.altKey || event.ctrlKey || event.metaKey) return true;
+        if (event.type === 'keydown') this.send({ type: 'terminal.input', id: info.id, data: '\x1b\r' });
+        return false;
+      });
+    }
     if (info.scrollback) term.write(info.scrollback);
-    this.entries.set(info.id, { tab: { id: info.id, title: info.title, exited: info.exited }, term, fit, host: null });
+    this.entries.set(info.id, { tab: { id: info.id, kind: info.kind, title: info.title, exited: info.exited, generation: this.generation }, term, fit, host: null });
   }
 
   private changed(): void {

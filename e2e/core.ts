@@ -5,12 +5,15 @@ import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '..');
 const FAKE_CLAUDE = join(REPO, 'packages/core/test/fake-claude/fake-claude.mjs');
-const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
+export const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
 const stream = (scenario: string): string => join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`);
 
 export interface Core {
   url: string;
   file(rel: string): string;
+  root: string;
+  // Where claude keeps the transcripts of the project's conversations, as the core looks for them.
+  transcripts: string;
   record: string;
   stop(): Promise<void>;
 }
@@ -182,7 +185,7 @@ export async function startHub(names: string[]): Promise<Hub> {
   };
 }
 
-export async function startCore(scenario: string): Promise<Core> {
+export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}): Promise<Core> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
   const root = join(base, 'project');
   cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
@@ -192,11 +195,13 @@ export async function startCore(scenario: string): Promise<Core> {
   const core = await spawnCore(
     base,
     ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
-    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario) },
+    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario), ...env },
   );
   return {
     url: core.url,
     record,
+    root,
+    transcripts: join(userHomeOf(base), '.claude/projects', root.replace(/[^A-Za-z0-9]/g, '-')),
     file: (rel) => readFileSync(join(root, rel), 'utf8'),
     stop: async () => {
       core.child.kill('SIGTERM');

@@ -3,7 +3,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import type { ClientMessage, MapSnapshot, ModelInfo, ServerMessage } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
 import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
@@ -61,6 +61,7 @@ const { values } = parseArgs({
 const exitWithParent = values['exit-with-parent'];
 const HUB_OWNS_PROJECTS = 'This core runs inside the IDE hub: open and close projects through the hub.';
 const PARENT_GONE_DEADLINE_MS = 10_000;
+const SHUTDOWN_DEADLINE_MS = 30_000;
 
 const port = Number(values.port);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -213,9 +214,14 @@ try {
     mcpServers: () => registry.sessionServers(),
     gate: rt.sessionGate,
     canLeave: () => rt.canLeave(),
+    terminalInput: (data) => terminals.input(AGENT_TERMINAL_ID, data),
   });
   session = agent;
   rt.attach(agent);
+  // A closed agent terminal ends its terminal mode once claude is gone, so the chat never runs a second claude beside it.
+  terminals.onMessage((message) => {
+    if (message.type === 'terminal.exit' && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
+  });
   await agent.start();
   try {
     await rt.start();
@@ -360,16 +366,33 @@ try {
         reply(settingsSnapshot());
         return;
       case 'terminal.open':
+        if (message.kind === 'agent') {
+          const launch = await agent.terminalLaunch();
+          if (!launch) return;
+          try {
+            terminals.open(AGENT_TERMINAL_ID, message.cols, message.rows, launch);
+          } catch (error) {
+            agent.terminalClosed();
+            throw error;
+          }
+          return;
+        }
         terminals.open(message.id, message.cols, message.rows);
         return;
       case 'terminal.input':
+        if (message.id === AGENT_TERMINAL_ID) agent.terminalTyped(message.data);
         terminals.input(message.id, message.data);
         return;
       case 'terminal.resize':
         terminals.resize(message.id, message.cols, message.rows);
         return;
       case 'terminal.close':
-        terminals.close(message.id);
+        if (message.id !== AGENT_TERMINAL_ID) {
+          void terminals.close(message.id);
+          return;
+        }
+        await terminals.close(message.id);
+        agent.terminalClosed();
         return;
       case 'fs.list':
         reply({ type: 'fs.list.result', requestId: message.requestId, ...listDirectories(message.path, homedir()) });
@@ -462,19 +485,35 @@ try {
   terminals.onMessage((message) => running.broadcast(message));
 
   const shutdown = async (): Promise<void> => {
+    // Every step has its own limit, yet one that never settles must not keep a stopped core alive.
+    let step = 'the agent terminal';
+    setTimeout(() => {
+      console.error(`IDE core: the shutdown is stuck at ${step}; exiting anyway.`);
+      process.exit(1);
+    }, SHUTDOWN_DEADLINE_MS).unref();
     login.cancel();
+    // The agent, in the chat or in its terminal, stops before the watcher, so its last writes are still judged.
+    await terminals.close(AGENT_TERMINAL_ID);
+    agent.terminalClosed();
     const closingTerminals = terminals.closeAll();
-    // rt.close() stops the attached agent before the watcher, so the agent's last writes are still judged.
+    step = 'the agent and the watcher';
     await rt.close();
     progress.stop();
     classifier?.stop();
+    step = 'the deploy watch';
     await deployWatch?.close();
     const stopping = mapService?.stop();
+    step = 'the models';
     await models.close();
+    step = 'the map';
     await stopping;
+    step = 'the indexer';
     await indexer?.stop();
+    step = 'the terminals';
     await closingTerminals;
+    step = 'the server';
     await running.close();
+    step = 'the successor';
     store.close();
     lock.release();
     await afterClose?.();
