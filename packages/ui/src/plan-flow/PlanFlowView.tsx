@@ -136,19 +136,19 @@ export function PlanFlowView({ plan, flow, hoverStep }: { plan: PlanView; flow: 
   return (
     <div className="pf-canvas" data-testid="plan-flow">
       <Canvas key={`${plan.id}@${plan.version}:${direction}`} plan={plan} flow={flow} view={view} direction={direction} hoverStep={hoverStep} />
-      <div className="pf-float pf-toolbar">
+      <div className="pf-float pf-row">
+        <LayoutMenu settings={{ ...DEFAULT_LAYOUT, direction }} fields={['direction']} onChange={(next) => changeDirection(next.direction)} />
         <div className="pf-seg">
           <button type="button" className={view === 'now' ? 'on' : ''} onClick={() => setView('now')}>Now</button>
           <button type="button" className={view === 'plan' ? 'on' : ''} onClick={() => setView('plan')}>After the plan</button>
         </div>
-      </div>
-      <LayoutMenu settings={{ ...DEFAULT_LAYOUT, direction }} fields={['direction']} onChange={(next) => changeDirection(next.direction)} />
-      <div className={`pf-float pf-impact${view === 'now' ? ' off' : ''}`}>
-        {stats.created > 0 && <span className="pf-stat create"><b>{stats.created}</b> new</span>}
-        {stats.modified > 0 && <span className="pf-stat modify"><b>{stats.modified}</b> modified</span>}
-        {stats.removed > 0 && <span className="pf-stat delete"><b>{stats.removed}</b> removed</span>}
-        <span className="pf-stat"><b>{stats.links}</b> new links</span>
-        <span className="pf-stat"><b>{stats.files}</b> files</span>
+        <div className={`pf-impact${view === 'now' ? ' off' : ''}`}>
+          {stats.created > 0 && <span className="pf-stat create"><b>{stats.created}</b> new</span>}
+          {stats.modified > 0 && <span className="pf-stat modify"><b>{stats.modified}</b> modified</span>}
+          {stats.removed > 0 && <span className="pf-stat delete"><b>{stats.removed}</b> removed</span>}
+          <span className="pf-stat"><b>{stats.links}</b> new links</span>
+          <span className="pf-stat"><b>{stats.files}</b> files</span>
+        </div>
       </div>
       <div className="pf-float pf-legend">
         <span><i className="lg existing" />existing</span>

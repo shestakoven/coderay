@@ -1,6 +1,7 @@
 /* Window chrome: project tabs, menus, palette, toasts, panel tabs, status toggles. Loaded after styles.css. */
 :root {
-  --chrome: #141516;
+  --chrome: var(--bg);
+  --tab-on: #141516;
   --hair: rgba(255, 255, 255, 0.08);
   --ghost: rgba(255, 255, 255, 0.055);
   --ghost-2: rgba(255, 255, 255, 0.1);
@@ -37,10 +38,7 @@
 .ptab .ptab-bg { position: absolute; inset: 3px 0 3px; border-radius: 7px; background: var(--ghost); opacity: 0; transition: opacity 0.12s; }
 .ptab:not(.on):hover .ptab-bg { opacity: 1; }
 .ptab:not(.on):hover { color: var(--fg); }
-.ptab.on { --ring: var(--bg); background: var(--bg); color: var(--fg); z-index: 2; }
-.ptab.on::before, .ptab.on::after { content: ''; position: absolute; bottom: 0; width: 9px; height: 9px; pointer-events: none; }
-.ptab.on::before { left: -9px; background: radial-gradient(circle at 0 0, transparent 8.5px, var(--bg) 9px); }
-.ptab.on::after { right: -9px; background: radial-gradient(circle at 100% 0, transparent 8.5px, var(--bg) 9px); }
+.ptab.on { --ring: var(--tab-on); background: var(--tab-on); border-radius: 8px 8px 0 0; color: var(--fg); z-index: 2; }
 .ptab .project { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
 .ptab-x { flex: none; width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; color: var(--muted); opacity: 0; transition: opacity 0.1s, background 0.1s, color 0.1s; }
 .ptab:hover .ptab-x, .ptab-x:focus-visible { opacity: 0.9; }
@@ -50,13 +48,12 @@
 .ptab.compact .project { display: none; }
 .ptab.compact .ptab-x { position: absolute; top: 3px; right: 1px; width: 14px; height: 14px; border-radius: 50%; background: var(--raised); box-shadow: 0 0 0 2px var(--chrome); z-index: 3; }
 .ptab.compact:hover .ptab-x { opacity: 1; }
-.ptab.dragging { z-index: 6; transition: none; color: var(--fg); background: var(--surface); border-radius: 9px; height: 30px; margin-bottom: 1px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09); --ring: var(--surface); }
+.ptab.dragging { z-index: 6; transition: none; color: var(--fg); background: var(--raised); border-radius: 9px; height: 30px; margin-bottom: 1px; box-shadow: 0 10px 28px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.09); --ring: var(--raised); }
 .ptab.dragging .ptab-bg { opacity: 0 !important; }
 .pbar-new, .pbar-ovf { align-self: flex-end; margin: 0 0 3px 4px; height: 26px; border-radius: 7px; color: var(--muted); display: flex; align-items: center; transition: background 0.12s, color 0.12s; }
 .pbar-new { width: 26px; justify-content: center; }
 .pbar-ovf { gap: 5px; padding: 0 8px 0 6px; font-size: var(--fs-sm); font-weight: 500; }
 .pbar-new:hover, .pbar-new.on, .pbar-ovf:hover, .pbar-ovf.on { background: var(--ghost-2); color: var(--fg); }
-.pbar-hint { align-self: flex-end; margin: 0 0 8px 6px; color: #70747b; font-size: var(--fs-sm); white-space: nowrap; animation: chrome-fade 0.6s 0.4s both; }
 @keyframes chrome-fade { from { opacity: 0; } }
 .pbar-gear { position: relative; align-self: center; margin-left: 8px; width: 28px; height: 28px; border-radius: var(--r-1); display: grid; place-items: center; color: var(--muted); transition: background 0.12s, color 0.12s; }
 .pbar-branch { align-self: center; margin-left: 8px; }
@@ -144,9 +141,10 @@
 .pbtn.primary kbd, .pbtn.danger kbd { background: rgba(255, 255, 255, 0.16); border-color: rgba(255, 255, 255, 0.28); color: #fff; }
 
 /* ---- tooltips ---- */
-.ptip { position: fixed; z-index: 1000; pointer-events: none; display: flex; align-items: center; gap: 8px; max-width: 320px; padding: 5px 8px; border-radius: 7px; background: #3d4045; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.07); font-size: var(--fs-sm); color: var(--fg); opacity: 0; transform: translateY(-2px); transition: opacity 0.09s, transform 0.09s; }
+.ptip { position: fixed; z-index: 1000; pointer-events: none; display: flex; align-items: center; gap: 4px; max-width: 320px; padding: 6px 10px; border-radius: 7px; background: #3d4045; box-shadow: 0 6px 20px rgba(0, 0, 0, 0.45), inset 0 0 0 1px rgba(255, 255, 255, 0.07); font-size: var(--fs-sm); color: var(--fg); opacity: 0; transform: translateY(-2px); transition: opacity 0.09s, transform 0.09s; }
 .ptip.on { opacity: 1; transform: none; }
-.ptip small { display: block; margin-top: 1px; color: #a9adb4; font-size: var(--fs-xs); white-space: pre-line; }
+.ptip > div:not(:last-child) { margin-right: 8px; }
+.ptip small { display: block; margin-top: 2px; color: #a9adb4; font-size: var(--fs-xs); white-space: pre-line; }
 .ptip kbd { margin: 0; background: rgba(0, 0, 0, 0.22); }
 kbd { display: inline-block; padding: 0 5px; border: 1px solid rgba(255, 255, 255, 0.14); border-bottom-width: 2px; border-radius: 4px; background: rgba(255, 255, 255, 0.07); color: var(--fg); font: 500 calc(10.5px * var(--fs-scale, 1))/16px var(--font-mono); }
 

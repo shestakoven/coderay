@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, type KeyboardEvent } from 'react';
 import type { AskQuestion, PromptAnswer, PromptItem } from '@ide/protocol';
 import { askAnswers, type AskSelection } from './prompt-form';
 
@@ -27,8 +27,13 @@ function AskForm({ questions, onAnswer }: { questions: AskQuestion[]; onAnswer: 
     if ('error' in result) setError(result.error);
     else { setError(null); onAnswer({ kind: 'answers', answers: result.answers }); }
   };
+  const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || !(event.target instanceof HTMLInputElement)) return;
+    event.preventDefault();
+    submit();
+  };
   return (
-    <div className="prompt">
+    <div className="prompt" onKeyDown={onKeyDown}>
       {questions.map((question, index) => (
         <fieldset key={question.question}>
           <legend>

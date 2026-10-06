@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -63,16 +63,18 @@ function git(args: string[], options: GitOptions = {}): Promise<Buffer> {
 }
 
 export class ShadowRepo {
-  private constructor(private readonly dir: string, private readonly emptyBlob: string, private readonly timeoutMs: number | undefined) {}
+  // `fresh`: the repository did not exist before, so no blob a baseline calls stored can be taken to be in it.
+  private constructor(private readonly dir: string, private readonly emptyBlob: string, private readonly timeoutMs: number | undefined, readonly fresh: boolean) {}
 
   static async open(dir: string, options: { timeoutMs?: number } = {}): Promise<ShadowRepo> {
     mkdirSync(dir, { recursive: true });
+    const fresh = !existsSync(join(dir, 'HEAD'));
     await git(['init', '--bare', '-q', '--', dir]);
     for (const [key, value] of [['gc.auto', '0'], ['core.autocrlf', 'false'], ['user.name', 'ide'], ['user.email', 'ide@localhost']]) {
       await git(['--git-dir', dir, 'config', key!, value!]);
     }
     const empty = (await git(['--git-dir', dir, 'hash-object', '-t', 'blob', '-w', '--stdin'], { input: '' })).toString().trim();
-    return new ShadowRepo(dir, empty, options.timeoutMs);
+    return new ShadowRepo(dir, empty, options.timeoutMs, fresh);
   }
 
   private run(args: string[], options?: GitOptions): Promise<Buffer> {

@@ -42,6 +42,25 @@ describe('scanTree with a nested worktree', () => {
     expect(paths).toEqual(expect.arrayContaining(['backend/src/a.py', 'README.md']));
   });
 
+  it('baselines the union of the files of every worktree, and keeps no ignored node_modules file of theirs', async () => {
+    const c = await scanner({ '.gitignore': '.worktrees/\ndist/\nnode_modules/\n.env\n' });
+    c.addWorktree('wt2');
+    c.addWorktree('wt3');
+    await writeTree(join(c.root, WT2), { 'extra/new.py': 'n' });
+    await writeTree(join(c.root, '.worktrees/wt3'), { '.env': 'K=2', 'node_modules/p/.env': 'K=3', 'node_modules/p/i.js': 'i' });
+    const cache = newScanCache();
+    await c.scan(cache);
+    const committed = ['.gitignore', 'README.md', 'backend/src/a.py', 'backend/src/other.py'];
+    const under = (dir: string, files: string[]): string[] => files.map((file) => `${dir}/${file}`);
+    expect(c.paths().filter((path) => path.startsWith('.worktrees/'))).toEqual([
+      ...under(WT1, committed),
+      ...under(WT2, [...committed, 'extra/new.py']),
+      ...under('.worktrees/wt3', ['.env', ...committed]),
+    ].sort());
+    expect(cache.nestedIgnored?.get('.worktrees/wt3')).toEqual(['.worktrees/wt3/.env']);
+    expect(Object.keys(JSON.parse(c.baselines.meta('baselines.nested')!) as object)).toEqual([WT1, WT2, '.worktrees/wt3']);
+  });
+
   it('records the content of a worktree file as it is on disk', async () => {
     const c = await scanner();
     writeFileSync(join(c.wt, 'backend/src/a.py'), 'a = 2\n');

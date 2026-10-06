@@ -16,8 +16,12 @@ const NESTED_KEY = 'baselines.nested';
 
 export class ScanError extends Error {}
 
+// The scan was cut short because the core is closing; nothing it had read was written.
+export class ScanAborted extends Error {}
+
 export interface ScanCache { stats: Map<string, string>; ignored: string[] | null; nestedIgnored?: Map<string, string[]> }
-export const newScanCache = (): ScanCache => ({ stats: new Map(), ignored: null, nestedIgnored: new Map() });
+// With `baselines`, the files whose stat signature is still the one their baseline was taken at are not hashed again.
+export const newScanCache = (baselines?: Baselines): ScanCache => ({ stats: baselines?.signatures() ?? new Map(), ignored: null, nestedIgnored: new Map() });
 const STAT_LANES = 32;
 
 export interface Drift { path: string; before: BaselineRecord | null; after: StoredBlob | null }
@@ -33,6 +37,21 @@ export class Baselines {
   get(rel: string): BaselineRecord | undefined { return this.map.get(rel); }
 
   paths(): string[] { return [...this.map.keys()]; }
+
+  signatures(): Map<string, string> {
+    const sigs = new Map<string, string>();
+    for (const [path, row] of this.map) if (row.sig !== undefined) sigs.set(path, row.sig);
+    return sigs;
+  }
+
+  sign(rows: { path: string; hash: string; sig: string }[]): void {
+    if (rows.length === 0) return;
+    this.store.saveBaselineSigs(rows);
+    for (const { path, hash, sig } of rows) {
+      const held = this.map.get(path);
+      if (held?.hash === hash) this.map.set(path, { ...held, sig });
+    }
+  }
 
   meta(key: string): string | null { return this.store.meta(key); }
 
@@ -185,23 +204,45 @@ async function nestedFiles(root: string, repo: NestedRepo, isGuarded: (rel: stri
   const base = join(repo.abs, prefix);
   const prefixed = (inner: string): string => `${repo.dir}/${prefix}${inner}`;
   const listed = (await lsFiles(base, ['-c', '-o', '--exclude-standard'])).map(prefixed);
-  const ignored = kept ?? (await lsFiles(base, ['-o', '-i', '--exclude-standard'])).filter((inner) => isGuarded(inner) || isGuarded(prefixed(inner))).map(prefixed);
+  const ignored = kept ?? (await lsFiles(base, ['-o', '-i', '--exclude-standard']))
+    .filter((inner) => !excluded(prefixed(inner), isGuarded) && (isGuarded(inner) || isGuarded(prefixed(inner))))
+    .map(prefixed);
   return { listed, ignored };
+}
+
+// Each worktree is a git process walking its own tree, so a project with many of them is listed a few at a time.
+const NESTED_LANES = 6;
+
+async function inLanes<T, R>(items: T[], lanes: number, work: (item: T) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(lanes, items.length) }, async () => {
+    while (next < items.length) {
+      const index = next++;
+      out[index] = await work(items[index]!);
+    }
+  }));
+  return out;
 }
 
 async function nestedCandidates(root: string, known: Iterable<string>, isGuarded: (rel: string) => boolean, cache: ScanCache | undefined, refresh: boolean): Promise<{ rels: string[]; nested: NestedSeen[] }> {
   const rels: string[] = [];
   const nested: NestedSeen[] = [];
-  for (const { repo, dir, mark } of await liveNested(root, known)) {
+  const listings = await inLanes(await liveNested(root, known), NESTED_LANES, async ({ repo, dir, mark }) => {
     try {
       const kept = cache?.nestedIgnored?.get(dir);
       const { listed, ignored } = await nestedFiles(root, repo, isGuarded, kept && !refresh ? kept : undefined);
       cache?.nestedIgnored?.set(dir, ignored);
-      for (const rel of [...listed, ...ignored]) rels.push(rel);
-      nested.push({ dir, mark });
+      return { files: [...listed, ...ignored], seen: { dir, mark } };
     } catch {
       // A worktree removed while it was listed has nothing left to compare.
+      return null;
     }
+  });
+  for (const listing of listings) {
+    if (!listing) continue;
+    for (const rel of listing.files) rels.push(rel);
+    nested.push(listing.seen);
   }
   return { rels, nested };
 }
@@ -211,14 +252,16 @@ async function gitCandidates(root: string, policy: Policy, known: Iterable<strin
   const guarded = guardedMatcher(policy);
   const isGuarded = (rel: string): boolean => guarded.ignores(rel);
   try {
-    const tracked = await lsFiles(root, ['-c', '-o', '--exclude-standard']);
-    const ignored = cache?.ignored && !refresh
-      ? cache.ignored
-      : (await lsFiles(root, ['-o', '-i', '--exclude-standard'])).filter((rel) => !excluded(rel, isGuarded) && isGuarded(rel));
+    const [tracked, ignored, internals, nested] = await Promise.all([
+      lsFiles(root, ['-c', '-o', '--exclude-standard']),
+      cache?.ignored && !refresh
+        ? Promise.resolve(cache.ignored)
+        : lsFiles(root, ['-o', '-i', '--exclude-standard']).then((all) => all.filter((rel) => !excluded(rel, isGuarded) && isGuarded(rel))),
+      gitInternals(root),
+      nestedCandidates(root, known, isGuarded, cache, refresh),
+    ]);
     if (cache) cache.ignored = ignored;
-    const internals = await gitInternals(root);
     const abs = new Map([...internals].filter(([rel]) => isGuarded(rel)));
-    const nested = await nestedCandidates(root, known, isGuarded, cache, refresh);
     const rels = [...new Set([...tracked, ...ignored, ...abs.keys(), ...nested.rels])].filter((rel) => !excluded(rel, isGuarded)).sort();
     return { rels, abs, nested: nested.nested };
   } catch (error) {
@@ -253,7 +296,24 @@ export async function hashCandidates(
   return { blobs, unreadable };
 }
 
-const record = (path: string, blob: StoredBlob): BaselineRecord => ({ path, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode });
+const HASH_CHUNK = 2_000;
+
+// In chunks, so a scan of tens of thousands of files can be stopped between them.
+async function hashInChunks(root: string, shadow: ShadowRepo, rels: string[], abs: ReadonlyMap<string, string>, stopped?: () => boolean): Promise<{ blobs: Map<string, StoredBlob>; unreadable: string[] }> {
+  const blobs = new Map<string, StoredBlob>();
+  const unreadable: string[] = [];
+  for (let from = 0; from < rels.length; from += HASH_CHUNK) {
+    if (stopped?.()) throw new ScanAborted();
+    const part = await hashCandidates(root, shadow, rels.slice(from, from + HASH_CHUNK), abs);
+    for (const [rel, blob] of part.blobs) blobs.set(rel, blob);
+    for (const rel of part.unreadable) unreadable.push(rel);
+  }
+  return { blobs, unreadable };
+}
+
+const record = (path: string, blob: StoredBlob, sig?: string): BaselineRecord => ({
+  path, hash: blob.hash, stored: blob.stored, size: blob.size, mode: blob.mode, ...(sig === undefined ? {} : { sig }),
+});
 
 const RACY_MS = 2_000;
 
@@ -279,22 +339,23 @@ export async function scanTree(
   shadow: ShadowRepo,
   baselines: Baselines,
   cache?: ScanCache,
-  options: { refresh?: boolean; racyMs?: number; unsighted?: (rels: string[]) => void } = {},
+  options: { refresh?: boolean; racyMs?: number; unsighted?: (rels: string[]) => void; stopped?: () => boolean } = {},
 ): Promise<ScanResult> {
   const gone = forgetGoneNested(root, baselines);
   const isGone = (path: string): boolean => gone.some((prefix) => path.startsWith(prefix));
   const seen = seenNested(baselines);
   const found = (await gitCandidates(root, policy, seen.keys(), cache, options.refresh))
     ?? { rels: await walkCandidates(root), abs: new Map<string, string>(), nested: (await liveNested(root, seen.keys())).map(({ dir, mark }) => ({ dir, mark })) };
+  if (options.stopped?.()) throw new ScanAborted();
   const seeding = baselines.meta(SEEDED_KEY) === null;
   const { sigs, settled } = cache ? await signatures(root, found.rels, found.abs, Date.now(), options.racyMs ?? RACY_MS) : { sigs: new Map<string, string>(), settled: new Set<string>() };
   const trusted = (): Map<string, string> => new Map([...sigs].filter(([rel]) => settled.has(rel)));
   const toHash = cache && !seeding ? found.rels.filter((rel) => sigs.get(rel) !== cache.stats.get(rel)) : found.rels;
   const hashing = new Set(toHash);
-  const { blobs, unreadable } = await hashCandidates(root, shadow, toHash, found.abs);
+  const { blobs, unreadable } = await hashInChunks(root, shadow, toHash, found.abs, options.stopped);
   if (seeding) {
     for (const path of baselines.paths()) if (!blobs.has(path)) baselines.remove(path);
-    baselines.setMany([...blobs].map(([path, blob]) => record(path, blob)));
+    baselines.setMany([...blobs].map(([path, blob]) => record(path, blob, settled.has(path) ? sigs.get(path) : undefined)));
     baselines.setMeta(SEEDED_KEY, '1');
     rememberNested(baselines, found.nested);
     for (const rel of unreadable) sigs.delete(rel);
@@ -330,6 +391,14 @@ export async function scanTree(
   if (unsighted.length > 0) options.unsighted?.(unsighted);
   rememberNested(baselines, found.nested);
   if (cache) {
+    // A baseline still at the hash the file just had keeps the file's signature, so the next start need not read the file again.
+    const signed: { path: string; hash: string; sig: string }[] = [];
+    for (const [path, blob] of blobs) {
+      const sig = sigs.get(path);
+      const held = baselines.get(path);
+      if (sig !== undefined && settled.has(path) && held?.hash === blob.hash && held.sig !== sig) signed.push({ path, hash: blob.hash, sig });
+    }
+    baselines.sign(signed);
     for (const d of drift) sigs.delete(d.path);
     for (const rel of hashing) if (!blobs.has(rel)) sigs.delete(rel);
     cache.stats = trusted();

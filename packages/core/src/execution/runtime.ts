@@ -9,7 +9,7 @@ import { Hold } from '../gate/hold';
 import { classifyPaths, guardedMatcher } from '../gate/paths';
 import { createGateRuntime, type GateRuntime, type GateRuntimeOptions } from '../gate/runtime';
 import { toolClass } from '../gate/tools';
-import { Baselines, newScanCache, ScanError, scanTree } from '../history/baselines';
+import { Baselines, newScanCache, ScanAborted, ScanError, scanTree } from '../history/baselines';
 import { ChangeService } from '../history/changes';
 import { Checkpoints } from '../history/checkpoints';
 import { DiffService } from '../history/diff';
@@ -190,7 +190,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
   let lastScanWall = Date.now();
   let lastScanMs = 0;
   let scanFailing = false;
-  const scanCache = newScanCache();
+  const scanCache = newScanCache(baselines);
   const touched = new Set<string>();
 
   const syncHold = (): void => {
@@ -204,7 +204,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     const startedWall = Date.now();
     const started = performance.now();
     const policy = o.policy();
-    const { seeded, drift } = await scanTree(o.root, policy, shadow, baselines, scanCache, { refresh, unsighted: (rels) => changes.markUnsighted(rels) });
+    const { seeded, drift } = await scanTree(o.root, policy, shadow, baselines, scanCache, { refresh, unsighted: (rels) => changes.markUnsighted(rels), stopped: () => closing });
     let failed = false;
     if (!seeded && drift.length > 0) {
       const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy });
@@ -238,7 +238,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     scanning = scan(full)
       .then(() => { scanFailing = false; })
       .catch((error) => {
-        if (scanFailing) return;
+        if (error instanceof ScanAborted || scanFailing) return;
         scanFailing = true;
         console.error('execution: the periodic scan failed', error);
         if (error instanceof ScanError) notice(`The IDE could not check the project files for changes (${error.message}).`);
@@ -346,8 +346,10 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       if (closing) return;
       lastScanWall = Date.now();
       opened = await ShadowRepo.open(o.shadowDir);
+      // Its blobs are put back by hashing every file again.
+      if (opened.fresh) scanCache.stats.clear();
       if (closing) return;
-      await recoverBaselines({ root: o.root, shadow, baselines, policy: o.policy(), changes, watchdog, crashed: current.startedFromCrash(), notice, cache: scanCache });
+      await recoverBaselines({ root: o.root, shadow, baselines, policy: o.policy(), changes, watchdog, crashed: current.startedFromCrash(), notice, cache: scanCache, stopped: () => closing });
       if (closing) return;
       watchdog.restore();
       syncHold();

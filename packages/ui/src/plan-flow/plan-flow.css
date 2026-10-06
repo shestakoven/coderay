@@ -4,12 +4,17 @@
 .pf-canvas .react-flow__background { opacity: 0.35; }
 
 .pf-float { position: absolute; z-index: 5; }
-.pf-toolbar { top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
-.pf-seg { display: flex; padding: 3px; gap: 2px; background: var(--surface); border: 1px solid var(--border); border-radius: 9px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); }
-.pf-seg button { background: none; border: 0; color: var(--muted); padding: 5px 12px; border-radius: 6px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; transition: background 0.15s, color 0.15s; }
+.pf-row { top: 12px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; pointer-events: none; }
+.map-area.has-view .pf-row { top: 50px; }
+.pf-row .map-layout, .pf-row .pf-seg { pointer-events: auto; }
+.pf-row .map-layout, .map-area.has-view .pf-row .map-layout { position: relative; inset: auto; }
+.pf-row .map-layout > button { height: 26px; padding-block: 0; }
+.pf-row .map-layout-panel { position: absolute; top: calc(100% + 6px); left: 0; }
+.pf-seg { display: flex; height: 26px; padding: 2px; gap: 2px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-2); box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3); }
+.pf-seg button { background: none; border: 0; color: var(--muted); padding: 0 11px; border-radius: var(--r-1); font: inherit; font-size: calc(11.5px * var(--fs-scale, 1)); cursor: pointer; transition: background 0.15s, color 0.15s; }
 .pf-seg button:hover { color: var(--fg); }
 .pf-seg button.on { background: var(--raised); color: var(--fg); }
-.pf-impact { top: 12px; left: 84px; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 25px; max-width: calc(50% - 170px); transition: opacity 0.25s; }
+.pf-impact { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; min-height: 26px; transition: opacity 0.25s; }
 .pf-impact.off { opacity: 0; pointer-events: none; }
 .pf-stat { display: inline-flex; gap: 4px; align-items: baseline; padding: 3px 9px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); font-size: calc(11px * var(--fs-scale, 1)); color: var(--muted); }
 .pf-stat b { color: var(--fg); font-weight: 650; }

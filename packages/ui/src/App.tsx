@@ -51,8 +51,8 @@ export function App() {
   const hub = projects.mode === 'hub';
 
   const send = useCallback((message: ClientMessage): boolean => control.current?.send(message) ?? false, []);
-  const notify = useCallback((id: string, title: string, body: string, kind: 'attention' | 'done' | 'error') => {
-    dispatchNotices({ type: 'add', notice: { id: crypto.randomUUID(), projectId: id, kind, title, body } });
+  const notify = useCallback((id: string, title: string, body: string, kind: 'attention' | 'done' | 'error', bubble = true) => {
+    if (bubble) dispatchNotices({ type: 'add', notice: { id: crypto.randomUUID(), projectId: id, kind, title, body } });
     if (kind === 'attention') playChime();
     if (document.hidden && typeof Notification !== 'undefined' && Notification.permission === 'granted') new Notification(title, { body });
   }, []);
@@ -141,11 +141,12 @@ export function App() {
     born.current[id] ??= Date.now();
     dispatchProjects({ type: 'status', id, status: next });
     const project = live.current.projects.find((candidate) => candidate.id === id);
-    const background = id !== live.current.activeId || !document.hasFocus();
+    const shown = id === live.current.activeId;
+    const background = !shown || !document.hasFocus();
     const notice = project ? noticeFor(previous, next, tabLabels(live.current.projects)[id] ?? project.name) : null;
     // Right after a view connects its first snapshots arrive: a question still waiting is news, an old crash or finish is not.
     const settling = Date.now() - (born.current[id] ?? 0) < SETTLE_MS;
-    if (notice && background && !(settling && notice.kind !== 'attention')) notify(id, notice.title, notice.body, notice.kind);
+    if (notice && background && !(settling && notice.kind !== 'attention')) notify(id, notice.title, notice.body, notice.kind, !shown);
     else dispatchNotices({ type: 'status', projectId: id, kind: next.kind });
   }, [notify]);
   const coreStates = useRef<Record<string, string>>({});
@@ -154,7 +155,7 @@ export function App() {
       const before = coreStates.current[project.id];
       coreStates.current[project.id] = project.state;
       if (before === 'running' && project.state === 'failed' && (project.id !== projects.activeId || !document.hasFocus())) {
-        notify(project.id, `${tabLabels(projects.projects)[project.id] ?? project.name} stopped`, project.error ?? 'The IDE core stopped.', 'error');
+        notify(project.id, `${tabLabels(projects.projects)[project.id] ?? project.name} stopped`, project.error ?? 'The IDE core stopped.', 'error', project.id !== projects.activeId);
       }
     }
   }, [projects.projects, projects.activeId, notify]);

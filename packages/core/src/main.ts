@@ -225,19 +225,26 @@ try {
     if (message.type === 'terminal.exit' && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
   });
   await agent.start();
-  try {
-    await rt.start();
-    // The dev shell reloads the core on every code edit, which kills the agent that made the edit.
-    if (process.env.IDE_AUTO_RESUME === '1' && agent.startedFromCrash()) {
-      try {
-        agent.send('[IDE] The IDE core restarted to load new code and your process ended with it. Continue where you stopped.', { fromUser: false });
-      } catch (error) {
-        agent.notice(`The agent could not be resumed after the reload (${(error as Error).message}).`);
+  // Checking a large project's files takes a while: the core listens meanwhile. What starts the agent or changes the current chat
+  // waits for it, because the check records what it finds into the chat that is current when it ends.
+  let watched = false;
+  const watching = (async (): Promise<void> => {
+    try {
+      await rt.start();
+      // The dev shell reloads the core on every code edit, which kills the agent that made the edit.
+      if (process.env.IDE_AUTO_RESUME === '1' && agent.startedFromCrash()) {
+        try {
+          agent.send('[IDE] The IDE core restarted to load new code and your process ended with it. Continue where you stopped.', { fromUser: false });
+        } catch (error) {
+          agent.notice(`The agent could not be resumed after the reload (${(error as Error).message}).`);
+        }
       }
+    } catch (error) {
+      agent.notice(`The IDE could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
+    } finally {
+      watched = true;
     }
-  } catch (error) {
-    agent.notice(`The IDE could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
-  }
+  })();
 
   const settingsSnapshot = (): ServerMessage => ({
     type: 'settings.snapshot',
@@ -313,6 +320,8 @@ try {
   const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
+        if (!watched) agent.notice('Checking the project files first; the agent starts when that is done.');
+        await watching;
         agent.send(message.text, { images: message.images });
         broadcastSessions();
         return;
@@ -329,6 +338,7 @@ try {
         void mapService?.regroup();
         return;
       case 'session.new':
+        await watching;
         await agent.newSession();
         return;
       case 'session.list':
@@ -338,16 +348,19 @@ try {
         reply({ type: 'models.snapshot', models: await modelCatalog() });
         return;
       case 'session.switch':
+        await watching;
         await agent.switchSession(message.id);
         return;
       case 'session.rename':
         agent.renameSession(message.id, message.title);
         return;
       case 'session.delete':
+        await watching;
         await agent.deleteSession(message.id);
         broadcastSessions();
         return;
       case 'session.delete-all':
+        await watching;
         await agent.deleteAllSessions();
         broadcastSessions();
         return;
@@ -369,6 +382,7 @@ try {
         return;
       case 'terminal.open':
         if (message.kind === 'agent') {
+          await watching;
           const launch = await agent.terminalLaunch();
           if (!launch) return;
           try {

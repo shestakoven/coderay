@@ -255,6 +255,18 @@ describe('the unclean-stop marker and orphaned unknown changes', () => {
     expect(f.store.meta(UNCLEAN_STOP_KEY)).toBe('1');
   });
 
+  it('returns quietly when the core is closing: no notice, no error, the marker stays and nothing is recorded', async () => {
+    const f = await driftFixture({ crashed: true });
+    f.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    editOnDisk(f.root, { 'a.ts': 'changed' });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    await recoverBaselines({
+      root: f.root, shadow: f.shadow, baselines: f.baselines, policy: DEFAULT_POLICY, changes: f.changes, watchdog: f.watchdog, crashed: true,
+      notice: (text) => f.notices.push(text), stopped: () => true,
+    });
+    expect([f.notices, error.mock.calls, f.store.meta(UNCLEAN_STOP_KEY), f.watchdog.events(), f.changes.changes()]).toEqual([[], [], '1', [], []]);
+  });
+
   it('raises the event for unknown changes recorded before a crash between recording and raising, once', async () => {
     const f = await driftFixture({ crashed: false });
     editOnDisk(f.root, { 'a.ts': 'changed' });

@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView } from '@ide/protocol';
@@ -8,7 +8,7 @@ import { writeMapFile } from '../../src/map/map-file';
 import { isAlive } from '../../src/os-process';
 import type { WatchdogSession } from '../../src/watchdog/watchdog';
 import { tempDir, waitFor } from '../helpers';
-import { AWAIT, build, HOLD_OPEN, INIT, mcpWrite, OUT_OF_PLAN, pendingEvent, WAIT_TURN } from './harness';
+import { AWAIT, build, FILES, HOLD_OPEN, INIT, mcpWrite, OUT_OF_PLAN, pendingEvent, WAIT_TURN } from './harness';
 
 const _sessionFitsTheWatchdog = (session: AgentSession): WatchdogSession => session;
 void _sessionFitsTheWatchdog;
@@ -64,6 +64,20 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     await b.rt.watchdog.answer(event.id, { kind: 'all', answer: 'keep' });
     await waitFor(() => b.rt.hold.waiting() === 0, 'the new process released');
     expect(b.rt.hold.isHeld()).toBe(false);
+  });
+
+  it('hashes every unchanged file again when its shadow repository was deleted, so their before-images come back', async () => {
+    const b = await build({ scenario: WAIT_TURN, start: false });
+    await new Promise((resolve) => setTimeout(resolve, 2_200));
+    await b.rt.start();
+    const app = (): { hash: string; sig?: string } => b.store.baselines().find((row) => row.path === 'src/app.ts')!;
+    const signed = app().sig !== undefined;
+    await b.session.close();
+    await b.rt.close();
+    rmSync(b.shadowDir, { recursive: true });
+    const again = await build({ scenario: WAIT_TURN, from: b });
+    const blob = execFileSync('git', ['--git-dir', again.shadowDir, 'cat-file', '-p', app().hash], { encoding: 'utf8' });
+    expect([signed, blob]).toEqual([true, FILES['src/app.ts']]);
   });
 
   it('holds after a core restart that restores a pending event', async () => {

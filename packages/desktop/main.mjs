@@ -4,6 +4,7 @@ import { connect, createServer } from 'node:net';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, Menu, shell } from 'electron';
+import { keepRoomForTrafficLights } from './chrome-insets.mjs';
 
 // The OS hands out a free port; a fixed one would collide with a running dev:core / dev:ui.
 const freePort = () =>
@@ -89,11 +90,11 @@ app.whenReady().then(async () => {
   });
   win.webContents.on('dom-ready', () => {
     win.webContents.insertCSS(`
-      html:root { --tabs-inset: 0px; }
-      header.topbar { padding-left: 84px; -webkit-app-region: drag; }
+      header.topbar { -webkit-app-region: drag; }
       header.topbar :is(button, select, input, label, a, [role='tab']) { -webkit-app-region: no-drag; }
     `);
   });
+  keepRoomForTrafficLights(win);
   const external = (url) => {
     if (/^https?:/.test(url)) shell.openExternal(url);
   };

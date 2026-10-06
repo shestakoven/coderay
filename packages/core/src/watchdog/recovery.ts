@@ -6,7 +6,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { ChangeView, Policy, ToolStatus } from '@ide/protocol';
 import { classifyPaths } from '../gate/paths';
-import { scanTree, type Baselines, type Drift, type ScanCache } from '../history/baselines';
+import { ScanAborted, scanTree, type Baselines, type Drift, type ScanCache } from '../history/baselines';
 import type { ChangeService } from '../history/changes';
 import type { ShadowRepo } from '../history/shadow';
 import type { BaselineRecord } from '../store/store';
@@ -22,6 +22,7 @@ export interface RecoverBaselinesOptions {
   crashed: boolean;
   notice?: (text: string) => void;
   cache?: ScanCache;
+  stopped?: () => boolean;
 }
 
 export const UNCLEAN_STOP_KEY = 'unclean-stop-pending';
@@ -33,7 +34,7 @@ export function largest(values: Iterable<number>): number {
 }
 
 async function scanAndRecord(o: RecoverBaselinesOptions): Promise<void> {
-  const { seeded, drift } = await scanTree(o.root, o.policy, o.shadow, o.baselines, o.cache, { unsighted: (rels) => o.changes.markUnsighted(rels) });
+  const { seeded, drift } = await scanTree(o.root, o.policy, o.shadow, o.baselines, o.cache, { unsighted: (rels) => o.changes.markUnsighted(rels), stopped: o.stopped });
   if (seeded || drift.length === 0) return;
   const infos = await classifyPaths(drift.map((d) => join(o.root, d.path)), { root: o.root, policy: o.policy });
   const enforced: Drift[] = [];
@@ -54,6 +55,7 @@ export async function recoverBaselines(o: RecoverBaselinesOptions): Promise<void
     await scanAndRecord(o);
     complete = true;
   } catch (error) {
+    if (error instanceof ScanAborted) return;
     const reason = error instanceof Error ? error.message : String(error);
     console.error('recovery: could not check the files changed while the core was down', error);
     o.notice?.(`The IDE could not check which files changed while it was not running (${reason}).`);

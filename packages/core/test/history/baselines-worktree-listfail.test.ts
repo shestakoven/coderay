@@ -12,7 +12,7 @@ import { git, isolateGit, projectWithWorktree } from '../worktree-fixture';
 
 isolateGit();
 
-const listing = vi.hoisted(() => ({ fails: false }));
+const listing = vi.hoisted(() => ({ fails: false, filesFailIn: null as string | null }));
 
 vi.mock('node:child_process', async (original) => {
   const actual = await original<typeof import('node:child_process')>();
@@ -20,6 +20,10 @@ vi.mock('node:child_process', async (original) => {
     const [, argv, , callback] = args as [string, unknown, unknown, unknown];
     if (listing.fails && Array.isArray(argv) && argv.includes('worktree') && argv.includes('list') && typeof callback === 'function') {
       queueMicrotask(() => callback(new Error('git worktree list failed'), '', ''));
+      return undefined;
+    }
+    if (listing.filesFailIn && Array.isArray(argv) && argv.includes('ls-files') && String(argv[1]).includes(listing.filesFailIn) && typeof callback === 'function') {
+      queueMicrotask(() => callback(new Error('git ls-files failed'), '', ''));
       return undefined;
     }
     return (actual.execFile as (...rest: unknown[]) => unknown)(...args);
@@ -32,6 +36,7 @@ const SILENT = { seeded: false, drift: [], unreadable: [] };
 
 async function seeded() {
   listing.fails = false;
+  listing.filesFailIn = null;
   const { root, wt } = await projectWithWorktree({}, DIR);
   const store = openStore(tempDir('lf-store-'));
   const shadow = await ShadowRepo.open(tempDir('lf-shadow-'));
@@ -53,6 +58,19 @@ describe('scanTree when git cannot list the worktrees', () => {
     c.restart(true);
     const { drift } = await c.scan();
     expect(drift.map((d) => [d.path, d.before !== null, d.after !== null])).toEqual([[`${DIR}/backend/src/a.py`, true, true]]);
+  });
+
+  it('skips a worktree whose files fail to list, keeping its baselines and reporting the others', async () => {
+    const c = await seeded();
+    git(c.root, 'worktree', 'add', '-q', 'trees/w2');
+    invalidateWorktrees(c.root);
+    await c.scan();
+    writeFileSync(join(c.wt, 'backend/src/a.py'), 'a = 2\n');
+    writeFileSync(join(c.root, 'trees/w2/backend/src/a.py'), 'a = 3\n');
+    listing.filesFailIn = 'trees/w2';
+    const { drift } = await c.scan();
+    expect(drift.map((d) => d.path)).toEqual([`${DIR}/backend/src/a.py`]);
+    expect(c.paths()).toEqual(expect.arrayContaining(['trees/w2/backend/src/a.py']));
   });
 
   it('reports a file of that worktree removed meanwhile', async () => {

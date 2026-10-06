@@ -22,32 +22,29 @@ interface Props {
 }
 
 const NEW_WIDTH = 34;
-const HINT_MIN_BAR = 520;
 const WORST: StatusKind[] = ['attention', 'error', 'working'];
 
 export function ProjectTabs({ projects, labels, activeId, statusOf, mac, newOpen, overflowOpen, onActivate, onClose, onReorder, onNew, onOverflow }: Props) {
   const wrap = useRef<HTMLDivElement>(null);
   const [fit, setFit] = useState<TabFit>({ mode: 'full', visible: projects.map((_, index) => index), hidden: [] });
   const activeIndex = Math.max(0, projects.findIndex((project) => project.id === activeId));
-  const hint = projects.length === 1;
   const [drag, setDrag] = useState<{ id: string; dx: number; to: number } | null>(null);
   const start = useRef<{ id: string; from: number; x: number; slot: number; moved: boolean } | null>(null);
   const justDragged = useRef(false);
-  const command = mac ? '⌘' : 'Ctrl+';
 
   useLayoutEffect(() => {
     const element = wrap.current;
     if (!element) return;
     const measure = () => {
       const inset = Number.parseFloat(getComputedStyle(element).paddingLeft) || 0;
-      const room = element.clientWidth - inset - NEW_WIDTH - 10 - (hint && element.clientWidth > HINT_MIN_BAR ? 190 : 0);
+      const room = element.clientWidth - inset - NEW_WIDTH - 10;
       setFit(fitTabs(projects.length, activeIndex, room));
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     return () => observer.disconnect();
-  }, [projects.length, activeIndex, hint]);
+  }, [projects.length, activeIndex]);
 
   const visible = fit.visible.map((index) => projects[index]).filter((project): project is HubProject => project !== undefined);
   const hidden = fit.hidden.map((index) => projects[index]).filter((project): project is HubProject => project !== undefined);
@@ -116,7 +113,7 @@ export function ProjectTabs({ projects, labels, activeId, statusOf, mac, newOpen
               style={{ transform: dragging ? `translateX(${drag.dx}px)` : shift !== 0 ? `translateX(${shift}px)` : undefined } as CSSProperties}
               data-project-id={project.id}
               data-tip={label}
-              data-sub={`${status.line}${projects.length > 1 ? '\nDrag to reorder' : ''}`}
+              data-sub={status.line}
               data-keys={key}
               onClick={() => { if (!justDragged.current) onActivate(project.id); }}
               onAuxClick={(event) => { if (event.button === 1 && projects.length > 1) onClose(project.id); }}
@@ -145,7 +142,6 @@ export function ProjectTabs({ projects, labels, activeId, statusOf, mac, newOpen
       <button data-menu-anchor className={`pbar-new${newOpen ? ' on' : ''}`} aria-label="Open project" aria-haspopup="menu" aria-expanded={newOpen} data-tip="Open project" data-keys={`${mac ? '⌘' : 'Ctrl'} T`} onClick={(event) => onNew(event.currentTarget)}>
         <Icon name="plus" size={16} />
       </button>
-      {hint && <span className="pbar-hint">Open another project<kbd>{command}T</kbd></span>}
     </div>
   );
 }

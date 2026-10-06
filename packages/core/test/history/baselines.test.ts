@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { chmodSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
-import { Baselines, EXCLUDED_DIRS, ScanError, hashCandidates, newScanCache, scanTree } from '../../src/history/baselines';
+import { Baselines, EXCLUDED_DIRS, ScanAborted, ScanError, hashCandidates, newScanCache, scanTree } from '../../src/history/baselines';
 import { ShadowRepo } from '../../src/history/shadow';
 import { openStore } from '../../src/store/store';
 import { tempDir, writeTree } from '../helpers';
@@ -135,6 +135,78 @@ describe('scanTree with a cache', () => {
     const cached = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, NO_RACY);
     const refreshed = await scanTree(root, DEFAULT_POLICY, shadow, baselines, cache, { refresh: true, racyMs: 0 });
     expect([cached.drift.map((d) => d.path), refreshed.drift.map((d) => d.path)]).toEqual([[], ['other/.env']]);
+  });
+});
+
+describe('scanTree after the core restarted', () => {
+  const hashed = (put: { mock: { calls: unknown[][] } }): string[] => put.mock.calls.flatMap((call) => call[0] as string[]).map((path) => path.split('/').slice(-1)[0]!).sort();
+
+  async function seededAndStopped(files = FILES, options: { racyMs?: number } = NO_RACY) {
+    const ctx = await setup(files);
+    await scanTree(ctx.root, DEFAULT_POLICY, ctx.shadow, ctx.baselines, newScanCache(), options);
+    const restart = (opts: { racyMs?: number } = NO_RACY) => {
+      const reopened = new Baselines(ctx.store);
+      return scanTree(ctx.root, DEFAULT_POLICY, ctx.shadow, reopened, newScanCache(reopened), opts);
+    };
+    return { ...ctx, restart, signed: () => ctx.store.baselines().filter((b) => b.sig !== undefined).map((b) => b.path).sort() };
+  }
+
+  it('hashes only the files that changed meanwhile and reports them', async () => {
+    const c = await seededAndStopped();
+    writeFileSync(join(c.root, 'a.ts'), 'changed content');
+    writeFileSync(join(c.root, 'fresh.ts'), 'new');
+    const put = vi.spyOn(c.shadow, 'putMany');
+    const result = await c.restart();
+    expect([result.drift.map((d) => d.path).sort(), hashed(put)]).toEqual([['a.ts', 'fresh.ts'], ['a.ts', 'fresh.ts']]);
+  });
+
+  it('still reports a change nobody took over after the next restart too', async () => {
+    const c = await seededAndStopped();
+    writeFileSync(join(c.root, 'a.ts'), 'changed content');
+    await c.restart();
+    const put = vi.spyOn(c.shadow, 'putMany');
+    const again = await c.restart();
+    expect([again.drift.map((d) => d.path), hashed(put)]).toEqual([['a.ts'], ['a.ts']]);
+  });
+
+  it('hashes a file touched without a content change once, finds no drift, and trusts its new signature afterwards', async () => {
+    const c = await seededAndStopped();
+    utimesSync(join(c.root, 'a.ts'), 1_000, 1_000);
+    const put = vi.spyOn(c.shadow, 'putMany');
+    const touched = await c.restart();
+    const touchedHash = hashed(put);
+    put.mockClear();
+    await c.restart();
+    expect([touched.drift, touchedHash, hashed(put)]).toEqual([[], ['a.ts'], []]);
+  });
+
+  it('hashes a file again whose baseline was rewritten by anything other than a scan', async () => {
+    const c = await seededAndStopped();
+    const { path, hash, stored, size, mode } = c.baselines.get('a.ts')!;
+    c.baselines.set({ path, hash, stored, size, mode });
+    const put = vi.spyOn(c.shadow, 'putMany');
+    const result = await c.restart();
+    expect([result.drift, hashed(put)]).toEqual([[], ['a.ts']]);
+  });
+
+  it('stops between listing and hashing when asked to, leaving the baselines and the shadow repository as they were', async () => {
+    const c = await seededAndStopped();
+    writeFileSync(join(c.root, 'a.ts'), 'changed content');
+    const before = c.store.baselines();
+    const put = vi.spyOn(c.shadow, 'putMany');
+    let asked = 0;
+    const reopened = new Baselines(c.store);
+    const aborted = scanTree(c.root, DEFAULT_POLICY, c.shadow, reopened, newScanCache(reopened), { ...NO_RACY, stopped: () => ++asked > 1 });
+    await expect(aborted).rejects.toBeInstanceOf(ScanAborted);
+    expect([c.store.baselines(), put.mock.calls.length]).toEqual([before, 0]);
+  });
+
+  it('never keeps the signature of a file written within the racy window', async () => {
+    const racy = { racyMs: 60_000 };
+    const c = await seededAndStopped(FILES, racy);
+    const seeded = c.signed();
+    await scanTree(c.root, DEFAULT_POLICY, c.shadow, c.baselines, newScanCache(), racy);
+    expect([seeded, c.signed()]).toEqual([[], []]);
   });
 });
 

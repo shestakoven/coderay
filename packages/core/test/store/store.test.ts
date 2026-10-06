@@ -184,9 +184,9 @@ describe('openStore', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('PRAGMA user_version = 8');
+    db.exec('PRAGMA user_version = 9');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 8, newer than this IDE understands (7)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 9, newer than this IDE understands (8)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
@@ -332,6 +332,7 @@ describe('plan flow storage', () => {
       const db = new DatabaseSync(join(dir, 'history.sqlite'));
       db.exec('ALTER TABLE plans DROP COLUMN flow');
       db.exec('ALTER TABLE sessions DROP COLUMN account_id');
+      db.exec('ALTER TABLE baselines DROP COLUMN sig');
       db.exec('PRAGMA user_version = 5');
       db.close();
       return dir;
@@ -354,13 +355,13 @@ describe('plan flow storage', () => {
       expect(store.plans('s1').plans.map((saved) => [saved.id, saved.flow])).toStrictEqual([['plan-1', null], ['plan-2', flow]]);
     });
 
-    it('moves to schema version 7', () => {
+    it('moves to the current schema version', () => {
       const dir = schemaFiveHistory();
       freshStore(dir).close();
       const check = new DatabaseSync(join(dir, 'history.sqlite'));
       const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
       check.close();
-      expect(version).toBe(7);
+      expect(version).toBe(8);
     });
   });
 });
@@ -402,7 +403,7 @@ describe('history tables (schema 3)', () => {
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     const step = check.prepare("SELECT status, cycle FROM step_states WHERE plan_id = 'p'").get();
     check.close();
-    expect(version).toBe(7);
+    expect(version).toBe(8);
     expect(step).toEqual({ status: 'done', cycle: 0 });
   });
 
@@ -501,6 +502,38 @@ describe('history tables (schema 3)', () => {
     store.saveBaselines([baseline('a.ts'), baseline('b.ts')], []);
     store.saveBaselines([{ ...baseline('a.ts'), hash: 'new', size: 99, mode: 0o755, stored: false }], ['b.ts']);
     expect(store.baselines()).toEqual([{ path: 'a.ts', hash: 'new', stored: false, size: 99, mode: 0o755 }]);
+  });
+
+  it('adds the signature column to a version 7 history and keeps its baselines', () => {
+    const dir = tempDir('ide-store-');
+    const first = openStore(dir);
+    first.saveBaselines([baseline('a.ts')], []);
+    first.close();
+    const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec('ALTER TABLE baselines DROP COLUMN sig; PRAGMA user_version = 7');
+    db.close();
+
+    const store = freshStore(dir);
+    expect(store.baselines()).toEqual([baseline('a.ts')]);
+    store.saveBaselines([{ ...baseline('b.ts'), sig: '1:2:3:4' }], []);
+    expect(store.baselines().find((b) => b.path === 'b.ts')?.sig).toBe('1:2:3:4');
+  });
+
+  it('drops the signature of a baseline that is written again without one', () => {
+    const store = freshStore();
+    store.saveBaselines([{ ...baseline('a.ts'), sig: '1:2:3:4' }], []);
+    store.saveBaselines([baseline('a.ts')], []);
+    expect(store.baselines()).toEqual([baseline('a.ts')]);
+  });
+
+  it('signs a baseline that is still at the hash it was taken for and leaves one at another hash unsigned', () => {
+    const store = freshStore();
+    store.saveBaselines([baseline('a.ts'), baseline('b.ts')], []);
+    store.saveBaselineSigs([
+      { path: 'a.ts', hash: 'h-a.ts', sig: 'sig-a' },
+      { path: 'b.ts', hash: 'older-hash', sig: 'sig-b' },
+    ]);
+    expect(store.baselines().map((b) => [b.path, b.sig])).toEqual([['a.ts', 'sig-a'], ['b.ts', undefined]]);
   });
 
   it('upserts a checkpoint by plan, step and cycle and reads the manifests back', () => {

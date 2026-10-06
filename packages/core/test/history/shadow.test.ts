@@ -48,6 +48,15 @@ describe('ShadowRepo.open', () => {
   });
 });
 
+describe('ShadowRepo.fresh', () => {
+  it('is true for a repository that did not exist before and false once it is opened again', async () => {
+    const dir = tempDir('shadow-');
+    const first = await ShadowRepo.open(dir);
+    const second = await ShadowRepo.open(dir);
+    expect([first.fresh, second.fresh]).toEqual([true, false]);
+  });
+});
+
 describe('ShadowRepo.put', () => {
   it('stores a CRLF file byte-exactly', async () => {
     const { shadow } = await open();

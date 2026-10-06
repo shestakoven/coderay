@@ -98,7 +98,8 @@ export interface GateEventRecord {
   resolvedAt: number | null;
 }
 
-export interface BaselineRecord { path: string; hash: string; stored: boolean; size: number; mode: number }
+// `sig` is the stat signature the file had when it hashed to `hash`; a write that leaves it out clears it.
+export interface BaselineRecord { path: string; hash: string; stored: boolean; size: number; mode: number; sig?: string }
 
 export interface CheckpointRecord {
   planId: string;
@@ -146,6 +147,8 @@ export interface Store {
   saveChanges(sessionId: string, changes: ChangeView[], baselines?: { rows: BaselineRecord[]; removed: string[] }): void;
   changes(sessionId: string, limit?: number): ChangeView[];
   saveBaselines(rows: BaselineRecord[], removed?: string[]): void;
+  // Attaches signatures to baselines still at the hash they were taken for; the others are left alone.
+  saveBaselineSigs(rows: { path: string; hash: string; sig: string }[]): void;
   baselines(): BaselineRecord[];
   meta(key: string): string | null;
   setMeta(key: string, value: string): void;
@@ -323,8 +326,12 @@ const SCHEMA_V7 = `
 ALTER TABLE sessions ADD COLUMN account_id TEXT;
 `;
 
+const SCHEMA_V8 = `
+ALTER TABLE baselines ADD COLUMN sig TEXT;
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8];
 
 const CHAT_TITLE_LENGTH = 60;
 const NEW_CHAT_TITLE = 'New chat';
@@ -497,6 +504,7 @@ const toChange = (row: Row): ChangeView => ({
 
 const toBaseline = (row: Row): BaselineRecord => ({
   path: String(row.path), hash: String(row.hash), stored: row.stored === 1, size: Number(row.size), mode: Number(row.mode),
+  ...(typeof row.sig === 'string' ? { sig: row.sig } : {}),
 });
 
 const toCheckpoint = (row: Row): CheckpointRecord => ({
@@ -639,8 +647,9 @@ export function openStore(dir: string): Store {
     });
   };
   const upsertBaseline = db.prepare(`
-    INSERT INTO baselines (path, hash, stored, size, mode, updated_at) VALUES (:path, :hash, :stored, :size, :mode, :updatedAt)
-    ON CONFLICT (path) DO UPDATE SET hash = excluded.hash, stored = excluded.stored, size = excluded.size, mode = excluded.mode, updated_at = excluded.updated_at`);
+    INSERT INTO baselines (path, hash, stored, size, mode, sig, updated_at) VALUES (:path, :hash, :stored, :size, :mode, :sig, :updatedAt)
+    ON CONFLICT (path) DO UPDATE SET hash = excluded.hash, stored = excluded.stored, size = excluded.size, mode = excluded.mode, sig = excluded.sig, updated_at = excluded.updated_at`);
+  const signBaseline = db.prepare('UPDATE baselines SET sig = :sig WHERE path = :path AND hash = :hash');
   const deleteBaseline = db.prepare('DELETE FROM baselines WHERE path = ?');
   const upsertCheckpoint = db.prepare(`
     INSERT INTO checkpoints (session_id, plan_id, step_key, cycle, before, after, started_at, sealed_at)
@@ -781,7 +790,7 @@ export function openStore(dir: string): Store {
           const updatedAt = Date.now();
           for (const path of baselines.removed) deleteBaseline.run(path);
           for (const row of baselines.rows) {
-            upsertBaseline.run({ path: row.path, hash: row.hash, stored: row.stored ? 1 : 0, size: row.size, mode: row.mode, updatedAt });
+            upsertBaseline.run({ path: row.path, hash: row.hash, stored: row.stored ? 1 : 0, size: row.size, mode: row.mode, sig: row.sig ?? null, updatedAt });
           }
         }
         db.exec('COMMIT');
@@ -802,8 +811,18 @@ export function openStore(dir: string): Store {
       try {
         for (const row of removed) deleteBaseline.run(row);
         for (const row of rows) {
-          upsertBaseline.run({ path: row.path, hash: row.hash, stored: row.stored ? 1 : 0, size: row.size, mode: row.mode, updatedAt });
+          upsertBaseline.run({ path: row.path, hash: row.hash, stored: row.stored ? 1 : 0, size: row.size, mode: row.mode, sig: row.sig ?? null, updatedAt });
         }
+        db.exec('COMMIT');
+      } catch (error) {
+        db.exec('ROLLBACK');
+        throw error;
+      }
+    },
+    saveBaselineSigs(rows) {
+      db.exec('BEGIN');
+      try {
+        for (const row of rows) signBaseline.run({ path: row.path, hash: row.hash, sig: row.sig });
         db.exec('COMMIT');
       } catch (error) {
         db.exec('ROLLBACK');
