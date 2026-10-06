@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '..');
 const FAKE_CLAUDE = join(REPO, 'packages/core/test/fake-claude/fake-claude.mjs');
-const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
+export const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
 const stream = (scenario: string): string => join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`);
 
 export interface Core {
