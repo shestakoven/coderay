@@ -356,7 +356,7 @@ export class HookGate {
       ]);
       const { sha, files } = parseStatus(status);
       const repoTop = top.trim();
-      const added = await Promise.all(commits.map((commit) =>
+      const added = await Promise.all(commits.filter((commit) => commit !== null).map((commit) =>
         run(sha === null ? ['ls-tree', '-r', '--name-only', '-z', commit] : ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=A', sha, commit], read)));
       const overwritten = added.flatMap((names) => names.split('\0')).filter((path) => path !== '' && present(join(repoTop, path)));
       const dirty = files.flatMap((file) => (file.origPath === null ? [file.path] : [file.path, file.origPath]));
@@ -516,11 +516,13 @@ function parseHookInput(raw: unknown, root: string): HookInput | null {
 }
 
 // A name git resolves, or a branch of exactly one remote, which checkout and switch take for a new local branch.
-async function commitOf(run: GitRun, ref: string): Promise<string> {
+async function commitOf(run: GitRun, ref: string): Promise<string | null> {
   const read = { readOnly: true, timeoutMs: STATUS_MS };
   try {
     return (await run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], read)).trim();
   } catch (error) {
+    // ORIG_HEAD is absent until the first rebase, merge or reset, and an --abort then has nothing to go back to.
+    if (ref === 'ORIG_HEAD') return null;
     const remote = new Set((await run(['for-each-ref', '--format=%(objectname)', `refs/remotes/*/${ref}`], read)).split('\n').filter(Boolean));
     if (remote.size !== 1) throw error;
     return [...remote][0]!;

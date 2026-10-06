@@ -77,10 +77,41 @@ const FILE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '<>']);
 const KEYWORDS = new Set(['{', '}', '!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until']);
 const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec', 'nice', 'env']);
 const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert']);
-const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'fetch', 'branch', 'ls-files', 'rev-list', 'describe', 'merge-base']);
-const HARMLESS = new Set(['cd', 'pwd', 'echo', 'printf', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
-// Options whose value is the next word, among the history commands'. -m takes one only in merge, cherry-pick and revert.
-const VALUE_OPTIONS = new Set(['-b', '-B', '-c', '-C', '--orphan', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option', '--onto', '--into-name']);
+// Reads write no file but --output, and run no program but what the repository's own configuration names.
+const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'rev-list', 'describe', 'merge-base', 'stash list', 'stash show']);
+const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'exit', 'fi', 'done', 'which']);
+// The options git takes before its command that the IDE follows, with = after those that take a value.
+const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --no-replace-objects --no-advice -v --version -h --help');
+// Per git command that leaves a command pure, the options known to run no program of the agent's choosing and to write nothing more,
+// with = after those that always take one (an optional value goes after =). Any other option, an abbreviation git accepts included,
+// makes the command impure.
+// git add, commit and stash only move content the gated work tree already had.
+const SAFE_OPTIONS = new Map(Object.entries({
+  checkout: '-q --quiet -f --force -m --merge --detach -t --track --no-track --guess --no-guess --progress --no-progress -b= -B= --orphan=',
+  switch: '-q --quiet -f --force --discard-changes -m --merge -d --detach -t --track --no-track --guess --no-guess --progress --no-progress -c= -C= --create= --force-create= --orphan=',
+  reset: '-q --quiet --hard --soft --mixed --merge --keep',
+  merge: '-q --quiet -v --verbose --ff --no-ff --ff-only --commit --no-commit --squash --no-squash --no-edit --stat -n --no-stat --log --no-log --autostash --no-autostash --allow-unrelated-histories --no-verify --abort --continue --quit -m= -F= --file= -X= --strategy-option= --into-name=',
+  pull: '-q --quiet -v --verbose -r --rebase --no-rebase --ff --no-ff --ff-only --commit --no-commit --squash --no-squash --no-edit --stat -n --no-stat --autostash --no-autostash --allow-unrelated-histories --no-verify --all -p --prune -t --tags --no-tags --unshallow -X= --strategy-option= --depth=',
+  rebase: '-q --quiet -v --verbose -i --interactive --autosquash --no-autosquash --autostash --no-autostash -m --merge -r --rebase-merges --no-rebase-merges --update-refs --no-update-refs --keep-base --root --fork-point --no-fork-point --stat -n --no-stat -f --force-rebase --no-ff --no-verify --verify --reapply-cherry-picks --no-reapply-cherry-picks --committer-date-is-author-date --ignore-date --reset-author-date --signoff --continue --skip --abort --quit --onto= -X= --strategy-option= --empty',
+  'cherry-pick': '-n --no-commit -x --ff --allow-empty --allow-empty-message --keep-redundant-commits -s --signoff --continue --skip --abort --quit -m= --mainline= -X= --strategy-option= --empty',
+  revert: '-n --no-commit --no-edit -s --signoff --continue --skip --abort --quit -m= --mainline= -X= --strategy-option=',
+  add: '-A --all -u --update -f --force -n --dry-run -v --verbose -N --intent-to-add --no-all --ignore-removal --ignore-errors',
+  commit: '-a --all -q --quiet -v --verbose --amend --no-edit -s --signoff -n --no-verify --verify --allow-empty --allow-empty-message --reset-author -o --only -i --include -m= --message= -F= --file= --author= --date= --fixup= --squash=',
+  'stash push': '-q --quiet -k --keep-index --no-keep-index -m= --message=',
+  'stash pop': '-q --quiet --index',
+  'stash apply': '-q --quiet --index',
+  'stash drop': '-q --quiet',
+  fetch: '-q --quiet -v --verbose --all --multiple -p --prune -P --prune-tags -t --tags -n --no-tags --unshallow --dry-run --progress --no-progress -f --force --atomic --no-recurse-submodules --depth= --deepen=',
+  push: '-q --quiet -v --verbose -u --set-upstream -f --force --force-with-lease --force-if-includes --tags --follow-tags --no-verify -n --dry-run --atomic -d --delete --progress --no-progress --porcelain',
+  branch: '-a --all -r --remotes -v --verbose -l --list --show-current --contains --no-contains --merged --no-merged -i --ignore-case --color --no-color --column --no-column -q --quiet -t --track --no-track --no-abbrev --points-at= --sort= --format= --abbrev',
+  tag: '-l --list --contains --no-contains --merged --no-merged -i --ignore-case --color --no-color --column --no-column --points-at= --sort= --format=',
+  remote: '-v --verbose -n --push --all',
+  config: '--get --get-all --get-regexp --get-urlmatch -l --list --local --global --system --worktree --show-origin --show-scope --name-only -z --null --bool --int --path --includes --no-includes --default= --type=',
+}).map(([verb, spec]) => [verb, optionTable(spec)]));
+const CONFIG_READS = ['--get', '--get-all', '--get-regexp', '--get-urlmatch', '-l', '--list'];
+// Editors and pagers that do nothing or only print, so setting one runs no program of the agent's choosing.
+const QUIET_SETTINGS = new Set(['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_PAGER', 'EDITOR', 'VISUAL', 'PAGER', 'core.editor', 'sequence.editor', 'core.pager']);
+const QUIET_PROGRAMS = new Set(['true', ':', 'cat']);
 const WORK_TREE_REWRITES = new Set(['restore', 'stash', 'clean', 'apply', 'am']);
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
 const XARGS_WRITES = 'xargs runs a command that writes files it reads from its input';
@@ -343,8 +374,9 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   }
   if (wrapped.length === 0) return;
   const name = literalText(wrapped[0]!);
-  if (name === null || (posix.basename(name) !== 'git' && !HARMLESS.has(posix.basename(name)))) state.pure = false;
-  if (name) command(posix.basename(name), wrapped.slice(1), state, depth);
+  const base = posix.basename(name ?? '');
+  if (name === null || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
+  if (name) command(base, wrapped.slice(1), state, depth);
 }
 
 function command(name: string, args: Word[], state: State, depth: number): void {
@@ -420,7 +452,10 @@ function command(name: string, args: Word[], state: State, depth: number): void 
       return;
     default:
       if (ENV_SETTERS.has(name)) {
-        for (const word of args) if (isAssignment(word)) assign(word, state);
+        for (const word of args) {
+          if (isAssignment(word)) assign(word, state);
+          else state.pure = false;
+        }
         return;
       }
       if (SHELLS.has(name)) nestedShell(args, state, depth);
@@ -525,17 +560,26 @@ function git(args: Word[], state: State): void {
   let i = 0;
   while (i < args.length) {
     const text = literalText(args[i]!);
+    if (text === null || !text.startsWith('-')) break;
+    const name = text.split('=')[0]!;
+    if (!GLOBAL_OPTIONS.has(name)) {
+      state.targets.push(unresolved(text, 'a git option the IDE cannot read'));
+      return;
+    }
     // Configuration given on the command line can run any program: hooks, aliases, editors, merge drivers.
-    if (text === null || text === '-c' || /^--(config-env|exec-path)(=|$)/.test(text)) state.pure = false;
-    if (text === '-C' || text === '-c' || text === '--git-dir' || text === '--work-tree' || text === '--namespace') i += 2;
-    else if (text !== null && text.startsWith('-')) i += 1;
-    else break;
+    const setting = literalText(args[i + 1] ?? EMPTY) ?? '';
+    if (text === '-c' && !quiet(setting.split('=')[0]!.toLowerCase(), setting.slice(setting.indexOf('=') + 1))) state.pure = false;
+    i += GLOBAL_OPTIONS.get(name) && name === text ? 2 : 1;
   }
   const word = args[i];
   if (!word) return;
   const sub = literalText(word);
+  const global = args.slice(0, i);
   const rest = args.slice(i + 1);
-  if (sub === null || !(HISTORY_VERBS.has(sub) || GIT_READS.has(sub)) || rest.some((arg) => runsCommand(sub, literalText(arg)))) state.pure = false;
+  const [verb, operands] = sub === 'stash' ? stashCommand(rest) : [sub, rest];
+  const options = verb === null ? null : parseOptions(operands, SAFE_OPTIONS.get(verb));
+  const harmless = verb !== null && spares(verb, operands, options);
+  if (!harmless) state.pure = false;
   // git diff, log and show write their output to a file with --output.
   for (const [at, arg] of rest.entries()) {
     const first = arg.parts[0];
@@ -545,58 +589,98 @@ function git(args: Word[], state: State): void {
     }
   }
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
-  else if (sub === 'checkout' && checksOutPaths(rest)) state.rewrites.push(gitDirectory(args.slice(0, i), state));
-  else if (HISTORY_VERBS.has(sub)) {
-    state.history.push(gitDirectory(args.slice(0, i), state));
-    state.incoming.push(incomingRefs(sub, rest));
+  // checkout <tree-ish> <paths>, checkout -- <paths> and their kin write files and leave HEAD where it is.
+  else if (sub === 'checkout' && (options === null || options.paths)) state.rewrites.push(gitDirectory(global, state));
+  else if (HISTORY_VERBS.has(sub) || (verb === 'stash push' && options !== null)) {
+    state.history.push(gitDirectory(global, state));
+    state.incoming.push(options === null ? null : incomingRefs(sub, options));
   }
-  else if (WORK_TREE_REWRITES.has(sub)) {
-    if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(gitDirectory(args.slice(0, i), state));
+  else if (sub === 'stash' ? !harmless : WORK_TREE_REWRITES.has(sub)) {
+    if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(gitDirectory(global, state));
   }
-  else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), rest, state);
+  else if (sub === 'mv' || sub === 'rm') gitPaths(sub, global, rest, state);
 }
 
-const runsCommand = (sub: string, arg: string | null): boolean =>
-  arg !== null && (/^--(exec|upload-pack)(=|$)/.test(arg) || (sub === 'rebase' && /^-[^-]*x/.test(arg)));
-
-// checkout <tree-ish> <paths>, checkout -- <paths> and their kin write files and leave HEAD where it is.
-function checksOutPaths(rest: Word[]): boolean {
-  let operands = 0;
-  for (let i = 0; i < rest.length; i += 1) {
-    const text = literalText(rest[i]!);
-    if (text === '--' || text === '-p' || text === '--patch' || text?.startsWith('--pathspec-from-file')) return true;
-    if (text !== null && VALUE_OPTIONS.has(text)) i += 1;
-    else if (text === null || !text.startsWith('-') || text === '-') operands += 1;
-  }
-  return operands > 1;
+// The subcommand of git stash, push when none is named, and the words after it.
+function stashCommand(rest: Word[]): [string | null, Word[]] {
+  const first = rest[0] === undefined ? undefined : literalText(rest[0]);
+  if (first === null) return [null, rest];
+  if (first === undefined || first.startsWith('-')) return ['stash push', rest];
+  return [`stash ${first === 'save' ? 'push' : first}`, rest.slice(1)];
 }
 
-// The commits a history command brings into the work tree besides HEAD; null when the words do not say (a variable, a sequencer step).
-function incomingRefs(sub: string, rest: Word[]): string[] | null {
-  const words: string[] = [];
-  const flags = new Set<string>();
-  let onto: string | null = null;
-  for (let i = 0; i < rest.length; i += 1) {
-    const text = literalText(rest[i]!);
+interface Options {
+  words: string[];
+  flags: Set<string>;
+  values: Map<string, string | null>;
+  // Paths follow --, or more than one operand is given.
+  paths: boolean;
+}
+
+// The operands and options of a git command when each option is among the safe ones; null for any other, or for a word the IDE cannot read.
+function parseOptions(args: Word[], safe: Map<string, boolean> | undefined): Options | null {
+  if (!safe) return null;
+  const parsed: Options = { words: [], flags: new Set(), values: new Map(), paths: false };
+  for (let i = 0; i < args.length; i += 1) {
+    const text = literalText(args[i]!);
     if (text === null) return null;
-    if (text === '--') break;
-    if (text === '--onto' || text.startsWith('--onto=')) {
-      onto = text === '--onto' ? literalText(rest[i + 1] ?? EMPTY) : text.slice('--onto='.length);
-      if (!onto) return null;
+    if (text === '--') {
+      parsed.paths = true;
+      break;
     }
-    if (VALUE_OPTIONS.has(text) || (text === '-m' && ['merge', 'cherry-pick', 'revert'].includes(sub))) i += 1;
-    else if (text === '-') words.push('@{-1}');
-    else if (text.startsWith('-')) flags.add(text.split('=')[0]!);
-    else words.push(text);
+    if (!text.startsWith('-') || text === '-') {
+      parsed.words.push(text);
+      continue;
+    }
+    // A long option's value follows = or is the next word; short options bundle, and one that takes a value takes the rest or the next word.
+    const long = text.startsWith('--');
+    const at = text.indexOf('=');
+    const names = long ? [at === -1 ? text : text.slice(0, at)] : [...text.slice(1)].map((letter) => `-${letter}`);
+    for (const [index, name] of names.entries()) {
+      if (!safe.has(name)) return null;
+      parsed.flags.add(name);
+      if (!safe.get(name)) continue;
+      const attached = long ? (at === -1 ? null : text.slice(at + 1)) : text.slice(index + 2) || null;
+      if (attached === null) i += 1;
+      parsed.values.set(name, attached ?? (args[i] === undefined ? '' : literalText(args[i]!)));
+      break;
+    }
   }
-  if (flags.has('--quit') || (sub === 'merge' && (flags.has('--abort') || flags.has('--continue')))) return [];
-  if (flags.has('--continue') || flags.has('--skip') || flags.has('--abort')) return null;
+  parsed.paths ||= parsed.words.length > 1;
+  return parsed;
+}
+
+// Whether a git command keeps the call pure: a read, or a command with only safe options (and, for remote and config, one that reads).
+function spares(verb: string, operands: Word[], options: Options | null): boolean {
+  if (GIT_READS.has(verb)) {
+    return operands.every((arg) => {
+      const text = literalText(arg);
+      return text !== null && !(text.length > 4 && '--ext-diff'.startsWith(text.split('=')[0]!));
+    });
+  }
+  if (options === null) return false;
+  const [first] = options.words;
+  if (verb === 'remote') return first === undefined || first === 'show' || first === 'get-url';
+  if (verb === 'config') return CONFIG_READS.some((flag) => options.flags.has(flag)) || options.words.length === 1 || first === 'get' || first === 'list';
+  return true;
+}
+
+// The commits a history command brings into the work tree besides HEAD; null when the words do not say (a variable, a refspec).
+function incomingRefs(sub: string, { words: operands, flags, values }: Options): string[] | null {
+  // A stopped sequence's commits were judged when it started, and the edits that resolve it are ordinary edits.
+  if (['--continue', '--skip', '--quit'].some((flag) => flags.has(flag))) return [];
+  if (flags.has('--abort')) return sub === 'merge' ? [] : ['ORIG_HEAD'];
+  const words = operands.map((word) => (word === '-' ? '@{-1}' : word));
+  const onto = values.get('--onto');
+  if (onto === null || onto === '') return null;
   switch (sub) {
     case 'checkout':
     case 'switch':
       return words.slice(0, 1);
     case 'reset':
       return ['--hard', '--merge', '--keep'].some((flag) => flags.has(flag)) ? words.slice(0, 1) : [];
+    case 'stash':
+      return [];
     case 'merge':
       return words.length > 0 ? words : ['@{upstream}'];
     case 'pull':
@@ -812,10 +896,14 @@ function assign(word: Word, state: State): void {
   if (only?.kind === 'sub' && isPlainMktemp(only.body)) state.mktemp.add(name);
   else state.mktemp.delete(name);
   if (PROTECTED_VARS.has(name)) state.poisoned.add(name);
+  if (quiet(name, literalText({ parts: value, raw: '' }) ?? '')) return;
   // A variable can point git at another repository, index or editor, or put another program on the PATH.
   state.pure = false;
   if (name.startsWith('GIT_')) state.gitEnv = true;
 }
+
+// An editor or pager that does nothing or only prints runs no program of the agent's choosing.
+const quiet = (name: string, value: string): boolean => QUIET_SETTINGS.has(name) && QUIET_PROGRAMS.has(value);
 
 function isPlainMktemp(body: string): boolean {
   const words = lex(body.trim()).map((token) => (token.t === 'word' ? literalText(token.word) : null));
@@ -839,6 +927,10 @@ function literalText(word: Word): string | null {
     text += part.text;
   }
   return text;
+}
+
+function optionTable(spec: string): Map<string, boolean> {
+  return new Map(spec.split(' ').map((option) => [option.replace(/=$/, ''), option.endsWith('=')]));
 }
 
 const literalWord = (text: string): Word => ({ parts: [{ kind: 'lit', text }], raw: text });

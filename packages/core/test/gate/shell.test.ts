@@ -197,7 +197,7 @@ describe('shellWrites', () => {
   });
 
   it('keeps restore, clean, stash, apply and am as work tree rewrites, apart from the history commands', () => {
-    expect(writes('git restore . && git -C sub stash && git clean -fd && git am p.patch && git apply p.patch').rewrites).toEqual(['/p', '/p/sub', '/p', '/p', '/p']);
+    expect(writes('git restore . && git -C sub stash && git clean -fd && git am p.patch && git apply p.patch').rewrites).toEqual(['/p', '/p', '/p', '/p', '/p/sub']);
     expect([writes('git restore .').history, writes('git rebase main').rewrites]).toEqual([[], []]);
   });
 
