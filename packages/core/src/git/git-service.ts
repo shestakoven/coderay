@@ -8,6 +8,7 @@ import { parseStatus } from './status-parse';
 
 const COMMIT_TIMEOUT_MS = 120_000;
 const BATCH = 200;
+const NULL_SHA = /^0+$/;
 const NO_REPO: GitStatus = { repo: false, branch: null, detached: false, sha: null, upstream: null, ahead: 0, behind: 0, files: [], operation: null, busy: null, problem: null };
 
 export interface GitServiceOptions {
@@ -37,6 +38,29 @@ function checkPaths(paths: string[]): void {
 
 function* chunks<T>(items: T[]): Generator<T[]> {
   for (let i = 0; i < items.length; i += BATCH) yield items.slice(i, i + BATCH);
+}
+
+// `diff --raw -z --no-renames`: ":<mode> <mode> <old> <new> <status>\0<path>\0" per file.
+function rawEntries(out: string): { path: string; sha: string | null }[] {
+  const tokens = out.split('\0');
+  const entries: { path: string; sha: string | null }[] = [];
+  for (let i = 0; i + 1 < tokens.length; i += 2) {
+    const sha = tokens[i]!.split(' ')[3]!;
+    entries.push({ path: tokens[i + 1]!, sha: NULL_SHA.test(sha) ? null : sha });
+  }
+  return entries;
+}
+
+// `ls-files -s -z`: "<mode> <sha> <stage>\t<path>\0"; only a merged entry (stage 0) has content.
+function indexEntries(out: string): Map<string, string> {
+  const shas = new Map<string, string>();
+  for (const record of out.split('\0')) {
+    const tab = record.indexOf('\t');
+    if (tab < 0) continue;
+    const [, sha, stage] = record.slice(0, tab).split(' ');
+    if (stage === '0') shas.set(record.slice(tab + 1), sha!);
+  }
+  return shas;
 }
 
 function operationOf(gitDir: string): GitStatus['operation'] {
@@ -217,6 +241,67 @@ export class GitService {
       const { run } = await this.need();
       await this.checkName(run, name);
       await run(['branch', '-d', '--', name]);
+    });
+  }
+
+  private guard(what: string): void {
+    const reason = this.o.agentBusy();
+    if (reason !== null) throw new GitError(`Cannot ${what} while ${reason}.`);
+  }
+
+  // The write is the IDE's own: the watchdog must not take it for an agent's.
+  private claim(place: Place, path: string, sha: string | null): void {
+    if (place.prefix === '') this.o.ideWrites.expect(path, sha);
+    else if (path.startsWith(place.prefix)) this.o.ideWrites.expect(path.slice(place.prefix.length), sha);
+  }
+
+  async branchCreate(name: string): Promise<void> {
+    await this.serial(async () => {
+      this.guard('create a branch');
+      const { run } = await this.need();
+      await this.checkName(run, name);
+      await run(['switch', '-c', name]);
+    });
+  }
+
+  async branchSwitch(name: string): Promise<void> {
+    await this.serial(async () => {
+      this.guard('switch branches');
+      const { run, place } = await this.need();
+      await this.checkName(run, name);
+      try {
+        const diff = await run(['diff', '--raw', '-z', '--no-abbrev', '--no-renames', 'HEAD', name, '--'], { readOnly: true });
+        for (const { path, sha } of rawEntries(diff)) this.claim(place, path, sha);
+      } catch {
+        // Claims are best effort: a repository without a commit has nothing to compare, and git reports a bad name itself.
+      }
+      await run(['switch', name]);
+    });
+  }
+
+  async discard(paths: string[]): Promise<void> {
+    checkPaths(paths);
+    await this.serial(async () => {
+      this.guard('discard changes');
+      const { run, place } = await this.need();
+      const files = new Map((await this.status()).files.map((file) => [file.path, file]));
+      const restore: string[] = [];
+      const clean: string[] = [];
+      for (const path of paths) {
+        const file = files.get(path);
+        if (file?.conflicted) throw new GitError(`${path} is conflicted.`);
+        if (!file || file.worktree === null) throw new GitError(`${path} has no changes to discard.`);
+        (file.worktree === 'untracked' ? clean : restore).push(path);
+      }
+      for (const batch of chunks(restore)) {
+        const shas = indexEntries(await run(['ls-files', '-s', '-z', '--', ...batch], { readOnly: true }));
+        for (const path of batch) this.claim(place, path, shas.get(path) ?? null);
+        await run(['restore', '--', ...batch]);
+      }
+      for (const batch of chunks(clean)) {
+        for (const path of batch) this.claim(place, path, null);
+        await run(['clean', '-f', '--', ...batch]);
+      }
     });
   }
 }
