@@ -51,8 +51,8 @@ async function fixture() {
   });
   const approve = async (): Promise<string> => {
     const call = plans.propose(PLAN);
-    const waiting = await waitFor(() => plans.plans().find((p: PlanView) => p.status === 'proposed'), 'the plan proposed');
-    plans.answer(waiting.id, waiting.version, { kind: 'approve' });
+    const waiting = await waitFor(() => plans.plans().find((p: PlanView) => p.status === 'proposed' || p.status === 'approved'), 'the plan decided');
+    if (waiting.status === 'proposed') plans.answer(waiting.id, waiting.version, { kind: 'approve' });
     await call;
     return waiting.id;
   };

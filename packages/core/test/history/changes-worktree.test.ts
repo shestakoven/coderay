@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView } from '@ide/protocol';
 import { invalidateWorktrees } from '../../src/gate/worktrees';
-import { Baselines } from '../../src/history/baselines';
+import { Baselines, scanTree } from '../../src/history/baselines';
 import { ChangeService } from '../../src/history/changes';
 import { Checkpoints } from '../../src/history/checkpoints';
 import { IdeWrites } from '../../src/history/ide-writes';
@@ -363,6 +363,42 @@ describe('ChangeService at the first sight of a worktree', () => {
     const record = await f.revert(f.service.changes().at(-1)!);
     expect(record.files.map((file) => [file.outcome, file.reason])).toEqual([['deleted', null]]);
     expect(existsSync(join(f.root, WT, 'created.txt'))).toBe(false);
+  });
+});
+
+describe('ChangeService for a file that lands in a worktree the IDE has already seen', () => {
+  const BROUGHT = `${WT}/backend/src/brought.py`;
+
+  it.each([
+    ['the event of another file', (f: F) => f.service.handle(f.ev(A))],
+    ['a scan', (f: F) => scanTree(f.root, DEFAULT_POLICY, f.shadow, f.baselines).then(() => undefined)],
+  ])('records a file git brings from another branch as a creation, as it does in the project itself, once %s has seen the worktree', async (_how, see) => {
+    const f = await fixture();
+    git(f.wt, 'checkout', '-q', '-b', 'other');
+    f.put(BROUGHT, 'brought\n');
+    git(f.wt, 'add', '-A');
+    git(f.wt, 'commit', '-q', '-m', 'other');
+    git(f.wt, 'checkout', '-q', '-');
+    await see(f);
+    git(f.wt, 'checkout', '-q', 'other');
+    await f.service.handle(f.ev(BROUGHT));
+    expect(f.service.changes()).toMatchObject([{ path: BROUGHT, beforeHash: null, beforeMode: null, afterHash: f.gitHash(f.wt, 'backend/src/brought.py'), enforcement: 'enforced' }]);
+  });
+
+  it('records nothing for the .git link of a worktree that the project does not ignore: it is not a file of the project', async () => {
+    const f = await fixture(await projectWithWorktree({}, 'trees/w1'));
+    await f.service.handle(f.ev('trees/w1/.git'));
+    expect(f.service.changes()).toEqual([]);
+  });
+
+  it('still takes a file of the checkout the IDE first saw, that landed after it looked, as it is', async () => {
+    const f = await fixture();
+    git(f.wt, 'rm', '-q', 'backend/src/other.py');
+    await f.service.handle(f.ev(A));
+    git(f.wt, 'checkout', '-q', 'HEAD', '--', 'backend/src/other.py');
+    await f.service.handle(f.ev(`${WT}/backend/src/other.py`));
+    expect(f.service.changes()).toEqual([]);
+    expect(f.baselines.get(`${WT}/backend/src/other.py`)?.hash).toBe(f.gitHash(f.wt, 'backend/src/other.py'));
   });
 });
 
