@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { basename, join, posix } from 'node:path';
 import { watch } from 'chokidar';
 import { parse } from 'yaml';
+import { readXcode } from './xcode';
 
 export interface BuildDef {
   context: string;
@@ -58,13 +59,13 @@ export function readDeploy(root: string): Deploy {
 
 const WATCH_DEBOUNCE_MS = 300;
 
-// Compose files at the root, the files they include and the Dockerfiles they build are not indexed, so they get their own watch.
+// Compose files at the root, the files they include, the Dockerfiles they build and XcodeGen specs are not indexed, so they get their own watch.
 export function watchDeploy(root: string, onChange: () => void): { close(): Promise<void> } {
   let timer: NodeJS.Timeout | undefined;
   const deployFiles = (): Set<string> => {
     const deploy = readDeploy(root);
     const builds = [...deploy.services.values()].flat().flatMap((d) => (d.build ? [posix.join(d.build.context, d.build.dockerfile)] : []));
-    return new Set([...deploy.files, ...builds].map((path) => join(root, path)));
+    return new Set([...deploy.files, ...builds, ...readXcode(root).files].map((path) => join(root, path)));
   };
   let watched = deployFiles();
   const options = { ignoreInitial: true, followSymlinks: false, ignorePermissionErrors: true };

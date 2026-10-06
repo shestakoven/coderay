@@ -14,6 +14,7 @@ import type {
 import type { IndexedFile } from '../model';
 import { identifierKey, type Classification, type Classify, type Identifier } from './classify';
 import { readDeploy, type ServiceDef } from './deploy';
+import { readXcode } from './xcode';
 
 // Literal URL hosts are names like package names; file contents never leave this process.
 const URL_LITERAL = /['"`]https?:\/\/(?:[^\s'"`@/]*@)?([a-z0-9-]+(?:\.[a-z0-9-]+)*\.[a-z]{2,})/gi;
@@ -210,6 +211,33 @@ export function buildC4(
     });
   }
 
+  const xcode = readXcode(root);
+  warnings.push(...xcode.warnings);
+  const nativeApps = new Set<string>();
+  for (const app of xcode.apps) {
+    const closure = new Set(paths.filter((p) => app.dirs.some((dir) => p === dir || p.startsWith(`${dir}/`))));
+    if (closure.size === 0) continue;
+    const name = containers.some((c) => c.name === app.name) ? `${app.name}-app` : app.name;
+    closures.set(name, closure);
+    // Files of one Swift module do not import each other, so no file is nearer to an entry than another.
+    depths.set(name, new Map([...closure].map((p) => [p, 0])));
+    nativeApps.add(`container:${name}`);
+    containers.push({
+      id: `container:${name}`,
+      name,
+      role: 'ui',
+      tech: `Swift · ${app.platform ?? 'Apple'}`,
+      launch: [],
+      entryFiles: [],
+      entryMissing: [],
+      files: closure.size,
+      components: [],
+      componentLinks: [],
+      group: null,
+      evidence: [{ path: app.file, note: `target ${app.name}` }],
+    });
+  }
+
   const reach = new Map<string, number>();
   for (const container of containers) {
     const counts = new Map<string, number>();
@@ -306,9 +334,12 @@ export function buildC4(
   const entrances = containers.filter(
     (c) => c.role === 'ui' && !behindUi.has(c.id) && deploy.services.get(c.name)?.some((d) => d.ports),
   );
-  const fromUsers = entrances.length > 0 ? entrances : containers.filter((c) => c.role === 'ui');
+  const fromUsers = entrances.length > 0 ? entrances : containers.filter((c) => c.role === 'ui' && !nativeApps.has(c.id));
   for (const container of fromUsers) {
     link('users', container.id, 'HTTPS', { path: container.evidence[0]?.path ?? '', note: 'published port' });
+  }
+  for (const container of containers.filter((c) => nativeApps.has(c.id))) {
+    link('users', container.id, 'native app', { path: container.evidence[0]?.path ?? '', note: 'installed by users' });
   }
 
   const byBuild = new Map<string, C4Container[]>();
