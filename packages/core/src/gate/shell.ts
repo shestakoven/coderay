@@ -18,7 +18,7 @@ export interface ShellTarget {
 export interface ShellWrites {
   targets: ShellTarget[];
   allTracked: boolean;
-  // The directory each work-tree rewrite and each history command runs in; null when the command does not say.
+  // The directories each work-tree rewrite and each history command may run in; null when the command does not say.
   rewrites: (string | null)[];
   history: (string | null)[];
   // For each history command, the commits it brings into the work tree besides HEAD; null when the command does not say which.
@@ -48,7 +48,10 @@ interface Redirect {
 
 interface State {
   env: ShellEnv;
-  cwd: (string | null)[];
+  // Per subshell level, every directory bash may be in.
+  cwd: (string | null)[][];
+  // How deep in if, while, for, case, a function or a { } group the command is.
+  nesting: number;
   mktemp: Set<string>;
   poisoned: Set<string>;
   targets: ShellTarget[];
@@ -75,6 +78,8 @@ const REDIRECTS = ['&>>', '<<<', '<<-', '>>', '>|', '&>', '>&', '<&', '<>', '<<'
 const SHORT_OPERATORS = [';', '|', '&', '(', ')'];
 const FILE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '<>']);
 const KEYWORDS = new Set(['{', '}', '!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until']);
+const OPENERS = new Set(['{', 'if', 'while', 'until', 'for', 'case', 'select', 'function']);
+const CLOSERS = new Set(['}', 'fi', 'done', 'esac']);
 const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec', 'nice', 'env']);
 const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert']);
 // Reads write no file but --output, and run no program but what the repository's own configuration names.
@@ -128,7 +133,7 @@ const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, gitEnv: false };
+  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, gitEnv: false };
   run(command, state, 0);
   // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
   const pure = state.pure && state.targets.length === 0;
@@ -145,10 +150,16 @@ function run(script: string, state: State, depth: number): void {
   const tokens = lex(script);
   let words: Word[] = [];
   let redirects: Redirect[] = [];
-  const flush = (): void => {
-    if (words.length > 0 || redirects.length > 0) simpleCommand(words, redirects, state, depth);
+  let before = '';
+  const flush = (after: string): void => {
+    // A command after && or || may not run, and one in a pipeline or in the background runs in a subshell.
+    const maybe = ['&&', '||', '|', '|&'].includes(before) || ['|', '|&', '&'].includes(after);
+    const empty = words.length === 0 && redirects.length === 0;
+    if (!empty) simpleCommand(words, redirects, state, depth, maybe);
     words = [];
     redirects = [];
+    // A line break after && or || continues the list.
+    if (!(empty && after === '\n')) before = after;
   };
   for (let i = 0; i < tokens.length; i += 1) {
     const token = tokens[i]!;
@@ -159,12 +170,12 @@ function run(script: string, state: State, depth: number): void {
       redirects.push({ op: token.op, word: next?.t === 'word' ? next.word : null });
       if (next?.t === 'word') i += 1;
     } else {
-      flush();
+      flush(token.op);
       if (token.op === '(') state.cwd.push(cwdOf(state));
       if (token.op === ')' && state.cwd.length > 1) state.cwd.pop();
     }
   }
-  flush();
+  flush('');
 }
 
 function lex(src: string): Token[] {
@@ -350,7 +361,7 @@ function quoteEnd(src: string, open: number, quote: string): number {
   return src.length;
 }
 
-function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth: number): void {
+function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth: number, maybe: boolean): void {
   for (const word of [...words, ...redirects.flatMap((redirect) => (redirect.word ? [redirect.word] : []))]) {
     for (const part of word.parts) {
       if (part.kind !== 'sub') continue;
@@ -360,7 +371,11 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
     }
   }
   let args = words;
-  while (args.length > 0 && KEYWORDS.has(literalText(args[0]!) ?? '')) args = args.slice(1);
+  while (args.length > 0 && KEYWORDS.has(literalText(args[0]!) ?? '')) {
+    nest(literalText(args[0]!)!, state);
+    args = args.slice(1);
+  }
+  nest(literalText(args[0] ?? EMPTY) ?? '', state);
   if (args[0]?.raw === '[[') return;
   for (const redirect of redirects) redirectTarget(redirect, state);
   while (args.length > 0 && isAssignment(args[0]!)) {
@@ -376,13 +391,18 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   const name = literalText(wrapped[0]!);
   const base = posix.basename(name ?? '');
   if (name === null || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
-  if (name) command(base, wrapped.slice(1), state, depth);
+  if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0);
 }
 
-function command(name: string, args: Word[], state: State, depth: number): void {
+function nest(word: string, state: State): void {
+  if (OPENERS.has(word)) state.nesting += 1;
+  else if (CLOSERS.has(word)) state.nesting = Math.max(0, state.nesting - 1);
+}
+
+function command(name: string, args: Word[], state: State, depth: number, maybe: boolean): void {
   switch (name) {
     case 'cd':
-      changeDirectory(args, state);
+      changeDirectory(args, state, maybe);
       return;
     case 'rm':
     case 'rmdir':
@@ -590,13 +610,16 @@ function git(args: Word[], state: State): void {
   }
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
   // checkout <tree-ish> <paths>, checkout -- <paths> and their kin write files and leave HEAD where it is.
-  else if (sub === 'checkout' && (options === null || options.paths)) state.rewrites.push(gitDirectory(global, state));
+  else if (sub === 'checkout' && (options === null || options.paths)) state.rewrites.push(...gitDirectories(global, state));
   else if (HISTORY_VERBS.has(sub) || (verb === 'stash push' && options !== null)) {
-    state.history.push(gitDirectory(global, state));
-    state.incoming.push(options === null ? null : incomingRefs(sub, options));
+    const refs = options === null ? null : incomingRefs(sub, options);
+    for (const dir of gitDirectories(global, state)) {
+      state.history.push(dir);
+      state.incoming.push(refs);
+    }
   }
   else if (sub === 'stash' ? !harmless : WORK_TREE_REWRITES.has(sub)) {
-    if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(gitDirectory(global, state));
+    if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(...gitDirectories(global, state));
   }
   else if (sub === 'mv' || sub === 'rm') gitPaths(sub, global, rest, state);
 }
@@ -695,19 +718,22 @@ function incomingRefs(sub: string, { words: operands, flags, values }: Options):
   }
 }
 
-// Where git runs: the working directory moved by each -C; unknown for a repository chosen any other way.
-function gitDirectory(options: Word[], state: State): string | null {
-  if (state.gitEnv) return null;
-  let dir = cwdOf(state);
-  for (let i = 0; i < options.length; i += 1) {
-    const text = literalText(options[i]!);
-    if (text !== null && /^--(git-dir|work-tree)(=|$)/.test(text)) return null;
-    if (text !== '-C') continue;
-    const value = options[i + 1] === undefined ? null : literalText(options[i + 1]!);
-    if (value === null || (dir === null && !value.startsWith('/'))) return null;
-    dir = posix.resolve(dir ?? '/', value);
-  }
-  return dir;
+// Where git may run: each directory bash may be in, moved by each -C; unknown for a repository chosen any other way.
+function gitDirectories(options: Word[], state: State): (string | null)[] {
+  if (state.gitEnv) return [null];
+  const dirs = cwdOf(state).map((cwd) => {
+    let dir = cwd;
+    for (let i = 0; i < options.length; i += 1) {
+      const text = literalText(options[i]!);
+      if (text !== null && /^--(git-dir|work-tree)(=|$)/.test(text)) return null;
+      if (text !== '-C') continue;
+      const value = options[i + 1] === undefined ? null : literalText(options[i + 1]!);
+      if (value === null || (dir === null && !value.startsWith('/'))) return null;
+      dir = posix.resolve(dir ?? '/', value);
+    }
+    return dir;
+  });
+  return [...new Set(dirs)];
 }
 
 // git xargs reads the paths from its input, so only a command that writes none of them is known to be harmless.
@@ -780,17 +806,15 @@ function nestedShell(args: Word[], state: State, depth: number): void {
   state.cwd.pop();
 }
 
-function changeDirectory(args: Word[], state: State): void {
+// A cd that may not run leaves bash in either directory.
+function changeDirectory(args: Word[], state: State, maybe: boolean): void {
   const [first] = operands(args, []);
   const top = state.cwd.length - 1;
-  if (!first) {
-    state.cwd[top] = state.env.home;
-    return;
-  }
-  const value = wordValue(first, state);
-  const current = state.cwd[top] ?? null;
-  const known = 'text' in value && value.text !== '-' && (value.text.startsWith('/') || current !== null);
-  state.cwd[top] = known ? posix.resolve(current ?? '/', value.text) : null;
+  const current = state.cwd[top]!;
+  const value = first ? wordValue(first, state) : { text: state.env.home };
+  const moved = current.map((dir) =>
+    'text' in value && value.text !== '-' && (value.text.startsWith('/') || dir !== null) ? posix.resolve(dir ?? '/', value.text) : null);
+  state.cwd[top] = [...new Set(maybe ? [...current, ...moved] : moved)];
 }
 
 function redirectTarget(redirect: Redirect, state: State): void {
@@ -855,12 +879,10 @@ function addTarget(word: Word, state: State, extra: TargetExtra = {}): void {
     return;
   }
   if (value.text === '' || DEVICE.test(value.text)) return;
-  const cwd = cwdOf(state);
-  if (!value.text.startsWith('/') && cwd === null) {
-    state.targets.push({ ...base, path: null, temp: false, unresolved: 'a relative path after a cd the IDE cannot follow' });
-    return;
+  for (const cwd of value.text.startsWith('/') ? ['/'] : cwdOf(state)) {
+    if (cwd === null) state.targets.push({ ...base, path: null, temp: false, unresolved: 'a relative path after a cd the IDE cannot follow' });
+    else state.targets.push({ ...base, path: posix.resolve(cwd, value.text), temp: false, unresolved: null });
   }
-  state.targets.push({ ...base, path: posix.resolve(cwd ?? '/', value.text), temp: false, unresolved: null });
 }
 
 function unwrap(args: Word[]): Word[] {
@@ -934,5 +956,5 @@ function optionTable(spec: string): Map<string, boolean> {
 }
 
 const literalWord = (text: string): Word => ({ parts: [{ kind: 'lit', text }], raw: text });
-const cwdOf = (state: State): string | null => state.cwd[state.cwd.length - 1] ?? null;
+const cwdOf = (state: State): (string | null)[] => state.cwd[state.cwd.length - 1]!;
 const unresolved = (word: string, reason: string): ShellTarget => ({ word, path: null, temp: false, mkdir: false, deleting: false, names: [], unresolved: reason });
