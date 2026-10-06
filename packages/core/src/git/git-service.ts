@@ -1,13 +1,17 @@
 import { existsSync } from 'node:fs';
-import { join, posix } from 'node:path';
-import type { FileDiff, GitBranch, GitSide, GitStatus } from '@ide/protocol';
+import { join, posix, relative, sep } from 'node:path';
+import type { FileDiff, GitBranch, GitClientMessage, GitServerMessage, GitSide, GitStatus } from '@ide/protocol';
 import type { IdeWrites } from '../history/ide-writes';
 import { EMPTY_DIFF, parseHunks } from '../history/unified-diff';
+import { watchRecursive, type RecursiveWatch } from '../watch/recursive';
 import { createRun, GitError, type GitRun } from './git-run';
 import { parseStatus } from './status-parse';
 
 const COMMIT_TIMEOUT_MS = 120_000;
 const BATCH = 200;
+const DEBOUNCE_MS = 250;
+const EXCLUDED = new Set(['node_modules', '.venv', 'venv', '__pycache__']);
+const GIT_STATE = /^(?:index|HEAD|MERGE_HEAD|CHERRY_PICK_HEAD|rebase-merge|rebase-apply|refs(?:\/.*)?)$/;
 const NULL_SHA = /^0+$/;
 const NO_REPO: GitStatus = { repo: false, branch: null, detached: false, sha: null, upstream: null, ahead: 0, behind: 0, files: [], operation: null, busy: null, problem: null };
 
@@ -26,7 +30,15 @@ interface Place {
   gitDir: string;
 }
 
+type Reply = (message: GitServerMessage | { type: 'error'; message: string }) => void;
+type Result = { diff?: FileDiff; branches?: GitBranch[] };
+
 const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+function ignoredInRoot(root: string, abs: string): boolean {
+  const parts = relative(root, abs).split(sep);
+  return parts.some((part) => EXCLUDED.has(part)) || (parts[0] === '.git' && parts.length > 1);
+}
 
 function checkPaths(paths: string[]): void {
   for (const path of paths) {
@@ -87,6 +99,9 @@ export class GitService {
   private running: Promise<unknown> = Promise.resolve();
   private queued: Promise<GitStatus> | null = null;
   private tail: Promise<unknown> = Promise.resolve();
+  private timer: NodeJS.Timeout | undefined;
+  private rootWatch: RecursiveWatch | null = null;
+  private gitWatch: { dir: string; watch: RecursiveWatch } | null = null;
   private closed = false;
 
   constructor(private readonly o: GitServiceOptions) {}
@@ -100,8 +115,92 @@ export class GitService {
     return () => this.listeners.delete(listener);
   }
 
+  start(): void {
+    this.rootWatch = watchRecursive(this.o.root, { ignored: (abs) => ignoredInRoot(this.o.root, abs), onEvent: () => this.poke(), onError: () => undefined });
+    void this.refresh();
+  }
+
+  poke(): void {
+    if (this.closed || this.timer !== undefined) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.refresh();
+    }, this.o.debounceMs ?? DEBOUNCE_MS);
+    this.timer.unref();
+  }
+
+  // The watches deliver events only once their probe has seen one; callers that change files right after `start()` wait for this.
+  async ready(): Promise<void> {
+    await Promise.all([this.rootWatch?.ready, this.gitWatch?.watch.ready]);
+  }
+
   async close(): Promise<void> {
     this.closed = true;
+    clearTimeout(this.timer);
+    await Promise.all([this.rootWatch?.close(), this.gitWatch?.watch.close()]);
+  }
+
+  private armGit(dir: string | null): void {
+    if (this.closed || this.gitWatch?.dir === dir) return;
+    void this.gitWatch?.watch.close();
+    this.gitWatch = dir === null ? null : {
+      dir,
+      watch: watchRecursive(dir, {
+        ignored: (abs) => !GIT_STATE.test(relative(dir, abs).split(sep).join('/')),
+        onEvent: () => this.poke(),
+        onError: () => undefined,
+        probePrefix: 'git-watch-probe-',
+      }),
+    };
+  }
+
+  async handle(message: GitClientMessage, reply: Reply): Promise<void> {
+    if (message.type === 'git.refresh') {
+      void this.refresh();
+      return;
+    }
+    let result: Result = {};
+    let error: string | null = null;
+    try {
+      result = await this.run(message);
+    } catch (failure) {
+      error = describe(failure);
+    }
+    if (message.type !== 'git.diff' && message.type !== 'git.branches') await this.refresh();
+    reply({ type: 'git.result', requestId: message.requestId, error, ...result });
+  }
+
+  private async run(message: Exclude<GitClientMessage, { type: 'git.refresh' }>): Promise<Result> {
+    switch (message.type) {
+      case 'git.diff':
+        return { diff: await this.diff(message.path, message.side) };
+      case 'git.branches':
+        return { branches: await this.branches() };
+      case 'git.init':
+        await this.init();
+        return {};
+      case 'git.stage':
+        await this.stage(message.paths);
+        return {};
+      case 'git.unstage':
+        await this.unstage(message.paths);
+        return {};
+      case 'git.discard':
+        await this.discard(message.paths);
+        return {};
+      case 'git.commit':
+        await this.commit(message.message);
+        return {};
+      case 'git.branch-create':
+        await this.branchCreate(message.name);
+        return {};
+      case 'git.branch-switch':
+        await this.branchSwitch(message.name);
+        return {};
+      case 'git.branch-delete':
+        await this.branchDelete(message.name);
+        return {};
+    }
   }
 
   private async locate(): Promise<Place | null> {
@@ -133,6 +232,7 @@ export class GitService {
     const busy = this.o.agentBusy();
     try {
       const place = await this.locate();
+      this.armGit(place?.gitDir ?? null);
       if (!place) return { ...NO_REPO, busy };
       const out = await createRun(place.top, this.o.git)(['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all'], { readOnly: true });
       return { repo: true, ...parseStatus(out), operation: operationOf(place.gitDir), busy, problem: null };

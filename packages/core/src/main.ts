@@ -8,6 +8,7 @@ import { AccountLogin } from './accounts/account-login';
 import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
+import { GitService } from './git/git-service';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { startHub, type RunningHub } from './hub/hub';
@@ -202,6 +203,7 @@ try {
     files: () => indexer?.files() ?? [],
     notice: (text) => (session ? session.notice(text) : console.warn(text)),
   });
+  const git = new GitService({ root, ideWrites: rt.ideWrites, agentBusy: () => rt.agentBusy() });
   const registry = new McpRegistry({
     home, root, builtins: () => ({ idecore: rt.gate.mcpEntry() }),
     expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
@@ -427,6 +429,7 @@ try {
       default:
         await routeClientMessage(message, {
           history: (history) => rt.history.handle(history, reply),
+          git: (message) => git.handle(message, reply),
           settings: async (settings) => {
             let error: string | null = null;
             try {
@@ -442,6 +445,10 @@ try {
     }
   };
 
+  const gitGreeting = (): ServerMessage[] => {
+    const status = git.snapshot();
+    return status ? [{ type: 'git.snapshot', status }] : [];
+  };
   const running = await startServer({
     port,
     token,
@@ -458,6 +465,7 @@ try {
       gateSnapshot(),
       settingsSnapshot(),
       { type: 'history.snapshot', history: rt.history.snapshot() },
+      ...gitGreeting(),
       { type: 'terminal.snapshot', terminals: terminals.snapshot() },
     ],
     onClientMessage: (message, reply) => {
@@ -472,17 +480,23 @@ try {
   agent.onMessage((message) => {
     running.broadcast(message);
     if (message.type !== 'session.snapshot') return;
+    git.poke();
     running.broadcast(plansSnapshot());
     broadcastSessions();
   });
   agent.onTurnClosed(broadcastSessions);
   agent.onTitleChanged(broadcastSessions);
   agent.onProcessExit(broadcastSessions);
-  rt.gate.plans.onChange((plans) => running.broadcast({ type: 'plans.snapshot', plans }));
+  rt.gate.plans.onChange((plans) => {
+    running.broadcast({ type: 'plans.snapshot', plans });
+    git.poke();
+  });
   rt.gate.gate.onChange((prompts) => running.broadcast({ type: 'gate.snapshot', prompts }));
   rt.history.onPatch((patch) => running.broadcast({ type: 'history.patch', patch }));
   rt.history.onReset(() => running.broadcast({ type: 'history.snapshot', history: rt.history.snapshot() }));
   terminals.onMessage((message) => running.broadcast(message));
+  git.onStatus((status) => running.broadcast({ type: 'git.snapshot', status }));
+  git.start();
 
   const shutdown = async (): Promise<void> => {
     // Every step has its own limit, yet one that never settles must not keep a stopped core alive.
@@ -498,6 +512,7 @@ try {
     const closingTerminals = terminals.closeAll();
     step = 'the agent and the watcher';
     await rt.close();
+    await git.close();
     progress.stop();
     classifier?.stop();
     step = 'the deploy watch';

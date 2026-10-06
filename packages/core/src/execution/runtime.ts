@@ -21,6 +21,7 @@ import { Summarizer } from '../history/summarizer';
 import type { IndexedFile } from '../model';
 import type { ModelProvider } from '../models/types';
 import { ActivityLedger } from '../watchdog/activity';
+import { busyReason } from './agent-busy';
 import { recoverBaselines } from '../watchdog/recovery';
 import { Watchdog, type WatchdogSession } from '../watchdog/watchdog';
 import { WatchdogWatcher, type FsEvent, type WatchdogWatcherOptions } from '../watchdog/watcher';
@@ -63,6 +64,7 @@ export interface ExecutionRuntime {
   close(): Promise<void>;
   unavailable(): string | null;
   canLeave(): string | null;
+  agentBusy(): string | null;
   onChangesUpserted(listener: (changes: ChangeView[]) => void): () => boolean;
 }
 
@@ -386,6 +388,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     history,
     baselines,
     unavailable: () => failure,
+    agentBusy: () => busyReason(session, gate.plans.plans()),
     canLeave() {
       if (gate.gate.pending().length > 0) return 'Answer the waiting tool question before switching chats.';
       if (gate.plans.plans().some((plan) => plan.status === 'proposed')) return 'Answer the waiting plan before switching chats.';
