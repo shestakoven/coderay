@@ -27,6 +27,7 @@ const CALL_ENDED = 'IDE: the call ended before the user answered.';
 export interface HookAnswer {
   permissionDecision: 'allow' | 'deny';
   permissionDecisionReason: string;
+  additionalContext?: string;
 }
 
 export interface GateContext {

@@ -216,6 +216,7 @@ try {
     mcpServers: () => registry.sessionServers(),
     gate: rt.sessionGate,
     canLeave: () => rt.canLeave(),
+    holdTurnEnd: (signal) => rt.holdTurnEnd(signal),
     terminalInput: (data) => terminals.input(AGENT_TERMINAL_ID, data),
   });
   session = agent;

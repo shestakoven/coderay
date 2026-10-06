@@ -6,6 +6,7 @@ import type { AgentSession, SessionGate } from '../agent/agent-session';
 import type { ToolEndInfo } from '../agent/tracker';
 import { FailOpenDetector } from '../gate/failopen';
 import { Hold } from '../gate/hold';
+import { GATE_HOLD_MS } from '../gate/hook-gate';
 import { classifyPaths, guardedMatcher } from '../gate/paths';
 import { createGateRuntime, type GateRuntime, type GateRuntimeOptions } from '../gate/runtime';
 import { toolClass } from '../gate/tools';
@@ -64,6 +65,7 @@ export interface ExecutionRuntime {
   close(): Promise<void>;
   unavailable(): string | null;
   canLeave(): string | null;
+  holdTurnEnd(signal: AbortSignal): Promise<void> | null;
   agentBusy(): string | null;
   onChangesUpserted(listener: (changes: ChangeView[]) => void): () => boolean;
 }
@@ -109,6 +111,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     runningShell: () => session?.runningShell() ?? false,
     processAlive: () => session?.processAlive() ?? false,
     interrupt: () => session?.interrupt() ?? false,
+    interruptResumes: () => session?.interruptResumes() ?? true,
     send: (text) => attached().send(text, { fromUser: false }),
     sendAbsorbed: (text) => attached().sendAbsorbed(text),
     queueNote: (text) => attached().queueNote(text),
@@ -396,6 +399,17 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       if (gate.plans.plans().some((plan) => plan.status === 'proposed')) return 'Answer the waiting plan before switching chats.';
       if (watchdog.isPending()) return 'Resolve the watchdog question before switching chats.';
       return null;
+    },
+    // The agent in a terminal cannot be told to go on once its turn has ended, so the end of a turn waits for the user's answer.
+    holdTurnEnd(signal) {
+      if (!watchdog.holdsTurn() || !hold.isHeld()) return null;
+      const deadline = Date.now() + (o.holdMs ?? GATE_HOLD_MS);
+      return (async () => {
+        while (watchdog.holdsTurn() && hold.isHeld() && !signal.aborted) {
+          const left = deadline - Date.now();
+          if (left <= 0 || (await hold.wait(signal, left)) !== 'released') return;
+        }
+      })();
     },
     onChangesUpserted(listener) {
       upserted.add(listener);

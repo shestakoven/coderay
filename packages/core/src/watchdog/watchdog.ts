@@ -27,6 +27,8 @@ export interface WatchdogSession {
   runningShell(): boolean;
   processAlive(): boolean;
   interrupt(): boolean;
+  // False when nothing can tell an interrupted agent to go on (a terminal's input belongs to the user); it is then held, not interrupted.
+  interruptResumes?(): boolean;
   send(text: string): void;
   sendAbsorbed(text: string): void;
   queueNote(text: string): void;
@@ -78,6 +80,7 @@ export class Watchdog {
   private readonly subagentNames = new Map<string, string[]>();
   private readonly killed = new Map<string, string[]>();
   private readonly stoppedTurnOpen = new Set<string>();
+  private readonly turnHeld = new Set<string>();
   private readonly proposedAtInterrupt = new Map<string, string[]>();
   private readonly settleMs: number;
   private readonly maxCollectingMs: number;
@@ -104,9 +107,15 @@ export class Watchdog {
     return this.all.some((event) => event.phase !== 'resolved');
   }
 
+  // A turn the agent must not end before the user answers: the answer then goes to it as the reason to go on.
+  holdsTurn(): boolean {
+    return this.turnHeld.size > 0;
+  }
+
   close(eventId: string, resolution: EventResolution): void {
     const event = this.all.find((e) => e.id === eventId);
     if (!event || event.phase === 'resolved') return;
+    this.turnHeld.delete(eventId);
     if (this.open?.id === eventId) {
       this.open = null;
       this.clearTimer();
@@ -455,6 +464,7 @@ export class Watchdog {
       this.subagentNames.delete(event.id);
       this.killed.delete(event.id);
       this.stoppedTurnOpen.delete(event.id);
+      this.turnHeld.delete(event.id);
       this.proposedAtInterrupt.delete(event.id);
       excess -= 1;
     }
@@ -479,9 +489,19 @@ export class Watchdog {
     });
     this.step(event, 'withdraw the open prompts', () => this.o.gate.withdrawPending('the watchdog opened an event'));
     this.step(event, 'interrupt the agent', () => {
-      if (session.hasOpenTurn() && !event.paused) event.interrupted = this.interrupt(event);
+      if (!session.hasOpenTurn()) return;
+      if (session.interruptResumes?.() === false) this.holdTurn(event);
+      else if (!event.paused) event.interrupted = this.interrupt(event);
     });
     return event;
+  }
+
+  private holdTurn(event: WatchdogEventView): void {
+    this.turnHeld.add(event.id);
+    const off = this.o.session.onTurnClosed(() => {
+      off();
+      this.turnHeld.delete(event.id);
+    });
   }
 
   private join(event: WatchdogEventView, change: ChangeView): void {

@@ -49,6 +49,8 @@ export interface AgentSessionOptions {
   canaryMs?: number;
   // Writes to the agent's terminal; the IDE only ever sends Esc, to stop a turn.
   terminalInput?: (data: string) => void;
+  // A turn the IDE holds in the terminal waits here for the user's answer; null when nothing holds it.
+  holdTurnEnd?: (signal: AbortSignal) => Promise<void> | null;
   transcriptsDir?: string;
   canLeave?: () => string | null;
 }
@@ -109,6 +111,7 @@ const INTERRUPT_KEYS = new Set(['\x1b', '\x03']);
 const INTERRUPT_CONFIRM_MS = 5000;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
+const NEVER_ABORTED = new AbortController().signal;
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
@@ -307,6 +310,11 @@ export class AgentSession {
     return this.process !== null || this.terminalOpen;
   }
 
+  // The chat's process takes a message after an interrupt; a terminal's input belongs to the user.
+  interruptResumes(): boolean {
+    return !this.terminalOpen;
+  }
+
   onInterrupt(listener: () => void): () => boolean {
     this.interruptListeners.add(listener);
     return () => this.interruptListeners.delete(listener);
@@ -383,7 +391,7 @@ export class AgentSession {
   }
 
   // An event hook of the agent in the terminal; the answer goes back to claude as the hook's output.
-  hookEvent(sessionId: string, raw: unknown): object | null {
+  hookEvent(sessionId: string, raw: unknown, signal?: AbortSignal): object | null | Promise<object | null> {
     const session = this.session;
     if (!this.terminalOpen || !session || sessionId !== session.id) return null;
     const event = parseHookEvent(raw);
@@ -397,7 +405,14 @@ export class AgentSession {
     const transcriptPath = hookEventInfo(raw)?.transcriptPath;
     if (transcriptPath) this.transcriptTail.follow(transcriptPath);
     if (!event || event.type === 'conversation') return null;
-    return this.answerHook(event, hookEventInfo(raw)?.name ?? '');
+    return this.answerHook(event, hookEventInfo(raw)?.name ?? '', signal);
+  }
+
+  // The agent's next call of its own carries the note the user's answer left, so the turn goes on with it instead of waiting for the user.
+  callNote(raw: unknown): string | null {
+    if (!this.terminalOpen || !this.fromTerminal(raw) || this.absorbed.length === 0) return null;
+    const event = parseHookEvent(raw);
+    return event?.type === 'tool-start' && event.agentId === null ? this.absorbed.splice(0).join('\n\n') : null;
   }
 
   private fromTerminal(raw: unknown): boolean {
@@ -405,10 +420,15 @@ export class AgentSession {
     return claudeSessionId === this.session?.claudeSessionId;
   }
 
-  private answerHook(event: AgentEvent, hookName: string): object | null {
-    if (event.type === 'turn-end' && !event.failed && this.absorbed.length > 0) {
-      // A note that came too late for a tool step keeps the agent going instead of ending its turn.
-      return { decision: 'block', reason: this.absorbed.splice(0).join('\n\n') };
+  private answerHook(event: AgentEvent, hookName: string, signal: AbortSignal = NEVER_ABORTED, waited = false): object | null | Promise<object | null> {
+    if (event.type === 'turn-end' && !event.failed) {
+      if (this.absorbed.length > 0) {
+        // A note that came too late for a tool step keeps the agent going instead of ending its turn.
+        return { decision: 'block', reason: this.absorbed.splice(0).join('\n\n') };
+      }
+      // The turn does not end while the user decides what to do with the agent's changes: the answer then keeps it going.
+      const held = waited ? null : this.options.holdTurnEnd?.(signal);
+      if (held) return held.then(() => (signal.aborted ? null : this.answerHook(event, hookName, signal, true)));
     }
     this.agentEvents([event]);
     if (event.type === 'prompt' && event.task === null) {
