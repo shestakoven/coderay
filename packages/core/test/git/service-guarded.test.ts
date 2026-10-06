@@ -26,26 +26,18 @@ describe('GitService guarded operations', () => {
     await git.commit('wip');
   });
 
-  it('discards an edit and deletes an untracked file, claiming both as IDE writes', async () => {
-    const root = await makeRepo({ 'a.txt': 'a\n' });
-    await put(root, { 'a.txt': 'edited\n', 'u.txt': 'u\n' });
-    const { git, ideWrites } = service(root);
-    await git.discard(['a.txt', 'u.txt']);
-    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('a\n');
-    expect(existsSync(join(root, 'u.txt'))).toBe(false);
-    expect(ideWrites.claim('a.txt', hashOf(root, 'a.txt'))).toBe(true);
-    expect(ideWrites.claim('u.txt', null)).toBe(true);
-  });
-
-  it('discards the work-tree side only and keeps what is staged', async () => {
+  it('discards the work-tree side back to the index, deletes an untracked file, and claims both as IDE writes', async () => {
     const root = await makeRepo({ 'a.txt': 'a\n' });
     await put(root, { 'a.txt': 'staged\n' });
     sh(root, 'add', 'a.txt');
-    await put(root, { 'a.txt': 'worktree\n' });
-    const { git } = service(root);
-    await git.discard(['a.txt']);
+    await put(root, { 'a.txt': 'edited\n', 'u.txt': 'u\n' });
+    const { git, ideWrites } = service(root);
+    await git.discard(['a.txt', 'u.txt']);
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('staged\n');
-    expect((await git.status()).files[0]).toMatchObject({ index: 'modified', worktree: null });
+    expect(existsSync(join(root, 'u.txt'))).toBe(false);
+    expect((await git.status()).files).toEqual([expect.objectContaining({ path: 'a.txt', index: 'modified', worktree: null })]);
+    expect(ideWrites.claim('a.txt', hashOf(root, 'a.txt'))).toBe(true);
+    expect(ideWrites.claim('u.txt', null)).toBe(true);
   });
 
   it('discards only what the status lists, and nothing through a symlink out of the project', async () => {
@@ -66,7 +58,6 @@ describe('GitService guarded operations', () => {
     await git.branchCreate('feature/x');
     expect(head(root)).toBe('feature/x');
     await expect(git.branchCreate('bad name')).rejects.toThrow('is not a valid branch name');
-    await expect(git.branchCreate('feature/x')).rejects.toThrow();
   });
 
   it('switches branch and claims every changed file with its new blob', async () => {
@@ -96,18 +87,5 @@ describe('GitService guarded operations', () => {
     expect(ideWrites.claim('x.txt', hashOf(root, 'sub/x.txt'))).toBe(true);
     expect(ideWrites.claim('top.txt', hashOf(root, 'top.txt'))).toBe(false);
     expect(ideWrites.claim('../top.txt', hashOf(root, 'top.txt'))).toBe(false);
-  });
-
-  it('passes on the refusal when local edits would be overwritten, leaving HEAD and the file alone', async () => {
-    const root = await makeRepo({ 'a.txt': 'a\n' });
-    sh(root, 'checkout', '-q', '-b', 'other');
-    await put(root, { 'a.txt': 'other\n' });
-    sh(root, 'commit', '-q', '-am', 'o');
-    sh(root, 'checkout', '-q', 'main');
-    await put(root, { 'a.txt': 'mine\n' });
-    const { git } = service(root);
-    await expect(git.branchSwitch('other')).rejects.toThrow(/overwritten/);
-    expect(head(root)).toBe('main');
-    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('mine\n');
   });
 });

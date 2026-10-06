@@ -47,7 +47,7 @@ describe('chipView', () => {
 describe('matchBranches', () => {
   const branches: GitBranch[] = ['main', 'feature/login', 'fix/typo'].map((name) => ({ name, current: name === 'main', upstream: null, sha: 'abc' }));
   it('filters by substring and offers to create a branch only for a new name', () => {
-    expect(matchBranches(branches, 'fe')).toEqual({ matches: [branches[1]], create: 'fe' });
+    expect(matchBranches(branches, 'FE')).toEqual({ matches: [branches[1]], create: 'FE' });
     expect(matchBranches(branches, 'main')).toEqual({ matches: [branches[0]], create: null });
     expect(matchBranches(branches, '  ')).toEqual({ matches: branches, create: null });
   });

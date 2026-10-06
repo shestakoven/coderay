@@ -52,21 +52,29 @@ describe('GitService refresh', () => {
     await wait(() => expect(seen.at(-1)?.repo).toBe(true));
   });
 
-  it('never lets an older status overwrite a newer one', async () => {
+  it('answers a refresh asked for while a status is running with a status taken after it', async () => {
     const root = await makeRepo({ 'a.txt': 'a\n' });
-    const { git } = service(root);
+    let runs = 0;
+    let started!: () => void;
+    const running = new Promise<void>((resolve) => (started = resolve));
+    const agentBusy = () => {
+      started();
+      return `run ${++runs}`;
+    };
+    const { git } = service(root, { agentBusy });
     const first = git.refresh();
-    await put(root, { 'a.txt': 'changed\n' });
+    await running;
     const second = git.refresh();
-    const [, newer] = await Promise.all([first, second]);
-    expect(paths(newer)).toEqual(['a.txt']);
-    expect(git.snapshot()).toEqual(newer);
+    expect((await first).busy).toBe('run 1');
+    expect((await second).busy).toBe('run 2');
+    expect(git.snapshot()?.busy).toBe('run 2');
   });
 });
 
 describe('GitService.handle', () => {
-  it('answers a request with its id and reports a failure as an error string', async () => {
+  it('answers each request with its id and result, reports a failure as an error string, and refreshes after a write', async () => {
     const root = await makeRepo({ 'a.txt': 'a\n' });
+    sh(root, 'branch', 'feature');
     await put(root, { 'a.txt': 'b\n' });
     const { git } = service(root);
     const replies: unknown[] = [];
@@ -77,8 +85,11 @@ describe('GitService.handle', () => {
     expect(replies).toEqual([
       { type: 'git.result', requestId: 'r1', error: null },
       { type: 'git.result', requestId: 'r2', error: 'The commit message is empty.' },
-      { type: 'git.result', requestId: 'r3', error: null, branches: [expect.objectContaining({ name: 'main', current: true })] },
+      {
+        type: 'git.result', requestId: 'r3', error: null,
+        branches: expect.arrayContaining([expect.objectContaining({ name: 'main', current: true }), expect.objectContaining({ name: 'feature', current: false })]),
+      },
     ]);
-    expect(paths(git.snapshot() ?? undefined)).toEqual(['a.txt']);
+    expect(git.snapshot()?.files).toEqual([expect.objectContaining({ path: 'a.txt', index: 'modified', worktree: null })]);
   });
 });

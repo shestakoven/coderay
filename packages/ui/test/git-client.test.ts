@@ -13,15 +13,12 @@ describe('GitClient', () => {
     await expect(pending).resolves.toEqual({ type: 'git.result', requestId, error: null });
   });
 
-  it('resolves with an error when the message cannot be sent', async () => {
-    const client = new GitClient(() => false);
-    expect((await client.request((requestId) => ({ type: 'git.init', requestId }))).error).toBe('Not connected to the IDE core.');
-  });
-
-  it('settles everything pending with an error when the connection drops', async () => {
-    const client = new GitClient(() => true);
-    const pending = client.request((requestId) => ({ type: 'git.branches', requestId }));
-    client.dropAll();
+  it('settles a request with an error when it cannot be sent or the connection drops', async () => {
+    const offline = new GitClient(() => false);
+    expect((await offline.request((requestId) => ({ type: 'git.init', requestId }))).error).toBe('Not connected to the IDE core.');
+    const online = new GitClient(() => true);
+    const pending = online.request((requestId) => ({ type: 'git.branches', requestId }));
+    online.dropAll();
     expect((await pending).error).toBe('The connection to the IDE core was lost.');
   });
 });

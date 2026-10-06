@@ -8,11 +8,6 @@ const session = (over: Partial<Record<keyof BusySession, unknown>> = {}): BusySe
 const plan = (status: PlanView['status'], steps: ('pending' | 'active' | 'done')[]): PlanView => ({ status, steps: steps.map((s) => ({ status: s })) }) as PlanView;
 
 describe('busyReason', () => {
-  it('is free with no session, no plan and nothing running', () => {
-    expect(busyReason(null, [])).toBeNull();
-    expect(busyReason(session(), [])).toBeNull();
-  });
-
   it('names an open turn, background work and an active step of an approved plan', () => {
     expect(busyReason(session({ hasOpenTurn: () => true }), [])).toBe('the agent is working');
     expect(busyReason(session({ runningSubagents: () => 2 }), [])).toBe('the agent has work running in the background');
@@ -20,7 +15,8 @@ describe('busyReason', () => {
     expect(busyReason(null, [plan('approved', ['done', 'active'])])).toBe('a plan step is running');
   });
 
-  it('is not held by an idle approved plan, or by a plan nobody approved', () => {
+  it('is free when nothing runs, even with an idle approved plan or an active step of a plan nobody approved', () => {
+    expect(busyReason(null, [])).toBeNull();
     expect(busyReason(session(), [plan('approved', ['done', 'pending'])])).toBeNull();
     expect(busyReason(session(), [plan('proposed', ['active'])])).toBeNull();
   });
