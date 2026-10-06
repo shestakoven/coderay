@@ -79,6 +79,7 @@ describe('planOnMap', () => {
     expect(planOnMap([v1, plan({ version: 2, status: 'proposed' })])?.version).toBe(2);
     expect(planOnMap([plan({ status: 'superseded' }), plan({ version: 2 })])?.version).toBe(2);
     expect(planOnMap([v1, plan({ version: 2, status: 'changes-requested' })])?.version).toBe(1);
+    expect(planOnMap([plan({ status: 'done' }), plan({ version: 2, status: 'changes-requested' })])?.version).toBe(1);
     expect(planOnMap([plan({ status: 'rejected' })])?.status).toBe('rejected');
     expect(planOnMap([plan({ status: 'done' }), plan({ id: 'plan-2', status: 'proposed' })])?.id).toBe('plan-2');
     expect(planOnMap([])).toBeNull();
