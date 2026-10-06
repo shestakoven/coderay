@@ -32,14 +32,21 @@ type Part =
   | { kind: 'escape' }
   | { kind: 'var'; name: string }
   | { kind: 'glob' }
-  | { kind: 'sub'; body: string };
+  | { kind: 'sub'; body: string; open?: boolean };
 
 interface Word {
   parts: Part[];
   raw: string;
 }
 
-type Token = { t: 'word'; word: Word } | { t: 'op'; op: string } | { t: 'redir'; op: string };
+// A sub token is a command substitution outside any word: in a heredoc body or in (( )).
+type Token = { t: 'word'; word: Word } | { t: 'op'; op: string } | { t: 'redir'; op: string } | { t: 'sub'; body: string };
+
+interface Heredoc {
+  delimiter: string;
+  strip: boolean;
+  quoted: boolean;
+}
 
 interface Redirect {
   op: string;
@@ -171,6 +178,10 @@ function run(script: string, state: State, depth: number): void {
       const next = tokens[i + 1];
       redirects.push({ op: token.op, word: next?.t === 'word' ? next.word : null });
       if (next?.t === 'word') i += 1;
+    } else if (token.t === 'sub') {
+      state.cwd.push(cwdOf(state));
+      run(token.body, state, depth + 1);
+      state.cwd.pop();
     } else {
       const next = tokens[i + 1];
       // name() defines a function, which may shadow any command and run at any later point.
@@ -191,8 +202,7 @@ function run(script: string, state: State, depth: number): void {
 
 function lex(src: string): Token[] {
   const tokens: Token[] = [];
-  const heredocs: { delimiter: string; strip: boolean }[] = [];
-  let delimiterStrips: boolean | null = null;
+  const heredocs: Heredoc[] = [];
   let i = 0;
   while (i < src.length) {
     const c = src[i]!;
@@ -205,10 +215,16 @@ function lex(src: string): Token[] {
     } else if (c === '\n') {
       tokens.push({ t: 'op', op: '\n' });
       i += 1;
-      for (const doc of heredocs.splice(0)) i = skipHeredoc(src, i, doc);
+      for (const doc of heredocs.splice(0)) {
+        const body = i;
+        i = skipHeredoc(src, i, doc);
+        // Bash runs $(…) and `…` in the body of a heredoc whose delimiter is not quoted.
+        if (!doc.quoted) tokens.push(...substitutionsIn(src.slice(body, i)).map((text): Token => ({ t: 'sub', body: text })));
+      }
     } else if (src.startsWith('((', i)) {
       const innerClose = closing(src, i + 2, ')');
       if (src[innerClose + 1] === ')') {
+        tokens.push(...substitutionsIn(src.slice(i + 2, innerClose)).map((text): Token => ({ t: 'sub', body: text })));
         i = innerClose + 2;
         tokens.push({ t: 'word', word: { parts: [{ kind: 'lit', text: '((…))' }], raw: '((…))' } });
       } else {
@@ -224,19 +240,21 @@ function lex(src: string): Token[] {
         i += (long ?? short)!.length;
         continue;
       }
+      if (redirect === '<<' || redirect === '<<-') {
+        const [doc, word, end] = heredocAt(src, i + 2);
+        heredocs.push(doc);
+        tokens.push({ t: 'redir', op: redirect }, { t: 'word', word });
+        i = end;
+        continue;
+      }
       if (redirect) {
         tokens.push({ t: 'redir', op: redirect });
         i += redirect.length;
-        if (redirect === '<<' || redirect === '<<-') delimiterStrips = redirect === '<<-';
         continue;
       }
       const [word, end] = readWord(src, i);
       i = end;
       if (/^\d+$/.test(word.raw) && REDIRECTS.some((op) => src.startsWith(op, i))) continue;
-      if (delimiterStrips !== null) {
-        heredocs.push({ delimiter: literalText(word) ?? word.raw, strip: delimiterStrips });
-        delimiterStrips = null;
-      }
       tokens.push({ t: 'word', word });
     }
   }
@@ -287,7 +305,7 @@ function readWord(src: string, start: number): [Word, number] {
       i = next;
     } else if (c === '`') {
       const end = closing(src, i + 1, '`');
-      push({ kind: 'sub', body: src.slice(i + 1, end) });
+      push({ kind: 'sub', body: src.slice(i + 1, end), open: end === src.length });
       i = end + 1;
     } else if (quoted) {
       if (c === '"') {
@@ -327,16 +345,16 @@ function readDollar(src: string, i: number): [Part | null, number] {
   const next = src[i + 1];
   if (next === '(' && src[i + 2] === '(') {
     const end = src.indexOf('))', i + 3);
-    return [{ kind: 'var', name: '((…))' }, end === -1 ? src.length : end + 2];
+    return [nested(src.slice(i + 3, end === -1 ? src.length : end)) ?? { kind: 'var', name: '((…))' }, end === -1 ? src.length : end + 2];
   }
   if (next === '(') {
     const end = closing(src, i + 2, ')');
-    return [{ kind: 'sub', body: src.slice(i + 2, end) }, end + 1];
+    return [{ kind: 'sub', body: src.slice(i + 2, end), open: end === src.length }, end + 1];
   }
   if (next === '{') {
     const end = src.indexOf('}', i + 2);
     const inner = src.slice(i + 2, end === -1 ? src.length : end);
-    return [{ kind: 'var', name: NAME.exec(inner)?.[0] ?? inner }, end === -1 ? src.length : end + 1];
+    return [nested(inner) ?? { kind: 'var', name: NAME.exec(inner)?.[0] ?? inner }, end === -1 ? src.length : end + 1];
   }
   const name = NAME.exec(src.slice(i + 1))?.[0];
   if (name) return [{ kind: 'var', name }, i + 1 + name.length];
@@ -344,16 +362,58 @@ function readDollar(src: string, i: number): [Part | null, number] {
   return [null, i + 1];
 }
 
+// $(…) and `…` inside ${…} and $((…)) run as well; their part is then a substitution of them all.
+function nested(text: string): Part | null {
+  const bodies = substitutionsIn(text);
+  return bodies.length === 0 ? null : { kind: 'sub', body: bodies.join('\n') };
+}
+
+// The bodies of the $(…) and `…` in text that bash expands without heeding quotes.
+function substitutionsIn(text: string): string[] {
+  const bodies: string[] = [];
+  for (let i = 0; i < text.length; i += 1) {
+    const backtick = text[i] === '`';
+    if (text[i] === '\\') {
+      i += 1;
+    } else if (backtick || (text.startsWith('$(', i) && text[i + 2] !== '(')) {
+      const open = i + (backtick ? 1 : 2);
+      i = closing(text, open, backtick ? '`' : ')');
+      bodies.push(text.slice(open, i));
+    }
+  }
+  return bodies;
+}
+
+// The heredoc whose << ends at start, the word that names its delimiter, and where that word ends.
+function heredocAt(src: string, start: number): [Heredoc, Word, number] {
+  const strip = src[start] === '-';
+  let i = strip ? start + 1 : start;
+  while (src[i] === ' ' || src[i] === '\t') i += 1;
+  const [word, end] = readWord(src, i);
+  return [{ delimiter: literalText(word) ?? word.raw, strip, quoted: /['"\\]/.test(word.raw) }, word, end];
+}
+
 function closing(src: string, from: number, close: ')' | '`'): number {
   let depth = 0;
+  const heredocs: Heredoc[] = [];
   for (let i = from; i < src.length; i += 1) {
-    const c = src[i];
+    const c = src[i]!;
     if (c === '\\') {
       i += 1;
     } else if (close === '`') {
       if (c === '`') return i;
+    } else if (c === '\n' && heredocs.length > 0) {
+      for (const doc of heredocs.splice(0)) i = skipHeredoc(src, i + 1, doc) - 1;
     } else if (c === "'" || c === '"') {
       i = quoteEnd(src, i, c);
+    } else if (c === '#' && (i === from || /[\s;&|()]/.test(src[i - 1]!))) {
+      // A comment runs to the end of its line, apostrophes and all.
+      const end = src.indexOf('\n', i);
+      i = (end === -1 ? src.length : end) - 1;
+    } else if (src.startsWith('<<', i) && src[i + 2] !== '<') {
+      const [doc, , end] = heredocAt(src, i + 2);
+      heredocs.push(doc);
+      i = end - 1;
     } else if (c === '(') {
       depth += 1;
     } else if (c === ')') {
@@ -376,6 +436,8 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   for (const word of [...words, ...redirects.flatMap((redirect) => (redirect.word ? [redirect.word] : []))]) {
     for (const part of word.parts) {
       if (part.kind !== 'sub') continue;
+      // Where the IDE finds no end bash may find one, and run what follows as commands.
+      if (part.open) state.targets.push(unresolved(word.raw.slice(0, 60), 'a command substitution the IDE cannot read to its end'));
       state.cwd.push(cwdOf(state));
       run(part.body, state, depth + 1);
       state.cwd.pop();
