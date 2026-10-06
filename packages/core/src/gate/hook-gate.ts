@@ -1,10 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import type { ControlMode, GateAnswer, GatePreview, GatePromptView, GateTarget, GateTargetKind, Policy, ToolDecision } from '@ide/protocol';
 import { summarizeToolInput } from '../agent/tools';
-import { createRun } from '../git/git-run';
+import { createRun, type GitRun } from '../git/git-run';
 import { parseStatus } from '../git/status-parse';
 import { isRecord } from '../json';
 import { globOwners, ownerIndex } from '../plans/freeze';
@@ -322,8 +322,8 @@ export class HookGate {
     await refreshWorktrees(this.options.root);
     // A rewrite inside a nested worktree touches that worktree only, which is no reason to ask for the whole project.
     const rewritesProject = writes.rewrites.some((dir) => dir === null || worktreeAt(this.options.root, realTarget(dir, '/')) === null);
-    const repos = await Promise.all(writes.history.map((dir) => this.repoState(dir)));
-    // A history command is judged by the uncommitted files it may discard; when git cannot say which, it may touch every tracked file.
+    const repos = await Promise.all(writes.history.map((dir, i) => this.repoState(dir, writes.incoming[i]!)));
+    // A history command is judged by the local files it may discard or overwrite; when git cannot say which, it may touch every tracked file.
     const found: ClassifiedTarget[] = rewritesProject || repos.includes(null) ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
     const history: HistoryCall[] = [];
     const dirty: Landing[] = [];
@@ -342,17 +342,25 @@ export class HookGate {
     return { targets: [...found, ...uncommitted, ...(await this.classify(landings, policy, home))], history };
   }
 
-  // HEAD and the tracked files with uncommitted changes where a git command runs; null when that cannot be read.
-  private async repoState(dir: string | null): Promise<RepoState | null> {
-    if (dir === null) return null;
+  // HEAD, and the files a git command may overwrite where it runs: tracked ones with uncommitted changes, and untracked or ignored ones
+  // (an .env) that a commit it brings in tracks. Null when that cannot be read.
+  private async repoState(dir: string | null, incoming: string[] | null): Promise<RepoState | null> {
+    if (dir === null || incoming === null) return null;
     const run = createRun(realTarget(dir, '/'));
+    const read = { readOnly: true, timeoutMs: STATUS_MS };
     try {
-      const [top, status] = await Promise.all([
-        run(['rev-parse', '--show-toplevel'], { readOnly: true, timeoutMs: STATUS_MS }),
-        run(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], { readOnly: true, timeoutMs: STATUS_MS }),
+      const [top, status, commits] = await Promise.all([
+        run(['rev-parse', '--show-toplevel'], read),
+        run(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], read),
+        Promise.all(incoming.map((ref) => commitOf(run, ref))),
       ]);
       const { sha, files } = parseStatus(status);
-      return { top: top.trim(), head: sha, dirty: files.flatMap((file) => (file.origPath === null ? [file.path] : [file.path, file.origPath])) };
+      const repoTop = top.trim();
+      const added = await Promise.all(commits.map((commit) =>
+        run(sha === null ? ['ls-tree', '-r', '--name-only', '-z', commit] : ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=A', sha, commit], read)));
+      const overwritten = added.flatMap((names) => names.split('\0')).filter((path) => path !== '' && present(join(repoTop, path)));
+      const dirty = files.flatMap((file) => (file.origPath === null ? [file.path] : [file.path, file.origPath]));
+      return { top: repoTop, head: sha, dirty: [...new Set([...dirty, ...overwritten])] };
     } catch {
       return null;
     }
@@ -505,6 +513,27 @@ function parseHookInput(raw: unknown, root: string): HookInput | null {
     toolUseId: raw.tool_use_id,
     cwd: typeof raw.cwd === 'string' && raw.cwd !== '' ? raw.cwd : root,
   };
+}
+
+// A name git resolves, or a branch of exactly one remote, which checkout and switch take for a new local branch.
+async function commitOf(run: GitRun, ref: string): Promise<string> {
+  const read = { readOnly: true, timeoutMs: STATUS_MS };
+  try {
+    return (await run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], read)).trim();
+  } catch (error) {
+    const remote = new Set((await run(['for-each-ref', '--format=%(objectname)', `refs/remotes/*/${ref}`], read)).split('\n').filter(Boolean));
+    if (remote.size !== 1) throw error;
+    return [...remote][0]!;
+  }
+}
+
+function present(abs: string): boolean {
+  try {
+    lstatSync(abs);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function special(kind: 'unresolved' | 'all-tracked', raw: string, why: string): ClassifiedTarget {

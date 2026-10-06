@@ -21,6 +21,8 @@ export interface ShellWrites {
   // The directory each work-tree rewrite and each history command runs in; null when the command does not say.
   rewrites: (string | null)[];
   history: (string | null)[];
+  // For each history command, the commits it brings into the work tree besides HEAD; null when the command does not say which.
+  incoming: (string[] | null)[];
 }
 
 type Part =
@@ -52,6 +54,7 @@ interface State {
   targets: ShellTarget[];
   rewrites: (string | null)[];
   history: (string | null)[];
+  incoming: (string[] | null)[];
   // Whether every command so far only moves history or reads.
   pure: boolean;
   // A GIT_ variable was set, so git may run on another repository or index than its directory says.
@@ -94,13 +97,13 @@ const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], pure: true, gitEnv: false };
+  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, gitEnv: false };
   run(command, state, 0);
   // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
   const pure = state.pure && state.targets.length === 0;
   const rewrites = pure ? state.rewrites : [...state.rewrites, ...state.history];
   const history = pure ? state.history : [];
-  return { targets: state.targets, allTracked: rewrites.length + history.length > 0, rewrites, history };
+  return { targets: state.targets, allTracked: rewrites.length + history.length > 0, rewrites, history, incoming: pure ? state.incoming : [] };
 }
 
 function run(script: string, state: State, depth: number): void {
@@ -535,7 +538,10 @@ function git(args: Word[], state: State): void {
   if (sub === null || !(HISTORY_VERBS.has(sub) || GIT_READS.has(sub)) || rest.some((arg) => runsCommand(sub, literalText(arg)))) state.pure = false;
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
   else if (sub === 'checkout' && checksOutPaths(rest)) state.rewrites.push(gitDirectory(args.slice(0, i), state));
-  else if (HISTORY_VERBS.has(sub)) state.history.push(gitDirectory(args.slice(0, i), state));
+  else if (HISTORY_VERBS.has(sub)) {
+    state.history.push(gitDirectory(args.slice(0, i), state));
+    state.incoming.push(incomingRefs(sub, rest));
+  }
   else if (WORK_TREE_REWRITES.has(sub)) {
     if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(gitDirectory(args.slice(0, i), state));
   }
@@ -555,6 +561,46 @@ function checksOutPaths(rest: Word[]): boolean {
     else if (text === null || !text.startsWith('-') || text === '-') operands += 1;
   }
   return operands > 1;
+}
+
+// The commits a history command brings into the work tree besides HEAD; null when the words do not say (a variable, a sequencer step).
+function incomingRefs(sub: string, rest: Word[]): string[] | null {
+  const words: string[] = [];
+  const flags = new Set<string>();
+  let onto: string | null = null;
+  for (let i = 0; i < rest.length; i += 1) {
+    const text = literalText(rest[i]!);
+    if (text === null) return null;
+    if (text === '--') break;
+    if (text === '--onto' || text.startsWith('--onto=')) {
+      onto = text === '--onto' ? literalText(rest[i + 1] ?? EMPTY) : text.slice('--onto='.length);
+      if (!onto) return null;
+    }
+    if (VALUE_OPTIONS.has(text)) i += 1;
+    else if (text === '-') words.push('@{-1}');
+    else if (text.startsWith('-')) flags.add(text.split('=')[0]!);
+    else words.push(text);
+  }
+  if (flags.has('--quit') || (sub === 'merge' && (flags.has('--abort') || flags.has('--continue')))) return [];
+  if (flags.has('--continue') || flags.has('--skip') || flags.has('--abort')) return null;
+  switch (sub) {
+    case 'checkout':
+    case 'switch':
+      return words.slice(0, 1);
+    case 'reset':
+      return ['--hard', '--merge', '--keep'].some((flag) => flags.has(flag)) ? words.slice(0, 1) : [];
+    case 'merge':
+      return words.length > 0 ? words : ['@{upstream}'];
+    case 'pull':
+      if (words.length < 2) return ['@{upstream}'];
+      return words.slice(1).some((ref) => ref.includes(':')) ? null : words.slice(1).map((ref) => `${words[0]}/${ref}`);
+    case 'rebase':
+      return [onto ?? words[0] ?? '@{upstream}', ...words.slice(1, 2)];
+    case 'revert':
+      return words.flatMap((ref) => [ref, `${ref}^`]);
+    default:
+      return words;
+  }
 }
 
 // Where git runs: the working directory moved by each -C; unknown for a repository chosen any other way.
