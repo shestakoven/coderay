@@ -38,3 +38,12 @@
 .git-dialog ul { margin: 0 0 8px; padding-left: 18px; }
 .git-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
 .git-dialog .danger { background: var(--error); color: #1e1f22; border-color: transparent; }
+.git-diff { position: absolute; inset: 0; z-index: 30; display: flex; flex-direction: column; background: var(--bg); outline: none; }
+.git-diff > header { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px; border-bottom: 1px solid var(--border); }
+.git-diff > header .grow { flex: 1; }
+.git-diff > header button { width: 28px; height: 28px; display: grid; place-items: center; border: 0; border-radius: var(--r-1); background: none; color: var(--muted); padding: 0; }
+.git-diff > header button:hover { background: var(--raised); color: var(--fg); }
+.git-counts i { font-style: normal; font-family: var(--font-mono); }
+.git-counts .add { color: var(--added); }
+.git-counts .del { color: var(--error); }
+.git-diff-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; }

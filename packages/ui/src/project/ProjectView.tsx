@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'r
 import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
 import { GitClient } from '../git/git-client';
 import { changedCount } from '../git/git-state';
+import { GitDiffView } from '../git/GitDiffView';
 import { GitPanel, type GitSelection } from '../git/GitPanel';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
@@ -449,6 +450,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 onExit={() => setReviewMode(false)}
               />
             )}
+            {gitSelection && gitStatus && <GitDiffView selection={gitSelection} status={gitStatus} client={git} onClose={() => setGitSelection(null)} />}
           </main>
           {showRight && <Resizer orientation="vertical" label="Resize agent panel" value={sizes.right} min={LIMITS.right.min} max={LIMITS.right.max} grow={-1} onResize={(size) => resize('right', size)} onReset={() => resetSize('right')} />}
           <RightPanel
