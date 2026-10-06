@@ -121,6 +121,21 @@ describe('changesByStep', () => {
     expect(groups[0]).toMatchObject({ rationale: 'why a', summary: { text: 'did a' } });
     expect(groups[1]).toMatchObject({ rationale: null, summary: null });
   });
+
+  it('labels follow-ups, and shows each git call as one row after the rest', () => {
+    const h = view({
+      changes: [
+        change({ id: 'f1', planId: 'p1', stepKey: null, at: 1 }),
+        change({ id: 'o1', planId: 'p1', stepKey: null, outOfPlan: true, at: 2 }),
+        change({ id: 'g1', origin: 'git', toolUseIds: ['t1'], at: 3 }),
+        change({ id: 'g2', origin: 'git', path: 'src/api/b.ts', toolUseIds: ['t1'], at: 4 }),
+      ],
+    });
+    const groups = changesByStep(h, [plan()], 'folder:src/api', demoSnapshot(), (id) => (id === 't1' ? 'git rebase main' : undefined));
+    expect(groups.map((g) => [g.title, g.git, g.changes.map((c) => c.id)])).toEqual([
+      ['Follow-ups', false, ['f1']], ['No step', false, ['o1']], ['git rebase main · 2 files', true, ['g1', 'g2']],
+    ]);
+  });
 });
 
 describe('chatFilterIds', () => {

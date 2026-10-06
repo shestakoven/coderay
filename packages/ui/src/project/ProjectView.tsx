@@ -9,7 +9,7 @@ import { GitDiffView } from '../git/GitDiffView';
 import { GitPanel, type GitSelection } from '../git/GitPanel';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
-import { canSend, chatReducer, initialChatState } from '../chat/chat-state';
+import { canSend, chatReducer, initialChatState, toolSummary } from '../chat/chat-state';
 import { dialogEvent, eventFilePaths } from '../history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from '../history/history-state';
 import { WatchdogDialog } from '../history/WatchdogDialog';
@@ -376,6 +376,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           onFilter={(filter) => dispatchChat({ type: 'filter', filter })}
           diffs={hist.results}
           requestDiff={requestDiff}
+          commandOf={(id) => toolSummary(chat, id)}
         />
       )}
     />

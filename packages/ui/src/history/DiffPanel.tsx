@@ -14,10 +14,11 @@ interface Props {
   onFilter: (filter: ChatFilter | null) => void;
   diffs: Record<string, DiffResult | undefined>;
   requestDiff: (path: string, before: string | null, after: string | null) => string | null;
+  commandOf?: (toolUseId: string) => string | undefined;
 }
 
-export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, diffs, requestDiff }: Props) {
-  const groups = changesByStep(history, plans, nodeId, snapshot);
+export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, diffs, requestDiff, commandOf }: Props) {
+  const groups = changesByStep(history, plans, nodeId, snapshot, commandOf);
   const [requested, setRequested] = useState<Record<string, string | null>>({});
   const [failed, setFailed] = useState<Record<string, boolean>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
@@ -41,13 +42,17 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
         <input type="checkbox" checked={filter?.nodeId === nodeId} onChange={(event) => toggleFilter(event.target.checked)} /> Show related chat only
       </label>
       {groups.map((group) => (
-        <section key={group.stepKey ?? 'none'} className="diff-step">
-          <h3>{group.title}</h3>
+        <section key={group.key} className="diff-step">
+          {group.git ? (
+            <button className="diff-git" aria-expanded={open[group.key] === true} title={group.title} onClick={() => setOpen({ ...open, [group.key]: !open[group.key] })}>
+              {open[group.key] ? '▾' : '▸'} <span className="diff-git-label">{group.title}</span> <span className="tl-kind">git</span>
+            </button>
+          ) : <h3>{group.title}</h3>}
           {group.rationale && <p className="muted">{group.rationale}</p>}
           {group.stepKey !== null && (
             <p className="summary-text">{group.summary?.text ?? <span className="muted">summary pending</span>}</p>
           )}
-          <ul>
+          {(!group.git || open[group.key]) && <ul>
             {group.changes.map((change) => {
               const requestId = requested[change.id];
               const result = requestId ? diffs[requestId] : undefined;
@@ -56,12 +61,12 @@ export function DiffPanel({ nodeId, history, plans, snapshot, filter, onFilter, 
                   <button className="link-row" onClick={() => expand(change)}>
                     {open[change.id] ? '▾' : '▸'} <code>{change.path}</code>
                   </button>{' '}
-                  <span className="muted">{change.origin} · {change.resolution ?? 'unresolved'}</span>
+                  {!group.git && <span className="muted">{change.origin} · {change.resolution ?? 'unresolved'}</span>}
                   {open[change.id] && <Hunks result={result} failed={failed[change.id] === true} path={change.path} />}
                 </li>
               );
             })}
-          </ul>
+          </ul>}
         </section>
       ))}
     </div>

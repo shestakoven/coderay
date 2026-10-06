@@ -1,5 +1,5 @@
 import type { ChangeView, HistoryView, PlanView, SummaryView } from '@ide/protocol';
-import { latestPlanVersion } from './history-state';
+import { isFollowUp, latestPlanVersion } from './history-state';
 
 export interface ReviewFile {
   path: string;
@@ -45,9 +45,7 @@ const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryV
 // 'recorded' marks files the gate does not enforce: gitignored, repository internals and harness paths. What git wrote is not the agent's work.
 const isReviewable = (change: ChangeView): boolean => change.enforcement === 'enforced' && change.resolution !== 'reverted' && change.origin !== 'git';
 
-// A write the plan covers, made once its steps ran out: stamped with the plan but with no step.
-const followUpsOf = (changes: ChangeView[], planId: string): ChangeView[] =>
-  changes.filter((change) => byAgent(change) && change.planId === planId && change.stepKey === null && !change.outOfPlan);
+const followUpsOf = (changes: ChangeView[], planId: string): ChangeView[] => changes.filter((change) => isFollowUp(change, planId));
 
 export const followUpFiles = (history: HistoryView, planId: string): ReviewFile[] => files(followUpsOf(history.changes.filter(isReviewable), planId));
 

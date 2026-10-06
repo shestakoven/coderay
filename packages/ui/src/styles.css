@@ -272,6 +272,9 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .diff-panel .diff-step h3 { margin: 12px 0 2px; font-size: calc(12px * var(--fs-scale, 1)); }
 .diff-panel ul { padding-left: 0; list-style: none; }
 .diff-panel .summary-text { margin: 2px 0; }
+.diff-panel .diff-git { display: flex; align-items: baseline; gap: 6px; width: 100%; margin: 12px 0 2px; padding: 2px 0; border: 0; background: none; color: var(--muted); font: inherit; font-size: calc(12px * var(--fs-scale, 1)); text-align: left; cursor: pointer; }
+.diff-panel .diff-git:hover { color: var(--fg); }
+.diff-panel .diff-git-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .filter-toggle { display: flex; gap: 6px; align-items: center; font-size: calc(12px * var(--fs-scale, 1)); }
 .chat-filter { display: flex; justify-content: space-between; align-items: center; gap: 8px; padding: 4px 10px; background: var(--plan-soft); font-size: calc(12px * var(--fs-scale, 1)); }
 .timeline { border-top: 1px solid var(--line); background: var(--panel); font-size: calc(12px * var(--fs-scale, 1)); flex-shrink: 0; }
