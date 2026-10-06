@@ -511,6 +511,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 plan={shown}
                 snapshot={snapshot}
                 open
+                working={activity.busy}
                 followUps={followUps}
                 onAnswer={answerPlan}
                 onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])}

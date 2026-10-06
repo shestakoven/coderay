@@ -7,10 +7,11 @@ import { badgeText, classifyTargets, planTitle } from './plan-state';
 const OP_MARK = { modify: '~', create: '+', delete: '−' } as const;
 const STATUS_ICON = { pending: '○', active: '●', done: '✓' } as const;
 
-export function PlanPanel({ plan, snapshot, open, followUps = [], onToggle, onAnswer, onFocusStep, onHoverStep, onShowFiles }: {
+export function PlanPanel({ plan, snapshot, open, working = true, followUps = [], onToggle, onAnswer, onFocusStep, onHoverStep, onShowFiles }: {
   plan: PlanView;
   snapshot: MapSnapshot | null;
   open: boolean;
+  working?: boolean;
   followUps?: ReviewFile[];
   onToggle?: () => void;
   onAnswer: (answer: PlanAnswer) => void;
@@ -39,7 +40,7 @@ export function PlanPanel({ plan, snapshot, open, followUps = [], onToggle, onAn
           <div className="plan-goal">{plan.goal}</div>
           <ol className="plan-steps">
             {plan.steps.map((step, index) => (
-              <StepRow key={step.key} step={step} n={index + 1} plan={plan} snapshot={snapshot} onFocus={() => onFocusStep(index)} onHover={onHoverStep} />
+              <StepRow key={step.key} step={step} n={index + 1} plan={plan} snapshot={snapshot} working={working} onFocus={() => onFocusStep(index)} onHover={onHoverStep} />
             ))}
           </ol>
           {followUps.length > 0 && (
@@ -124,11 +125,12 @@ function Note({ plan }: { plan: PlanView }) {
   return null;
 }
 
-function StepRow({ step, n, plan, snapshot, onFocus, onHover }: {
+function StepRow({ step, n, plan, snapshot, working, onFocus, onHover }: {
   step: PlanStepView;
   n: number;
   plan: PlanView;
   snapshot: MapSnapshot | null;
+  working: boolean;
   onFocus: () => void;
   onHover?: (key: string | null) => void;
 }) {
@@ -145,13 +147,16 @@ function StepRow({ step, n, plan, snapshot, onFocus, onHover }: {
     else if (target.kind === 'other') other.push(`${op} ${target.path}`);
     else add(component(target.owner)?.name ?? target.owner, `${op} ${target.path.slice(target.path.lastIndexOf('/') + 1)}`);
   }
+  const leftOpen = step.status === 'active' && !working;
   return (
-    <li className={`plan-step ${step.status}`} onMouseEnter={() => onHover?.(step.key)} onMouseLeave={() => onHover?.(null)}>
+    <li className={`plan-step ${step.status}${leftOpen ? ' left-open' : ''}`} onMouseEnter={() => onHover?.(step.key)} onMouseLeave={() => onHover?.(null)}>
       <button className="plan-step-head" onClick={onFocus} title="Show on the map">
         <span className={`step-badge ${step.status}`}>{badgeText({ n, status: step.status })}</span>
         <span className="plan-step-title">{step.title}</span>
         {step.extra && <span className="added-chip" title="Added after you approved the plan">added</span>}
-        <span className="plan-step-status">{STATUS_ICON[step.status]}</span>
+        {leftOpen
+          ? <span className="plan-step-status" title="The agent's turn ended while this step was still active">left open</span>
+          : <span className="plan-step-status">{STATUS_ICON[step.status]}</span>}
       </button>
       <div className="plan-targets">
         {[...groups].map(([name, lines]) => (
