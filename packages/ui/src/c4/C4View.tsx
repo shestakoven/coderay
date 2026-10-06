@@ -128,10 +128,28 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
     setRoot(id);
   };
   const signature = useMemo(() => JSON.stringify(graph), [graph]);
+  const overlay = usePlanOverlay();
+  const graphIds = useMemo(() => new Set(graph.nodes.map((n) => n.id)), [graph]);
+  const nodeChangeMarks = useMemo(() => {
+    const marks = new Map<string, NodeChange>();
+    const place = (componentId: string): string | null =>
+      locateComponent(componentId, model, { expanded: root ? null : expanded, root, nodeIds: graphIds }).node;
+    for (const [componentId, found] of overlay.changes) {
+      const node = place(componentId);
+      if (!node || !snapshot.components.some((c) => c.id === componentId)) continue;
+      const seen = marks.get(node) ?? { states: [], added: 0, removed: 0, files: 0 };
+      marks.set(node, {
+        states: [...seen.states, ...found.states], added: seen.added + found.added, removed: seen.removed + found.removed, files: seen.files + found.files.length,
+      });
+    }
+    return marks;
+  }, [overlay.changes, snapshot.components, model, root, expanded, graphIds]);
+  const taller = useMemo(() => new Set(nodeChangeMarks.keys()), [nodeChangeMarks]);
+  const tallerKey = JSON.stringify([...taller].sort());
 
   useEffect(() => {
     let cancelled = false;
-    layoutC4(graph, elk, layout).then(
+    layoutC4(graph, elk, layout, taller).then(
       (layout) => {
         if (cancelled) return;
         setNodes(layout.nodes.map((n) => (!n.parentId && moved.current.has(n.id) ? { ...n, position: moved.current.get(n.id)! } : n)));
@@ -160,10 +178,9 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
     return () => {
       cancelled = true;
     };
-  }, [signature, layout, resetKey, setNodes, setEdges, fitBounds, setCenter, getZoom]);
+  }, [signature, tallerKey, layout, resetKey, setNodes, setEdges, fitBounds, setCenter, getZoom]);
 
   const focus = useMemo(() => focusOf(selection, nodes, edges), [selection, nodes, edges]);
-  const overlay = usePlanOverlay();
   const nodePlans = useMemo(() => c4NodePlans(nodes, model, overlay.marks), [nodes, model, overlay.marks]);
   const nodeIds = useMemo(() => new Set(nodes.map((node) => node.id)), [nodes]);
   const promptTargetId = overlay.prompt ? promptTarget(overlay.prompt)?.componentId ?? null : null;
@@ -177,20 +194,6 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
       ...overlay.prompts.map((p) => place(promptTarget(p)?.componentId)),
     ]);
   }, [snapshot.files, model, root, expanded, nodeIds, overlay.eventFiles, overlay.prompts]);
-  const nodeChangeMarks = useMemo(() => {
-    const marks = new Map<string, NodeChange>();
-    const place = (componentId: string): string | null =>
-      locateComponent(componentId, model, { expanded: root ? null : expanded, root, nodeIds }).node;
-    for (const [componentId, found] of overlay.changes) {
-      const node = place(componentId);
-      if (!node || !snapshot.components.some((c) => c.id === componentId)) continue;
-      const seen = marks.get(node) ?? { states: [], added: 0, removed: 0, files: 0 };
-      marks.set(node, {
-        states: [...seen.states, ...found.states], added: seen.added + found.added, removed: seen.removed + found.removed, files: seen.files + found.files.length,
-      });
-    }
-    return marks;
-  }, [overlay.changes, snapshot.components, model, root, expanded, nodeIds]);
   const shownNodes = useMemo(
     () =>
       nodes.map((n) => {

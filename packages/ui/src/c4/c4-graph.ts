@@ -267,32 +267,35 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
 }
 
 const ROOT_COMPONENT = { width: 250, height: 74 };
-const sizeOf = (node: VisibleNode) => (node.data.slim ? SLIM : node.kind === 'component' && node.data.detail ? ROOT_COMPONENT : SIZE[node.kind]);
+const CHANGE_LINE = 15;
+const sizeOf = (node: VisibleNode, taller: ReadonlySet<string> = new Set()) => {
+  const base = node.data.slim ? SLIM : node.kind === 'component' && node.data.detail ? ROOT_COMPONENT : SIZE[node.kind];
+  return taller.has(node.id) ? { ...base, height: base.height + CHANGE_LINE } : base;
+};
 
 export async function layoutC4(
   graph: { nodes: VisibleNode[]; edges: VisibleEdge[] },
   elk: ELK,
   layout: C4Layout = DEFAULT_C4_LAYOUT,
+  taller: ReadonlySet<string> = new Set(),
 ): Promise<{ nodes: C4FlowNode[]; edges: Edge<C4EdgeData>[] }> {
   const children = new Map<string, VisibleNode[]>();
   for (const n of graph.nodes) if (n.parentId) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n]);
   const inner = new Map<string, { x: number; y: number; width: number; height: number }>();
   const boxes = new Map<string, { width: number; height: number }>();
   for (const [parentId, kids] of children) {
+    const rows: VisibleNode[][] = [];
+    kids.forEach((kid, i) => (i % COLUMNS === 0 ? rows.push([kid]) : rows[rows.length - 1]!.push(kid)));
     let y = HEADER;
-    let rowHeight = 0;
-    kids.forEach((kid, i) => {
-      const size = sizeOf(kid);
-      const col = i % COLUMNS;
-      if (col === 0 && i > 0) {
-        y += rowHeight + GAP;
-        rowHeight = 0;
-      }
-      inner.set(kid.id, { x: GAP + col * (size.width + GAP), y, ...size });
-      rowHeight = Math.max(rowHeight, size.height);
-    });
-    const width = GAP + COLUMNS * (SIZE.component.width + GAP);
-    boxes.set(parentId, { width, height: y + rowHeight + GAP });
+    for (const row of rows) {
+      const rowHeight = Math.max(...row.map((kid) => sizeOf(kid, taller).height));
+      row.forEach((kid, col) => {
+        const { width } = sizeOf(kid);
+        inner.set(kid.id, { x: GAP + col * (width + GAP), y, width, height: rowHeight });
+      });
+      y += rowHeight + GAP;
+    }
+    boxes.set(parentId, { width: GAP + COLUMNS * (SIZE.component.width + GAP), height: y });
   }
 
   const top = graph.nodes.filter((n) => !n.parentId);
@@ -320,7 +323,7 @@ export async function layoutC4(
     },
     children: top.map((n) => ({
       id: n.id,
-      ...(boxes.get(n.id) ?? sizeOf(n)),
+      ...(boxes.get(n.id) ?? sizeOf(n, taller)),
       layoutOptions: { 'elk.partitioning.partition': String(n.column) },
     })),
     edges: elkEdges,
@@ -330,7 +333,7 @@ export async function layoutC4(
   const nodes: C4FlowNode[] = [];
   for (const n of top) {
     const p = position.get(n.id);
-    const box = boxes.get(n.id) ?? sizeOf(n);
+    const box = boxes.get(n.id) ?? sizeOf(n, taller);
     nodes.push({ id: n.id, type: n.kind === 'group' ? 'c4group' : n.kind, position: { x: p?.x ?? 0, y: p?.y ?? 0 }, width: box.width, height: box.height, data: { ...n.data, direction: layout.direction } });
     for (const kid of children.get(n.id) ?? []) {
       const r = inner.get(kid.id)!;
