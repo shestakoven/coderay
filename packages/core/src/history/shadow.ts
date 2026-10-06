@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
-import { chmod, lstat, mkdir, mkdtemp, readlink, rename, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, open, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import type { FileDiff } from '@ide/protocol';
@@ -31,6 +31,28 @@ function cleanEnv(extra: Record<string, string> | undefined): NodeJS.ProcessEnv 
 }
 
 export interface StoredBlob { hash: string; stored: boolean; size: number; mode: number }
+
+type ObjectFormat = 'sha1' | 'sha256';
+
+const blobId = (format: ObjectFormat, size: number): ReturnType<typeof createHash> => createHash(format).update(`blob ${size}\0`);
+
+// Git's own name for a file, worked out here: a process per file is what a revert of hundreds of files spends its time on.
+async function blobIdOfFile(format: ObjectFormat, abs: string): Promise<string | null> {
+  const handle = await open(abs, 'r');
+  try {
+    const { size } = await handle.stat();
+    const id = blobId(format, size);
+    let read = 0;
+    for await (const chunk of handle.createReadStream({ autoClose: false }) as AsyncIterable<Buffer>) {
+      read += chunk.length;
+      id.update(chunk);
+    }
+    // A file that changed size while it was read has no name worth trusting; git is asked instead.
+    return read === size ? id.digest('hex') : null;
+  } finally {
+    await handle.close();
+  }
+}
 
 interface GitOptions { input?: string | Buffer; env?: Record<string, string>; timeoutMs?: number }
 
@@ -64,7 +86,10 @@ function git(args: string[], options: GitOptions = {}): Promise<Buffer> {
 
 export class ShadowRepo {
   // `fresh`: the repository did not exist before, so no blob a baseline calls stored can be taken to be in it.
-  private constructor(private readonly dir: string, private readonly emptyBlob: string, private readonly timeoutMs: number | undefined, readonly fresh: boolean) {}
+  private constructor(
+    private readonly dir: string, private readonly emptyBlob: string, private readonly timeoutMs: number | undefined, readonly fresh: boolean,
+    private readonly format: ObjectFormat | null,
+  ) {}
 
   static async open(dir: string, options: { timeoutMs?: number } = {}): Promise<ShadowRepo> {
     mkdirSync(dir, { recursive: true });
@@ -74,7 +99,9 @@ export class ShadowRepo {
       await git(['--git-dir', dir, 'config', key!, value!]);
     }
     const empty = (await git(['--git-dir', dir, 'hash-object', '-t', 'blob', '-w', '--stdin'], { input: '' })).toString().trim();
-    return new ShadowRepo(dir, empty, options.timeoutMs, fresh);
+    // The repository's hash function is the one that names the empty blob the way git just did.
+    const format = (['sha1', 'sha256'] as const).find((candidate) => blobId(candidate, 0).digest('hex') === empty) ?? null;
+    return new ShadowRepo(dir, empty, options.timeoutMs, fresh, format);
   }
 
   private run(args: string[], options?: GitOptions): Promise<Buffer> {
@@ -92,8 +119,9 @@ export class ShadowRepo {
       if (stat.isSymbolicLink()) return await this.text(await readlink(abs), store);
       if (!stat.isFile()) return null;
       const write = store && stat.size <= MAX_BLOB_BYTES;
-      const out = await this.run(['hash-object', ...(write ? ['-w'] : []), '--no-filters', '--', abs]);
-      return { hash: out.toString().trim(), stored: write, size: stat.size, mode: stat.mode & EXEC ? 0o755 : 0o644 };
+      const named = !write && this.format ? await blobIdOfFile(this.format, abs).catch(() => null) : null;
+      const hash = named ?? (await this.run(['hash-object', ...(write ? ['-w'] : []), '--no-filters', '--', abs])).toString().trim();
+      return { hash, stored: write, size: stat.size, mode: stat.mode & EXEC ? 0o755 : 0o644 };
     } catch { return null; }
   }
 

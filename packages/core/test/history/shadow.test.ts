@@ -140,6 +140,24 @@ describe('ShadowRepo.hash', () => {
     expect(await shadow.read(blob!.hash)).toBeNull();
     expect((await shadow.put(file))!.hash).toBe(blob!.hash);
   });
+
+  it('names a file exactly as git does, without starting git', async () => {
+    const { shadow } = await open();
+    const w = tempDir('w-');
+    const files = { empty: Buffer.alloc(0), text: Buffer.from('content\r\nmore\n'), bytes: Buffer.from(Array.from({ length: 300_000 }, (_, i) => i % 256)) };
+    const expected: Record<string, string> = {};
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(w, name), content);
+      expected[name] = execFileSync('git', ['hash-object', '--no-filters', '--', join(w, name)], { encoding: 'utf8' }).trim();
+    }
+    vi.stubEnv('PATH', '');
+    try {
+      const named = await Promise.all(Object.keys(files).map(async (name) => [name, (await shadow.hash(join(w, name)))?.hash] as const));
+      expect(Object.fromEntries(named)).toEqual(expected);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
 });
 
 describe('ShadowRepo.putMany', () => {
