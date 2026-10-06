@@ -97,7 +97,7 @@ describe('the agent in a terminal while the watchdog asks the user about its cha
     expect(JSON.parse(prompt.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: expect.stringContaining(RESTORED) } });
   });
 
-  it('stops waiting for a Stop hook claude gave up on, so the answer reaches the agent with its next call instead of being lost', async () => {
+  it('stops waiting for a Stop hook claude gave up on and ends the turn, so the answer reaches the agent with the next prompt instead of being lost', async () => {
     const t = await terminal({ runtime: { hookDeadlineMs: 400 } });
     const event = await t.outOfPlan();
     let stop: { code: number | null; stdout: string } | undefined;
@@ -105,8 +105,10 @@ describe('the agent in a terminal while the watchdog asks the user about its cha
     await waitFor(() => stop, 'the Stop hook to give up at its deadline', 3_000);
     expect(stop).toEqual({ code: 0, stdout: '' });
     await t.waiting(0);
+    await waitFor(() => !t.b.session.hasOpenTurn(), 'the turn closed');
     await t.b.rt.watchdog.answer(event.id, REVERT);
-    expect(await t.gate(writeC(t.b.root, 'toolu_c1'))).toMatchObject({ permissionDecision: 'allow', additionalContext: expect.stringContaining(RESTORED) });
+    const prompt = await t.event('UserPromptSubmit', { prompt: 'continue' });
+    expect(JSON.parse(prompt.stdout)).toEqual({ hookSpecificOutput: { hookEventName: 'UserPromptSubmit', additionalContext: expect.stringContaining(RESTORED) } });
   });
 
   it('hands the answer to the main agent, not to the background subagent that made the change', async () => {
