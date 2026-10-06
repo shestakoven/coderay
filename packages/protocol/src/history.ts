@@ -1,6 +1,6 @@
 import type { ControlMode } from './settings';
 
-export type ChangeOrigin = 'ide' | 'agent' | 'agent-tool' | 'human' | 'unknown';
+export type ChangeOrigin = 'ide' | 'agent' | 'agent-tool' | 'git' | 'human' | 'unknown';
 export type Enforcement = 'enforced' | 'recorded';
 export type ChangeResolution = 'kept' | 'reverted' | 'plan-expanded' | 'relabeled-human' | 'flagged';
 export interface ChangeView {
