@@ -59,10 +59,11 @@ describe('the hook settings of a terminal (writeGateFiles with events)', () => {
 });
 
 describe('the hook settings of a chat (writeGateFiles without events)', () => {
-  it.each([[{}], [{ events: false }]])('installs only the gate and the canary for %j', (options) => {
+  it.each([[{}], [{ events: false }]])('installs the gate, the canary and the end of the turn for %j', (options) => {
     const { settings, scripts } = settingsOf(options);
-    expect(Object.keys(settings.hooks).sort()).toEqual(['PreToolUse', 'SessionStart']);
+    expect(Object.keys(settings.hooks).sort()).toEqual(['PreToolUse', 'SessionStart', 'Stop']);
     expect(scripts('PreToolUse')).toEqual([HOOK_SCRIPT]);
     expect(scripts('SessionStart')).toEqual([SESSION_START_SCRIPT]);
+    expect(scripts('Stop')).toEqual([AGENT_EVENT_SCRIPT]);
   });
 });

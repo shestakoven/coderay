@@ -79,6 +79,10 @@ export class TurnTracker {
     return this.openTurns.length > 0;
   }
 
+  openTurnId(): string | null {
+    return this.running ?? this.openTurns[0]?.id ?? null;
+  }
+
   endInfo(toolUseId: string): ToolEndInfo | null {
     const info = this.toolEnds.get(toolUseId) ?? null;
     this.toolEnds.delete(toolUseId);

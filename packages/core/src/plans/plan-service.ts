@@ -233,6 +233,14 @@ export class PlanService {
     return { state: 'none' };
   }
 
+  // The step the agent has started and not finished, in the plan the gate enforces.
+  active(): { planId: string; key: string; title: string } | null {
+    const gate = this.gate();
+    if (gate.state !== 'approved' || gate.activeStep === null) return null;
+    const step = this.enforced(gate.planId)?.steps.find((candidate) => candidate.key === gate.activeStep);
+    return step ? { planId: gate.planId, key: step.key, title: step.title } : null;
+  }
+
   scopeOf(planId: string, version: number): FrozenScope | null {
     this.load();
     const record = this.records.find((candidate) => candidate.id === planId && candidate.version === version);
