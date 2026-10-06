@@ -4,10 +4,11 @@ import { mkdirSync } from 'node:fs';
 import { chmod, lstat, mkdir, mkdtemp, readlink, rename, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import type { DiffHunk, DiffLine, FileDiff } from '@ide/protocol';
+import type { FileDiff } from '@ide/protocol';
+import { EMPTY_DIFF, parseHunks } from './unified-diff';
 
 export const MAX_BLOB_BYTES = 5 * 1024 * 1024;
-export const MAX_DIFF_LINES = 2000;
+export { MAX_DIFF_LINES } from './unified-diff';
 const BATCH = 500;
 const EXEC = 0o111;
 const MAX_OUTPUT = 128 * 1024 * 1024;
@@ -59,34 +60,6 @@ function git(args: string[], options: GitOptions = {}): Promise<Buffer> {
     });
     child.stdin.end(options.input);
   });
-}
-
-const EMPTY_DIFF: FileDiff = { binary: false, truncated: false, missing: false, added: 0, removed: 0, hunks: [] };
-
-function parseHunks(text: string): { hunks: DiffHunk[]; truncated: boolean } {
-  const hunks: DiffHunk[] = [];
-  let current: DiffHunk | null = null;
-  let lines = 0;
-  for (const raw of text.split('\n')) {
-    const header = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/.exec(raw);
-    if (header) {
-      current = {
-        oldStart: Number(header[1]), oldLines: header[2] === undefined ? 1 : Number(header[2]),
-        newStart: Number(header[3]), newLines: header[4] === undefined ? 1 : Number(header[4]),
-        lines: [],
-      };
-      hunks.push(current);
-      continue;
-    }
-    if (!current) continue;
-    const marker = raw[0];
-    const op: DiffLine['op'] | null = marker === ' ' ? 'context' : marker === '+' ? 'add' : marker === '-' ? 'del' : null;
-    if (op === null) continue;
-    if (lines === MAX_DIFF_LINES) return { hunks, truncated: true };
-    current.lines.push({ op, text: raw.slice(1) });
-    lines++;
-  }
-  return { hunks, truncated: false };
 }
 
 export class ShadowRepo {
