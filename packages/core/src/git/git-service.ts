@@ -129,6 +129,11 @@ export class GitService {
     this.timer.unref();
   }
 
+  // Whether the agent is busy changes with no file event (a turn that only talks): the owner of that state calls this when it may have changed.
+  checkBusy(): void {
+    if (this.last !== null && this.o.agentBusy() !== this.last.busy) this.poke();
+  }
+
   // The watches deliver events only once their probe has seen one; callers that change files right after `start()` wait for this.
   async ready(): Promise<void> {
     await Promise.all([this.rootWatch?.ready, this.gitWatch?.watch.ready]);

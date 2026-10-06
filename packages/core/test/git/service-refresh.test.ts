@@ -10,9 +10,9 @@ const paths = (status: GitStatus | undefined): string[] => status?.files.map((f)
 const wait = (check: () => void) => vi.waitFor(check, { timeout: 5000 });
 
 describe('GitService refresh', () => {
-  it('broadcasts a status when the working tree changes, and only when it changed', async () => {
+  it('broadcasts a status when the working tree or the agent state changes, and only when it changed', async () => {
     const root = await makeRepo({ 'a.txt': 'a\n' });
-    const { git } = service(root, { debounceMs: 20 });
+    const { git, busy } = service(root, { debounceMs: 20 });
     const seen: GitStatus[] = [];
     git.onStatus((status) => seen.push(status));
     git.start();
@@ -22,8 +22,15 @@ describe('GitService refresh', () => {
     await wait(() => expect(paths(seen.at(-1))).toEqual(['a.txt']));
     const count = seen.length;
     git.poke();
+    git.checkBusy();
     await new Promise((resolve) => setTimeout(resolve, 150));
     expect(seen).toHaveLength(count);
+    busy.reason = 'the agent is working';
+    git.checkBusy();
+    await wait(() => expect(seen.at(-1)?.busy).toBe('the agent is working'));
+    busy.reason = null;
+    git.checkBusy();
+    await wait(() => expect(seen.at(-1)?.busy).toBeNull());
   });
 
   it('sees what git does outside the IDE, such as a git add typed in a terminal', async () => {

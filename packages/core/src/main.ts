@@ -479,12 +479,16 @@ try {
   server = running;
   agent.onMessage((message) => {
     running.broadcast(message);
+    git.checkBusy();
     if (message.type !== 'session.snapshot') return;
     git.poke();
     running.broadcast(plansSnapshot());
     broadcastSessions();
   });
-  agent.onTurnClosed(broadcastSessions);
+  agent.onTurnClosed(() => {
+    broadcastSessions();
+    git.checkBusy();
+  });
   agent.onTitleChanged(broadcastSessions);
   agent.onProcessExit(broadcastSessions);
   rt.gate.plans.onChange((plans) => {

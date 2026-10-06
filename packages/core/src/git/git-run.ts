@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { GIT_NOT_FOUND } from '../project/git';
 
 const READ_TIMEOUT_MS = 30_000;
+const KILL_GRACE_MS = 2_000;
 const MAX_OUTPUT = 64 * 1024 * 1024;
 const INHERITED = /^GIT_(DIR|WORK_TREE|INDEX_FILE|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|COMMON_DIR|NAMESPACE|PREFIX|SHALLOW_FILE|GRAFT_FILE|REPLACE_REF_BASE|NO_REPLACE_OBJECTS)$/;
 
@@ -25,6 +26,11 @@ export type GitRun = (args: string[], options?: RunOptions) => Promise<string>;
 function environment(readOnly: boolean): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(process.env)) if (!INHERITED.test(key)) env[key] = value;
+  // LC_ALL outranks LC_MESSAGES, so it would bring the user's language back into the messages git is parsed by.
+  if (env.LC_ALL !== undefined) {
+    env.LC_CTYPE ??= env.LC_ALL;
+    delete env.LC_ALL;
+  }
   return { ...env, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', LC_MESSAGES: 'C', ...(readOnly ? { GIT_OPTIONAL_LOCKS: '0' } : {}) };
 }
 
@@ -36,15 +42,22 @@ export function createRun(cwd: string, bin = 'git'): GitRun {
     let size = 0;
     let timedOut = false;
     let tooBig = false;
+    // SIGTERM lets git remove its lock files; SIGKILL would leave an index.lock that fails every later write.
+    const stop = (): void => {
+      child.kill('SIGTERM');
+      setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+      }, KILL_GRACE_MS).unref();
+    };
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      stop();
     }, options.timeoutMs ?? READ_TIMEOUT_MS);
     child.stdout.on('data', (chunk: Buffer) => {
       size += chunk.length;
       if (size > MAX_OUTPUT) {
         tooBig = true;
-        child.kill('SIGKILL');
+        stop();
       } else out.push(chunk);
     });
     child.stderr.on('data', (chunk: Buffer) => err.push(chunk));
