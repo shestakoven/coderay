@@ -436,9 +436,11 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     await b.send();
     await waitFor(() => step.done, 'the step done');
     await step.closed;
+    // A component summary may be asked for before close, when the watcher records the step's write; nothing may be asked after it.
+    const asked = () => b.rt.summarizer.views().map((view) => `${view.scope}:${view.ref}`);
+    const atClose = asked();
     release();
     await new Promise((resolve) => setImmediate(resolve));
-    const stepSummaries = b.rt.summarizer.views().filter((view) => view.scope === 'step');
-    expect([b.rt.checkpoints.views().map((view) => view.sealedAt), stepSummaries]).toEqual([[null], []]);
+    expect([b.rt.checkpoints.views().map((view) => view.sealedAt), asked(), atClose.filter((ref) => ref.startsWith('step:'))]).toEqual([[null], atClose, []]);
   });
 });
