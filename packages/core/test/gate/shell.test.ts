@@ -196,6 +196,15 @@ describe('shellWrites', () => {
     expect(verbs.map((verb) => [verb, writes(`git ${verb} x`).history, writes(`git ${verb} x`).rewrites])).toEqual(verbs.map((verb) => [verb, ['/p'], []]));
   });
 
+  it('cannot say where git runs once a GIT_ variable is set, however it is set, so the call rewrites a work tree nobody named', () => {
+    for (const command of ['GIT_DIR=x git reset --hard', 'export GIT_WORK_TREE=w; git checkout main', 'env GIT_DIR=x git rebase main', 'cd sub && GIT_INDEX_FILE=i git merge main']) {
+      expect([command, writes(command).rewrites, writes(command).history]).toEqual([command, [null], []]);
+    }
+    for (const command of ['GIT_DIR=x git rm a.ts', 'export GIT_WORK_TREE=w; git mv a b']) {
+      expect([command, writes(command).targets.map((target) => [target.path, target.unresolved !== null])]).toEqual([command, [[null, true]]]);
+    }
+  });
+
   it('keeps restore, clean, stash, apply and am as work tree rewrites, apart from the history commands', () => {
     expect(writes('git restore . && git -C sub stash && git clean -fd && git am p.patch && git apply p.patch').rewrites).toEqual(['/p', '/p/sub', '/p', '/p', '/p']);
     expect([writes('git restore .').history, writes('git rebase main').rewrites]).toEqual([[], []]);
