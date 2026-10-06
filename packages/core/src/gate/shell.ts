@@ -85,8 +85,10 @@ const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', '
 // Reads write no file but --output, and run no program but what the repository's own configuration names.
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'rev-list', 'describe', 'merge-base', 'stash list', 'stash show']);
 const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'exit', 'fi', 'done', 'which']);
-// The options git takes before its command that the IDE follows, with = after those that take a value.
-const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --no-replace-objects --no-advice -v --version -h --help');
+// The options git takes before its command, with = after those that take a value; after any other one the IDE cannot tell which command runs.
+const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= --namespace= --config-env= --attr-source= --exec-path --bare -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs --no-replace-objects --no-advice -v --version -h --help');
+// Of those, the ones that run no program of the agent's choosing and leave refs and attributes as they are; -c only with a quiet editor or pager.
+const PURE_GLOBALS = new Set(['-C', '--git-dir', '--work-tree', '-P', '--no-pager', '-p', '--paginate', '--no-optional-locks', '--literal-pathspecs', '--no-replace-objects', '--no-advice', '-v', '--version', '-h', '--help']);
 // Per git command that leaves a command pure, the options known to run no program of the agent's choosing and to write nothing more,
 // with = after those that always take one (an optional value goes after =). Any other option, an abbreviation git accepts included,
 // makes the command impure.
@@ -598,7 +600,7 @@ function git(args: Word[], state: State): void {
     }
     // Configuration given on the command line can run any program: hooks, aliases, editors, merge drivers.
     const setting = literalText(args[i + 1] ?? EMPTY) ?? '';
-    if (text === '-c' && !quiet(setting.split('=')[0]!.toLowerCase(), setting.slice(setting.indexOf('=') + 1))) state.pure = false;
+    if (text === '-c' ? !quiet(setting.split('=')[0]!.toLowerCase(), setting.slice(setting.indexOf('=') + 1)) : !PURE_GLOBALS.has(name)) state.pure = false;
     i += GLOBAL_OPTIONS.get(name) && name === text ? 2 : 1;
   }
   const word = args[i];
