@@ -39,7 +39,10 @@ export function timelineSummary(items: TimelineItem[]): string {
 export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount, leading, trailing, compact }: Props) {
   const [rollback, dispatch] = useReducer(rollbackReducer, null);
   const [undoing, setUndoing] = useState<Record<string, string>>({});
-  const items = useMemo(() => timelineItems(plans, history), [plans, history]);
+  const items = useMemo(() => timelineItems(plans, history, (id) => {
+    const item = chat.items[id];
+    return item?.kind === 'tool' ? item.summary : undefined;
+  }), [plans, history, chat.items]);
 
   useEffect(() => {
     if (!rollback?.requestId) return;

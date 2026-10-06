@@ -43,8 +43,8 @@ const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryV
 
 // Out-of-plan changes come first: they are the ones that need a human decision. External changes (made outside the IDE's agent) come last.
 export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGroup[] {
-  // 'recorded' marks files the gate does not enforce: gitignored, git internals and harness paths.
-  const reviewable = history.changes.filter((change) => change.enforcement === 'enforced' && change.resolution !== 'reverted');
+  // 'recorded' marks files the gate does not enforce: gitignored, git internals and harness paths. What git wrote is not the agent's work.
+  const reviewable = history.changes.filter((change) => change.enforcement === 'enforced' && change.resolution !== 'reverted' && change.origin !== 'git');
   const agentChanges = reviewable.filter(byAgent);
   const claimed = new Set<string>();
   const stepGroups: ReviewGroup[] = [];
