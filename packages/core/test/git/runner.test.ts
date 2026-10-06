@@ -23,9 +23,18 @@ describe('createRun', () => {
   });
 
   it('asks a command that exceeds its time limit to stop with SIGTERM, so git can remove its lock files', async () => {
-    const { bin, dir } = script('trap \'echo term > "$2"; exit 0\' TERM\nsleep 5 &\nwait $!');
+    const { bin, dir } = script('trap \'echo term > "$2"; exit 0\' TERM\necho > "$3"\nsleep 5 >/dev/null 2>&1 &\nwait $!');
     const mark = join(dir, 'mark');
-    await expect(createRun(dir, bin)([mark], { timeoutMs: 150 })).rejects.toThrow('timed out');
-    await vi.waitFor(() => expect(existsSync(mark) && readFileSync(mark, 'utf8')).toBe('term\n'), { timeout: 3000 });
+    const ready = join(dir, 'ready');
+    // A script written a moment ago can take longer than the limit to start, and SIGTERM before its trap kills the shell outright; so the clock only moves once the trap is in place.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const run = expect(createRun(dir, bin)([mark, ready], { timeoutMs: 150 })).rejects.toThrow('timed out');
+    while (!existsSync(ready)) await new Promise((resolve) => setImmediate(resolve));
+    vi.advanceTimersByTime(150);
+    await run;
+    expect(readFileSync(mark, 'utf8')).toBe('term\n');
   });
 });
