@@ -158,6 +158,16 @@ export function scopeRelOf(root: string, hit: WorktreeHit): string | null {
   return hit.inner.startsWith(prefix) ? hit.inner.slice(prefix.length) : null;
 }
 
+// Where the project's own files lie in each worktree known now.
+export function worktreeBases(root: string): string[] {
+  const state = stateOf(root);
+  if (!state.loaded) loadSync(root, state);
+  const repos = [...state.listed, ...state.found.values()].filter((repo) => hasDotGit(repo.abs));
+  if (repos.length === 0) return [];
+  const { prefix } = ownRepo(root, state);
+  return repos.map((repo) => join(repo.abs, prefix));
+}
+
 // Where the project root lies in its repository, which is also where it lies in each worktree ("" at the top).
 export function projectPrefix(root: string): string {
   return ownRepo(root, stateOf(root)).prefix;

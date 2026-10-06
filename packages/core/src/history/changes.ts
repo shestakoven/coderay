@@ -25,6 +25,8 @@ const SYMLINK_MODE = 0o120000;
 const GIT_ENTRY = /^(\d+) (?:blob )?([0-9a-f]{40,64})(?: (\d+))?$/;
 // "git add -N" puts the empty blob in the index for a file git does not have yet.
 const EMPTY_BLOBS = new Set(['e69de29bb2d1d6434b8b29ae775ad8c2e48c5391', '473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813']);
+// The ".git" of a worktree below the project is git's link to its repository: reverting it would unhook the worktree.
+const GIT_LINK = /\/\.git$/;
 // Gitignored files, harness paths (.omc/), submodules and the rest of a worktree beyond the project are not history:
 // they only bury the changes worth reviewing.
 const UNTRACKED = new Set(['gitignored', 'a harness path', 'inside a submodule', 'outside the project in a nested worktree']);
@@ -148,6 +150,8 @@ export class ChangeService {
   private readonly unreadableSeen = new Set<string>();
   // Files of a nested worktree that were there when the IDE first saw it but were not taken as baselines then.
   private readonly unsighted = new Set<string>();
+  // HEAD of each nested worktree when the IDE first saw it: its tree is the checkout the IDE found, as git made it.
+  private readonly seedHeads = new Map<string, string>();
   private readonly stamps = new Map<string, number>();
   private readonly graceMs: number;
   private draining: Promise<void> | null = null;
@@ -281,7 +285,7 @@ export class ChangeService {
     const seen = [...latest.keys()];
     const classified = await classifyPaths(seen.map((rel) => join(root, rel)), { root, policy });
     const gone = forgetGoneNested(root, baselines, (dir) => seen.some((rel) => rel.startsWith(`${dir}/`)));
-    const watched = classified.map((info, i) => !UNTRACKED.has(info.why) && !gone.some((prefix) => seen[i]!.startsWith(prefix)));
+    const watched = classified.map((info, i) => !UNTRACKED.has(info.why) && !GIT_LINK.test(seen[i]!) && !gone.some((prefix) => seen[i]!.startsWith(prefix)));
     const rels = seen.filter((_, i) => watched[i]);
     const infos = classified.filter((_, i) => watched[i]);
     const enforcedRels = rels.filter((_, i) => infos[i]!.cls === 'enforced');
@@ -302,7 +306,9 @@ export class ChangeService {
     const tracked = new Set([...outerTracked, ...index.keys()]);
     const blobs = new Map([...enforcedBlobs.blobs, ...recordedBlobs.blobs]);
     const unreadable = new Set([...enforcedBlobs.unreadable, ...recordedBlobs.unreadable]);
-    const fromGit = await this.gitBefore([...nested.keys()].filter((rel) => !baselines.get(rel)), nested, index, blobs);
+    const unbased = [...nested.keys()].filter((rel) => !baselines.get(rel));
+    const inCheckout = await this.inCheckout(unbased.filter((rel) => !this.unsighted.has(rel)), nested);
+    const fromGit = await this.gitBefore(unbased.filter((rel) => this.unsighted.has(rel) || inCheckout.has(rel)), nested, index, blobs);
     const seeds: BaselineRecord[] = [];
 
     const made: ChangeView[] = [];
@@ -499,7 +505,25 @@ export class ChangeService {
       if (knownNested(this.o.baselines, repo)) continue;
       const left = await seedNested(this.o.root, this.o.policy, this.o.shadow, this.o.baselines, repo, pending);
       for (const rel of left) this.unsighted.add(rel);
+      const head = await git(repo.abs, ['rev-parse', '--verify', '--quiet', 'HEAD']).then((out) => out.trim(), () => '');
+      if (head === '') this.seedHeads.delete(repo.dir);
+      else this.seedHeads.set(repo.dir, head);
     }
+  }
+
+  // Of files with no baseline, the ones that belong to the checkout the IDE first saw. Any other was written since, and
+  // what git holds of it now (a branch checked out, a file staged) is that write, not a version to start from.
+  private async inCheckout(rels: string[], nested: ReadonlyMap<string, WorktreeHit>): Promise<Set<string>> {
+    const found = new Set<string>();
+    const byDir = new Map<string, string[]>();
+    for (const rel of rels) {
+      const dir = nested.get(rel)!.dir;
+      if (this.seedHeads.has(dir)) byDir.set(dir, [...(byDir.get(dir) ?? []), rel]);
+    }
+    await Promise.all([...byDir].map(async ([dir, group]) => {
+      for (const rel of (await perRepo(nested, group, ['ls-tree', '-r', '-z', this.seedHeads.get(dir)!])).keys()) found.add(rel);
+    }));
+    return found;
   }
 
   private async trackedAmong(rels: string[]): Promise<Set<string>> {

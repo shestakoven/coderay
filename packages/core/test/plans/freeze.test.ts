@@ -7,6 +7,7 @@ import { freezeScope, ownerIndex, reviewPlan } from '../../src/plans/freeze';
 import { parsePlanInput, type ComponentRef } from '../../src/plans/plan-input';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { tempDir, writeTree } from '../helpers';
+import { git, isolateGit, projectWithWorktree } from '../worktree-fixture';
 
 const components: ComponentRef[] = [
   { id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts', 'src/extra.ts', 'src/ui/one.ts'], globs: [] },
@@ -193,5 +194,24 @@ describe('overlapping component globs', () => {
     const root = await project();
     const result = await reviewPlan(steps([{ path: 'src/x/new.ts', op: 'create' }]), { root, policy: DEFAULT_POLICY, components: nested, tempRoots: [] });
     expect([result.review.auto, result.owners['src/x/new.ts']]).toEqual([true, 'b']);
+  });
+});
+
+describe('a plan for a worktree that has files the project root does not', () => {
+  isolateGit();
+
+  async function withFeature(): Promise<string> {
+    const { root, wt } = await projectWithWorktree();
+    await writeTree(wt, { 'backend/feat/x.py': 'x = 1\n' });
+    git(wt, 'add', '-A');
+    git(wt, 'commit', '-q', '-m', 'feat');
+    return root;
+  }
+
+  it('freezes a directory only the worktree has to a glob, and takes a file only the worktree has for an existing one', async () => {
+    const root = await withFeature();
+    expect(freezeScope(steps([{ path: 'backend/feat', op: 'modify' }]), root, [])).toMatchObject({ paths: [], globs: ['backend/feat/**'] });
+    const result = await reviewPlan(steps([{ path: 'backend/feat/x.py', op: 'modify' }]), { root, policy: DEFAULT_POLICY, components: [], tempRoots: [] });
+    expect(result.review).toEqual({ auto: true, notes: ["1 file outside the map's components"] });
   });
 });
