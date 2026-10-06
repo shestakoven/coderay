@@ -199,6 +199,20 @@ describe('shellWrites', () => {
     expect(writes(command).history).toEqual(dirs);
   });
 
+  it('judges git in both directories wherever a cd may not run: after && or ||, in a pipeline or the background, in a block, and after a function, an alias or CDPATH', () => {
+    const rows: [command: string, history: string[], rewrites: string[]][] = [
+      ['cd sub && git reset --hard', ['/p/sub'], []],
+      ['false && cd sub; git reset --hard', ['/p', '/p/sub'], []],
+      ['cd sub & git reset --hard', ['/p', '/p/sub'], []],
+      ['git status | cd sub; git reset --hard', ['/p', '/p/sub'], []],
+      ['if true; then cd sub; fi; git reset --hard', ['/p', '/p/sub'], []],
+      ['f() { :; }; cd sub && git reset --hard', [], ['/p', '/p/sub']],
+      ['alias cd=true; cd sub && git reset --hard', [], ['/p', '/p/sub']],
+      ['CDPATH=/x cd sub && git reset --hard', [], ['/p', '/p/sub']],
+    ];
+    expect(rows.map(([command]) => [command, writes(command).history, writes(command).rewrites])).toEqual(rows);
+  });
+
   it('reads each of checkout, switch, reset, pull, merge, rebase, cherry-pick and revert as history, and none as a work tree rewrite', () => {
     const verbs = ['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert'];
     expect(verbs.map((verb) => [verb, writes(`git ${verb} x`).history, writes(`git ${verb} x`).rewrites])).toEqual(verbs.map((verb) => [verb, ['/p'], []]));

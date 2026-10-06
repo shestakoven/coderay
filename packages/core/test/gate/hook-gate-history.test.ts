@@ -42,15 +42,16 @@ async function setup(mode: ControlMode) {
 }
 
 describe('HookGate for a command that moves history, under a plan without **', () => {
-  it('asks only about a dirty tracked file outside the plan, named from the repository top even when run from a subdirectory', async () => {
+  it('asks once, and only about a dirty tracked file outside the plan, named from the repository top even when run from a subdirectory and reached by two commands', async () => {
     const { root, bash, pending, gate } = await setup('B');
     const src = join(root, 'src');
     expect((await bash('git rebase main', src))?.permissionDecision).toBe('allow');
     writeFileSync(join(root, 'src/app.ts'), 'dirty');
     expect((await bash('git rebase main', src))?.permissionDecision).toBe('allow');
     writeFileSync(join(root, 'README.md'), 'dirty');
-    const answer = bash('git rebase main', src);
+    const answer = bash('git rebase main && git merge main', src);
     const prompt = await pending();
+    expect(gate.prompts()).toHaveLength(1);
     expect(prompt.targets.filter((target) => !target.inScope).map((target) => [target.path, target.uncommitted])).toEqual([['README.md', true]]);
     gate.answer(prompt.id, 'deny');
     expect((await answer)?.permissionDecision).toBe('deny');
@@ -66,7 +67,8 @@ describe('HookGate for a command that moves history, under a plan without **', (
 });
 
 // main ignores .env and tracks sub/, has origin with main as upstream and "remote-only" known by origin alone; "envbranch" tracks the .env
-// that main ignores, "news" adds a file and edits one, and the project holds an .env of its own.
+// that main ignores, "dirbranch" adds a directory named .env, "news" adds a file and edits one, a linked worktree sits in .worktrees/wt,
+// and the project holds an .env of its own.
 function repoWithOrigin(root: string): void {
   git(root, 'branch', '-M', 'main');
   mkdirSync(join(root, 'sub'));
@@ -86,12 +88,18 @@ function repoWithOrigin(root: string): void {
   writeFileSync(join(root, 'sub/x.txt'), 'x2\n');
   git(root, 'add', '-A');
   git(root, 'commit', '-q', '-m', 'news');
+  git(root, 'checkout', '-q', '-b', 'dirbranch', 'main');
+  mkdirSync(join(root, '.env'));
+  writeFileSync(join(root, '.env/inner.txt'), 'inner\n');
+  git(root, 'add', '-f', '.env/inner.txt');
+  git(root, 'commit', '-q', '-m', 'env as a directory');
   git(root, 'checkout', '-q', '-b', 'envbranch', 'main');
   writeFileSync(join(root, '.env'), 'TRACKED=1\n');
   git(root, 'add', '-f', '.env');
   git(root, 'commit', '-q', '-m', 'track env');
   git(root, 'push', '-q', 'origin', 'envbranch');
   git(root, 'checkout', '-q', 'main');
+  git(root, 'worktree', 'add', '-q', '--detach', '.worktrees/wt');
   writeFileSync(join(root, '.env'), 'LOCAL=1\n');
 }
 
@@ -112,28 +120,41 @@ const EVERY_FILE = expect.stringContaining('every tracked file');
 const ENV_FILE = expect.stringContaining('.env (uncommitted)');
 
 describe('HookGate for history commands in a repository with an origin and an ignored .env', () => {
-  it('lets the usual rebase, pull, merge and checkout forms through on a clean tree', async () => {
+  it('lets the usual rebase, pull, merge, checkout and commit forms through on a clean tree, however they are chained, piped or prefixed', async () => {
     const { root, bash } = await setup('A');
     repoWithOrigin(root);
+    git(root, 'checkout', '-q', 'news');
+    git(root, 'checkout', '-q', 'main');
     const commands = [
       'git fetch origin && git rebase origin/main', 'cd sub && git rebase main', 'git pull --rebase', 'git pull', 'git pull origin main',
-      'git merge main', 'git checkout -b x', 'git checkout -b x main', 'git checkout main', 'git switch -c y', 'git checkout remote-only',
-      'git switch remote-only', 'git reset --hard', 'git reset --hard HEAD~1', 'git status && git diff --stat | head -3; git rebase main',
-      'git merge news', 'git rebase news', 'git checkout news', 'if git diff --quiet; then git rebase main; fi',
-      'git commit -qm x && git rebase main', 'git rebase --continue',
+      'git stash && git rebase main && git stash pop', 'git merge main', 'git merge news', 'git rebase news', 'git checkout -b feature',
+      'git checkout -b x main', 'git checkout main', 'git checkout news', 'git checkout remote-only', 'git switch remote-only', 'git switch -',
+      'git switch -c x', 'git reset --hard', 'git reset --hard HEAD~1', 'git commit -am x && git rebase main', 'git commit -qm x && git rebase main',
+      'git rebase main 2>&1 | tail -5', 'git rebase main; echo done', 'git status && git diff --stat | head -3; git rebase main',
+      'if git diff --quiet; then git rebase main; fi', 'until git rebase main; do sleep 1; done', 'git rebase main; exit 0', 'git rebase --continue',
+      'git rebase main || git rebase --abort', 'GIT_EDITOR=true git rebase --continue', 'git rebase main && git push',
+      'pwd; true; false; :; sleep 0; ls; cat README.md | head -1 | tail -1 | wc -l; grep -q x README.md; test -f a; which git; set -e; git rebase main',
+      'cd .worktrees/wt && git reset --hard', 'git remote -v; git config --get user.name; git branch --show-current; git tag -l; git rebase main',
     ];
     expect((await verdicts(bash, commands)).map(([command, decision]) => [command, decision])).toEqual(commands.map((command) => [command, 'allow']));
   });
 
-  it('asks about every tracked file when a command that moves history also writes, runs a program, or reconfigures git', async () => {
+  it('asks about every tracked file when a command that moves history also writes, runs a program, reconfigures git, or may run in another directory', async () => {
     const { root, bash } = await setup('A');
     repoWithOrigin(root);
+    const forged = 'git update-index --add --cacheinfo 100644,$(git hash-object -w README.md),forged.txt && t=$(git write-tree) && '
+      + 'c=$(git commit-tree "$t" -p HEAD -m x) && git update-ref refs/heads/forged "$c" && git reset --hard forged';
     const commands = [
-      'git hash-object -w README.md && git reset --hard main', 'git update-index --add README.md && git reset --hard main',
-      'git rebase -xtrue main', 'git rebase --exec=true main', 'git -c core.hooksPath=/tmp/h rebase main',
+      'git hash-object -w README.md && git reset --hard main', 'git update-index --add README.md && git reset --hard main', forged,
+      'git rebase -xtrue main', 'git rebase -qxtrue main', 'git rebase --exec=true main', "git rebase --exe='true' main", 'git rebase --exe=true main',
+      'git fetch --upload-pa=prog origin && git rebase main', 'git fetch --upload-pa=prog && git pull', 'git -c core.hooksPath=/tmp/h rebase main',
       'git --exec-path=/tmp/x merge main', 'git diff --output=src/other.ts && git rebase main', 'git log --output out.txt; git rebase main',
-      'echo x > out.txt && git rebase main', 'make && git rebase main', '$FIX && git rebase main', 'FOO=1 git rebase main',
-      'sudo git rebase main', 'env git rebase main',
+      'echo x > out.txt && git rebase main', `python3 -c "open('src/other.ts','w').write('x')" && git pull`, 'make && git rebase main',
+      '$FIX && git rebase main', 'FOO=1 git rebase main', 'sudo git rebase main', 'env git rebase main', 'GIT_DIR=/elsewhere/.git git checkout main',
+      './cat README.md && git rebase main', '/tmp/x/git rebase main', './git rebase main',
+      'alias cd=true; cd .worktrees/wt && git reset --hard', 'f() { :; }; cd .worktrees/wt && git reset --hard',
+      'CDPATH=/x cd .worktrees/wt && git reset --hard', 'git diff --ext && git rebase main', 'git config core.hooksPath /tmp/h && git rebase main',
+      'git remote set-url origin /tmp/x && git pull',
     ];
     expect(await verdicts(bash, commands)).toEqual(commands.map((command) => [command, 'deny', EVERY_FILE]));
   });
@@ -151,6 +172,16 @@ describe('HookGate for history commands in a repository with an origin and an ig
     expect(await verdicts(bash, brings)).toEqual(brings.map((command) => [command, 'deny', ENV_FILE]));
     const unnamed = ['git rebase "$BRANCH"', 'git merge no-such-branch', 'git pull origin a:b', 'git reset {--hard,} envbranch', 'git reset $"--hard" envbranch'];
     expect(await verdicts(bash, unnamed)).toEqual(unnamed.map((command) => [command, 'deny', EVERY_FILE]));
+    // A stopped sequence brings nothing new in, however many commits the upstream holds; an --abort goes back to ORIG_HEAD, which is absent until the first rebase, merge or reset.
+    const resumes = [
+      'git rebase --continue', 'GIT_EDITOR=true git rebase --continue', 'git rebase --skip', 'git rebase --quit', 'git rebase --root', 'git rebase --abort',
+      'git merge --continue', 'git merge --quit', 'git merge --abort', 'git cherry-pick --continue', 'git revert --skip',
+    ];
+    expect((await verdicts(bash, resumes)).map(([command, decision]) => [command, decision])).toEqual(resumes.map((command) => [command, 'allow']));
+    git(root, 'update-ref', 'ORIG_HEAD', 'envbranch');
+    expect(await verdicts(bash, ['git rebase --abort', 'git cherry-pick --abort', 'git merge --abort'])).toEqual([
+      ['git rebase --abort', 'deny', ENV_FILE], ['git cherry-pick --abort', 'deny', ENV_FILE], ['git merge --abort', 'allow', expect.any(String)],
+    ]);
   });
 
   it('asks before checkout writes files from a commit or the index and leaves HEAD where it is', async () => {
@@ -161,5 +192,34 @@ describe('HookGate for history commands in a repository with an origin and an ig
       'git checkout --patch', 'git checkout --pathspec-from-file=list main',
     ];
     expect(await verdicts(bash, commands)).toEqual(commands.map((command) => [command, 'deny', EVERY_FILE]));
+  });
+
+  it('names the file a history command would discard or overwrite when the call hides the command from a plain reading', async () => {
+    const { root, bash } = await setup('A');
+    repoWithOrigin(root);
+    mkdirSync(join(root, 'vendor/lib'), { recursive: true });
+    git(join(root, 'vendor/lib'), 'init', '-q');
+    writeFileSync(join(root, 'README.md'), 'dirty');
+    git(root, 'update-index', '--assume-unchanged', 'sub/x.txt');
+    writeFileSync(join(root, 'sub/x.txt'), 'edited');
+    // What the user is asked about: README.md has an edit git shows, sub/x.txt one it hides, and .env is an ignored file a directory would replace.
+    const readme = 'README.md (uncommitted)';
+    const rows: [command: string, asked: string | null][] = [
+      ['false && cd vendor/lib; git reset --hard', readme],
+      ['git commit -m "$(cat <<\'EOF\'\nfix: it\'s done\nEOF\n)" && git reset --hard', readme],
+      ['git commit -m "$(echo msg # it\'s done\n)" && git reset --hard', readme],
+      ['cat <<-EOF\n\tbody\n\tEOF\ngit reset --hard', readme],
+      ['cat <<EOF\n$(git reset --hard)\nEOF', readme],
+      ['echo ${X:-$(git reset --hard)}', readme],
+      ["cat <<'EOF'\n$(git reset --hard)\nEOF", null],
+      ['git checkout main', 'sub/x.txt (uncommitted)'],
+      ['git checkout dirbranch', '.env (uncommitted)'],
+      ['git --super-prefix=x reset --hard', 'a git option the IDE cannot read'],
+      ['echo "$(git status', 'a command substitution the IDE cannot read to its end'],
+    ];
+    const results = await verdicts(bash, rows.map(([command]) => command));
+    expect(results.map(([command, decision, reason], i) => [command, decision, rows[i]![1] === null || (reason ?? '').includes(rows[i]![1]!)])).toEqual(
+      rows.map(([command, asked]) => [command, asked === null ? 'allow' : 'deny', true]),
+    );
   });
 });
