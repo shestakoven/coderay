@@ -75,6 +75,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [highlight, setHighlight] = useState<Set<string>>(new Set());
   const [panels, dispatchPanels] = useReducer(panelReducer, project.id, (id) => loadPanels(storage(), id));
   const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
+  const [terminalsKnown, setTerminalsKnown] = useState(false);
   const [agentOpening, setAgentOpening] = useState(false);
   const sendRef = useRef<(message: ClientMessage) => boolean>(() => false);
   const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
@@ -130,6 +131,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           break;
         case 'terminal.snapshot':
           hub.restore(message.terminals);
+          setTerminalsKnown(true);
           break;
         case 'terminal.opened':
           hub.opened(message.terminal);
@@ -155,6 +157,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       }
     }, (next) => {
       setConnection(next);
+      if (next !== 'open') setTerminalsKnown(false);
       if (next === 'open') link.current?.send({ type: 'models.list' });
     }, url);
     link.current = current;
@@ -530,7 +533,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 </button>
               </>
             )}
-            terminal={<TerminalPanel hub={hub} tabs={shellTabs} visible={active && panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
+            terminal={<TerminalPanel hub={hub} tabs={shellTabs} known={terminalsKnown} visible={active && panels.bottom && panels.bottomTab === 'terminal' && !panels.focus} />}
           />
         </div>
         {settingsOpen && (
