@@ -120,6 +120,7 @@ describe('HookGate for history commands in a repository with an origin and an ig
       'git merge main', 'git checkout -b x', 'git checkout -b x main', 'git checkout main', 'git switch -c y', 'git checkout remote-only',
       'git switch remote-only', 'git reset --hard', 'git reset --hard HEAD~1', 'git status && git diff --stat | head -3; git rebase main',
       'git merge news', 'git rebase news', 'git checkout news', 'if git diff --quiet; then git rebase main; fi',
+      'git commit -qm x && git rebase main', 'git rebase --continue',
     ];
     expect((await verdicts(bash, commands)).map(([command, decision]) => [command, decision])).toEqual(commands.map((command) => [command, 'allow']));
   });
@@ -129,7 +130,7 @@ describe('HookGate for history commands in a repository with an origin and an ig
     repoWithOrigin(root);
     const commands = [
       'git hash-object -w README.md && git reset --hard main', 'git update-index --add README.md && git reset --hard main',
-      'git commit -qm x && git rebase main', 'git rebase -xtrue main', 'git rebase --exec=true main', 'git -c core.hooksPath=/tmp/h rebase main',
+      'git rebase -xtrue main', 'git rebase --exec=true main', 'git -c core.hooksPath=/tmp/h rebase main',
       'git --exec-path=/tmp/x merge main', 'git diff --output=src/other.ts && git rebase main', 'git log --output out.txt; git rebase main',
       'echo x > out.txt && git rebase main', 'make && git rebase main', '$FIX && git rebase main', 'FOO=1 git rebase main',
       'sudo git rebase main', 'env git rebase main',
@@ -148,7 +149,7 @@ describe('HookGate for history commands in a repository with an origin and an ig
       'git pull origin envbranch', 'git pull', 'git pull --rebase', 'cd sub && git checkout envbranch',
     ];
     expect(await verdicts(bash, brings)).toEqual(brings.map((command) => [command, 'deny', ENV_FILE]));
-    const unnamed = ['git rebase "$BRANCH"', 'git merge no-such-branch', 'git rebase --continue', 'git pull origin a:b'];
+    const unnamed = ['git rebase "$BRANCH"', 'git merge no-such-branch', 'git pull origin a:b'];
     expect(await verdicts(bash, unnamed)).toEqual(unnamed.map((command) => [command, 'deny', EVERY_FILE]));
   });
 
