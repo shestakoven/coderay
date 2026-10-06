@@ -23,6 +23,10 @@ describe('shellWrites', () => {
     ['ls -la; grep -r foo src; npm test', []],
     ['echo > ~/notes.txt', ['/home/u/notes.txt']],
     ['echo > /abs/x.txt', ['/abs/x.txt']],
+    ['[[ 1 ]] > .env', ['/p/.env']],
+    ['r\\\nm "\\\n.env"', ['/p/.env']],
+    ["git push origin {a,b} && git commit -m $'a\\nb'", []],
+    ['rm .e{m..o}v', ['? brace expansion']],
   ])('%s', (command, expected) => {
     expect(targets(command)).toEqual(expected);
   });
@@ -56,7 +60,10 @@ describe('shellWrites', () => {
     expect(writes(command).targets.filter((target) => !target.deleting).map((target) => [target.path, target.names])).toEqual([[`/p/${dir}`, ['a.ts']]]);
   });
 
-  it.each(['source s.sh', '. s.sh', "bash -c -- 'touch x'", 'echo x > ~other/f.ts', "echo x > $'a\\n.ts'", 'echo x > $\'a\\x41.ts\''])('%s has an unresolved target', (command) => {
+  it.each([
+    'source s.sh', '. s.sh', "bash -c -- 'touch x'", 'echo x > ~other/f.ts', "echo x > $'a\\n.ts'", 'echo x > $\'a\\x41.ts\'', 'echo x > ~+/f.ts',
+    'git log -1 {--output=.env,}', 'git log -1 $"--output=.env"',
+  ])('%s has an unresolved target', (command) => {
     expect(writes(command).targets.some((target) => target.unresolved !== null)).toBe(true);
   });
 
@@ -71,6 +78,7 @@ describe('shellWrites', () => {
     '$T/../*',
     '$T/../../t/x',
     '$T/$X/../../f',
+    '$T/{a,../../x}',
   ])('a mktemp variable in %s leaves the temporary directory', (path) => {
     const got = writes(`T=$(mktemp -d); echo x > ${path}`).targets;
     expect(got.map((target) => [target.temp, target.unresolved !== null])).toEqual([[false, true]]);

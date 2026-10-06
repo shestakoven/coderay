@@ -149,7 +149,7 @@ describe('HookGate for history commands in a repository with an origin and an ig
       'git pull origin envbranch', 'git pull', 'git pull --rebase', 'cd sub && git checkout envbranch',
     ];
     expect(await verdicts(bash, brings)).toEqual(brings.map((command) => [command, 'deny', ENV_FILE]));
-    const unnamed = ['git rebase "$BRANCH"', 'git merge no-such-branch', 'git pull origin a:b'];
+    const unnamed = ['git rebase "$BRANCH"', 'git merge no-such-branch', 'git pull origin a:b', 'git reset {--hard,} envbranch', 'git reset $"--hard" envbranch'];
     expect(await verdicts(bash, unnamed)).toEqual(unnamed.map((command) => [command, 'deny', EVERY_FILE]));
   });
 

@@ -28,8 +28,8 @@ export interface ShellWrites {
 type Part =
   | { kind: 'lit'; text: string }
   | { kind: 'tilde' }
-  | { kind: 'other' }
-  | { kind: 'escape' }
+  // Text bash builds from how the word is spelled, which the IDE does not work out; dash when it may begin with -.
+  | { kind: 'unread'; what: string; dash: boolean }
   | { kind: 'var'; name: string }
   | { kind: 'glob' }
   | { kind: 'sub'; body: string; open?: boolean };
@@ -174,6 +174,9 @@ function run(script: string, state: State, depth: number): void {
     const token = tokens[i]!;
     if (token.t === 'word') {
       words.push(token.word);
+    } else if (token.t === 'redir' && inTest(words)) {
+      // In [[ ]], < and > compare strings.
+      words.push(literalWord(token.op));
     } else if (token.t === 'redir') {
       const next = tokens[i + 1];
       redirects.push({ op: token.op, word: next?.t === 'word' ? next.word : null });
@@ -284,20 +287,30 @@ function readWord(src: string, start: number): [Word, number] {
   if (src[i] === '~' && (i + 1 === src.length || src[i + 1] === '/' || BREAKS.has(src[i + 1]!))) {
     parts.push({ kind: 'tilde' });
     i += 1;
-  } else if (src[i] === '~' && /[A-Za-z0-9._-]/.test(src[i + 1] ?? '')) {
-    parts.push({ kind: 'other' });
+  } else if (src[i] === '~' && /[A-Za-z0-9._+-]/.test(src[i + 1] ?? '')) {
+    parts.push({ kind: 'unread', what: "another user's home directory, ~+ or ~-", dash: false });
   }
   let quoted = false;
   while (i < src.length) {
     const c = src[i]!;
     if (!quoted && BREAKS.has(c)) break;
+    const brace = !quoted && c === '{' ? braceExpansion(src, i) : null;
     if (!quoted && c === '$' && src[i + 1] === "'") {
       let end = i + 2;
       while (end < src.length && src[end] !== "'") end += src[end] === '\\' ? 2 : 1;
       const body = src.slice(i + 2, end);
-      if (body.includes('\\')) push({ kind: 'escape' });
-      else lit += body;
+      const escape = body.indexOf('\\');
+      // The text before the first escape stays readable, so $'line\nline' is no option in disguise.
+      lit += escape === -1 ? body : body.slice(0, escape);
+      if (escape !== -1) push({ kind: 'unread', what: "an escape sequence in a $'…' string", dash: true });
       i = end + 1;
+    } else if (!quoted && c === '$' && src[i + 1] === '"') {
+      // The locale may translate the string. The quoted string after the $ is still read, for the commands it runs.
+      push({ kind: 'unread', what: 'a $"…" string', dash: true });
+      i += 1;
+    } else if (brace) {
+      push({ kind: 'unread', what: 'brace expansion', dash: brace.dash });
+      i += 1;
     } else if (c === '$') {
       const [part, next] = readDollar(src, i);
       if (part) push(part);
@@ -312,7 +325,8 @@ function readWord(src: string, start: number): [Word, number] {
         quoted = false;
         i += 1;
       } else if (c === '\\' && '$`"\\\n'.includes(src[i + 1] ?? '')) {
-        lit += src[i + 1];
+        // A backslash before a line break joins the two lines.
+        if (src[i + 1] !== '\n') lit += src[i + 1];
         i += 2;
       } else {
         lit += c;
@@ -327,7 +341,7 @@ function readWord(src: string, start: number): [Word, number] {
       lit += src.slice(i + 1, stop);
       i = stop + 1;
     } else if (c === '\\') {
-      lit += src[i + 1] ?? '';
+      if (src[i + 1] !== '\n') lit += src[i + 1] ?? '';
       i += 2;
     } else if (c === '*' || c === '?' || c === '[') {
       push({ kind: 'glob' });
@@ -339,6 +353,40 @@ function readWord(src: string, start: number): [Word, number] {
   }
   if (lit) parts.push({ kind: 'lit', text: lit });
   return [{ parts, raw: src.slice(start, i) }, i];
+}
+
+// The brace expansion the { at start opens, if it does: a } that closes it in the same word, and a comma or .. between, none of
+// them quoted. dash when a word it makes may begin with -: an alternative is empty, starts with -, or starts with what the IDE
+// does not follow. A sequence makes letters or numbers, so at most a negative count.
+function braceExpansion(src: string, start: number): { dash: boolean } | null {
+  let depth = 0;
+  let list = false;
+  let dash = false;
+  for (let i = start; i < src.length; i += 1) {
+    const c = src[i]!;
+    if (BREAKS.has(c)) return null;
+    if (depth === 1 && '{,'.includes(src[i - 1]!) && '-\\\'"$`{,}'.includes(c)) dash = true;
+    if (c === '\\') {
+      i += 1;
+    } else if (c === "'" || c === '"') {
+      i = quoteEnd(src, i, c);
+    } else if (c === '`') {
+      i = closing(src, i + 1, '`');
+    } else if (c === '$' && src[i + 1] === '(') {
+      i = closing(src, i + 2, ')');
+    } else if (c === '$' && src[i + 1] === '{') {
+      const end = src.indexOf('}', i);
+      i = end === -1 ? src.length : end;
+    } else if (c === '{') {
+      depth += 1;
+    } else if (c === '}') {
+      depth -= 1;
+      if (depth === 0) return list ? { dash } : null;
+    } else if (depth === 1 && (c === ',' || src.startsWith('..', i))) {
+      list = true;
+    }
+  }
+  return null;
 }
 
 function readDollar(src: string, i: number): [Part | null, number] {
@@ -449,8 +497,8 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
     args = args.slice(1);
   }
   nest(literalText(args[0] ?? EMPTY) ?? '', state);
-  if (args[0]?.raw === '[[') return;
   for (const redirect of redirects) redirectTarget(redirect, state);
+  if (args[0]?.raw === '[[') return;
   while (args.length > 0 && isAssignment(args[0]!)) {
     assign(args[0]!, state);
     args = args.slice(1);
@@ -467,6 +515,12 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   if (name === null || name.includes('/') || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
   if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
+}
+
+// Whether the words so far open a [[ ]] test that has not closed.
+function inTest(words: Word[]): boolean {
+  const first = words.findIndex((word) => !KEYWORDS.has(literalText(word) ?? ''));
+  return first !== -1 && words[first]!.raw === '[[' && !words.slice(first).some((word) => word.raw === ']]');
 }
 
 function nest(word: string, state: State): void {
@@ -685,7 +739,7 @@ function git(args: Word[], state: State): void {
     if (literalText(arg) === '--output' && rest[at + 1]) addTarget(rest[at + 1]!, state);
     else if (first?.kind === 'lit' && first.text.startsWith('--output=')) {
       addTarget({ parts: [{ kind: 'lit', text: first.text.slice('--output='.length) }, ...arg.parts.slice(1)], raw: arg.raw }, state);
-    }
+    } else if (hidesOption(arg)) state.targets.push(unresolved(arg.raw, 'a git option the IDE cannot read'));
   }
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
   // checkout <tree-ish> <paths>, checkout -- <paths> and their kin write files and leave HEAD where it is.
@@ -701,6 +755,17 @@ function git(args: Word[], state: State): void {
     if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(...gitDirectories(global, state));
   }
   else if (sub === 'mv' || sub === 'rm') gitPaths(sub, global, rest, state);
+}
+
+// Whether a word may be an option whose name its spelling hides, such as {--output=f,} or $"--hard". Variables and command
+// substitutions are not counted: everyday git passes a commit or a path through them.
+function hidesOption(word: Word): boolean {
+  const at = word.parts.findIndex((part) => part.kind === 'unread');
+  const part = word.parts[at];
+  if (part?.kind !== 'unread') return false;
+  const before = literalText({ parts: word.parts.slice(0, at), raw: '' });
+  if (before === '') return part.dash;
+  return before === null || (before.startsWith('-') && !before.includes('='));
 }
 
 // The subcommand of git stash, push when none is named, and the words after it.
@@ -917,8 +982,7 @@ function wordValue(word: Word, state: State): WordValue {
     else if (part.kind === 'tilde') {
       if (state.poisoned.has('HOME')) return { problem: 'the variable $HOME' };
       text += state.env.home;
-    } else if (part.kind === 'other') return { problem: "another user's home directory" };
-    else if (part.kind === 'escape') return { problem: 'an escape sequence in a $\'…\' string' };
+    } else if (part.kind === 'unread') return { problem: part.what };
     else if (part.kind === 'glob') return { problem: 'a wildcard' };
     else if (part.kind === 'sub') return { problem: 'command substitution' };
     else if (text === '' && state.mktemp.has(part.name)) return tempValue(word.parts.slice(index + 1));
@@ -938,6 +1002,9 @@ function tempValue(rest: Part[]): WordValue {
     if (part.kind === 'lit') {
       tail += part.text;
       dotted ||= part.text.split('/').includes('..');
+    } else if (part.kind === 'unread') {
+      // It may spell .. and climb out.
+      return { problem: part.what };
     } else if (dotted) {
       return leaves;
     } else {
