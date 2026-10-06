@@ -35,6 +35,12 @@ describe('the hook settings of a terminal (writeGateFiles with events)', () => {
     }
   });
 
+  it('lets claude wait for the Stop hook as long as for the gate, since the end of a turn waits for the user', () => {
+    const { settings } = settingsOf({ events: true });
+    const timeoutOf = (name: string, script: string) => settings.hooks[name]?.flatMap((entry) => entry.hooks).find((hook) => hook.args[0] === script)?.timeout;
+    expect(timeoutOf('Stop', AGENT_EVENT_SCRIPT)).toBe(timeoutOf('PreToolUse', HOOK_SCRIPT));
+  });
+
   it('runs the event hook for every tool', () => {
     const { settings } = settingsOf({ events: true });
     for (const name of ['PostToolUse', 'PostToolUseFailure']) {
