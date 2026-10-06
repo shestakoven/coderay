@@ -17,10 +17,10 @@ export function planOnMap(plans: PlanView[]): PlanView | null {
   const latest = plans.at(-1);
   if (!latest) return null;
   const versions = plans.filter((plan) => plan.id === latest.id);
-  return versions.findLast((plan) => plan.status === 'proposed') ?? versions.findLast((plan) => plan.status === 'approved') ?? latest;
+  return versions.findLast((plan) => plan.status === 'proposed') ?? versions.findLast((plan) => plan.status === 'approved' || plan.status === 'done') ?? latest;
 }
 
-export const drawsOverlay = (plan: PlanView | null): boolean => plan !== null && (plan.status === 'proposed' || plan.status === 'approved');
+export const drawsOverlay = (plan: PlanView | null): boolean => plan !== null && (plan.status === 'proposed' || plan.status === 'approved' || plan.status === 'done');
 export const waitsForUser = (plan: PlanView | null): boolean => plan?.status === 'proposed';
 export const panelOpenByDefault = (plan: PlanView): boolean => plan.status === 'proposed';
 export const pendingPrompts = (prompts: GatePromptView[]): GatePromptView[] => prompts.filter((prompt) => prompt.status === 'pending');

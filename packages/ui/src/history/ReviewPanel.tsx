@@ -64,6 +64,7 @@ function ReviewSection({ entry, folded, onFold, open, requested, diffs, onExpand
         <button className="review-title" onClick={onFold} aria-expanded={!folded}>
           <Icon name={folded ? 'chevron-right' : 'chevron-down'} size={16} />
           <span className="review-name">{entry.title}</span>
+          {entry.extra && <span className="added-chip" title="Added after you approved the plan">added</span>}
         </button>
         <span className="review-stat"><span className="add">+{entry.added}</span> <span className="del">−{entry.removed}</span></span>
         <button className="tl-action shown" title="Show on the map" aria-label="Show on the map" onClick={() => onShowOnMap(entry.files.map((file) => file.path))}><Icon name="search" size={18} /></button>

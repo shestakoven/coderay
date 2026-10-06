@@ -86,10 +86,13 @@ export class PlanService {
     this.load();
     if (this.loadedFor !== session) return { ok: false, error: 'IDE: the agent session changed while the plan was checked.' };
     if (signal?.aborted) return { ok: false, error: 'IDE: the call was cancelled.' };
-    const open = this.openPlanId();
-    if (open !== null) {
-      const problem = this.keepsProgress(open, input.steps);
-      if (problem) return { ok: false, error: problem };
+    let open = this.openPlanId();
+    let replaced: PlanRecord | null = null;
+    const problem = open === null ? null : this.keepsProgress(open, input.steps);
+    if (problem !== null) {
+      replaced = this.enforced(open!)!;
+      if (replaced.status !== 'done') return { ok: false, error: problem };
+      open = null;
     }
     const id = open ?? this.newId();
     const version = open === null ? 1 : Math.max(...this.versions(open).map((record) => record.version)) + 1;
@@ -107,6 +110,7 @@ export class PlanService {
     };
     this.records.push(record);
     if (!this.states.has(id)) this.states.set(id, new Map());
+    if (replaced !== null) this.close(replaced, `Replaced by plan ${id}.`);
     if (review.auto) {
       this.approve(record, 'auto');
       return { ok: true, value: { status: 'approved' } };
@@ -123,6 +127,11 @@ export class PlanService {
     if (answer.kind === 'reject') {
       this.rejectPause = true;
       this.reject(record, answer.feedback.trim());
+      return;
+    }
+    if (answer.kind === 'accept') {
+      if (record.status !== 'done') throw new PlanError('Only a plan with every step done can be accepted.');
+      this.close(record, 'Accepted by you.');
       return;
     }
     if (record.status !== 'proposed') throw new PlanError('That plan is no longer waiting for an answer.');
@@ -149,7 +158,7 @@ export class PlanService {
     }
     const gate = this.gate();
     if (gate.state === 'rejected') return { ok: false, error: `IDE: the user rejected plan ${gate.planId}. Stop and wait for the user's next message.` };
-    if (gate.state === 'done') return { ok: false, error: `IDE: plan ${gate.planId} is done.` };
+    if (gate.state === 'closed') return { ok: false, error: `IDE: plan ${gate.planId} is closed. Call mcp__idecore__propose_plan for further changes.` };
     if (gate.state === 'none') return { ok: false, error: 'IDE: no plan is approved. Call mcp__idecore__propose_plan first and wait for its result.' };
     const enforced = this.enforced(gate.planId)!;
     if (!enforced.steps.some((step) => step.key === key)) {
@@ -183,7 +192,7 @@ export class PlanService {
 
   resetStep(planId: string, key: string): void {
     this.load();
-    const enforced = this.enforced(planId) ?? this.versions(planId).findLast((record) => record.status === 'done');
+    const enforced = this.enforced(planId);
     if (!enforced || !enforced.steps.some((step) => step.key === key)) throw new PlanError(`Plan ${planId} has no step "${key}".`);
     const status = this.states.get(planId)?.get(key) ?? 'pending';
     if (status === 'pending') throw new PlanError(`Step "${key}" has not run.`);
@@ -217,9 +226,9 @@ export class PlanService {
     const planId = this.records.at(-1)?.id;
     if (planId === undefined) return { state: 'none' };
     const enforced = this.enforced(planId);
-    if (enforced) return { state: 'approved', planId, version: enforced.version, scope: enforced.scope, activeStep: this.activeStep(planId) };
+    if (enforced) return { state: 'approved', planId, version: enforced.version, scope: enforced.scope, activeStep: this.activeStep(planId), followUps: enforced.status === 'done' };
     const versions = this.versions(planId);
-    if (versions.some((record) => record.status === 'done')) return { state: 'done', planId };
+    if (versions.some((record) => record.status === 'closed')) return { state: 'closed', planId };
     if (versions.some((record) => record.status === 'rejected')) return { state: 'rejected', planId };
     return { state: 'none' };
   }
@@ -227,7 +236,7 @@ export class PlanService {
   scopeOf(planId: string, version: number): FrozenScope | null {
     this.load();
     const record = this.records.find((candidate) => candidate.id === planId && candidate.version === version);
-    return record && (record.status === 'approved' || record.status === 'done') ? record.scope : null;
+    return record && (record.status === 'approved' || record.status === 'done' || record.status === 'closed') ? record.scope : null;
   }
 
   canExpand(): boolean {
@@ -254,7 +263,7 @@ export class PlanService {
     const record: PlanRecord = {
       ...enforced,
       version: Math.max(...this.versions(gate.planId).map((candidate) => candidate.version)) + 1,
-      status: 'approved',
+      status: enforced.status,
       approvedBy: 'user-expand',
       steps,
       scope: {
@@ -348,11 +357,12 @@ export class PlanService {
 
   private approve(record: PlanRecord, by: ApprovedBy): void {
     for (const other of this.versions(record.id)) {
-      if (other === record || other.status !== 'approved') continue;
+      if (other === record || (other.status !== 'approved' && other.status !== 'done')) continue;
       other.status = 'superseded';
       this.save(other);
     }
-    record.status = 'approved';
+    const states = this.states.get(record.id);
+    record.status = record.steps.every((step) => states?.get(step.key) === 'done') ? 'done' : 'approved';
     record.approvedBy = by;
     record.decidedAt = this.now();
     this.save(record);
@@ -361,7 +371,7 @@ export class PlanService {
   }
 
   private reject(record: PlanRecord, feedback: string): void {
-    const open = this.versions(record.id).filter((candidate) => OPEN_LATEST.has(candidate.status) || candidate.status === 'approved');
+    const open = this.versions(record.id).filter((candidate) => OPEN_LATEST.has(candidate.status) || candidate.status === 'approved' || candidate.status === 'done');
     if (!open.includes(record)) throw new PlanError('Only a waiting or approved plan can be rejected.');
     const result: ProposeResult = feedback ? { status: 'rejected', feedback } : { status: 'rejected' };
     for (const version of open) {
@@ -374,11 +384,20 @@ export class PlanService {
     this.emit();
   }
 
+  private close(record: PlanRecord, feedback: string): void {
+    record.status = 'closed';
+    record.feedback = feedback;
+    record.decidedAt = this.now();
+    this.save(record);
+    this.withdrawWaitingRevisions(record);
+    this.emit();
+  }
+
   private openPlanId(): string | null {
     const planId = this.records.at(-1)?.id;
     if (planId === undefined) return null;
     const versions = this.versions(planId);
-    if (versions.some((record) => record.status === 'rejected' || record.status === 'done')) return null;
+    if (versions.some((record) => record.status === 'rejected' || record.status === 'closed')) return null;
     const latest = versions.at(-1)!;
     return this.enforced(planId) || OPEN_LATEST.has(latest.status) ? planId : null;
   }
@@ -396,7 +415,7 @@ export class PlanService {
     if (active !== null) return active;
     const states = this.states.get(planId);
     const steps = [...(this.enforced(planId)?.steps ?? [])].sort((a, b) => a.order - b.order);
-    return steps.find((step) => (states?.get(step.key) ?? 'pending') === 'pending')?.key ?? null;
+    return (steps.find((step) => (states?.get(step.key) ?? 'pending') === 'pending') ?? steps.at(-1))?.key ?? null;
   }
 
   private activeStep(planId: string): string | null {
@@ -425,7 +444,7 @@ export class PlanService {
   }
 
   private enforced(planId: string): PlanRecord | undefined {
-    return this.versions(planId).findLast((record) => record.status === 'approved');
+    return this.versions(planId).findLast((record) => record.status === 'approved' || record.status === 'done');
   }
 
   private versions(planId: string): PlanRecord[] {
@@ -454,9 +473,10 @@ export class PlanService {
 
   private view(record: PlanRecord): PlanView {
     const states = this.states.get(record.id);
+    const first = this.versions(record.id).find((version) => version.approvedBy !== null);
     return {
       id: record.id, version: record.version, goal: record.goal, status: record.status, approvedBy: record.approvedBy,
-      steps: record.steps.map((step) => ({ ...step, status: states?.get(step.key) ?? 'pending' })),
+      steps: record.steps.map((step) => ({ ...step, status: states?.get(step.key) ?? 'pending', extra: first !== undefined && !first.steps.some((original) => original.key === step.key) })),
       scope: record.scope, owners: record.owners, review: record.review, feedback: record.feedback,
       flow: record.flow, proposedAt: record.proposedAt, decidedAt: record.decidedAt,
     };

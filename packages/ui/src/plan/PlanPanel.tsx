@@ -1,18 +1,22 @@
 import { useState } from 'react';
 import type { MapSnapshot, PlanAnswer, PlanStepView, PlanView } from '@ide/protocol';
+import { FilePath } from '../history/ReviewPanel';
+import type { ReviewFile } from '../history/review-state';
 import { badgeText, classifyTargets, planTitle } from './plan-state';
 
 const OP_MARK = { modify: '~', create: '+', delete: '−' } as const;
 const STATUS_ICON = { pending: '○', active: '●', done: '✓' } as const;
 
-export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusStep, onHoverStep }: {
+export function PlanPanel({ plan, snapshot, open, followUps = [], onToggle, onAnswer, onFocusStep, onHoverStep, onShowFiles }: {
   plan: PlanView;
   snapshot: MapSnapshot | null;
   open: boolean;
+  followUps?: ReviewFile[];
   onToggle?: () => void;
   onAnswer: (answer: PlanAnswer) => void;
   onFocusStep: (index: number) => void;
   onHoverStep?: (key: string | null) => void;
+  onShowFiles?: (paths: string[]) => void;
 }) {
   const [changing, setChanging] = useState(false);
   const [feedback, setFeedback] = useState('');
@@ -38,6 +42,21 @@ export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusSte
               <StepRow key={step.key} step={step} n={index + 1} plan={plan} snapshot={snapshot} onFocus={() => onFocusStep(index)} onHover={onHoverStep} />
             ))}
           </ol>
+          {followUps.length > 0 && (
+            <section className="plan-followups" aria-label="Follow-ups">
+              <h4>Follow-ups</h4>
+              <ul className="review-files">
+                {followUps.map((file) => (
+                  <li key={file.path}>
+                    <button className="review-file" onClick={() => onShowFiles?.([file.path])} title="Show on the map">
+                      <FilePath path={file.path} />
+                      <span className="review-stat"><span className="add">+{file.added}</span> <span className="del">−{file.removed}</span></span>
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          )}
           <Note plan={plan} />
           {plan.status === 'proposed' && (
             <>
@@ -71,6 +90,13 @@ export function PlanPanel({ plan, snapshot, open, onToggle, onAnswer, onFocusSte
               </div>
             </>
           )}
+          {plan.status === 'done' && (
+            <div className="prompt-actions">
+              <button className="primary" title="Closes the plan. The agent's next write is denied until it proposes a new plan." onClick={() => onAnswer({ kind: 'accept' })}>
+                Accept
+              </button>
+            </div>
+          )}
           {plan.status === 'approved' && (
             <div className="prompt-actions">
               <button title="Revokes the approval. The agent is not interrupted; its next write is denied." onClick={() => onAnswer({ kind: 'reject', feedback: '' })}>
@@ -90,10 +116,11 @@ function Note({ plan }: { plan: PlanView }) {
   if (plan.status === 'approved' && plan.approvedBy === 'auto') {
     return <div className="plan-note muted">Approved automatically: {notes}. Reject revokes the approval; the agent is not interrupted, and its next write is denied.</div>;
   }
+  if (plan.status === 'done') return <div className="plan-note muted">All steps done. Fixes to these files are still allowed until you accept the plan.</div>;
   if (plan.status === 'rejected') {
     return <div className="plan-note muted">Rejected{plan.feedback ? `: ${plan.feedback}` : ''}. Files it already changed stay as they are; the agent's next write is denied.</div>;
   }
-  if (plan.status === 'withdrawn' || plan.status === 'changes-requested') return <div className="plan-note muted">{plan.feedback}</div>;
+  if (plan.status === 'withdrawn' || plan.status === 'changes-requested' || plan.status === 'closed') return <div className="plan-note muted">{plan.feedback}</div>;
   return null;
 }
 
@@ -123,6 +150,7 @@ function StepRow({ step, n, plan, snapshot, onFocus, onHover }: {
       <button className="plan-step-head" onClick={onFocus} title="Show on the map">
         <span className={`step-badge ${step.status}`}>{badgeText({ n, status: step.status })}</span>
         <span className="plan-step-title">{step.title}</span>
+        {step.extra && <span className="added-chip" title="Added after you approved the plan">added</span>}
         <span className="plan-step-status">{STATUS_ICON[step.status]}</span>
       </button>
       <div className="plan-targets">

@@ -113,7 +113,7 @@ async function fixture(o: Setup = {}) {
   return { root, store, shadow, ledger, gate, changes, session, hold, withdrawn, watchdog, emitted, canExpand, saveFails, info, produce, toolCall: () => ledger.allowed(call({})) };
 }
 
-const approved = (scope: Partial<FrozenScope> = {}): PlanGate => ({ state: 'approved', planId: 'p1', version: 1, scope: { paths: [], globs: [], ...scope }, activeStep: 's1' });
+const approved = (scope: Partial<FrozenScope> = {}): PlanGate => ({ state: 'approved', planId: 'p1', version: 1, scope: { paths: [], globs: [], ...scope }, activeStep: 's1', followUps: false });
 const pendingEvent = (f: Awaited<ReturnType<typeof fixture>>): Promise<WatchdogEventView> =>
   waitFor(() => f.watchdog.events().find((e) => e.phase === 'pending'), 'a pending event');
 
@@ -182,7 +182,7 @@ describe('Watchdog raising', () => {
     f.toolCall();
     const change = (await f.produce(['src/in.ts']))[0]!;
     expect([change.planId, change.planVersion]).toEqual(['p1', 1]);
-    f.gate.value = { state: 'done', planId: 'p1' };
+    f.gate.value = { state: 'closed', planId: 'p1' };
     f.watchdog.consider(change);
     await sleepMs(120);
     expect([f.watchdog.events(), f.hold.isHeld(), f.session.calls]).toEqual([[], false, []]);
@@ -194,7 +194,7 @@ describe('Watchdog raising', () => {
     f.toolCall();
     const outside = (await f.produce(['b.ts']))[0]!;
     const unknown = { ...(await f.produce(['src/c.ts']))[0]!, planVersion: 9 };
-    f.gate.value = { state: 'done', planId: 'p1' };
+    f.gate.value = { state: 'closed', planId: 'p1' };
     f.watchdog.consider(outside);
     f.watchdog.consider(unknown);
     const event = await waitFor(() => f.watchdog.events().find((e) => e.phase === 'pending'), 'a pending event');
@@ -225,8 +225,8 @@ describe('Watchdog raising', () => {
     expect(f.watchdog.events()).toEqual([]);
   });
 
-  it('raises when no plan is approved, the plan is done, or it was rejected', async () => {
-    for (const gate of [{ state: 'none' }, { state: 'done', planId: 'p1' }, { state: 'rejected', planId: 'p1' }] as PlanGate[]) {
+  it('raises when no plan is approved, the plan is closed, or it was rejected', async () => {
+    for (const gate of [{ state: 'none' }, { state: 'closed', planId: 'p1' }, { state: 'rejected', planId: 'p1' }] as PlanGate[]) {
       const f = await fixture();
       f.gate.value = gate;
       f.toolCall();
@@ -830,7 +830,7 @@ describe('Watchdog for a worktree inside a directory the plan covers', () => {
   it('judges a change stamped with an older version of the plan by that version, by the path inside the worktree', async () => {
     const f = await insidePlanDirectory();
     const [inside, outside] = await f.produce(['src/wt/src/in.ts', 'src/wt/package.json']);
-    f.gate.value = { state: 'approved', planId: 'p1', version: 2, scope: { paths: [], globs: [] }, activeStep: 's1' };
+    f.gate.value = { state: 'approved', planId: 'p1', version: 2, scope: { paths: [], globs: [] }, activeStep: 's1', followUps: false };
     f.watchdog.consider(inside!);
     await sleepMs(120);
     expect(f.watchdog.events()).toEqual([]);

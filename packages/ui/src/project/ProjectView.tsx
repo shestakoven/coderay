@@ -18,6 +18,7 @@ import { projectPathOf } from '../history/project-path';
 import { ReviewMode } from '../history/ReviewMode';
 import { ReviewPanel } from '../history/ReviewPanel';
 import { reviewSections, sectionFiles } from '../history/review-model';
+import { followUpFiles } from '../history/review-state';
 import { Timeline } from '../history/Timeline';
 import { DetailsPanel, type DetailsTab } from '../map/DetailsPanel';
 import { initialMapState, mapReducer } from '../map/map-state';
@@ -357,6 +358,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     const owners = new Set(snapshot?.files.filter((file) => wanted.has(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
     if (owners.size > 0) focusComponents([...owners]);
   };
+  const followUps = useMemo(() => (shown ? followUpFiles(hist.history, shown.id) : []), [hist.history, shown]);
   const reviewFiles = useMemo(() => sectionFiles(reviewSections(hist.history, plans.plans)).length, [hist.history, plans.plans]);
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (
@@ -509,9 +511,11 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 plan={shown}
                 snapshot={snapshot}
                 open
+                followUps={followUps}
                 onAnswer={answerPlan}
                 onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])}
                 onHoverStep={setHoverStep}
+                onShowFiles={showPathsOnMap}
               />
             ) : (
               <div className="empty muted">{shown ? 'The plan is waiting for your answer above the chat.' : 'No plan yet. When the agent proposes one, it appears above the chat and on the map.'}</div>

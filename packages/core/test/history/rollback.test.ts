@@ -442,7 +442,7 @@ describe('step rollback', () => {
     const f = await fixture();
     await f.approve({ goal: 'One', steps: [PLAN.steps[0]] });
     await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }]);
-    expect(f.plans.gate()).toMatchObject({ state: 'done' });
+    expect(f.plans.gate()).toMatchObject({ state: 'approved', followUps: true });
     await f.reverts.rollbackStep('plan-1', 's1', []);
     expect(f.plans.stepStates()['plan-1']).toEqual({ s1: 'pending' });
     expect(f.plans.gate()).toMatchObject({ state: 'approved', planId: 'plan-1', activeStep: null });
