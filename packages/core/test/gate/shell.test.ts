@@ -191,6 +191,11 @@ describe('shellWrites', () => {
     expect(writes(command).history).toEqual(dirs);
   });
 
+  it('reads each of checkout, switch, reset, pull, merge, rebase, cherry-pick and revert as history, and none as a work tree rewrite', () => {
+    const verbs = ['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert'];
+    expect(verbs.map((verb) => [verb, writes(`git ${verb} x`).history, writes(`git ${verb} x`).rewrites])).toEqual(verbs.map((verb) => [verb, ['/p'], []]));
+  });
+
   it('keeps restore, clean, stash, apply and am as work tree rewrites, apart from the history commands', () => {
     expect(writes('git restore . && git -C sub stash && git clean -fd && git am p.patch && git apply p.patch').rewrites).toEqual(['/p', '/p/sub', '/p', '/p', '/p']);
     expect([writes('git restore .').history, writes('git rebase main').rewrites]).toEqual([[], []]);
