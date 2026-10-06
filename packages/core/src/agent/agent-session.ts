@@ -430,7 +430,14 @@ export class AgentSession {
     if (event.type === 'turn-end' && !event.failed) {
       // The turn does not end while the user decides what to do with the agent's changes: the answer then keeps it going.
       const held = waited || this.absorbed.length > 0 ? null : this.options.holdTurnEnd?.(signal);
-      if (held) return held.then(() => (signal.aborted ? null : this.answerHook(event, hookName, signal, true)));
+      if (held) {
+        return held.then(() => {
+          if (!signal.aborted) return this.answerHook(event, hookName, signal, true);
+          // Claude stopped waiting for the answer, and its turn ends all the same.
+          this.agentEvents([event]);
+          return null;
+        });
+      }
       const block = this.turnEndBlock();
       if (block) return block;
     }
