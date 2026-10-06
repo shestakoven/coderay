@@ -188,6 +188,8 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 .plan-step.done .plan-step-title { color: var(--muted); }
 .plan-step-status { color: var(--muted); }
 .plan-step.active .plan-step-status { color: var(--plan); }
+.plan-step.left-open .plan-step-status { color: var(--warn); font-size: calc(11px * var(--fs-scale, 1)); }
+.plan-step.left-open .step-badge.active { animation: none; }
 .plan-targets { margin: 3px 0 0 24px; display: flex; flex-direction: column; gap: 2px; }
 .plan-target-group { display: flex; flex-wrap: wrap; gap: 4px; align-items: baseline; }
 .plan-component { font-weight: 600; font-size: calc(11px * var(--fs-scale, 1)); margin-right: 2px; }

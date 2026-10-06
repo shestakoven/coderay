@@ -102,7 +102,7 @@ export class PlanService {
     }
     const scope = freezeScope(input.steps, this.options.root, components);
     const base = this.rejectPause && reviewed.review.auto ? { auto: false, notes: [REJECT_PAUSE_NOTE, ...reviewed.review.notes] } : reviewed.review;
-    const review = base.auto ? base : { ...base, notes: [...base.notes, ...flowNotes(input.flow, input.steps, scope)] };
+    const review = { ...base, notes: [...base.notes, ...(base.auto ? [] : flowNotes(input.flow, input.steps, scope)), ...this.addedNotes(open, input.steps)] };
     const record: PlanRecord = {
       id, version, goal: input.goal, status: 'proposed', approvedBy: null, steps: input.steps,
       scope, owners: reviewed.owners, review, flow: input.flow,
@@ -231,6 +231,14 @@ export class PlanService {
     if (versions.some((record) => record.status === 'closed')) return { state: 'closed', planId };
     if (versions.some((record) => record.status === 'rejected')) return { state: 'rejected', planId };
     return { state: 'none' };
+  }
+
+  // The step the agent has started and not finished, in the plan the gate enforces.
+  active(): { planId: string; key: string; title: string } | null {
+    const gate = this.gate();
+    if (gate.state !== 'approved' || gate.activeStep === null) return null;
+    const step = this.enforced(gate.planId)?.steps.find((candidate) => candidate.key === gate.activeStep);
+    return step ? { planId: gate.planId, key: step.key, title: step.title } : null;
   }
 
   scopeOf(planId: string, version: number): FrozenScope | null {
@@ -408,6 +416,14 @@ export class PlanService {
       if (status !== 'pending' && !keys.has(key)) return `IDE: the new version must keep step "${key}", which is ${status}.`;
     }
     return null;
+  }
+
+  // What a proposal adds to the plan the user approved is said on its card, auto-approved or not.
+  private addedNotes(planId: string | null, steps: PlanStep[]): string[] {
+    const approved = planId === null ? undefined : this.enforced(planId);
+    if (approved === undefined) return [];
+    const added = steps.filter((step) => !approved.steps.some((known) => known.key === step.key));
+    return added.length === 0 ? [] : [`adds ${added.length} ${added.length === 1 ? 'step' : 'steps'} after approval: ${added.map((step) => step.key).join(', ')}`];
   }
 
   private expandStep(planId: string): string | null {
