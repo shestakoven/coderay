@@ -187,14 +187,19 @@ describe('shellWrites', () => {
     ['cd "$D" && git -C sub reset --hard', [null]],
     ['cd "$D" && git -C /abs/wt reset --hard', ['/abs/wt']],
     ['git status && git -C sub log', []],
-  ])('%s rewrites the work tree in %j', (command, dirs) => {
-    expect(writes(command).rewrites).toEqual(dirs);
+  ])('%s moves history in %j', (command, dirs) => {
+    expect(writes(command).history).toEqual(dirs);
+  });
+
+  it('keeps restore, clean, stash, apply and am as work tree rewrites, apart from the history commands', () => {
+    expect(writes('git restore . && git -C sub stash && git clean -fd && git am p.patch && git apply p.patch').rewrites).toEqual(['/p', '/p/sub', '/p', '/p', '/p']);
+    expect([writes('git restore .').history, writes('git rebase main').rewrites]).toEqual([[], []]);
   });
 
   it('keeps an earlier rewrite when a later git apply only touches the index, and the other way round', () => {
-    expect(writes('git reset --hard && git apply --cached p.patch').rewrites).toEqual(['/p']);
-    expect(writes('git apply --cached p.patch && git reset --hard').rewrites).toEqual(['/p']);
-    expect(writes('git reset --hard && git apply --cached p.patch').allTracked).toBe(true);
+    expect(writes('git restore . && git apply --cached p.patch').rewrites).toEqual(['/p']);
+    expect(writes('git apply --cached p.patch && git restore .').rewrites).toEqual(['/p']);
+    expect(writes('git restore . && git apply --cached p.patch').allTracked).toBe(true);
   });
 
   it('does not mark git apply that only touches the index', () => {

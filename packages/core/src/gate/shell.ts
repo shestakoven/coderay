@@ -18,8 +18,9 @@ export interface ShellTarget {
 export interface ShellWrites {
   targets: ShellTarget[];
   allTracked: boolean;
-  // The directory each work-tree rewrite runs in; null when the command does not say.
+  // The directory each work-tree rewrite and each history command runs in; null when the command does not say.
   rewrites: (string | null)[];
+  history: (string | null)[];
 }
 
 type Part =
@@ -50,6 +51,7 @@ interface State {
   poisoned: Set<string>;
   targets: ShellTarget[];
   rewrites: (string | null)[];
+  history: (string | null)[];
 }
 
 interface TargetExtra {
@@ -67,7 +69,8 @@ const SHORT_OPERATORS = [';', '|', '&', '(', ')'];
 const FILE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '<>']);
 const KEYWORDS = new Set(['{', '}', '!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until']);
 const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec', 'nice', 'env']);
-const WORK_TREE_REWRITES = new Set(['checkout', 'switch', 'restore', 'reset', 'stash', 'clean', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert', 'apply', 'am']);
+const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert']);
+const WORK_TREE_REWRITES = new Set(['restore', 'stash', 'clean', 'apply', 'am']);
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
 const XARGS_WRITES = 'xargs runs a command that writes files it reads from its input';
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
@@ -83,9 +86,9 @@ const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [] };
+  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [] };
   run(command, state, 0);
-  return { targets: state.targets, allTracked: state.rewrites.length > 0, rewrites: state.rewrites };
+  return { targets: state.targets, allTracked: state.rewrites.length + state.history.length > 0, rewrites: state.rewrites, history: state.history };
 }
 
 function run(script: string, state: State, depth: number): void {
@@ -510,6 +513,7 @@ function git(args: Word[], state: State): void {
   if (!word) return;
   const sub = literalText(word);
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
+  else if (HISTORY_VERBS.has(sub)) state.history.push(gitDirectory(args.slice(0, i), state));
   else if (WORK_TREE_REWRITES.has(sub)) {
     if (!(sub === 'apply' && appliesToIndexOnly(args.slice(i + 1)))) state.rewrites.push(gitDirectory(args.slice(0, i), state));
   }

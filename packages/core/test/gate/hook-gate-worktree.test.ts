@@ -159,9 +159,9 @@ describe('HookGate for a worktree inside a directory the plan covers', () => {
 
 describe('HookGate for a git command that rewrites the work tree', () => {
   it.each([
-    ['in the worktree', 'git reset --hard', WT],
-    ['named by -C relative to the project', `git -C ${WT} reset --hard`, '.'],
-    ['named by an absolute -C', 'git -C ABS reset --hard', 'src'],
+    ['in the worktree', 'git restore .', WT],
+    ['named by -C relative to the project', `git -C ${WT} restore .`, '.'],
+    ['named by an absolute -C', 'git -C ABS restore .', 'src'],
   ])('lets one that runs %s through a plan that does not cover the whole project', async (_where, command, cwd) => {
     const { root, bash, approve } = await setup('A');
     await approve();
@@ -170,11 +170,11 @@ describe('HookGate for a git command that rewrites the work tree', () => {
   });
 
   it.each([
-    ['in the project root', 'git reset --hard', '.'],
-    ['in a directory of the project that is not a worktree', 'git reset --hard', 'src'],
-    ['next to one in the worktree', `git -C ${WT} reset --hard && git checkout .`, '.'],
-    ['in the worktree, then in the project', `git reset --hard && git -C ../.. checkout .`, WT],
-    ['against a repository that the command does not name by a directory', 'git --work-tree ../.. reset --hard', WT],
+    ['in the project root', 'git restore .', '.'],
+    ['in a directory of the project that is not a worktree', 'git restore .', 'src'],
+    ['next to one in the worktree', `git -C ${WT} restore . && git clean -f`, '.'],
+    ['in the worktree, then in the project', `git restore . && git -C ../.. clean -f`, WT],
+    ['against a repository that the command does not name by a directory', 'git --work-tree ../.. restore .', WT],
   ])('asks for the whole project for one that runs %s', async (_where, command, cwd) => {
     const { root, bash, approve } = await setup('A');
     await approve();

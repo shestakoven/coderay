@@ -4,6 +4,8 @@ import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import type { ControlMode, GateAnswer, GatePreview, GatePromptView, GateTarget, GateTargetKind, Policy, ToolDecision } from '@ide/protocol';
 import { summarizeToolInput } from '../agent/tools';
+import { createRun } from '../git/git-run';
+import { parseStatus } from '../git/status-parse';
 import { isRecord } from '../json';
 import { globOwners, ownerIndex } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
@@ -13,7 +15,7 @@ import type { Hold } from './hold';
 import { classifyPaths, expandHome, realTarget } from './paths';
 import { refreshWorktrees, worktreeAt } from './worktrees';
 import { decide, describeTargets, targetName, type ClassifiedTarget, type GuardDecision } from './scope-guard';
-import type { ToolCall } from '../watchdog/activity';
+import type { HistoryCall, ToolCall } from '../watchdog/activity';
 import { shellWrites, type ShellTarget } from './shell';
 import { FILE_PATH_FIELD, toolClass, type ToolClass } from './tools';
 
@@ -21,6 +23,7 @@ export const GATE_HOLD_MS = 3_530_000;
 const PREVIEW_CHARS = 20_000;
 const KEPT_CLOSED = 50;
 const KEPT_DECIDED = 100_000;
+const STATUS_MS = 5_000;
 const NO_RESPONSE = "IDE: the user did not respond in time. Stop and wait for the user's next message.";
 const CALL_ENDED = 'IDE: the call ended before the user answered.';
 
@@ -64,6 +67,13 @@ interface HookInput {
 interface Judged {
   decision: GuardDecision;
   targets: ClassifiedTarget[];
+  history: HistoryCall[];
+}
+
+interface RepoState {
+  top: string;
+  head: string | null;
+  dirty: string[];
 }
 
 interface Landing {
@@ -293,32 +303,64 @@ export class HookGate {
   private async judge(input: HookInput): Promise<Judged> {
     const policy = this.options.policy();
     const cls = toolClass(input.toolName);
-    const targets = await this.targets(cls, input, policy);
-    return { decision: decide({ tool: input.toolName, toolClass: cls, targets, gate: this.options.plans.gate(), mode: policy.mode }), targets };
+    const { targets, history } = await this.targets(cls, input, policy);
+    return { decision: decide({ tool: input.toolName, toolClass: cls, targets, gate: this.options.plans.gate(), mode: policy.mode }), targets, history };
   }
 
-  private async targets(cls: ToolClass, input: HookInput, policy: Policy): Promise<ClassifiedTarget[]> {
+  private async targets(cls: ToolClass, input: HookInput, policy: Policy): Promise<{ targets: ClassifiedTarget[]; history: HistoryCall[] }> {
     const home = this.options.home ?? homedir();
     if (cls === 'file-writer') {
       const path = input.toolInput[FILE_PATH_FIELD[input.toolName] as string];
-      if (typeof path !== 'string' || path === '') return [special('unresolved', String(path ?? ''), 'no file path in the call')];
-      return this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false, deleting: false }], policy, home);
+      if (typeof path !== 'string' || path === '') return { targets: [special('unresolved', String(path ?? ''), 'no file path in the call')], history: [] };
+      return { targets: await this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false, deleting: false }], policy, home), history: [] };
     }
-    if (cls !== 'shell') return [];
+    if (cls !== 'shell') return { targets: [], history: [] };
     const command = input.toolInput.command;
-    if (typeof command !== 'string') return [special('unresolved', '', 'no command in the call')];
+    if (typeof command !== 'string') return { targets: [special('unresolved', '', 'no command in the call')], history: [] };
     const env = this.options.env ?? process.env;
     const writes = shellWrites(command, input.cwd, { home, vars: { TMPDIR: env.TMPDIR, TMP: env.TMP } });
     await refreshWorktrees(this.options.root);
     // A rewrite inside a nested worktree touches that worktree only, which is no reason to ask for the whole project.
     const rewritesProject = writes.rewrites.some((dir) => dir === null || worktreeAt(this.options.root, realTarget(dir, '/')) === null);
-    const found: ClassifiedTarget[] = rewritesProject ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
+    const repos = await Promise.all(writes.history.map((dir) => this.repoState(dir)));
+    // A history command is judged by the uncommitted files it may discard; when git cannot say which, it may touch every tracked file.
+    const found: ClassifiedTarget[] = rewritesProject || repos.includes(null) ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
+    const history: HistoryCall[] = [];
+    const dirty: Landing[] = [];
+    for (const repo of repos) {
+      if (repo === null) continue;
+      const dir = this.projectDir(repo.top);
+      if (dir !== null) history.push({ dir, top: repo.top, head: repo.head });
+      dirty.push(...repo.dirty.map((path) => ({ raw: path, abs: join(repo.top, path), mkdir: false, deleting: false })));
+    }
     const landings: Landing[] = [];
     for (const target of writes.targets) {
       if (target.unresolved !== null) found.push(special('unresolved', target.word, target.unresolved));
       else if (!target.temp) landings.push(...landingsOf(target));
     }
-    return [...found, ...(await this.classify(landings, policy, home))];
+    const uncommitted = (await this.classify(dirty, policy, home)).map((target) => ({ ...target, uncommitted: true }));
+    return { targets: [...found, ...uncommitted, ...(await this.classify(landings, policy, home))], history };
+  }
+
+  // HEAD and the tracked files with uncommitted changes where a git command runs; null when that cannot be read.
+  private async repoState(dir: string | null): Promise<RepoState | null> {
+    if (dir === null) return null;
+    const run = createRun(realTarget(dir, '/'));
+    try {
+      const [top, status] = await Promise.all([
+        run(['rev-parse', '--show-toplevel'], { readOnly: true, timeoutMs: STATUS_MS }),
+        run(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], { readOnly: true, timeoutMs: STATUS_MS }),
+      ]);
+      const { sha, files } = parseStatus(status);
+      return { top: top.trim(), head: sha, dirty: files.flatMap((file) => (file.origPath === null ? [file.path] : [file.path, file.origPath])) };
+    } catch {
+      return null;
+    }
+  }
+
+  // Where a repository's top lies under the project root ("" for the root, or for a repository around it); null for any other repository.
+  private projectDir(top: string): string | null {
+    return this.relativeCwd(top) ?? (relative(top, this.options.root).startsWith('..') ? null : '');
   }
 
   private async classify(landings: Landing[], policy: Policy, home: string): Promise<ClassifiedTarget[]> {
@@ -359,6 +401,7 @@ export class HookGate {
       inScope: !outOfScope.has(target),
       deleting: target.deleting,
       componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.scopeRel ?? target.rel, target.exists) : null,
+      ...(target.uncommitted ? { uncommitted: true } : {}),
     }));
     return {
       id: this.newId(), toolUseId: input.toolUseId, parentToolUseId: context.parentToolUseId, tool: input.toolName,
@@ -396,7 +439,7 @@ export class HookGate {
       toolUseId: input.toolUseId, parentToolUseId: this.options.context(input.toolUseId).parentToolUseId, tool: input.toolName, toolClass: cls,
       targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
       allTracked: judged.targets.some((target) => target.kind === 'all-tracked'),
-      cwdRel: background && cls === 'shell' ? this.relativeCwd(input.cwd) : null, background, allowedOnce,
+      cwdRel: background && cls === 'shell' ? this.relativeCwd(input.cwd) : null, background, allowedOnce, history: judged.history,
     };
     for (const listener of this.allowedListeners) {
       try {

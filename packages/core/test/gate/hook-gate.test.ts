@@ -613,7 +613,7 @@ describe('HookGate', () => {
   it('never offers to expand the plan for a git command that rewrites the whole work tree', async () => {
     const { call, approve, pending, gate } = await setup();
     await approve();
-    void call('Bash', { command: 'git checkout .' });
+    void call('Bash', { command: 'git restore .' });
     const prompt = await pending();
     expect(prompt.canExpand).toBe(false);
     expect(() => gate.answer(prompt.id, 'expand-plan')).toThrow(GateError);
@@ -703,7 +703,7 @@ describe('HookGate onAllowed', () => {
     h.gate.onAllowed((call) => calls.push(call));
     return { ...h, calls };
   }
-  const base = { parentToolUseId: null, allTracked: false, cwdRel: null, background: false, allowedOnce: false };
+  const base = { parentToolUseId: null, allTracked: false, cwdRel: null, background: false, allowedOnce: false, history: [] };
 
   it('reports an allowed write with its project-relative target and no allow-once', async () => {
     const { root, call, approve, calls } = await watched();
@@ -821,7 +821,7 @@ describe('HookGate onAllowed', () => {
   it('reports allTracked from the shell heuristic', async () => {
     const { call, approve, calls } = await watched({ mode: 'C' });
     await approve();
-    await call('Bash', { command: 'git checkout .' });
+    await call('Bash', { command: 'git restore .' });
     expect(calls).toMatchObject([{ tool: 'Bash', allTracked: true }]);
   });
 
