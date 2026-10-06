@@ -1,6 +1,9 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
+import { GitClient } from '../git/git-client';
+import { changedCount } from '../git/git-state';
+import { GitPanel, type GitSelection } from '../git/GitPanel';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
 import { canSend, chatReducer, initialChatState } from '../chat/chat-state';
@@ -79,6 +82,9 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [agentOpening, setAgentOpening] = useState(false);
   const sendRef = useRef<(message: ClientMessage) => boolean>(() => false);
   const hub = useMemo(() => new TerminalHub((message) => sendRef.current(message), setTerminalTabs), []);
+  const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
+  const [gitSelection, setGitSelection] = useState<GitSelection | null>(null);
+  const git = useMemo(() => new GitClient((message) => sendRef.current(message)), []);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
   const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
   const [reviewMode, setReviewMode] = useState(false);
@@ -129,6 +135,12 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
         case 'history.result':
           dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview });
           break;
+        case 'git.snapshot':
+          setGitStatus(message.status);
+          break;
+        case 'git.result':
+          git.handle(message);
+          break;
         case 'terminal.snapshot':
           hub.restore(message.terminals);
           setTerminalsKnown(true);
@@ -158,11 +170,12 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     }, (next) => {
       setConnection(next);
       if (next !== 'open') setTerminalsKnown(false);
+      if (next !== 'open') git.dropAll();
       if (next === 'open') link.current?.send({ type: 'models.list' });
     }, url);
     link.current = current;
     return () => current.close();
-  }, [token, url, hub]);
+  }, [token, url, hub, git]);
 
   const send = (message: ClientMessage): boolean => {
     if (!fitsFrame(message)) {
@@ -387,6 +400,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
             tab={panels.leftTab}
             onTab={(next) => dispatchPanels({ type: 'left-tab', tab: next })}
             components={snapshot ? <ComponentTree snapshot={snapshot} changes={changes} marks={marks} selected={state.selected} onSelectComponent={selectComponent} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
+            gitCount={changedCount(gitStatus)}
+            git={<GitPanel status={gitStatus} client={git} selection={gitSelection} onSelect={setGitSelection} />}
             detailsRef={setDetailsEl}
             files={snapshot ? <FileTree snapshot={snapshot} changes={changes} selected={state.selected} onSelectFile={selectFile} /> : <div className="empty muted">Waiting for the map…</div>}
           />

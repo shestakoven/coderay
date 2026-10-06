@@ -1,4 +1,4 @@
-export type LeftTab = 'components' | 'files' | 'details';
+export type LeftTab = 'components' | 'files' | 'details' | 'git';
 export type RightTab = 'agent' | 'plan' | 'review';
 export type BottomTab = 'timeline' | 'terminal';
 

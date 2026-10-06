@@ -1,0 +1,40 @@
+.git-pane { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.git-note { padding: 16px 14px; display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
+.git-banner { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin: 8px 10px 0; padding: 6px 8px; border-radius: var(--r-1); background: var(--raised); color: var(--muted); font-size: var(--fs-sm); }
+.git-banner.warn { color: var(--warn); }
+.git-banner button { flex: none; border: 0; background: none; color: inherit; padding: 0; display: grid; place-items: center; }
+.git-lists { flex: 1; min-height: 0; overflow: auto; padding: 4px 6px 8px; }
+.git-section-head { display: flex; align-items: center; justify-content: space-between; min-height: 26px; padding: 0 4px; }
+.git-fold { display: flex; align-items: center; gap: 4px; border: 0; background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 600; padding: 0; }
+.git-fold:hover { color: var(--fg); }
+.git-count { padding: 0 6px; border-radius: 8px; background: var(--raised); font-weight: 500; }
+.git-actions { display: flex; align-items: center; gap: 2px; opacity: 0; transition: opacity 0.12s; }
+.git-section-head:hover .git-actions, .git-section-head:focus-within .git-actions, .git-row:hover .git-actions, .git-row:focus-within .git-actions { opacity: 1; }
+.git-actions button { width: 22px; height: 22px; display: grid; place-items: center; border: 0; border-radius: var(--r-1); background: none; color: var(--muted); padding: 0; }
+.git-actions button:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
+.git-actions button:disabled { opacity: 0.4; }
+.git-row { display: flex; align-items: center; gap: 6px; min-height: 26px; padding: 0 6px 0 22px; border-radius: var(--r-1); cursor: default; outline: none; }
+.git-row:hover { background: var(--raised); }
+.git-row.selected { background: var(--selection); }
+.git-row:focus-visible { box-shadow: inset 0 0 0 1px var(--accent); }
+.git-name { flex: none; max-width: 70%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.git-dir { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; direction: rtl; text-align: left; color: var(--muted); font-size: var(--fs-sm); }
+.git-row .git-actions { margin-left: auto; }
+.git-kind { flex: none; width: 16px; text-align: center; font: 600 11px var(--font-mono); color: var(--muted); }
+.git-kind.added, .git-kind.untracked { color: var(--added); }
+.git-kind.modified, .git-kind.typechange { color: var(--modified); }
+.git-kind.deleted, .git-kind.conflict { color: var(--error); }
+.git-kind.renamed, .git-kind.copied { color: var(--accent); }
+.git-commit { display: flex; flex-direction: column; gap: 6px; padding: 8px 10px 10px; border-top: 1px solid var(--border); }
+.git-commit textarea { resize: vertical; min-height: 56px; max-height: 160px; padding: 6px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-1); font: inherit; }
+.git-commit textarea:focus { outline: none; border-color: var(--accent); }
+.git-commit-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.git-hint { color: var(--muted); font-size: var(--fs-sm); min-width: 0; }
+.git-hint.warn { color: var(--warn); }
+.git-error { margin: 0; max-height: 120px; overflow: auto; padding: 6px 8px; border-radius: var(--r-1); background: var(--raised); color: var(--error); font: 12px var(--font-mono); white-space: pre-wrap; }
+.git-modal { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(0, 0, 0, 0.45); }
+.git-dialog { width: min(420px, calc(100vw - 32px)); padding: 16px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 18px 48px rgba(0, 0, 0, 0.5); }
+.git-dialog h3 { margin: 0 0 8px; font-size: 14px; }
+.git-dialog ul { margin: 0 0 8px; padding-left: 18px; }
+.git-dialog-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+.git-dialog .danger { background: var(--error); color: #1e1f22; border-color: transparent; }
