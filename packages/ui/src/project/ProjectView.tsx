@@ -1,6 +1,8 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
+import { createPortal } from 'react-dom';
+import { BranchChip } from '../git/BranchChip';
 import { GitClient } from '../git/git-client';
 import { changedCount } from '../git/git-state';
 import { GitDiffView } from '../git/GitDiffView';
@@ -59,9 +61,11 @@ export interface ProjectViewProps {
   settingsRequest: number;
   onStatus: (id: string, status: ProjectStatus) => void;
   onBadge: (id: string, count: number) => void;
+  // The top bar's empty slot for the branch chip; only the shown project renders into it.
+  branchSlot: HTMLElement | null;
 }
 
-export function ProjectView({ project, token, url, active, settingsRequest, onStatus, onBadge }: ProjectViewProps) {
+export function ProjectView({ project, token, url, active, settingsRequest, onStatus, onBadge, branchSlot }: ProjectViewProps) {
   const [state, dispatch] = useReducer(mapReducer, initialMapState);
   const [chat, dispatchChat] = useReducer(chatReducer, initialChatState);
   const stoppedByUser = useRef(false);
@@ -564,6 +568,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           />
         )}
       </div>
+      {active && branchSlot ? createPortal(<BranchChip status={gitStatus} client={git} />, branchSlot) : null}
     </DetailsSlotContext.Provider>
   );
 }

@@ -47,3 +47,24 @@
 .git-counts .add { color: var(--added); }
 .git-counts .del { color: var(--error); }
 .git-diff-body { flex: 1; min-height: 0; overflow: auto; padding: 8px 12px; }
+.branch-wrap { position: relative; }
+.branch-chip { display: flex; align-items: center; gap: 6px; height: 26px; max-width: 220px; padding: 0 8px; border: 0; border-radius: var(--r-1); background: none; color: var(--muted); font: inherit; font-size: var(--fs-sm); font-weight: 500; transition: background 0.12s, color 0.12s; }
+.branch-chip:hover, .branch-chip.on { background: var(--raised); color: var(--fg); }
+.branch-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-dirty { flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--modified); }
+.branch-sync { flex: none; font-family: var(--font-mono); font-size: 11px; }
+.branch-pop { position: absolute; top: calc(100% + 6px); right: 0; z-index: 40; width: 300px; padding: 8px; border-radius: 10px; background: var(--surface); border: 1px solid var(--border); box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5); -webkit-app-region: no-drag; }
+.branch-pop input { width: 100%; box-sizing: border-box; padding: 6px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-1); font: inherit; }
+.branch-pop input:focus { outline: none; border-color: var(--accent); }
+.branch-note { margin: 8px 4px 0; color: var(--muted); font-size: var(--fs-sm); }
+.branch-note.warn { color: var(--warn); }
+.branch-list { max-height: 260px; overflow: auto; margin-top: 6px; }
+.branch-item { display: flex; align-items: center; gap: 6px; min-height: 28px; padding: 0 6px; border-radius: var(--r-1); cursor: default; }
+.branch-item.on { background: var(--selection); }
+.branch-item.off { opacity: 0.5; }
+.branch-check { flex: none; width: 16px; color: var(--accent); }
+.branch-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.branch-up { flex: none; color: var(--muted); font-size: 11px; }
+.branch-del { flex: none; width: 22px; height: 22px; display: none; place-items: center; border: 0; border-radius: var(--r-1); background: none; color: var(--muted); padding: 0; }
+.branch-item:hover .branch-del { display: grid; }
+.branch-del:hover { background: var(--raised); color: var(--error); }

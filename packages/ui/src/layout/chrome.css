@@ -59,6 +59,7 @@
 .pbar-hint { align-self: flex-end; margin: 0 0 8px 6px; color: #70747b; font-size: var(--fs-sm); white-space: nowrap; animation: chrome-fade 0.6s 0.4s both; }
 @keyframes chrome-fade { from { opacity: 0; } }
 .pbar-gear { position: relative; align-self: center; margin-left: 8px; width: 28px; height: 28px; border-radius: var(--r-1); display: grid; place-items: center; color: var(--muted); transition: background 0.12s, color 0.12s; }
+.pbar-branch { align-self: center; margin-left: 8px; }
 .pbar-gear:hover { background: var(--raised); color: var(--fg); }
 .pbar-gear b { position: absolute; top: 0; right: 0; min-width: 14px; height: 14px; border-radius: 7px; background: var(--warn); color: #1e1f22; font-size: calc(10px * var(--fs-scale, 1)); line-height: 14px; font-weight: 600; text-align: center; }
 .pbar-title { align-self: center; font-weight: 600; color: var(--fg); }

@@ -40,6 +40,7 @@ export function App() {
   const [dialog, setDialog] = useState<Dialog>(null);
   const [confirmClose, setConfirmClose] = useState<string | null>(null);
   const [settingsRequest, setSettingsRequest] = useState(0);
+  const [branchSlot, setBranchSlot] = useState<HTMLElement | null>(null);
   const [badges, setBadges] = useState<Record<string, number>>({});
   const seen = useRef<Record<string, ProjectStatus>>({});
   const born = useRef<Record<string, number>>({});
@@ -278,6 +279,7 @@ export function App() {
     <div className="app shell">
       <TopBar
         mac={mac}
+        branchSlot={setBranchSlot}
         reviewCount={active ? (badges[active.id] ?? 0) : 0}
         onSettings={() => setSettingsRequest((count) => count + 1)}
         tabs={(
@@ -312,6 +314,7 @@ export function App() {
               settingsRequest={settingsRequest}
               onStatus={onStatus}
               onBadge={onBadge}
+              branchSlot={branchSlot}
             />
           )
           : project.id === projects.activeId && (
