@@ -6,6 +6,8 @@ import { EMPTY_DIFF, parseHunks } from '../history/unified-diff';
 import { createRun, GitError, type GitRun } from './git-run';
 import { parseStatus } from './status-parse';
 
+const COMMIT_TIMEOUT_MS = 120_000;
+const BATCH = 200;
 const NO_REPO: GitStatus = { repo: false, branch: null, detached: false, sha: null, upstream: null, ahead: 0, behind: 0, files: [], operation: null, busy: null, problem: null };
 
 export interface GitServiceOptions {
@@ -33,6 +35,10 @@ function checkPaths(paths: string[]): void {
   }
 }
 
+function* chunks<T>(items: T[]): Generator<T[]> {
+  for (let i = 0; i < items.length; i += BATCH) yield items.slice(i, i + BATCH);
+}
+
 function operationOf(gitDir: string): GitStatus['operation'] {
   if (existsSync(join(gitDir, 'MERGE_HEAD'))) return 'merge';
   if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
@@ -56,6 +62,7 @@ export class GitService {
   private readonly listeners = new Set<(status: GitStatus) => void>();
   private running: Promise<unknown> = Promise.resolve();
   private queued: Promise<GitStatus> | null = null;
+  private tail: Promise<unknown> = Promise.resolve();
   private closed = false;
 
   constructor(private readonly o: GitServiceOptions) {}
@@ -154,5 +161,62 @@ export class GitService {
     if (side === 'unstaged' && file?.worktree === 'untracked') return diffOf(run, ['--no-index', '--', '/dev/null', path]);
     if (side === 'unstaged') return diffOf(run, ['--', path]);
     return diffOf(run, ['--cached', '-M', '--', ...(file?.origPath ? [path, file.origPath] : [path])]);
+  }
+
+  private serial<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(work);
+    this.tail = run.catch(() => undefined);
+    return run;
+  }
+
+  private async hasHead(run: GitRun): Promise<boolean> {
+    return (await run(['rev-parse', '--verify', '-q', 'HEAD'], { okCodes: [1], readOnly: true })).trim() !== '';
+  }
+
+  async init(): Promise<void> {
+    await this.serial(async () => {
+      await createRun(this.o.root, this.o.git)(['init', '-q']);
+    });
+  }
+
+  async stage(paths: string[] | 'all'): Promise<void> {
+    if (paths !== 'all') checkPaths(paths);
+    await this.serial(async () => {
+      const { run } = await this.need();
+      if (paths === 'all') await run(['add', '-A']);
+      else for (const batch of chunks(paths)) await run(['add', '-A', '--', ...batch]);
+    });
+  }
+
+  async unstage(paths: string[] | 'all'): Promise<void> {
+    if (paths !== 'all') checkPaths(paths);
+    await this.serial(async () => {
+      const { run } = await this.need();
+      if (await this.hasHead(run)) {
+        if (paths === 'all') await run(['reset', '-q']);
+        else for (const batch of chunks(paths)) await run(['reset', '-q', '--', ...batch]);
+        return;
+      }
+      // With no commit there is nothing to reset to: unstaging is dropping the paths from the index.
+      const targets = paths === 'all' ? (await run(['ls-files', '-z'], { readOnly: true })).split('\0').filter(Boolean) : paths;
+      for (const batch of chunks(targets)) await run(['rm', '--cached', '-r', '-q', '--', ...batch]);
+    });
+  }
+
+  async commit(message: string): Promise<void> {
+    if (message.trim() === '') throw new GitError('The commit message is empty.');
+    await this.serial(async () => {
+      const { run } = await this.need();
+      if ((await run(['diff', '--cached', '--name-only', '-z'], { readOnly: true })) === '') throw new GitError('Nothing is staged.');
+      await run(['commit', '-q', '-F', '-'], { input: message, timeoutMs: COMMIT_TIMEOUT_MS });
+    });
+  }
+
+  async branchDelete(name: string): Promise<void> {
+    await this.serial(async () => {
+      const { run } = await this.need();
+      await this.checkName(run, name);
+      await run(['branch', '-d', '--', name]);
+    });
   }
 }
