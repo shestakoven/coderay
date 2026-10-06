@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import type { ClientMessage } from '@ide/protocol';
+import type { ClientMessage, GitClientMessage } from '@ide/protocol';
 import { routeClientMessage, routeOf } from '../../src/server/router';
+
+// A Record over the union makes the type check fail when a git message type is added without being listed here.
+const GIT_TYPES: Record<GitClientMessage['type'], true> = {
+  'git.refresh': true, 'git.init': true, 'git.diff': true, 'git.stage': true, 'git.unstage': true, 'git.discard': true, 'git.commit': true,
+  'git.branches': true, 'git.branch-create': true, 'git.branch-switch': true, 'git.branch-delete': true,
+};
 
 describe('routeOf', () => {
   it.each(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback'])('routes %s to history', (type) => {
@@ -9,6 +15,10 @@ describe('routeOf', () => {
 
   it.each(['mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits'])('routes %s to settings', (type) => {
     expect(routeOf(type)).toBe('settings');
+  });
+
+  it.each(Object.keys(GIT_TYPES))('routes %s to git', (type) => {
+    expect(routeOf(type)).toBe('git');
   });
 
   it.each(['history.snapshot', 'history.nonsense', 'mcp.unknown', 'policy.', 'settings.get', '', 'constructor', '__proto__'])('treats %j as unknown, never as settings', (type) => {
@@ -31,6 +41,7 @@ describe('routeClientMessage', () => {
     const calls: string[] = [];
     await routeClientMessage({ type }, {
       history: async (m) => void calls.push(`history:${m.type}`),
+      git: async (m) => void calls.push(`git:${m.type}`),
       settings: (m) => void calls.push(`settings:${m.type}`),
       unknown: (t) => void calls.push(`unknown:${t}`),
     });
@@ -39,6 +50,10 @@ describe('routeClientMessage', () => {
 
   it('sends each history message to the history handler only', async () => {
     expect(await run('step.rollback')).toEqual(['history:step.rollback']);
+  });
+
+  it('sends git messages to the git handler only', async () => {
+    expect(await run('git.commit')).toEqual(['git:git.commit']);
   });
 
   it('sends change.revert to the history handler only', async () => {

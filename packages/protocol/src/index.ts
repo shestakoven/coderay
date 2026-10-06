@@ -1,3 +1,4 @@
+import type { GitClientMessage, GitServerMessage } from './git';
 import type { HistoryClientMessage, HistoryServerMessage } from './history';
 import type { HubClientMessage, HubServerMessage } from './hub';
 import type { PlanClientMessage, PlanServerMessage } from './plans';
@@ -10,6 +11,7 @@ export * from './session';
 export * from './settings';
 export * from './plans';
 export * from './history';
+export * from './git';
 export * from './hub';
 export * from './project';
 export * from './project-name';
@@ -171,6 +173,7 @@ export type ServerMessage =
   | SettingsServerMessage
   | PlanServerMessage
   | HistoryServerMessage
+  | GitServerMessage
   | ProjectServerMessage
   | HubServerMessage
   | TerminalServerMessage;
@@ -180,6 +183,7 @@ export type ClientMessage =
   | SettingsClientMessage
   | PlanClientMessage
   | HistoryClientMessage
+  | GitClientMessage
   | ProjectClientMessage
   | HubClientMessage
   | TerminalClientMessage

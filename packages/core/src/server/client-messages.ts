@@ -22,7 +22,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code,
+    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -37,6 +37,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
     case 'session.delete-all':
     case 'map.regroup':
     case 'settings.get':
+    case 'git.refresh':
       return { type };
     case 'session.rename':
       return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH && typeof title === 'string' && title.trim() !== '' && title.length <= MAX_TITLE_LENGTH ? { type, id, title } : null;
@@ -134,6 +135,22 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof planId === 'string' && typeof stepKey === 'string' ? { type, requestId, planId, stepKey } : null;
     case 'step.rollback':
       return typeof planId === 'string' && typeof stepKey === 'string' && isConfirmList(confirm) ? { type, requestId, planId, stepKey, confirm } : null;
+    case 'git.init':
+    case 'git.branches':
+      return { type, requestId };
+    case 'git.diff':
+      return isBoundedString(path, MAX_PATH_LENGTH) && (side === 'staged' || side === 'unstaged') ? { type, requestId, path, side } : null;
+    case 'git.stage':
+    case 'git.unstage':
+      return paths === 'all' || isGitPaths(paths) ? { type, requestId, paths } : null;
+    case 'git.discard':
+      return isGitPaths(paths) ? { type, requestId, paths } : null;
+    case 'git.commit':
+      return typeof message === 'string' && message.trim() !== '' && message.length <= MAX_COMMIT_MESSAGE ? { type, requestId, message } : null;
+    case 'git.branch-create':
+    case 'git.branch-switch':
+    case 'git.branch-delete':
+      return isBoundedString(name, MAX_BRANCH_NAME) ? { type, requestId, name } : null;
     default:
       return null;
   }
@@ -166,6 +183,9 @@ const MAX_NAME_LENGTH = 1024;
 const MAX_ID_LENGTH = 100;
 const MAX_CODE_LENGTH = 4096;
 const MAX_HUB_IDS = 100;
+const MAX_GIT_PATHS = 5000;
+const MAX_COMMIT_MESSAGE = 100_000;
+const MAX_BRANCH_NAME = 255;
 
 const isImageList = (value: unknown): value is ChatImage[] =>
   Array.isArray(value) && value.length > 0 && value.length <= MAX_CHAT_IMAGES && value.every((item) =>
@@ -180,6 +200,9 @@ const isBoundedString = (value: unknown, max: number): value is string => typeof
 const isTerminalId = (value: unknown): value is string => typeof value === 'string' && TERMINAL_ID.test(value);
 
 const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isGitPaths = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.length > 0 && value.length <= MAX_GIT_PATHS && value.every((item) => isBoundedString(item, MAX_PATH_LENGTH));
 
 const isConfirmList = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length <= MAX_CONFIRM_FILES && value.every((item) => typeof item === 'string');

@@ -1,0 +1,402 @@
+import { existsSync } from 'node:fs';
+import { join, posix, relative, sep } from 'node:path';
+import type { FileDiff, GitBranch, GitClientMessage, GitServerMessage, GitSide, GitStatus } from '@ide/protocol';
+import type { IdeWrites } from '../history/ide-writes';
+import { EMPTY_DIFF, parseHunks } from '../history/unified-diff';
+import { watchRecursive, type RecursiveWatch } from '../watch/recursive';
+import { createRun, GitError, type GitRun } from './git-run';
+import { parseStatus } from './status-parse';
+
+const COMMIT_TIMEOUT_MS = 120_000;
+const BATCH = 200;
+const DEBOUNCE_MS = 250;
+const EXCLUDED = new Set(['node_modules', '.venv', 'venv', '__pycache__']);
+const GIT_STATE = /^(?:index|HEAD|MERGE_HEAD|CHERRY_PICK_HEAD|rebase-merge|rebase-apply|refs(?:\/.*)?)$/;
+const NULL_SHA = /^0+$/;
+const NO_REPO: GitStatus = { repo: false, branch: null, detached: false, sha: null, upstream: null, ahead: 0, behind: 0, files: [], operation: null, busy: null, problem: null };
+
+export interface GitServiceOptions {
+  root: string;
+  ideWrites: Pick<IdeWrites, 'expect'>;
+  agentBusy: () => string | null;
+  git?: string;
+  debounceMs?: number;
+}
+
+interface Place {
+  top: string;
+  // The project root relative to the repository top, with a trailing slash; empty when they are the same folder.
+  prefix: string;
+  gitDir: string;
+}
+
+type Reply = (message: GitServerMessage | { type: 'error'; message: string }) => void;
+type Result = { diff?: FileDiff; branches?: GitBranch[] };
+
+const describe = (error: unknown): string => (error instanceof Error ? error.message : String(error));
+
+function ignoredInRoot(root: string, abs: string): boolean {
+  const parts = relative(root, abs).split(sep);
+  return parts.some((part) => EXCLUDED.has(part)) || (parts[0] === '.git' && parts.length > 1);
+}
+
+function checkPaths(paths: string[]): void {
+  for (const path of paths) {
+    if (path === '' || path.includes('\0') || posix.isAbsolute(path) || path.split('/').some((part) => part === '' || part === '.' || part === '..' || part === '.git')) {
+      throw new GitError(`"${path}" is not a path inside the project.`);
+    }
+  }
+}
+
+function* chunks<T>(items: T[]): Generator<T[]> {
+  for (let i = 0; i < items.length; i += BATCH) yield items.slice(i, i + BATCH);
+}
+
+// `diff --raw -z --no-renames`: ":<mode> <mode> <old> <new> <status>\0<path>\0" per file.
+function rawEntries(out: string): { path: string; sha: string | null }[] {
+  const tokens = out.split('\0');
+  const entries: { path: string; sha: string | null }[] = [];
+  for (let i = 0; i + 1 < tokens.length; i += 2) {
+    const sha = tokens[i]!.split(' ')[3]!;
+    entries.push({ path: tokens[i + 1]!, sha: NULL_SHA.test(sha) ? null : sha });
+  }
+  return entries;
+}
+
+// `ls-files -s -z`: "<mode> <sha> <stage>\t<path>\0"; only a merged entry (stage 0) has content.
+function indexEntries(out: string): Map<string, string> {
+  const shas = new Map<string, string>();
+  for (const record of out.split('\0')) {
+    const tab = record.indexOf('\t');
+    if (tab < 0) continue;
+    const [, sha, stage] = record.slice(0, tab).split(' ');
+    if (stage === '0') shas.set(record.slice(tab + 1), sha!);
+  }
+  return shas;
+}
+
+function operationOf(gitDir: string): GitStatus['operation'] {
+  if (existsSync(join(gitDir, 'MERGE_HEAD'))) return 'merge';
+  if (existsSync(join(gitDir, 'rebase-merge')) || existsSync(join(gitDir, 'rebase-apply'))) return 'rebase';
+  if (existsSync(join(gitDir, 'CHERRY_PICK_HEAD'))) return 'cherry-pick';
+  return null;
+}
+
+async function diffOf(run: GitRun, tail: string[]): Promise<FileDiff> {
+  const flags = ['--no-color', '--no-ext-diff', '--no-textconv'];
+  const read = { readOnly: true, okCodes: [1] };
+  const [numstat] = (await run(['diff', ...flags, '--numstat', ...tail], read)).split('\n');
+  if (!numstat) return { ...EMPTY_DIFF };
+  const [added, removed] = numstat.split('\t');
+  if (added === '-' || removed === '-') return { ...EMPTY_DIFF, binary: true };
+  const { hunks, truncated } = parseHunks(await run(['diff', ...flags, '--unified=3', ...tail], read));
+  return { binary: false, truncated, missing: false, added: Number(added), removed: Number(removed), hunks };
+}
+
+export class GitService {
+  private last: GitStatus | null = null;
+  private readonly listeners = new Set<(status: GitStatus) => void>();
+  private running: Promise<unknown> = Promise.resolve();
+  private queued: Promise<GitStatus> | null = null;
+  private tail: Promise<unknown> = Promise.resolve();
+  private timer: NodeJS.Timeout | undefined;
+  private rootWatch: RecursiveWatch | null = null;
+  private gitWatch: { dir: string; watch: RecursiveWatch } | null = null;
+  private closed = false;
+
+  constructor(private readonly o: GitServiceOptions) {}
+
+  snapshot(): GitStatus | null {
+    return this.last;
+  }
+
+  onStatus(listener: (status: GitStatus) => void): () => boolean {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  start(): void {
+    this.rootWatch = watchRecursive(this.o.root, { ignored: (abs) => ignoredInRoot(this.o.root, abs), onEvent: () => this.poke(), onError: () => undefined });
+    void this.refresh();
+  }
+
+  poke(): void {
+    if (this.closed || this.timer !== undefined) return;
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void this.refresh();
+    }, this.o.debounceMs ?? DEBOUNCE_MS);
+    this.timer.unref();
+  }
+
+  // Whether the agent is busy changes with no file event (a turn that only talks): the owner of that state calls this when it may have changed.
+  checkBusy(): void {
+    if (this.last !== null && this.o.agentBusy() !== this.last.busy) this.poke();
+  }
+
+  // The watches deliver events only once their probe has seen one; callers that change files right after `start()` wait for this.
+  async ready(): Promise<void> {
+    await Promise.all([this.rootWatch?.ready, this.gitWatch?.watch.ready]);
+  }
+
+  async close(): Promise<void> {
+    this.closed = true;
+    clearTimeout(this.timer);
+    await Promise.all([this.rootWatch?.close(), this.gitWatch?.watch.close()]);
+  }
+
+  private armGit(dir: string | null): void {
+    if (this.closed || this.gitWatch?.dir === dir) return;
+    void this.gitWatch?.watch.close();
+    this.gitWatch = dir === null ? null : {
+      dir,
+      watch: watchRecursive(dir, {
+        ignored: (abs) => !GIT_STATE.test(relative(dir, abs).split(sep).join('/')),
+        onEvent: () => this.poke(),
+        onError: () => undefined,
+        probePrefix: 'git-watch-probe-',
+      }),
+    };
+  }
+
+  async handle(message: GitClientMessage, reply: Reply): Promise<void> {
+    if (message.type === 'git.refresh') {
+      void this.refresh();
+      return;
+    }
+    let result: Result = {};
+    let error: string | null = null;
+    try {
+      result = await this.run(message);
+    } catch (failure) {
+      error = describe(failure);
+    }
+    if (message.type !== 'git.diff' && message.type !== 'git.branches') await this.refresh();
+    reply({ type: 'git.result', requestId: message.requestId, error, ...result });
+  }
+
+  private async run(message: Exclude<GitClientMessage, { type: 'git.refresh' }>): Promise<Result> {
+    switch (message.type) {
+      case 'git.diff':
+        return { diff: await this.diff(message.path, message.side) };
+      case 'git.branches':
+        return { branches: await this.branches() };
+      case 'git.init':
+        await this.init();
+        return {};
+      case 'git.stage':
+        await this.stage(message.paths);
+        return {};
+      case 'git.unstage':
+        await this.unstage(message.paths);
+        return {};
+      case 'git.discard':
+        await this.discard(message.paths);
+        return {};
+      case 'git.commit':
+        await this.commit(message.message);
+        return {};
+      case 'git.branch-create':
+        await this.branchCreate(message.name);
+        return {};
+      case 'git.branch-switch':
+        await this.branchSwitch(message.name);
+        return {};
+      case 'git.branch-delete':
+        await this.branchDelete(message.name);
+        return {};
+    }
+  }
+
+  private async locate(): Promise<Place | null> {
+    try {
+      const out = await createRun(this.o.root, this.o.git)(['rev-parse', '--show-toplevel', '--show-prefix', '--absolute-git-dir'], { readOnly: true });
+      const [top, prefix, gitDir] = out.split('\n');
+      return { top: top!, prefix: prefix!, gitDir: gitDir! };
+    } catch (error) {
+      if (error instanceof GitError && /not a git repository/i.test(error.message)) return null;
+      throw error;
+    }
+  }
+
+  private async need(): Promise<{ run: GitRun; place: Place }> {
+    const place = await this.locate();
+    if (!place) throw new GitError('This folder is not a git repository.');
+    return { run: createRun(place.top, this.o.git), place };
+  }
+
+  private async checkName(run: GitRun, name: string): Promise<void> {
+    try {
+      await run(['check-ref-format', '--branch', name], { readOnly: true });
+    } catch {
+      throw new GitError(`"${name}" is not a valid branch name.`);
+    }
+  }
+
+  async status(): Promise<GitStatus> {
+    const busy = this.o.agentBusy();
+    try {
+      const place = await this.locate();
+      this.armGit(place?.gitDir ?? null);
+      if (!place) return { ...NO_REPO, busy };
+      const out = await createRun(place.top, this.o.git)(['status', '--porcelain=v2', '-z', '--branch', '--untracked-files=all'], { readOnly: true });
+      return { repo: true, ...parseStatus(out), operation: operationOf(place.gitDir), busy, problem: null };
+    } catch (error) {
+      return { ...NO_REPO, busy, problem: describe(error) };
+    }
+  }
+
+  // A computation that has not started yet sees the newest state, so callers that arrive meanwhile share it; one that is running is followed by another.
+  refresh(): Promise<GitStatus> {
+    if (this.queued) return this.queued;
+    const next = this.running.then(() => {
+      this.queued = null;
+      return this.compute();
+    });
+    this.queued = next;
+    this.running = next.catch(() => undefined);
+    return next;
+  }
+
+  private async compute(): Promise<GitStatus> {
+    const status = await this.status();
+    if (!this.closed && JSON.stringify(status) !== JSON.stringify(this.last)) {
+      this.last = status;
+      for (const listener of this.listeners) {
+        try {
+          listener(status);
+        } catch (error) {
+          console.error('git: a status listener failed', error);
+        }
+      }
+    }
+    return status;
+  }
+
+  async branches(): Promise<GitBranch[]> {
+    const { run } = await this.need();
+    const out = await run(['for-each-ref', '--sort=-committerdate', '--format=%(HEAD)\t%(refname:short)\t%(upstream:short)\t%(objectname:short)', 'refs/heads'], { readOnly: true });
+    return out.split('\n').filter(Boolean).map((line) => {
+      const [head, name, upstream, sha] = line.split('\t');
+      return { name: name!, current: head === '*', upstream: upstream || null, sha: sha! };
+    });
+  }
+
+  async diff(path: string, side: GitSide): Promise<FileDiff> {
+    checkPaths([path]);
+    const status = await this.refresh();
+    const { run } = await this.need();
+    const file = status.files.find((f) => f.path === path);
+    if (side === 'unstaged' && file?.worktree === 'untracked') return diffOf(run, ['--no-index', '--', '/dev/null', path]);
+    if (side === 'unstaged') return diffOf(run, ['--', path]);
+    return diffOf(run, ['--cached', '-M', '--', ...(file?.origPath ? [path, file.origPath] : [path])]);
+  }
+
+  private serial<T>(work: () => Promise<T>): Promise<T> {
+    const run = this.tail.then(work);
+    this.tail = run.catch(() => undefined);
+    return run;
+  }
+
+  async init(): Promise<void> {
+    await this.serial(async () => {
+      await createRun(this.o.root, this.o.git)(['init', '-q']);
+    });
+  }
+
+  async stage(paths: string[] | 'all'): Promise<void> {
+    if (paths !== 'all') checkPaths(paths);
+    await this.serial(async () => {
+      const { run } = await this.need();
+      if (paths === 'all') await run(['add', '-A']);
+      else for (const batch of chunks(paths)) await run(['add', '-A', '--', ...batch]);
+    });
+  }
+
+  async unstage(paths: string[] | 'all'): Promise<void> {
+    if (paths !== 'all') checkPaths(paths);
+    await this.serial(async () => {
+      const { run } = await this.need();
+      if (paths === 'all') await run(['reset', '-q']);
+      else for (const batch of chunks(paths)) await run(['reset', '-q', '--', ...batch]);
+    });
+  }
+
+  async commit(message: string): Promise<void> {
+    if (message.trim() === '') throw new GitError('The commit message is empty.');
+    await this.serial(async () => {
+      const { run } = await this.need();
+      if ((await run(['diff', '--cached', '--name-only', '-z'], { readOnly: true })) === '') throw new GitError('Nothing is staged.');
+      await run(['commit', '-q', '-F', '-'], { input: message, timeoutMs: COMMIT_TIMEOUT_MS });
+    });
+  }
+
+  async branchDelete(name: string): Promise<void> {
+    await this.serial(async () => {
+      const { run } = await this.need();
+      await this.checkName(run, name);
+      await run(['branch', '-d', '--', name]);
+    });
+  }
+
+  private guard(what: string): void {
+    const reason = this.o.agentBusy();
+    if (reason !== null) throw new GitError(`Cannot ${what} while ${reason}.`);
+  }
+
+  // The write is the IDE's own: the watchdog must not take it for an agent's.
+  private claim(place: Place, path: string, sha: string | null): void {
+    if (place.prefix === '') this.o.ideWrites.expect(path, sha);
+    else if (path.startsWith(place.prefix)) this.o.ideWrites.expect(path.slice(place.prefix.length), sha);
+  }
+
+  async branchCreate(name: string): Promise<void> {
+    await this.serial(async () => {
+      this.guard('create a branch');
+      const { run } = await this.need();
+      await this.checkName(run, name);
+      await run(['switch', '-c', name]);
+    });
+  }
+
+  async branchSwitch(name: string): Promise<void> {
+    await this.serial(async () => {
+      this.guard('switch branches');
+      const { run, place } = await this.need();
+      await this.checkName(run, name);
+      try {
+        const diff = await run(['diff', '--raw', '-z', '--no-abbrev', '--no-renames', 'HEAD', name, '--'], { readOnly: true });
+        for (const { path, sha } of rawEntries(diff)) this.claim(place, path, sha);
+      } catch {
+        // Claims are best effort: a repository without a commit has nothing to compare, and git reports a bad name itself.
+      }
+      await run(['switch', name]);
+    });
+  }
+
+  async discard(paths: string[]): Promise<void> {
+    checkPaths(paths);
+    await this.serial(async () => {
+      this.guard('discard changes');
+      const { run, place } = await this.need();
+      const files = new Map((await this.status()).files.map((file) => [file.path, file]));
+      const restore: string[] = [];
+      const clean: string[] = [];
+      for (const path of paths) {
+        const file = files.get(path);
+        if (file?.conflicted) throw new GitError(`${path} is conflicted.`);
+        if (!file || file.worktree === null) throw new GitError(`${path} has no changes to discard.`);
+        (file.worktree === 'untracked' ? clean : restore).push(path);
+      }
+      for (const batch of chunks(restore)) {
+        const shas = indexEntries(await run(['ls-files', '-s', '-z', '--', ...batch], { readOnly: true }));
+        for (const path of batch) this.claim(place, path, shas.get(path) ?? null);
+        await run(['restore', '--', ...batch]);
+      }
+      for (const batch of chunks(clean)) {
+        for (const path of batch) this.claim(place, path, null);
+        await run(['clean', '-f', '--', ...batch]);
+      }
+    });
+  }
+}
