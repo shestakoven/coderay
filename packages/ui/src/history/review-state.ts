@@ -42,8 +42,8 @@ const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryV
   return { key, title, outOfPlan, summary, files: rows, added: rows.reduce((sum, row) => sum + row.added, 0), removed: rows.reduce((sum, row) => sum + row.removed, 0), extra };
 };
 
-// 'recorded' marks files the gate does not enforce: gitignored, repository internals and harness paths.
-const isReviewable = (change: ChangeView): boolean => change.enforcement === 'enforced' && change.resolution !== 'reverted';
+// 'recorded' marks files the gate does not enforce: gitignored, repository internals and harness paths. What git wrote is not the agent's work.
+const isReviewable = (change: ChangeView): boolean => change.enforcement === 'enforced' && change.resolution !== 'reverted' && change.origin !== 'git';
 
 // A write the plan covers, made once its steps ran out: stamped with the plan but with no step.
 const followUpsOf = (changes: ChangeView[], planId: string): ChangeView[] =>

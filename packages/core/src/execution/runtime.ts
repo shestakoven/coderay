@@ -14,6 +14,7 @@ import { Baselines, newScanCache, ScanAborted, ScanError, scanTree } from '../hi
 import { ChangeService } from '../history/changes';
 import { Checkpoints } from '../history/checkpoints';
 import { DiffService } from '../history/diff';
+import { GitOps } from '../history/git-ops';
 import { HistoryService } from '../history/history-service';
 import { IdeWrites } from '../history/ide-writes';
 import { RevertService } from '../history/revert';
@@ -96,6 +97,8 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
   const ideWrites = new IdeWrites();
   const ledger = new ActivityLedger({ graceMs: o.ledgerGraceMs });
   const checkpoints = new Checkpoints(o.store, sessionId);
+  const gitOps = new GitOps({ root: o.root, settle: (toolUseId) => changes.settleGit(toolUseId) });
+  const gitFailed = (error: unknown): void => console.error('execution: could not tell what git changed', error);
   const changes = new ChangeService({
     root: o.root,
     get policy() {
@@ -103,6 +106,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     },
     shadow, baselines, ideWrites, ledger, plans: gate.plans, store: o.store, checkpoints, sessionId,
     toolStamp: (toolUseId) => session?.toolStamp(toolUseId) ?? null,
+    gitMoved: (toolUseId) => gitOps.moved(toolUseId),
   });
   const agent: WatchdogSession = {
     hasOpenTurn: () => session?.hasOpenTurn() ?? false,
@@ -310,7 +314,10 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     const ids = new Set(revertRecord.changeIds);
     publish(changes.changes().filter((change) => ids.has(change.id)));
   });
-  gate.gate.onAllowed((call) => ledger.allowed(call));
+  gate.gate.onAllowed((call) => {
+    ledger.allowed(call);
+    gitOps.begin(call);
+  });
   gate.plans.onStep((event) => {
     if (closing) return;
     try {
@@ -428,12 +435,17 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         }
         ledger.ended(info.toolUseId);
         if (toolClass(info.tool) === 'subagent' && !next.hasLiveTask(info.toolUseId)) ledger.taskEnded(info.toolUseId);
+        gitOps.toolEnded(info.toolUseId).catch(gitFailed);
         detector.toolEnded(info);
       });
-      next.onTaskEnd((toolUseId) => ledger.taskEnded(toolUseId));
+      next.onTaskEnd((toolUseId) => {
+        ledger.taskEnded(toolUseId);
+        gitOps.end(toolUseId).catch(gitFailed);
+      });
       next.onInterrupt(() => ledger.interrupted());
       next.onProcessExit(() => {
         ledger.clear();
+        gitOps.endAll().catch(gitFailed);
         if (!watchdog.isPending()) hold.release();
       });
       next.onNewSession(() => {

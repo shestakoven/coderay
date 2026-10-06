@@ -107,6 +107,7 @@ export interface GateTarget {
   inScope: boolean;
   deleting: boolean;
   componentId: string | null;
+  uncommitted?: boolean;
 }
 
 export type GatePreview =

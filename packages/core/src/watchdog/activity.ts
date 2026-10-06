@@ -1,5 +1,12 @@
 import type { ToolClass } from '../gate/tools';
 
+// A git command that can move HEAD: the repository's top, its place under the project root ("" for the root), and HEAD before the call.
+export interface HistoryCall {
+  dir: string;
+  top: string;
+  head: string | null;
+}
+
 export interface ToolCall {
   toolUseId: string;
   parentToolUseId: string | null;
@@ -10,10 +17,11 @@ export interface ToolCall {
   cwdRel: string | null;
   background: boolean;
   allowedOnce: boolean;
+  history?: HistoryCall[];
 }
 
 export interface Attribution {
-  origin: 'agent' | 'agent-tool' | 'human';
+  origin: 'agent' | 'agent-tool' | 'git' | 'human';
   toolUseIds: string[];
   allowedOnce: boolean;
 }
@@ -21,6 +29,7 @@ export interface Attribution {
 export interface AttributionScope {
   tracked?: boolean;
   enforced?: boolean;
+  deleted?: boolean;
 }
 
 export interface ActivityLedgerOptions {
@@ -41,6 +50,8 @@ const LINGER_MS = 60_000;
 const KEEP_ENDED_MS = 3_600_000;
 const COUNTING = new Set<ToolClass>(['file-writer', 'shell', 'subagent', 'mcp', 'unknown']);
 const WRITING = new Set<ToolClass>(['file-writer', 'shell']);
+
+export const isGitState = (rel: string): boolean => rel === '.git/HEAD' || rel === '.git/refs' || rel.startsWith('.git/refs/');
 
 const under = (rel: string, base: string): boolean => {
   const dir = base.replace(/\/+$/, '');
@@ -101,6 +112,8 @@ export class ActivityLedger {
     const active = [...this.entries.values()].filter((entry) => this.active(entry, at) && this.reaches(entry.call, rel, allTracked));
     const covering = active.filter((entry) => WRITING.has(entry.call.toolClass) && ((allTracked && entry.call.allTracked) || entry.call.targets.some((target) => under(rel, target))));
     if (covering.length > 0) return { origin: 'agent', toolUseIds: ids(covering), allowedOnce: covering.some((entry) => entry.call.allowedOnce) };
+    const history = active.filter((entry) => WRITING.has(entry.call.toolClass) && historyMade(entry.call, rel, scope));
+    if (history.length > 0) return { origin: 'git', toolUseIds: ids(history), allowedOnce: false };
     const once = scope.enforced === false ? [] : active.filter((entry) => entry.call.allowedOnce);
     if (once.length > 0) return { origin: 'agent', toolUseIds: ids(once), allowedOnce: true };
     if (active.length > 0) return { origin: 'agent-tool', toolUseIds: ids(active), allowedOnce: false };
@@ -132,8 +145,15 @@ export class ActivityLedger {
 
   private reaches(call: ToolCall, rel: string, allTracked: boolean): boolean {
     if (!call.background) return true;
-    return (allTracked && call.allTracked) || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel));
+    return (allTracked && call.allTracked) || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel)) || (call.history?.some((h) => under(rel, h.dir)) ?? false);
   }
+}
+
+// A history call may write every file it leaves tracked or deletes in its repository, and the repository's refs.
+function historyMade(call: ToolCall, rel: string, scope: AttributionScope): boolean {
+  const history = call.history ?? [];
+  if (history.length === 0) return false;
+  return isGitState(rel) || ((scope.tracked !== false || scope.deleted === true) && history.some((h) => under(rel, h.dir)));
 }
 
 function ids(entries: Entry[]): string[] {

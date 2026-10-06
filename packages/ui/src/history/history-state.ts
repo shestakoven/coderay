@@ -185,7 +185,7 @@ export function changesByStep(h: HistoryView, plans: PlanView[], nodeId: string,
 export const chatFilterIds = (h: HistoryView, nodeId: string, snapshot: MapSnapshot | null): Set<string> =>
   new Set(ownChanges(h, snapshot, nodeId).flatMap((c) => c.toolUseIds));
 
-export type TimelineKind = 'step' | 'event' | 'revert' | 'gate';
+export type TimelineKind = 'step' | 'event' | 'revert' | 'gate' | 'git';
 export interface TimelineItem {
   id: string;
   kind: TimelineKind;
@@ -202,9 +202,18 @@ const EVENT_TONE: Record<WatchdogEventView['resolution'], TimelineItem['tone']> 
 const GATE_TONE: Record<string, TimelineItem['tone']> = { 'allowed-once': 'ok', 'plan-expanded': 'ok', denied: 'error', flagged: 'warn' };
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-export function timelineItems(plans: PlanView[], h: HistoryView): TimelineItem[] {
+export function timelineItems(plans: PlanView[], h: HistoryView, commandOf: (toolUseId: string) => string | undefined = () => undefined): TimelineItem[] {
   const items: TimelineItem[] = [];
   const latest = latestVersions(plans);
+  const byCall = new Map<string, ChangeView[]>();
+  for (const change of h.changes) {
+    const call = change.toolUseIds[0];
+    if (change.origin === 'git' && change.enforcement === 'enforced' && call !== undefined) byCall.set(call, [...(byCall.get(call) ?? []), change]);
+  }
+  for (const [call, own] of byCall) {
+    const files = [...new Set(own.map((c) => c.path))].sort();
+    items.push({ id: `git:${call}`, kind: 'git', at: Math.min(...own.map((c) => c.at)), label: `${commandOf(call) ?? 'git'} · ${plural(files.length, 'file')}`, tone: 'muted', files, ref: {} });
+  }
   for (const checkpoint of h.checkpoints) {
     const plan = latest.get(checkpoint.planId);
     const step = plan?.steps.find((s) => s.key === checkpoint.stepKey);

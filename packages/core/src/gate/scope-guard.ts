@@ -17,6 +17,8 @@ export interface ClassifiedTarget {
   why: string;
   unowned?: boolean;
   scopeRel?: string;
+  // A tracked file with changes git has not committed, which a history command may discard.
+  uncommitted?: boolean;
 }
 
 export type PlanGate =
@@ -57,6 +59,7 @@ export function describeTargets(targets: ClassifiedTarget[]): string {
   const names = targets.map((target) => {
     if (target.kind === 'all-tracked') return 'every tracked file (a git command that rewrites the work tree)';
     if (target.kind === 'unresolved') return `${target.raw} (${target.why})`;
+    if (target.uncommitted) return `${targetName(target)} (uncommitted)`;
     return target.deleting ? `${targetName(target)} (delete)` : targetName(target);
   });
   const shown = names.slice(0, MAX_LISTED).join(', ');

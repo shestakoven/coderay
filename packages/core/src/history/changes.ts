@@ -7,7 +7,7 @@ import { classifyPaths } from '../gate/paths';
 import { worktreeOf, type NestedRepo, type WorktreeHit } from '../gate/worktrees';
 import type { PlanGate } from '../gate/scope-guard';
 import type { BaselineRecord, Store } from '../store/store';
-import type { ActivityLedger } from '../watchdog/activity';
+import { isGitState, type ActivityLedger } from '../watchdog/activity';
 import type { FsEvent } from '../watchdog/watcher';
 import { forgetGoneNested, hashCandidates, knownNested, seedNested, type Baselines, type Drift } from './baselines';
 import type { Checkpoints } from './checkpoints';
@@ -43,6 +43,8 @@ export interface ChangeServiceOptions {
   graceMs?: number;
   keptChanges?: number;
   toolStamp?: (toolUseId: string) => Stamp;
+  // The files a history call that has ended left changed by git itself; undefined while it runs.
+  gitMoved?: (toolUseId: string) => ReadonlySet<string> | undefined;
 }
 
 export type Stamp = { planId: string; planVersion: number; stepKey: string | null } | null;
@@ -53,8 +55,6 @@ interface Queued {
   resolve: () => void;
   reject: (error: unknown) => void;
 }
-
-const isGitState = (rel: string): boolean => rel === '.git/HEAD' || rel === '.git/refs' || rel.startsWith('.git/refs/');
 
 const git = (root: string, args: string[]): Promise<string> =>
   new Promise((resolve, reject) => {
@@ -339,8 +339,8 @@ export class ChangeService {
       const claimed = !isUnreadable && this.o.ideWrites.claim(rel, afterHash);
       if (claimed) claims.push({ rel, hash: afterHash });
       if (!claimed) {
-        const attribution = this.o.ledger.attribute(rel, event.at, { tracked: tracked.has(rel), enforced });
-        origin = attribution.origin;
+        const attribution = this.o.ledger.attribute(rel, event.at, { tracked: tracked.has(rel), enforced, deleted: blob === null });
+        origin = attribution.origin === 'git' && !this.gitMade(rel, attribution.toolUseIds) ? 'agent-tool' : attribution.origin;
         toolUseIds = attribution.toolUseIds;
       }
       const byAgent = origin === 'agent' || origin === 'agent-tool';
@@ -378,13 +378,37 @@ export class ChangeService {
     for (const rel of rels) if (!unreadable.has(rel)) this.unreadableSeen.delete(rel);
     baselines.remember(rows, removed);
     this.o.checkpoints.recordMany(made);
+    this.emit(made);
+  }
+
+  private emit(changes: ChangeView[]): void {
     for (const listener of this.listeners) {
       try {
-        listener(made);
+        listener(changes);
       } catch (error) {
         console.error('changes: a listener failed', error);
       }
     }
+  }
+
+  // A file written while a history call ran is git's, unless the call has ended and git did not write it.
+  private gitMade(rel: string, toolUseIds: string[]): boolean {
+    return isGitState(rel) || toolUseIds.some((id) => this.o.gitMoved?.(id)?.has(rel) ?? true);
+  }
+
+  // The changes recorded as git's while the call ran that git turned out not to have written become the agent's.
+  async settleGit(toolUseId: string): Promise<void> {
+    await this.batching;
+    this.sync();
+    const stamp = this.o.toolStamp?.(toolUseId) ?? this.stampFor();
+    const updated = this.all
+      .filter((change) => change.origin === 'git' && change.toolUseIds.includes(toolUseId) && !this.gitMade(change.path, change.toolUseIds))
+      .map((change): ChangeView => ({ ...change, origin: 'agent-tool', planId: stamp?.planId ?? null, planVersion: stamp?.planVersion ?? null, stepKey: stamp?.stepKey ?? null }));
+    if (updated.length === 0) return;
+    this.persistStrict(updated);
+    for (const change of updated) this.replace(change);
+    this.o.checkpoints.recordMany(updated);
+    this.emit(updated);
   }
 
   private build(o: {
