@@ -102,7 +102,7 @@ export class PlanService {
     }
     const scope = freezeScope(input.steps, this.options.root, components);
     const base = this.rejectPause && reviewed.review.auto ? { auto: false, notes: [REJECT_PAUSE_NOTE, ...reviewed.review.notes] } : reviewed.review;
-    const review = base.auto ? base : { ...base, notes: [...base.notes, ...flowNotes(input.flow, input.steps, scope)] };
+    const review = { ...base, notes: [...base.notes, ...(base.auto ? [] : flowNotes(input.flow, input.steps, scope)), ...this.addedNotes(open, input.steps)] };
     const record: PlanRecord = {
       id, version, goal: input.goal, status: 'proposed', approvedBy: null, steps: input.steps,
       scope, owners: reviewed.owners, review, flow: input.flow,
@@ -416,6 +416,14 @@ export class PlanService {
       if (status !== 'pending' && !keys.has(key)) return `IDE: the new version must keep step "${key}", which is ${status}.`;
     }
     return null;
+  }
+
+  // What a proposal adds to the plan the user approved is said on its card, auto-approved or not.
+  private addedNotes(planId: string | null, steps: PlanStep[]): string[] {
+    const approved = planId === null ? undefined : this.enforced(planId);
+    if (approved === undefined) return [];
+    const added = steps.filter((step) => !approved.steps.some((known) => known.key === step.key));
+    return added.length === 0 ? [] : [`adds ${added.length} ${added.length === 1 ? 'step' : 'steps'} after approval: ${added.map((step) => step.key).join(', ')}`];
   }
 
   private expandStep(planId: string): string | null {
