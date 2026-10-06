@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { createRun } from '../git/git-run';
 import type { HistoryCall, ToolCall } from '../watchdog/activity';
@@ -10,8 +11,8 @@ export interface GitOpsOptions {
   settle(toolUseId: string): Promise<void>;
 }
 
-// What a git command that can move HEAD wrote: the files whose content differs between HEAD before and after the call.
-// A file the call wrote that is not among them (git checkout <tree> -- file, cherry-pick -n, a hook) is the agent's.
+// What a git command that can move HEAD wrote: the files whose content differs between HEAD before and after the call, and that now hold what HEAD holds.
+// A file the call wrote that is not among them (cherry-pick -n, a hook, a write over what git checked out) is the agent's.
 export class GitOps {
   private readonly open = new Map<string, ToolCall>();
   private readonly done = new Map<string, ReadonlySet<string>>();
@@ -54,11 +55,25 @@ export class GitOps {
   private async changed({ top, head }: HistoryCall): Promise<string[]> {
     if (head === null) return [];
     const run = createRun(top);
+    const read = { readOnly: true, timeoutMs: READ_MS };
     try {
-      const after = (await run(['rev-parse', '--verify', 'HEAD'], { readOnly: true, timeoutMs: READ_MS })).trim();
+      const after = (await run(['rev-parse', '--verify', 'HEAD'], read)).trim();
       if (after === head) return [];
-      const names = await run(['diff', '--name-only', '-z', '--no-renames', head, after], { readOnly: true, timeoutMs: READ_MS });
-      return names.split('\0').filter(Boolean).map((path) => relative(this.o.root, join(top, path))).filter((rel) => !rel.startsWith('..'));
+      const [moved, differs, conflicted] = await Promise.all([
+        run(['diff', '--name-status', '-z', '--no-renames', head, after], read),
+        run(['diff', '--name-only', '-z', '--no-renames', after], read),
+        run(['diff', '--name-only', '-z', '--diff-filter=U'], read),
+      ]);
+      // Git's are the files that now hold what HEAD holds, or git's conflict: one the call wrote over, or brought back after git deleted it, is the agent's.
+      const unmerged = new Set(conflicted.split('\0'));
+      const altered = new Set(differs.split('\0').filter((path) => !unmerged.has(path)));
+      const fields = moved.split('\0');
+      const paths: string[] = [];
+      for (let i = 0; i + 1 < fields.length; i += 2) {
+        const path = fields[i + 1]!;
+        if (!altered.has(path) && !(fields[i] === 'D' && existsSync(join(top, path)))) paths.push(path);
+      }
+      return paths.map((path) => relative(this.o.root, join(top, path))).filter((rel) => !rel.startsWith('..'));
     } catch (error) {
       console.error('git ops: could not read what git changed', error);
       return [];
