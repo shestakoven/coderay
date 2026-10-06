@@ -2,7 +2,7 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import ignore from 'ignore';
 import type { ChangeView } from '@ide/protocol';
-import type { AgentSession, SessionGate } from '../agent/agent-session';
+import type { AgentSession, AgentSessionOptions, SessionGate } from '../agent/agent-session';
 import type { ToolEndInfo } from '../agent/tracker';
 import { FailOpenDetector } from '../gate/failopen';
 import { Hold } from '../gate/hold';
@@ -66,7 +66,8 @@ export interface ExecutionRuntime {
   close(): Promise<void>;
   unavailable(): string | null;
   canLeave(): string | null;
-  holdTurnEnd(signal: AbortSignal): Promise<void> | null;
+  // What the agent session takes from the runtime: main.ts and the tests hand this same object to AgentSession.
+  sessionOptions: Required<Pick<AgentSessionOptions, 'gate' | 'holdTurnEnd' | 'activeStep'>>;
   agentBusy(): string | null;
   onChangesUpserted(listener: (changes: ChangeView[]) => void): () => boolean;
 }
@@ -407,16 +408,20 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       if (watchdog.isPending()) return 'Resolve the watchdog question before switching chats.';
       return null;
     },
-    // The agent in a terminal cannot be told to go on once its turn has ended, so the end of a turn waits for the user's answer.
-    holdTurnEnd(signal) {
-      if (!watchdog.holdsTurn() || !hold.isHeld()) return null;
-      const deadline = Date.now() + (o.holdMs ?? GATE_HOLD_MS);
-      return (async () => {
-        while (watchdog.holdsTurn() && hold.isHeld() && !signal.aborted) {
-          const left = deadline - Date.now();
-          if (left <= 0 || (await hold.wait(signal, left)) !== 'released') return;
-        }
-      })();
+    sessionOptions: {
+      gate: sessionGate,
+      activeStep: () => gate.plans.active(),
+      // The agent in a terminal cannot be told to go on once its turn has ended, so the end of a turn waits for the user's answer.
+      holdTurnEnd(signal) {
+        if (!watchdog.holdsTurn() || !hold.isHeld()) return null;
+        const deadline = Date.now() + (o.holdMs ?? GATE_HOLD_MS);
+        return (async () => {
+          while (watchdog.holdsTurn() && hold.isHeld() && !signal.aborted) {
+            const left = deadline - Date.now();
+            if (left <= 0 || (await hold.wait(signal, left)) !== 'released') return;
+          }
+        })();
+      },
     },
     onChangesUpserted(listener) {
       upserted.add(listener);

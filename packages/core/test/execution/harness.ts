@@ -79,8 +79,7 @@ export async function build(options: BuildOptions): Promise<Built> {
   const fake = fakeClaude(scenarioPath, recordFile);
   const session = new AgentSession({
     root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000,
-    mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), gate: rt.sessionGate,
-    holdTurnEnd: (signal) => rt.holdTurnEnd(signal), terminalInput: (data) => typed.push(data),
+    mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), ...rt.sessionOptions, terminalInput: (data) => typed.push(data),
   });
   rt.attach(session);
   server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: rt.gate.routes });

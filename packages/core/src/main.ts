@@ -214,10 +214,8 @@ try {
     claude: { command: values.claude, args: [] },
     accounts,
     mcpServers: () => registry.sessionServers(),
-    gate: rt.sessionGate,
+    ...rt.sessionOptions,
     canLeave: () => rt.canLeave(),
-    holdTurnEnd: (signal) => rt.holdTurnEnd(signal),
-    activeStep: () => rt.gate.plans.active(),
     terminalInput: (data) => terminals.input(AGENT_TERMINAL_ID, data),
   });
   session = agent;

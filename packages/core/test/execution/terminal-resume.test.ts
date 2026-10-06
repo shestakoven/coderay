@@ -12,6 +12,7 @@ interface Settings {
 
 const RESTORED = 'Restored to their earlier content: src/b.ts.';
 const REVERT = { kind: 'all', answer: 'revert' } as const;
+const STOP = { last_assistant_message: 'Done.', background_tasks: [] };
 const GENERATOR = { tool_name: 'Bash', tool_input: { command: './gen.sh' }, tool_use_id: 'toolu_gen' };
 const writeC = (root: string, id: string) => ({ tool_name: 'Write', tool_input: { file_path: `${root}/src/c.ts`, content: 'c' }, tool_use_id: id });
 
@@ -87,7 +88,9 @@ describe('the agent in a terminal while the watchdog asks the user about its cha
   it('ends the turn when the user does not answer within the hold, and the late answer goes with the next prompt', async () => {
     const t = await terminal({ runtime: { holdMs: 300 } });
     const event = await t.outOfPlan();
-    const stop = await t.event('Stop', { last_assistant_message: 'Done.', stop_hook_active: false, background_tasks: [] });
+    const stepQuestion = await t.event('Stop', { ...STOP, stop_hook_active: false });
+    expect(JSON.parse(stepQuestion.stdout)).toEqual({ decision: 'block', reason: expect.not.stringContaining(RESTORED) });
+    const stop = await t.event('Stop', { ...STOP, stop_hook_active: true });
     expect([stop, t.b.session.hasOpenTurn()]).toEqual([{ code: 0, stdout: '' }, false]);
     await t.b.rt.watchdog.answer(event.id, REVERT);
     const prompt = await t.event('UserPromptSubmit', { prompt: 'continue' });
@@ -131,5 +134,15 @@ describe('the agent in a terminal while the watchdog asks the user about its cha
     const answer = await call;
     expect(answer).toMatchObject({ permissionDecision: 'deny', permissionDecisionReason: expect.stringContaining(RESTORED) });
     expect(answer).not.toHaveProperty('additionalContext');
+  });
+});
+
+describe('the end of a turn with a plan step still active', { timeout: 30_000 }, () => {
+  it('asks the agent once to close the step, then lets the turn end', async () => {
+    const t = await terminal();
+    await t.event('UserPromptSubmit', { prompt: 'make a and c' });
+    const first = await t.event('Stop', { ...STOP, stop_hook_active: false });
+    expect(JSON.parse(first.stdout)).toEqual({ decision: 'block', reason: expect.stringContaining('step "s1" (a and c) is still active') });
+    expect(await t.event('Stop', { ...STOP, stop_hook_active: true })).toEqual({ code: 0, stdout: '' });
   });
 });
