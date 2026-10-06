@@ -79,8 +79,8 @@ const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec',
 const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert']);
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'fetch', 'branch', 'ls-files', 'rev-list', 'describe', 'merge-base']);
 const HARMLESS = new Set(['cd', 'pwd', 'echo', 'printf', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
-// Options whose value is the next word, among the history commands'.
-const VALUE_OPTIONS = new Set(['-b', '-B', '-c', '-C', '--orphan', '-m', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option', '--onto', '--into-name']);
+// Options whose value is the next word, among the history commands'. -m takes one only in merge, cherry-pick and revert.
+const VALUE_OPTIONS = new Set(['-b', '-B', '-c', '-C', '--orphan', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option', '--onto', '--into-name']);
 const WORK_TREE_REWRITES = new Set(['restore', 'stash', 'clean', 'apply', 'am']);
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
 const XARGS_WRITES = 'xargs runs a command that writes files it reads from its input';
@@ -576,7 +576,7 @@ function incomingRefs(sub: string, rest: Word[]): string[] | null {
       onto = text === '--onto' ? literalText(rest[i + 1] ?? EMPTY) : text.slice('--onto='.length);
       if (!onto) return null;
     }
-    if (VALUE_OPTIONS.has(text)) i += 1;
+    if (VALUE_OPTIONS.has(text) || (text === '-m' && ['merge', 'cherry-pick', 'revert'].includes(sub))) i += 1;
     else if (text === '-') words.push('@{-1}');
     else if (text.startsWith('-')) flags.add(text.split('=')[0]!);
     else words.push(text);
