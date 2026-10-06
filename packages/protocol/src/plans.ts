@@ -20,7 +20,7 @@ export type StepStatus = 'pending' | 'active' | 'done';
 
 export interface PlanStepView extends PlanStep {
   status: StepStatus;
-  extra: boolean;
+  extra?: boolean;
 }
 
 export type PlanStatus = 'proposed' | 'approved' | 'changes-requested' | 'rejected' | 'withdrawn' | 'superseded' | 'done' | 'closed';

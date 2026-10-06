@@ -68,8 +68,8 @@ describe('planMarks', () => {
     ]);
   });
 
-  it('draws nothing for a rejected, withdrawn or finished plan', () => {
-    for (const status of ['rejected', 'withdrawn', 'done'] as const) expect(planMarks(plan({ status }), demoSnapshot())).toBe(EMPTY_MARKS);
+  it('draws nothing for a rejected, withdrawn or closed plan', () => {
+    for (const status of ['rejected', 'withdrawn', 'closed'] as const) expect(planMarks(plan({ status }), demoSnapshot())).toBe(EMPTY_MARKS);
   });
 });
 
@@ -144,10 +144,10 @@ describe('plan predicates', () => {
     expect([waitsForUser(plan({ status: 'proposed' })), waitsForUser(plan()), waitsForUser(plan({ status: 'changes-requested' })), waitsForUser(null)]).toEqual([true, false, false, false]);
   });
 
-  it('draws the overlay for a proposed or approved plan only', () => {
+  it('draws the overlay for a proposed, approved or done plan only', () => {
     expect([
-      drawsOverlay(plan({ status: 'proposed' })), drawsOverlay(plan()), drawsOverlay(plan({ status: 'rejected' })), drawsOverlay(plan({ status: 'done' })), drawsOverlay(null),
-    ]).toEqual([true, true, false, false, false]);
+      drawsOverlay(plan({ status: 'proposed' })), drawsOverlay(plan()), drawsOverlay(plan({ status: 'done' })), drawsOverlay(plan({ status: 'rejected' })), drawsOverlay(plan({ status: 'closed' })), drawsOverlay(null),
+    ]).toEqual([true, true, true, false, false, false]);
   });
 });
 

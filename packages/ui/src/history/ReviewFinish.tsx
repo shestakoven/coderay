@@ -5,13 +5,14 @@ interface Props {
   tally: Tally;
   unsentComments: number;
   onRequest: () => void;
+  onAcceptPlan?: () => void;
   onContinue: () => void;
   onExit: () => void;
 }
 
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`;
 
-export function ReviewFinish({ tally, unsentComments, onRequest, onContinue, onExit }: Props) {
+export function ReviewFinish({ tally, unsentComments, onRequest, onAcceptPlan, onContinue, onExit }: Props) {
   if (tally.total === 0) {
     return (
       <div className="rv-finish" role="status">
@@ -56,7 +57,8 @@ export function ReviewFinish({ tally, unsentComments, onRequest, onContinue, onE
       </dl>
       <div className="rv-finish-actions">
         {unsentComments > 0 && <button className="rv-btn primary" onClick={onRequest}><Icon name="send" size={14} />Request changes<b>{unsentComments}</b></button>}
-        <button className={`rv-btn${unsentComments > 0 ? '' : ' primary'}`} onClick={onExit}>Back to the map</button>
+        {clean && onAcceptPlan && <button className="rv-btn primary" onClick={onAcceptPlan} title="Closes the plan. The agent's next write is denied until it proposes a new plan.">Accept plan</button>}
+        <button className={`rv-btn${unsentComments > 0 || (clean && onAcceptPlan) ? '' : ' primary'}`} onClick={onExit}>Back to the map</button>
       </div>
     </div>
   );
