@@ -21,8 +21,8 @@ export interface ClassifiedTarget {
 
 export type PlanGate =
   | { state: 'none' }
-  | { state: 'approved'; planId: string; version: number; scope: FrozenScope; activeStep: string | null }
-  | { state: 'done'; planId: string }
+  | { state: 'approved'; planId: string; version: number; scope: FrozenScope; activeStep: string | null; followUps: boolean }
+  | { state: 'closed'; planId: string }
   | { state: 'rejected'; planId: string };
 
 export type Outcome = 'allow' | 'unchecked' | 'deny' | 'ask' | 'flag';
@@ -80,11 +80,11 @@ export function decide(input: GuardInput): GuardDecision {
   if (gate.state === 'rejected') {
     return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `IDE: the user rejected plan ${gate.planId}. Stop and wait for the user's next message.` };
   }
-  if (gate.state === 'done') {
-    return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `IDE: plan ${gate.planId} is done. Call mcp__idecore__propose_plan for further changes.` };
+  if (gate.state === 'closed') {
+    return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `IDE: plan ${gate.planId} is closed. Call mcp__idecore__propose_plan for further changes.` };
   }
   const stamp = { planId: gate.planId, version: gate.version };
-  if (gate.activeStep === null) {
+  if (gate.activeStep === null && !gate.followUps) {
     return {
       ...NONE, ...stamp, relevant, outcome: 'deny',
       reason: `IDE: plan ${gate.planId} is approved, but no step is active. Call mcp__idecore__step with {"key": "<step key>", "phase": "start"} first.`,
@@ -92,7 +92,7 @@ export function decide(input: GuardInput): GuardDecision {
   }
   const outOfScope = relevant.filter((target) => !inScope(gate.scope, target));
   const base = { ...stamp, stepKey: gate.activeStep, relevant, outOfScope };
-  if (outOfScope.length === 0) return { ...base, outcome: 'allow', reason: `IDE: allowed by plan ${gate.planId}, step ${gate.activeStep}.` };
+  if (outOfScope.length === 0) return { ...base, outcome: 'allow', reason: `IDE: allowed by plan ${gate.planId}, ${gate.activeStep === null ? 'as a follow-up' : `step ${gate.activeStep}`}.` };
   const outside = describeTargets(outOfScope);
   const hint = outOfScope.some((target) => target.unowned) ? ` ${NO_OWNER}` : '';
   const one = outOfScope.length === 1;

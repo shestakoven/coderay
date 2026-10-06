@@ -171,7 +171,7 @@ function parseAnswer(value: unknown): PromptAnswer | null {
 
 function parsePlanAnswer(value: unknown): PlanAnswer | null {
   if (!isRecord(value)) return null;
-  if (value.kind === 'approve') return { kind: 'approve' };
+  if (value.kind === 'approve' || value.kind === 'accept') return { kind: value.kind };
   if ((value.kind === 'changes' || value.kind === 'reject') && typeof value.feedback === 'string') return { kind: value.kind, feedback: value.feedback };
   return null;
 }

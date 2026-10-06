@@ -9,7 +9,7 @@ function target(kind: TargetKind, rel: string | null, extra: Partial<ClassifiedT
 }
 
 const approved = (activeStep: string | null = 'edit'): PlanGate => ({
-  state: 'approved', planId: 'plan-1', version: 2, scope: { paths: ['src/app.ts'], globs: ['src/lib/**'] }, activeStep,
+  state: 'approved', planId: 'plan-1', version: 2, scope: { paths: ['src/app.ts'], globs: ['src/lib/**'] }, activeStep, followUps: false,
 });
 
 const run = (tool: string, targets: ClassifiedTarget[], gate: PlanGate = approved(), mode: ControlMode = 'B') =>
@@ -47,12 +47,12 @@ describe('decide', () => {
     ]);
   });
 
-  it('denies writes after the user rejected the plan, and after the plan is done', () => {
+  it('denies writes after the user rejected the plan, and after the plan is closed', () => {
     const rejected = run('Write', [target('enforced', 'src/app.ts')], { state: 'rejected', planId: 'plan-1' });
-    const done = run('Write', [target('enforced', 'src/app.ts')], { state: 'done', planId: 'plan-1' });
-    expect([rejected.outcome, rejected.reason, done.outcome, done.reason]).toEqual([
+    const closed = run('Write', [target('enforced', 'src/app.ts')], { state: 'closed', planId: 'plan-1' });
+    expect([rejected.outcome, rejected.reason, closed.outcome, closed.reason]).toEqual([
       'deny', "IDE: the user rejected plan plan-1. Stop and wait for the user's next message.",
-      'deny', 'IDE: plan plan-1 is done. Call mcp__idecore__propose_plan for further changes.',
+      'deny', 'IDE: plan plan-1 is closed. Call mcp__idecore__propose_plan for further changes.',
     ]);
   });
 
@@ -75,14 +75,14 @@ describe('decide', () => {
   });
 
   it('denies a directory delete under a bare wildcard glob in mode A', () => {
-    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope: { paths: [], globs: ['*'] }, activeStep: 'edit' };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope: { paths: [], globs: ['*'] }, activeStep: 'edit', followUps: false };
     const decision = run('Bash', [target('enforced', 'packages', { dir: true })], gate, 'A');
     expect([decision.outcome, decision.outOfScope.map((t) => t.rel)]).toEqual(['deny', ['packages']]);
   });
 
   it('a modify target does not allow rm: mode A denies, mode B asks; a delete target allows it', () => {
     const scope = { paths: ['src/app.ts', 'src/old.ts'], globs: [], deletes: { paths: ['src/old.ts'], globs: [] } };
-    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit' };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit', followUps: false };
     const removal = (rel: string) => target('enforced', rel, { deleting: true });
     expect(['A', 'B'].map((mode) => run('Bash', [removal('src/app.ts')], gate, mode as ControlMode).outcome)).toEqual(['deny', 'ask']);
     expect(run('Bash', [removal('src/old.ts')], gate).outcome).toBe('allow');
@@ -90,7 +90,7 @@ describe('decide', () => {
 
   it('mv a b needs a delete for a and a write for b', () => {
     const scope = { paths: ['src/a.ts', 'src/b.ts'], globs: [], deletes: { paths: ['src/a.ts'], globs: [] } };
-    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit' };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit', followUps: false };
     const move = (from: string, to: string) => [target('enforced', from, { deleting: true }), target('enforced', to)];
     expect(run('Bash', move('src/a.ts', 'src/b.ts'), gate).outcome).toBe('allow');
     expect(run('Bash', move('src/b.ts', 'src/a.ts'), gate).outcome).toBe('ask');
@@ -98,7 +98,7 @@ describe('decide', () => {
 
   it('a Write to an existing path is never a delete', () => {
     const scope = { paths: ['src/app.ts'], globs: [], deletes: { paths: [], globs: [] } };
-    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit' };
+    const gate: PlanGate = { state: 'approved', planId: 'plan-1', version: 1, scope, activeStep: 'edit', followUps: false };
     expect(run('Write', [target('enforced', 'src/app.ts')], gate).outcome).toBe('allow');
   });
 
@@ -109,7 +109,7 @@ describe('decide', () => {
 
   it('counts a git work-tree rewrite in scope only when the whole tree is', () => {
     expect(run('Bash', [target('all-tracked', null)]).outcome).toBe('ask');
-    const whole: PlanGate = { state: 'approved', planId: 'plan-1', version: 2, scope: { paths: [], globs: ['**'] }, activeStep: 'edit' };
+    const whole: PlanGate = { state: 'approved', planId: 'plan-1', version: 2, scope: { paths: [], globs: ['**'] }, activeStep: 'edit', followUps: false };
     expect(run('Bash', [target('all-tracked', null)], whole).outcome).toBe('allow');
   });
 
@@ -133,7 +133,7 @@ describe('decide', () => {
 
 describe('decide for a file of a nested worktree', () => {
   const REAL = '.worktrees/wt1/backend/src';
-  const gate = (scope: FrozenScope): PlanGate => ({ state: 'approved', planId: 'plan-1', version: 2, scope, activeStep: 'edit' });
+  const gate = (scope: FrozenScope): PlanGate => ({ state: 'approved', planId: 'plan-1', version: 2, scope, activeStep: 'edit', followUps: false });
   const inWorktree = (name: string, extra: Partial<ClassifiedTarget> = {}) => target('enforced', `${REAL}/${name}`, { scopeRel: `backend/src/${name}`, ...extra });
 
   it('allows a write the plan covers by the path inside the worktree and stamps it like any in-scope write', () => {
@@ -184,7 +184,7 @@ describe('decide for a file of a nested worktree', () => {
 });
 
 describe('decide for a worktree that lies in a directory the plan covers', () => {
-  const gate = (scope: FrozenScope): PlanGate => ({ state: 'approved', planId: 'plan-1', version: 2, scope, activeStep: 'edit' });
+  const gate = (scope: FrozenScope): PlanGate => ({ state: 'approved', planId: 'plan-1', version: 2, scope, activeStep: 'edit', followUps: false });
   const over = gate({ paths: [], globs: ['src/**'] });
   const inWorktree = (inner: string, extra: Partial<ClassifiedTarget> = {}) => target('enforced', `src/wt/${inner}`, { scopeRel: inner, ...extra });
 

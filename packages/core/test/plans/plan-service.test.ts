@@ -84,7 +84,7 @@ describe('PlanService', () => {
     service.answer(plan.id, plan.version, { kind: 'approve' });
     expect(await call).toEqual({ ok: true, value: { status: 'approved' } });
     expect(service.gate()).toEqual({
-      state: 'approved', planId: 'plan-1', version: 1, activeStep: null,
+      state: 'approved', planId: 'plan-1', version: 1, activeStep: null, followUps: false,
       scope: { paths: ['src/app.ts', 'src/lib/util.ts', 'src/other.ts'], globs: ['src/lib/**'], deletes: { paths: [], globs: [] } },
     });
   });
@@ -413,7 +413,8 @@ describe('PlanService', () => {
     expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: false, error: 'IDE: step "a" is already done.' });
     service.step({ key: 'b', phase: 'start' });
     service.step({ key: 'b', phase: 'done' });
-    expect([latest(service)?.status, service.gate()]).toEqual(['done', { state: 'done', planId: 'plan-1' }]);
+    expect(latest(service)?.status).toBe('done');
+    expect(service.gate()).toMatchObject({ state: 'approved', planId: 'plan-1', activeStep: null, followUps: true });
   });
 
   it('refuses steps before any plan is approved', async () => {
