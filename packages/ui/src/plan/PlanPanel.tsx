@@ -142,7 +142,8 @@ function StepRow({ step, n, plan, snapshot, working, onFocus, onHover }: {
     const op = OP_MARK[target.op];
     if (target.kind === 'component') {
       const found = component(target.componentId);
-      add(found?.name ?? target.componentId, `${op} whole component (${found?.files.length ?? 0} files)`);
+      const count = found?.files.length ?? 0;
+      add(found?.name ?? target.componentId, `${op} whole component (${count} ${count === 1 ? 'file' : 'files'})`);
     } else if (target.kind === 'directory') add('Directories', `${op} ${target.path}/`);
     else if (target.kind === 'other') other.push(`${op} ${target.path}`);
     else add(component(target.owner)?.name ?? target.owner, `${op} ${target.path.slice(target.path.lastIndexOf('/') + 1)}`);

@@ -75,7 +75,7 @@ export function WatchdogDialog({ event, diffs, send, requestDiff }: Props) {
       ))}
       {hidden > 0 && <button onClick={() => setExpanded(true)}>Show all ({hidden} more)</button>}
       <div className="wd-actions">
-        <span className="muted wd-hint">{answer ? 'Or answer for all files at once:' : `${chosen} of ${total} files chosen. Choose for every file, or answer for all at once:`}</span>
+        <span className="muted wd-hint">{answer ? 'Or answer for all files at once:' : `${chosen} of ${total} ${total === 1 ? 'file' : 'files'} chosen. Choose for every file, or answer for all at once:`}</span>
         <button onClick={() => reply({ kind: 'all', answer: 'keep' })} title="Keep every file as the agent left it">Keep all</button>
         <button onClick={() => reply({ kind: 'all', answer: 'revert' })} title="Restore every file to how it was before">Revert all</button>
         {canExpand(event) && <button onClick={() => reply({ kind: 'all', answer: 'expand-plan' })} title="Add these files to the approved plan">Expand plan</button>}

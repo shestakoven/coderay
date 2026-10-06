@@ -25,11 +25,12 @@ export function ReviewPanel({ history, plans, diffs, requestDiff, onShowOnMap, o
     setRequested((current) => ({ ...current, [key]: requestDiff(file.path, file.before, file.after) }));
   };
   if (groups.length === 0) return <div className="empty muted">Nothing to review yet. Changes the agent makes show up here, step by step.</div>;
+  const count = groups.reduce((sum, entry) => sum + entry.files.length, 0);
   return (
     <div className="review" data-testid="review-panel">
       <div className="review-toolbar">
         <button className="rm-btn primary" onClick={onStart}>Start review</button>
-        <span className="muted">{groups.reduce((sum, entry) => sum + entry.files.length, 0)} files</span>
+        <span className="muted">{count} {count === 1 ? 'file' : 'files'}</span>
       </div>
       {groups.map((entry) => (
         <ReviewSection

@@ -442,11 +442,11 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
         ))}
         {container && (
           <>
-            <h3>Components ({container.components.length}) · {container.files} files</h3>
+            <h3>Components ({container.components.length}) · {container.files} {container.files === 1 ? 'file' : 'files'}</h3>
             <ul>
               {container.components.map((p) => (
                 <li key={p.id}>
-                  {componentName(p.id)} <span className="muted">{p.near} near · {p.files} files{p.containers > 1 ? ` · in ${p.containers} containers` : ''}</span>
+                  {componentName(p.id)} <span className="muted">{p.near} near · {p.files} {p.files === 1 ? 'file' : 'files'}{p.containers > 1 ? ` · in ${p.containers} containers` : ''}</span>
                 </li>
               ))}
             </ul>

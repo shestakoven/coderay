@@ -6,6 +6,8 @@ import { c4Spacing, DEFAULT_C4_LAYOUT, type C4Layout } from './c4-layout';
 
 export const OWN_COMPONENT_CARDS = 14;
 
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 export type C4Kind = 'person' | 'container' | 'group' | 'external' | 'component' | 'shared';
 
 export type C4NodeData = {
@@ -118,7 +120,7 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
       kind: 'container',
       title: c.name,
       subtitle: `${c.role} · ${c.tech}`,
-      detail: c.entryMissing.length > 0 ? `entry not found: ${c.entryMissing.join(', ')}` : `${c.files} files · ${c.components.length} components`,
+      detail: c.entryMissing.length > 0 ? `entry not found: ${c.entryMissing.join(', ')}` : `${plural(c.files, 'file')} · ${plural(c.components.length, 'component')}`,
       accent: ROLE_ACCENT[c.role],
       icon: ROLE_ICON[c.role],
       warn: c.entryMissing.length > 0,
@@ -172,7 +174,7 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
         data: {
           kind: 'component',
           title: componentName.get(p.id) ?? (p.id === 'unassigned' ? 'Unassigned files' : p.id),
-          subtitle: `${p.near} near entry · ${p.files} files${p.containers > 1 ? ` · in ${p.containers} containers` : ''}`,
+          subtitle: `${p.near} near entry · ${plural(p.files, 'file')}${p.containers > 1 ? ` · in ${p.containers} containers` : ''}`,
           accent: ROLE_ACCENT[c.role],
           icon: 'box',
         },
@@ -189,8 +191,8 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
         column: 0,
         data: {
           kind: 'shared',
-          title: `Libraries · ${rest.length} components`,
-          subtitle: `${rest.reduce((sum, p) => sum + p.files, 0)} files deeper than 2 imports from the entry`,
+          title: `Libraries · ${plural(rest.length, 'component')}`,
+          subtitle: `${plural(rest.reduce((sum, p) => sum + p.files, 0), 'file')} deeper than 2 imports from the entry`,
           accent: 'var(--c4-muted)',
           icon: 'stack',
         },
@@ -446,7 +448,7 @@ export function c4RootGraph(snapshot: MapSnapshot, model: C4Model, rootId: strin
       data: {
         kind: 'component',
         title: component.get(p.id)?.name ?? (p.id === 'unassigned' ? 'Unassigned files' : p.id),
-        subtitle: `${p.near} near entry · ${p.files} files`,
+        subtitle: `${p.near} near entry · ${plural(p.files, 'file')}`,
         detail: component.get(p.id)?.summary,
         accent: entry ? 'var(--c4-person)' : p.near > 0 ? ROLE_ACCENT[root.role] : 'var(--c4-muted)',
         icon: entry ? 'play' : 'box',

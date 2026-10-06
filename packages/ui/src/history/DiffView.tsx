@@ -166,7 +166,7 @@ export function DiffView({ diff, path, mode = 'unified', kind = 'modified', rena
       ))}
       {fold && fold.hidden > 0 && (
         <div className="diff-fold">
-          <span>{fold.hidden.toLocaleString()} more {kind === 'new' ? 'added' : 'deleted'} lines are hidden</span>
+          <span>{fold.hidden.toLocaleString()} more {kind === 'new' ? 'added' : 'deleted'} {fold.hidden === 1 ? 'line is' : 'lines are'} hidden</span>
           <button onClick={() => setLimit(fold.visible + FOLD_STEP)}>Show {Math.min(FOLD_STEP, fold.hidden).toLocaleString()} more</button>
           <button onClick={() => setLimit(fold.total)}>Show all {fold.total.toLocaleString()} lines</button>
         </div>
