@@ -174,11 +174,11 @@ button.link { background: none; border: none; color: var(--accent); padding: 0; 
 .c4-crumbs button.link:disabled { color: var(--text); opacity: 1; cursor: default; }
 .plan-float { position: absolute; top: 10px; left: 12px; z-index: 8; max-width: 380px; }
 .plan-panel { background: var(--surface); border: 1px solid var(--plan); border-radius: var(--r-2); padding: 8px 10px; font-size: calc(12px * var(--fs-scale, 1)); display: flex; flex-direction: column; gap: 6px; max-height: calc(100vh - 160px); overflow: auto; width: 360px; }
-.plan-panel.rejected, .plan-panel.withdrawn, .plan-panel.done { border-color: var(--line); }
+.plan-panel.rejected, .plan-panel.withdrawn, .plan-panel.closed { border-color: var(--line); }
 .plan-panel-head { display: flex; align-items: center; gap: 6px; background: none; border: none; padding: 0; text-align: left; width: 100%; }
 .plan-toggle { margin-left: auto; }
 .plan-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--plan); flex: none; }
-.plan-panel.rejected .plan-dot, .plan-panel.withdrawn .plan-dot, .plan-panel.done .plan-dot { background: var(--muted); }
+.plan-panel.rejected .plan-dot, .plan-panel.withdrawn .plan-dot, .plan-panel.closed .plan-dot { background: var(--muted); }
 .plan-goal { font-weight: 500; }
 .plan-steps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .plan-step { border-top: 1px solid var(--line); padding-top: 5px; }
@@ -736,8 +736,8 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .diff-row.del .diff-mark { color: var(--error); }
 .review-files .diff-view { margin: 2px 0 8px 12px; }
 .review-file .review-path { display: flex; flex: 1; min-width: 0; overflow: visible; text-overflow: clip; }
-.review-dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
-.review-base { flex: none; color: var(--fg); }
+.review-dir { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--muted); }
+.review-base { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; color: var(--fg); }
 .diff-text mark { color: inherit; border-radius: 2px; }
 .diff-row.add mark { background: rgba(115, 201, 145, 0.38); }
 .diff-row.del mark { background: rgba(247, 84, 100, 0.40); }
