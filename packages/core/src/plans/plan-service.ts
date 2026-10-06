@@ -110,7 +110,7 @@ export class PlanService {
     };
     this.records.push(record);
     if (!this.states.has(id)) this.states.set(id, new Map());
-    if (replaced !== null) this.close(replaced, `Replaced by plan ${id}.`);
+    if (replaced !== null) this.close(replaced, `Replaced by plan ${id}.`, `Plan ${id} replaced this plan before this revision was answered.`);
     if (review.auto) {
       this.approve(record, 'auto');
       return { ok: true, value: { status: 'approved' } };
@@ -131,7 +131,7 @@ export class PlanService {
     }
     if (answer.kind === 'accept') {
       if (record.status !== 'done') throw new PlanError('Only a plan with every step done can be accepted.');
-      this.close(record, 'Accepted by you.');
+      this.close(record, 'Accepted by you.', `The user accepted plan ${record.id} as finished before this revision was answered; the plan is closed.`);
       return;
     }
     if (record.status !== 'proposed') throw new PlanError('That plan is no longer waiting for an answer.');
@@ -322,12 +322,12 @@ export class PlanService {
     }
   }
 
-  private withdrawWaitingRevisions(done: PlanRecord): void {
+  private withdrawWaitingRevisions(done: PlanRecord, why = COMPLETED_FIRST): void {
     for (const record of this.versions(done.id)) {
-      if (record.status === 'proposed') this.settle(record, 'withdrawn', COMPLETED_FIRST, { status: 'rejected', feedback: COMPLETED_FIRST });
+      if (record.status === 'proposed') this.settle(record, 'withdrawn', why, { status: 'rejected', feedback: why });
       else if (record.status === 'changes-requested') {
         record.status = 'withdrawn';
-        record.feedback = COMPLETED_FIRST;
+        record.feedback = why;
         record.decidedAt = this.now();
         this.save(record);
       }
@@ -392,12 +392,12 @@ export class PlanService {
     this.emit();
   }
 
-  private close(record: PlanRecord, feedback: string): void {
+  private close(record: PlanRecord, feedback: string, revisionFeedback: string): void {
     record.status = 'closed';
     record.feedback = feedback;
     record.decidedAt = this.now();
     this.save(record);
-    this.withdrawWaitingRevisions(record);
+    this.withdrawWaitingRevisions(record, revisionFeedback);
     this.emit();
   }
 
