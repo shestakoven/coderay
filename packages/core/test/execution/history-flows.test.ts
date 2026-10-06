@@ -68,13 +68,14 @@ describe.each([
   });
 });
 
-describe('git checkout of single files from another commit, which leaves HEAD where it was', { timeout: 60_000 }, () => {
+describe('git cherry-pick -n and revert -n, which leave HEAD where it was', { timeout: 60_000 }, () => {
   it('is still the agent work: after the call ends the watchdog raises an event for the files outside the plan, whether written during the call or at its end', async () => {
-    const b = await flow('root', 'git checkout main -- outside.txt && sleep 1 && git checkout main -- old.txt', [HOLD, AWAIT]);
+    const b = await flow('root', 'git cherry-pick -n main && sleep 1 && git revert -n HEAD', [HOLD, AWAIT]);
     await b.send();
-    await waitFor(() => ['outside.txt', 'old.txt'].every((rel) => b.events().some((e) => e.changes.some((c) => c.path === rel))), 'both files in watchdog events', 20_000);
+    const files = ['gone.txt', 'notes.txt', 'old.txt', 'outside.txt', 'ren.txt', 'renamed.txt'];
+    await waitFor(() => files.every((rel) => b.events().some((e) => e.changes.some((c) => c.path === rel))), 'every file in watchdog events', 20_000);
     const raised = b.events().flatMap((e) => e.changes.map((c) => [c.path, c.origin, c.outOfPlan]));
-    expect(raised.sort()).toEqual([['old.txt', 'agent-tool', true], ['outside.txt', 'agent-tool', true]]);
-    expect([changeOf(b, 'outside.txt')?.stepKey, b.rt.gate.gate.prompts()]).toEqual(['edit', []]);
+    expect(raised.sort()).toEqual(files.map((rel) => [rel, 'agent-tool', true]));
+    expect([changeOf(b, 'outside.txt')?.stepKey, changeOf(b, 'notes.txt')?.stepKey, b.rt.gate.gate.prompts()]).toEqual(['edit', 'edit', []]);
   });
 });

@@ -52,6 +52,10 @@ interface State {
   targets: ShellTarget[];
   rewrites: (string | null)[];
   history: (string | null)[];
+  // Whether every command so far only moves history or reads.
+  pure: boolean;
+  // A GIT_ variable was set, so git may run on another repository or index than its directory says.
+  gitEnv: boolean;
 }
 
 interface TargetExtra {
@@ -70,6 +74,10 @@ const FILE_REDIRECTS = new Set(['>', '>>', '>|', '&>', '&>>', '<>']);
 const KEYWORDS = new Set(['{', '}', '!', 'then', 'do', 'else', 'elif', 'if', 'while', 'until']);
 const WRAPPERS = new Set(['sudo', 'command', 'builtin', 'nohup', 'time', 'exec', 'nice', 'env']);
 const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert']);
+const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'fetch', 'branch', 'ls-files', 'rev-list', 'describe', 'merge-base']);
+const HARMLESS = new Set(['cd', 'pwd', 'echo', 'printf', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
+// Options whose value is the next word, among the history commands'.
+const VALUE_OPTIONS = new Set(['-b', '-B', '-c', '-C', '--orphan', '-m', '-F', '--file', '-s', '--strategy', '-X', '--strategy-option', '--onto', '--into-name']);
 const WORK_TREE_REWRITES = new Set(['restore', 'stash', 'clean', 'apply', 'am']);
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
 const XARGS_WRITES = 'xargs runs a command that writes files it reads from its input';
@@ -86,9 +94,13 @@ const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [] };
+  const state: State = { env, cwd: [cwd], mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], pure: true, gitEnv: false };
   run(command, state, 0);
-  return { targets: state.targets, allTracked: state.rewrites.length + state.history.length > 0, rewrites: state.rewrites, history: state.history };
+  // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
+  const pure = state.pure && state.targets.length === 0;
+  const rewrites = pure ? state.rewrites : [...state.rewrites, ...state.history];
+  const history = pure ? state.history : [];
+  return { targets: state.targets, allTracked: rewrites.length + history.length > 0, rewrites, history };
 }
 
 function run(script: string, state: State, depth: number): void {
@@ -321,10 +333,15 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
     assign(args[0]!, state);
     args = args.slice(1);
   }
-  args = unwrap(args);
-  const name = literalText(args[0] ?? EMPTY);
-  if (!name) return;
-  command(posix.basename(name), args.slice(1), state, depth);
+  const wrapped = unwrap(args);
+  for (const word of args.slice(0, args.length - wrapped.length)) {
+    if (isAssignment(word)) assign(word, state);
+    else if (['env', 'sudo'].includes(posix.basename(literalText(word) ?? ''))) state.pure = false;
+  }
+  if (wrapped.length === 0) return;
+  const name = literalText(wrapped[0]!);
+  if (name === null || (posix.basename(name) !== 'git' && !HARMLESS.has(posix.basename(name)))) state.pure = false;
+  if (name) command(posix.basename(name), wrapped.slice(1), state, depth);
 }
 
 function command(name: string, args: Word[], state: State, depth: number): void {
@@ -505,6 +522,8 @@ function git(args: Word[], state: State): void {
   let i = 0;
   while (i < args.length) {
     const text = literalText(args[i]!);
+    // Configuration given on the command line can run any program: hooks, aliases, editors, merge drivers.
+    if (text === null || text === '-c' || /^--(config-env|exec-path)(=|$)/.test(text)) state.pure = false;
     if (text === '-C' || text === '-c' || text === '--git-dir' || text === '--work-tree' || text === '--namespace') i += 2;
     else if (text !== null && text.startsWith('-')) i += 1;
     else break;
@@ -512,16 +531,35 @@ function git(args: Word[], state: State): void {
   const word = args[i];
   if (!word) return;
   const sub = literalText(word);
+  const rest = args.slice(i + 1);
+  if (sub === null || !(HISTORY_VERBS.has(sub) || GIT_READS.has(sub)) || rest.some((arg) => runsCommand(sub, literalText(arg)))) state.pure = false;
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
+  else if (sub === 'checkout' && checksOutPaths(rest)) state.rewrites.push(gitDirectory(args.slice(0, i), state));
   else if (HISTORY_VERBS.has(sub)) state.history.push(gitDirectory(args.slice(0, i), state));
   else if (WORK_TREE_REWRITES.has(sub)) {
-    if (!(sub === 'apply' && appliesToIndexOnly(args.slice(i + 1)))) state.rewrites.push(gitDirectory(args.slice(0, i), state));
+    if (!(sub === 'apply' && appliesToIndexOnly(rest))) state.rewrites.push(gitDirectory(args.slice(0, i), state));
   }
-  else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), args.slice(i + 1), state);
+  else if (sub === 'mv' || sub === 'rm') gitPaths(sub, args.slice(0, i), rest, state);
+}
+
+const runsCommand = (sub: string, arg: string | null): boolean =>
+  arg !== null && (/^--(exec|upload-pack)(=|$)/.test(arg) || (sub === 'rebase' && /^-[^-]*x/.test(arg)));
+
+// checkout <tree-ish> <paths>, checkout -- <paths> and their kin write files and leave HEAD where it is.
+function checksOutPaths(rest: Word[]): boolean {
+  let operands = 0;
+  for (let i = 0; i < rest.length; i += 1) {
+    const text = literalText(rest[i]!);
+    if (text === '--' || text === '-p' || text === '--patch' || text?.startsWith('--pathspec-from-file')) return true;
+    if (text !== null && VALUE_OPTIONS.has(text)) i += 1;
+    else if (text === null || !text.startsWith('-') || text === '-') operands += 1;
+  }
+  return operands > 1;
 }
 
 // Where git runs: the working directory moved by each -C; unknown for a repository chosen any other way.
 function gitDirectory(options: Word[], state: State): string | null {
+  if (state.gitEnv) return null;
   let dir = cwdOf(state);
   for (let i = 0; i < options.length; i += 1) {
     const text = literalText(options[i]!);
@@ -554,7 +592,7 @@ function appliesToIndexOnly(rest: Word[]): boolean {
 }
 
 function gitPaths(sub: 'mv' | 'rm', global: Word[], rest: Word[], state: State): void {
-  const redirected = global.some((arg) => /^(-C|--git-dir|--work-tree)/.test(literalText(arg) ?? ''));
+  const redirected = state.gitEnv || global.some((arg) => /^(-C|--git-dir|--work-tree)/.test(literalText(arg) ?? ''));
   const fromFile = rest.some((arg) => literalText(arg)?.startsWith('--pathspec-from-file') ?? false);
   if (redirected || fromFile) {
     state.targets.push(unresolved(`git ${sub}`, redirected ? `git ${sub} runs in another directory` : `git ${sub} reads its paths from a file`));
@@ -720,6 +758,9 @@ function assign(word: Word, state: State): void {
   if (only?.kind === 'sub' && isPlainMktemp(only.body)) state.mktemp.add(name);
   else state.mktemp.delete(name);
   if (PROTECTED_VARS.has(name)) state.poisoned.add(name);
+  // A variable can point git at another repository, index or editor, or put another program on the PATH.
+  state.pure = false;
+  if (name.startsWith('GIT_')) state.gitEnv = true;
 }
 
 function isPlainMktemp(body: string): boolean {
