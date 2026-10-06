@@ -143,9 +143,10 @@ export class ActivityLedger {
     return entry.interruptedAt === null || at <= entry.interruptedAt + this.lingerMs;
   }
 
+  // A background call at the project root would otherwise claim every file anyone writes while it runs.
   private reaches(call: ToolCall, rel: string, allTracked: boolean): boolean {
     if (!call.background) return true;
-    return (allTracked && call.allTracked) || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel)) || (call.history?.some((h) => under(rel, h.dir)) ?? false);
+    return (allTracked && call.allTracked) || call.targets.some((target) => under(rel, target)) || (call.cwdRel !== null && call.cwdRel !== '' && call.cwdRel !== '.' && under(rel, call.cwdRel)) || (call.history?.some((h) => h.dir !== '' && under(rel, h.dir)) ?? false);
   }
 }
 
