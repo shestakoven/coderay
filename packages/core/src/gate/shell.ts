@@ -536,6 +536,14 @@ function git(args: Word[], state: State): void {
   const sub = literalText(word);
   const rest = args.slice(i + 1);
   if (sub === null || !(HISTORY_VERBS.has(sub) || GIT_READS.has(sub)) || rest.some((arg) => runsCommand(sub, literalText(arg)))) state.pure = false;
+  // git diff, log and show write their output to a file with --output.
+  for (const [at, arg] of rest.entries()) {
+    const first = arg.parts[0];
+    if (literalText(arg) === '--output' && rest[at + 1]) addTarget(rest[at + 1]!, state);
+    else if (first?.kind === 'lit' && first.text.startsWith('--output=')) {
+      addTarget({ parts: [{ kind: 'lit', text: first.text.slice('--output='.length) }, ...arg.parts.slice(1)], raw: arg.raw }, state);
+    }
+  }
   if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
   else if (sub === 'checkout' && checksOutPaths(rest)) state.rewrites.push(gitDirectory(args.slice(0, i), state));
   else if (HISTORY_VERBS.has(sub)) {
