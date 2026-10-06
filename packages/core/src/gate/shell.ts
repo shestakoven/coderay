@@ -50,7 +50,7 @@ interface State {
   env: ShellEnv;
   // Per subshell level, every directory bash may be in.
   cwd: (string | null)[][];
-  // How deep in if, while, for, case, a function or a { } group the command is.
+  // How deep in if, while, for, case, a function or a { } group the command is; after a function is defined, never back to 0.
   nesting: number;
   mktemp: Set<string>;
   poisoned: Set<string>;
@@ -170,6 +170,15 @@ function run(script: string, state: State, depth: number): void {
       redirects.push({ op: token.op, word: next?.t === 'word' ? next.word : null });
       if (next?.t === 'word') i += 1;
     } else {
+      const next = tokens[i + 1];
+      // name() defines a function, which may shadow any command and run at any later point.
+      if (token.op === '(' && words.length > 0 && next?.t === 'op' && next.op === ')') {
+        words = [];
+        state.pure = false;
+        state.nesting += 1;
+        i += 1;
+        continue;
+      }
       flush(token.op);
       if (token.op === '(') state.cwd.push(cwdOf(state));
       if (token.op === ')' && state.cwd.length > 1) state.cwd.pop();
@@ -391,7 +400,8 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   const name = literalText(wrapped[0]!);
   const base = posix.basename(name ?? '');
   if (name === null || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
-  if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0);
+  // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
+  if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
 }
 
 function nest(word: string, state: State): void {
