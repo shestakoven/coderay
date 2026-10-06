@@ -483,7 +483,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   prompts={pendingPrompts(plans.prompts)}
                   dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
                   planDock={shown && waitsForUser(shown) && (
-                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} onHoverStep={setHoverStep} />
+                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} working={activity.busy} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} onHoverStep={setHoverStep} />
                   )}
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}

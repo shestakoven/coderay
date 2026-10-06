@@ -7,11 +7,12 @@ import { badgeText, classifyTargets, planTitle } from './plan-state';
 const OP_MARK = { modify: '~', create: '+', delete: '−' } as const;
 const STATUS_ICON = { pending: '○', active: '●', done: '✓' } as const;
 
-export function PlanPanel({ plan, snapshot, open, working = true, followUps = [], onToggle, onAnswer, onFocusStep, onHoverStep, onShowFiles }: {
+export function PlanPanel({ plan, snapshot, open, working, followUps = [], onToggle, onAnswer, onFocusStep, onHoverStep, onShowFiles }: {
   plan: PlanView;
   snapshot: MapSnapshot | null;
   open: boolean;
-  working?: boolean;
+  // Whether the agent has a turn open. No default: a caller that forgot it would never show a step as left open.
+  working: boolean;
   followUps?: ReviewFile[];
   onToggle?: () => void;
   onAnswer: (answer: PlanAnswer) => void;
