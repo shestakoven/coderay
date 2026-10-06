@@ -254,6 +254,11 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
         toggleTerminalRef.current();
         return;
       }
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyG') {
+        event.preventDefault();
+        dispatchPanels({ type: 'left-tab', tab: 'git' });
+        return;
+      }
       if (typing(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
       if (event.key === 'f') dispatchPanels({ type: 'focus' });
     };
