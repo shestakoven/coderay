@@ -67,6 +67,8 @@ interface State {
   poisoned: Set<string>;
   // Loop variables whose every value the IDE can read: for NAME in a b c.
   loops: Map<string, string[]>;
+  // A construct ran or may run that changes a variable without an assignment the IDE reads: no loop variable is known from then on.
+  loopsOff: boolean;
   targets: ShellTarget[];
   rewrites: (string | null)[];
   history: (string | null)[];
@@ -163,13 +165,15 @@ const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const MAX_DEPTH = 8;
 const MAX_LOOP_PATHS = 32;
+// Words that read or assign a variable behind an assignment the IDE reads: arithmetic (let, the operands of -eq and the like), select, read and its kin, eval and source, a trap or an alias that runs later, a nameref.
+const REBINDERS = new Set(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'coproc', 'declare', 'typeset', 'local', 'function', '-eq', '-ne', '-lt', '-le', '-gt', '-ge']);
 // Values that stay one word with no wildcard, whatever the quoting of the variable.
 const PLAIN_VALUE = /^[\w.,:@%+=/-]+$/;
 const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), loops: new Map(), targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
+  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), loops: new Map(), loopsOff: false, targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
   run(command, state, 0);
   // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
   const pure = state.pure && state.targets.length === 0;
@@ -203,6 +207,23 @@ function readsOnly(base: string, args: Word[]): boolean {
   return writing !== undefined && args.every((word) => {
     const text = literalText(word);
     return text !== null && !writing.test(text);
+  });
+}
+
+// Whether the script has a construct that can change a variable without an assignment the IDE reads.
+function rebinds(tokens: Token[]): boolean {
+  return tokens.some((token, i) => {
+    const next = tokens[i + 1];
+    if (token.t === 'op') {
+      // ((…)), for ((…)) and name() { … }: a function may be called before the line that defines it, and sets any variable.
+      return token.op === '(' && (next?.t === 'op' && (next.op === '(' || next.op === ')'));
+    }
+    if (token.t !== 'word') return false;
+    const text = literalText(token.word);
+    if (token.word.parts.some((part) => part.kind === 'var' && part.name === '((…))')) return true;
+    if (text === null) return false;
+    if (text === '((…))' || REBINDERS.has(text) || /\[[^\]]*=/.test(text)) return true;
+    return text === 'printf' && next?.t === 'word' && (literalText(next.word) ?? '').startsWith('-v');
   });
 }
 
@@ -248,6 +269,7 @@ function run(script: string, state: State, depth: number): void {
     return;
   }
   const tokens = lex(script);
+  if (rebinds(tokens)) state.loopsOff = true;
   let words: Word[] = [];
   let redirects: Redirect[] = [];
   let before = '';
@@ -609,6 +631,11 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   }
   const appended = name === null ? null : /^([A-Za-z_]\w*)\+=/.exec(name);
   if (appended) state.loops.delete(appended[1]!);
+  // A command named by a variable may be read, let or any other builtin.
+  if (name === null) {
+    state.loopsOff = true;
+    state.loops.clear();
+  }
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
   if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
 }
@@ -679,14 +706,6 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       return;
     case 'for':
       bindLoop(args, state);
-      return;
-    case 'read':
-    case 'mapfile':
-    case 'readarray':
-    case 'getopts':
-    case 'printf':
-    case 'unset':
-      state.loops.clear();
       return;
     case 'find':
       find(args, state);
@@ -1146,7 +1165,7 @@ function loopWords(word: Word, state: State): Word[] {
 // for NAME in WORDS: while the loop runs NAME is one of the words; a list the IDE cannot read leaves it unknown.
 function bindLoop(args: Word[], state: State): void {
   const name = literalText(args[0] ?? EMPTY);
-  if (name === null || !/^[A-Za-z_]\w*$/.test(name)) return;
+  if (state.loopsOff || name === null || !/^[A-Za-z_]\w*$/.test(name)) return;
   state.loops.delete(name);
   if (PROTECTED_VARS.has(name)) {
     state.poisoned.add(name);
