@@ -42,10 +42,10 @@ describe('main.ts --hub under the app (--token-stdin --exit-with-parent)', () =>
 
     const underApp = startHub(tempDir('hub-parent-'), ['--token-stdin', '--exit-with-parent']);
     underApp.child.stdin.write(`${TOKEN}\n`);
-    await waitFor(() => /IDE core: hub/.test(underApp.output.text) || undefined, `the hub's greeting in:\n${underApp.output.text}`, 30_000);
+    await waitFor(() => /CodeRay core: hub/.test(underApp.output.text) || undefined, `the hub's greeting in:\n${underApp.output.text}`, 30_000);
     underApp.child.stdin.end();
     await underApp.closed;
-    expect(underApp.output.text).toContain('IDE core: hub');
+    expect(underApp.output.text).toContain('CodeRay core: hub');
     expect(underApp.output.text).not.toContain(TOKEN);
   });
 
@@ -57,7 +57,7 @@ describe('main.ts --hub under the app (--token-stdin --exit-with-parent)', () =>
     execFileSync('git', ['init', '-q'], { cwd: root });
     const hub = startHub(base, ['--token-stdin', '--exit-with-parent'], [root]);
     hub.child.stdin.write(`${TOKEN}\n`);
-    await waitFor(() => hub.output.text.includes(`[${basename(root)}] IDE core: ${root}`) || undefined, `the project core to be up in:\n${hub.output.text}`, 30_000);
+    await waitFor(() => hub.output.text.includes(`[${basename(root)}] CodeRay core: ${root}`) || undefined, `the project core to be up in:\n${hub.output.text}`, 30_000);
     const lock = join(projectDir(join(base, 'home'), root), LOCK_FILE);
     expect(existsSync(lock)).toBe(true);
 

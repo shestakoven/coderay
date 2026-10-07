@@ -6,7 +6,7 @@ describe('systemPrompt', () => {
     const prompt = systemPrompt([{ id: 'auth', name: 'Auth' }, { id: 'billing', name: 'Billing' }]);
     expect(prompt).toContain('call mcp__idecore__propose_plan');
     expect(prompt).toContain('call mcp__idecore__step with {"key": "<key>", "phase": "start"}');
-    expect(prompt).toContain('Tool errors that start with "IDE:" come from this IDE');
+    expect(prompt).toContain('Tool errors that start with "CodeRay:" come from this CodeRay');
     expect(prompt.split('\n').slice(-3)).toEqual(['Components of this project (id — name):', '- auth — Auth', '- billing — Billing']);
   });
 

@@ -348,7 +348,7 @@ function migrate(db: InstanceType<typeof DatabaseSync>): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
   const current = Number(row?.user_version ?? 0);
   if (current > MIGRATIONS.length) {
-    throw new Error(`history.sqlite has schema version ${current}, newer than this IDE understands (${MIGRATIONS.length})`);
+    throw new Error(`history.sqlite has schema version ${current}, newer than this CodeRay understands (${MIGRATIONS.length})`);
   }
   for (let version = current; version < MIGRATIONS.length; version += 1) {
     db.exec('BEGIN');

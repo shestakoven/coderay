@@ -525,9 +525,9 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(controlResponse(h)).toEqual({
       type: 'control_response',
-      response: { subtype: 'success', request_id: 'req_fx_settings', response: { behavior: 'deny', message: 'The IDE does not answer permission prompts for Write.' } },
+      response: { subtype: 'success', request_id: 'req_fx_settings', response: { behavior: 'deny', message: 'CodeRay does not answer permission prompts for Write.' } },
     });
-    expect(texts(h.session.state().items)).toContain('Refused a "can_use_tool" request from claude: The IDE does not answer permission prompts for Write.');
+    expect(texts(h.session.state().items)).toContain('Refused a "can_use_tool" request from claude: CodeRay does not answer permission prompts for Write.');
   });
 
   it('ends the session on New session and starts a fresh claude conversation with the next message', async () => {
@@ -555,7 +555,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(texts(h.session.state().items)).toContain(
-      'claude 2.1.100 is older than 2.1.281, the version the IDE was verified with; tool names and stream events may differ.',
+      'claude 2.1.100 is older than 2.1.281, the version CodeRay was verified with; tool names and stream events may differ.',
     );
   });
 
@@ -621,11 +621,11 @@ async function gatedHarness(scenario: string, overrides: Partial<AgentSessionOpt
 }
 
 const decision = (toolUseId: string) => ({
-  toolUseId, decision: 'allow' as const, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE: allowed', decidedAt: 1,
+  toolUseId, decision: 'allow' as const, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'CodeRay: allowed', decidedAt: 1,
 });
 
 describe('AgentSession with the gate', () => {
-  it('passes the hook settings, the IDE system prompt and a fresh system prompt before the permission flags, on the first spawn and on resume', async () => {
+  it('passes the hook settings, CodeRay system prompt and a fresh system prompt before the permission flags, on the first spawn and on resume', async () => {
     const h = await gatedHarness('multi-turn');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
@@ -651,11 +651,11 @@ describe('AgentSession with the gate', () => {
     expect(() => h.session.send('hi')).toThrow(new SessionError('no-gate').message);
     const { session, turns, items } = h.session.state();
     expect([session?.status, turns, items.length]).toEqual(['stopped', [], 1]);
-    expect(texts(items)[0]).toMatch(/^The IDE could not write the hook settings for claude \(.+\), so the agent was not started\.$/);
+    expect(texts(items)[0]).toMatch(/^CodeRay could not write the hook settings for claude \(.+\), so the agent was not started\.$/);
     expect(texts(items)[0]).toContain(runDir(home));
   });
 
-  it('still shows an AskUserQuestion prompt and answers it when the IDE hook is active (spike c39)', async () => {
+  it('still shows an AskUserQuestion prompt and answers it when CodeRay hook is active (spike c39)', async () => {
     const h = await gatedHarness('ask-user-question');
     h.session.send('ask me');
     const prompt = await pendingPrompt(h);
@@ -1060,13 +1060,13 @@ describe('AgentSession notes from the watchdog', () => {
 
   it('prepends a queued note to the next user message and shows it as a notice, with the message text unchanged', async () => {
     const h = await harness('multi-turn');
-    h.session.queueNote('[IDE] The user kept a.ts.');
+    h.session.queueNote('[CodeRay] The user kept a.ts.');
     h.session.send('continue please');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[IDE] The user kept a.ts.\n\ncontinue please' } }]);
+    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[CodeRay] The user kept a.ts.\n\ncontinue please' } }]);
     const items = h.session.state().items;
     expect(items.find((item) => item.kind === 'message' && item.role === 'user')).toMatchObject({ text: 'continue please' });
-    expect(items.find((item) => item.kind === 'notice')).toMatchObject({ text: '[IDE] The user kept a.ts.' });
+    expect(items.find((item) => item.kind === 'notice')).toMatchObject({ text: '[CodeRay] The user kept a.ts.' });
     h.session.send('and once more');
     await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
     expect(userWrites(h)[1]).toMatchObject({ message: { content: 'and once more' } });
@@ -1076,7 +1076,7 @@ describe('AgentSession notes from the watchdog', () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    h.session.queueNote('[IDE] note');
+    h.session.queueNote('[CodeRay] note');
     const child = (h.session as unknown as { process: { write: (m: object) => void } }).process;
     const write = child.write.bind(child);
     child.write = () => { throw new Error('pipe closed'); };
@@ -1084,7 +1084,7 @@ describe('AgentSession notes from the watchdog', () => {
     child.write = write;
     h.session.send('again');
     await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
-    expect(userWrites(h)[1]).toMatchObject({ message: { content: '[IDE] note\n\nagain' } });
+    expect(userWrites(h)[1]).toMatchObject({ message: { content: '[CodeRay] note\n\nagain' } });
   });
 
   it('writes an absorbed note into the open turn without opening a turn of its own', async () => {
@@ -1092,21 +1092,21 @@ describe('AgentSession notes from the watchdog', () => {
     h.session.send('run it');
     await waitFor(() => userWrites(h).length === 1, 'first message delivered');
     const turnsBefore = h.session.state().turns.length;
-    h.session.sendAbsorbed('[IDE] note');
+    h.session.sendAbsorbed('[CodeRay] note');
     await waitFor(() => userWrites(h).length === 2, 'note delivered');
-    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[IDE] note' } });
+    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[CodeRay] note' } });
     const state = h.session.state();
     expect(state.turns).toHaveLength(turnsBefore);
     expect(state.items.filter((item) => item.kind === 'message' && item.role === 'user')).toHaveLength(1);
-    expect(state.items.find((item) => item.kind === 'notice')).toMatchObject({ text: 'IDE note sent to the agent' });
+    expect(state.items.find((item) => item.kind === 'notice')).toMatchObject({ text: 'CodeRay note sent to the agent' });
   });
 
   it('refuses an absorbed note when there is no process or no open turn', async () => {
     const h = await harness('multi-turn');
-    expect(() => h.session.sendAbsorbed('[IDE] note')).toThrow(SessionError);
+    expect(() => h.session.sendAbsorbed('[CodeRay] note')).toThrow(SessionError);
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(() => h.session.sendAbsorbed('[IDE] note')).toThrow(SessionError);
+    expect(() => h.session.sendAbsorbed('[CodeRay] note')).toThrow(SessionError);
     expect(userWrites(h)).toHaveLength(1);
   });
 
@@ -1114,11 +1114,11 @@ describe('AgentSession notes from the watchdog', () => {
     const h = await canaryHarness('interrupt-bash', 'off', 5000);
     h.session.send('run it');
     await waitFor(() => h.argvs().length === 1, 'claude started');
-    h.session.sendAbsorbed('[IDE] note');
+    h.session.sendAbsorbed('[CodeRay] note');
     expect(userWrites(h)).toEqual([]);
     await h.ping();
     await waitFor(() => userWrites(h).length === 2, 'both delivered');
-    expect(userWrites(h).map((m) => (m.message as { content: string }).content)).toEqual(['run it', '[IDE] note']);
+    expect(userWrites(h).map((m) => (m.message as { content: string }).content)).toEqual(['run it', '[CodeRay] note']);
   });
 });
 

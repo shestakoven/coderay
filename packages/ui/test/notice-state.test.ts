@@ -3,7 +3,7 @@ import { noticesReducer, type NoticeItem } from '../src/project/notice-state';
 import type { StatusKind } from '../src/project/project-status';
 
 const notice = (id: string, projectId: string | null, kind: NoticeItem['kind'] = 'attention'): NoticeItem =>
-  ({ id, projectId, kind, title: `${projectId ?? 'IDE'} title`, body: `${id} body` });
+  ({ id, projectId, kind, title: `${projectId ?? 'CodeRay'} title`, body: `${id} body` });
 const add = (state: NoticeItem[], item: NoticeItem) => noticesReducer(state, { type: 'add', notice: item });
 const addAll = (items: NoticeItem[]) => items.reduce(add, [] as NoticeItem[]);
 const ids = (state: NoticeItem[]) => state.map((item) => item.id).sort();

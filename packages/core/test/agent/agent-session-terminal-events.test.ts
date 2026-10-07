@@ -15,7 +15,7 @@ const quiet = (ms = 500) => new Promise((resolve) => setTimeout(resolve, ms));
 const taskNotification = (taskId: string, toolUseId: string, status = 'completed') =>
   `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n<status>${status}</status>\n<summary>Background command "sleep 5" completed</summary>\n</task-notification>`;
 const decision = (toolUseId: string, kind: ToolDecisionRecord['decision']): ToolDecisionRecord => ({
-  toolUseId, decision: kind, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE', decidedAt: 1,
+  toolUseId, decision: kind, planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'CodeRay', decidedAt: 1,
 });
 
 // Moves the clock the session reads forward, while time still passes by itself.
@@ -677,7 +677,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
         expect([t.state().session?.claudeSessionId, t.notices()]).toEqual([t.claudeId, []]);
       });
 
-      it('ignores a SessionStart that names another IDE session', async () => {
+      it('ignores a SessionStart that names another CodeRay session', async () => {
         const t = await openTerminal();
         t.h.session.hookEvent('another-ide-session', t.raw('SessionStart', { source: 'clear', session_id: 'other-conversation' }));
         expect([t.state().session?.claudeSessionId, t.notices()]).toEqual([t.claudeId, []]);
@@ -712,7 +712,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
       });
     });
 
-    it('answers null and changes nothing for an event that names another IDE session', async () => {
+    it('answers null and changes nothing for an event that names another CodeRay session', async () => {
       const t = await openTerminal();
       const before = snapshot(t);
       expect(t.h.session.hookEvent('another-ide-session', t.raw('UserPromptSubmit', { prompt: 'hello' }))).toBeNull();
@@ -743,7 +743,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
       expect(JSON.stringify(h.session.state())).toBe(before);
     });
 
-    it.each([['Notification', { message: 'x' }], ['PreCompact', {}], ['SomethingNew', {}]])('answers null and changes nothing for a %s, which the IDE does not follow', async (name, fields) => {
+    it.each([['Notification', { message: 'x' }], ['PreCompact', {}], ['SomethingNew', {}]])('answers null and changes nothing for a %s, which CodeRay does not follow', async (name, fields) => {
       const t = await openTerminal();
       t.prompt('fix the login');
       const before = snapshot(t);
@@ -930,14 +930,14 @@ describe('an agent in the terminal, followed through its hooks', () => {
   });
 
   describe('the way to the agent in the terminal', () => {
-    it('never types a message of the IDE into the terminal, which belongs to the user', async () => {
+    it('never types a message of CodeRay into the terminal, which belongs to the user', async () => {
       const t = await openTerminal();
       t.h.session.send('please check the tests', { fromUser: false });
       await quiet(300);
       expect(t.h.input).toEqual([]);
     });
 
-    it('gives a message of the IDE to the agent with the next prompt of the user, and shows it in the chat', async () => {
+    it('gives a message of CodeRay to the agent with the next prompt of the user, and shows it in the chat', async () => {
       const t = await openTerminal();
       t.h.session.send('please check the tests', { fromUser: false });
       expect(t.prompt('continue')).toEqual({
@@ -946,7 +946,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
       expect(t.notices().some((text) => text.includes('please check the tests'))).toBe(true);
     });
 
-    it('gives a message of the IDE once', async () => {
+    it('gives a message of CodeRay once', async () => {
       const t = await openTerminal();
       t.h.session.send('please check the tests', { fromUser: false });
       t.prompt('continue');
@@ -954,14 +954,14 @@ describe('an agent in the terminal, followed through its hooks', () => {
       expect(t.prompt('and now?')).toBeNull();
     });
 
-    it('still tells that the user wrote when a message of the IDE goes with the prompt', async () => {
+    it('still tells that the user wrote when a message of CodeRay goes with the prompt', async () => {
       const t = await openTerminal();
       t.h.session.send('please check the tests', { fromUser: false });
       t.prompt('continue');
       expect(t.heard.userMessages).toBe(1);
     });
 
-    it('does not let the IDE put images into the terminal either', async () => {
+    it('does not let CodeRay put images into the terminal either', async () => {
       const t = await openTerminal();
       expect(() => t.h.session.send('look', { fromUser: false, images: [{ mediaType: 'image/gif', data: 'R0lG' }] })).toThrow(new SessionError('in-terminal'));
       expect(t.h.input).toEqual([]);

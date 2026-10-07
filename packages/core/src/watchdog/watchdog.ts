@@ -194,7 +194,7 @@ export class Watchdog {
       for (const path of paths) decisions.set(path, Object.hasOwn(answer.files, path) ? answer.files[path]! : 'keep');
     }
     for (const [path, value] of decisions) {
-      if (isGitState(path) && value !== 'keep') throw new WatchdogError(`${path} can only be kept: the IDE does not roll back git state.`);
+      if (isGitState(path) && value !== 'keep') throw new WatchdogError(`${path} can only be kept: CodeRay does not roll back git state.`);
     }
     return decisions;
   }
@@ -345,7 +345,7 @@ export class Watchdog {
         id: this.newId(), kind: 'watchdog', mode: this.mode(), phase: 'pending', resolution: 'pending', changes: [], toolCalls: [],
         interrupted: false, paused: false, runningSubagents: 0, backgroundShell: false, unknownOrigin: true,
         snapshotSha: null, canExpand: false, defaultAction: null,
-        reason: 'These files changed while the IDE was not running; it does not know who changed them.', ts: this.now(), resolvedAt: null,
+        reason: 'These files changed while CodeRay was not running; it does not know who changed them.', ts: this.now(), resolvedAt: null,
       };
       this.all.push(event);
       this.step(event, 'store the decision', () => { this.o.changes.markOutOfPlan(changes.map((c) => c.id), event.id); });

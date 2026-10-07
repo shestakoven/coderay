@@ -144,7 +144,7 @@ describe('shellWrites', () => {
   });
 
   it('cannot resolve a relative path after a cd into a variable', () => {
-    expect(targets('cd "$DIR" && rm x')).toEqual(['? a relative path after a cd the IDE cannot follow']);
+    expect(targets('cd "$DIR" && rm x')).toEqual(['? a relative path after a cd CodeRay cannot follow']);
   });
 
   it('substitutes $TMPDIR and $TMP, and leaves other variables unresolved', () => {
@@ -168,7 +168,7 @@ describe('shellWrites', () => {
   it('reads the script of sh -c and command substitutions', () => {
     expect(targets("bash -c 'echo > inner.txt'")).toEqual(['/p/inner.txt']);
     expect(targets('echo $(echo hi > sub.txt)')).toEqual(['/p/sub.txt']);
-    expect(targets('sh -c "$CMD"')).toEqual(['? a shell script the IDE cannot read']);
+    expect(targets('sh -c "$CMD"')).toEqual(['? a shell script CodeRay cannot read']);
   });
 
   it('marks git commands that rewrite the work tree, and no others', () => {
@@ -256,7 +256,7 @@ describe('shellWrites', () => {
     expect(targets("find . -name '*.tmp' -delete")).toEqual(['? find deletes or changes the files it finds']);
     expect(targets('find . -exec rm {} \\;')).toEqual(['? find deletes or changes the files it finds']);
     expect(targets('ls | xargs -n 1 rm')).toEqual(['? xargs runs a command that writes files it reads from its input']);
-    expect(targets('eval "$X"')).toEqual(['? eval runs text the IDE cannot read']);
+    expect(targets('eval "$X"')).toEqual(['? eval runs text CodeRay cannot read']);
   });
 
   it('looks through sudo, env and keywords to the command', () => {

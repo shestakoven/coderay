@@ -90,7 +90,7 @@ describe('idecore', () => {
     const { plans, port } = await setup();
     const client = await connect(port);
     const result = await client.callTool({ name: 'propose_plan', arguments: { ...small, flow: { ...flow, nodes: [{ ...flow.nodes[0]!, steps: ['nope'] }] } } });
-    expect([result.isError, text(result)]).toEqual([true, expect.stringMatching(/^IDE: /)]);
+    expect([result.isError, text(result)]).toEqual([true, expect.stringMatching(/^CodeRay: /)]);
     for (const mention of ['nope', 'edit']) expect(text(result)).toContain(mention);
     expect(plans.plans()).toEqual([]);
   });
@@ -107,7 +107,7 @@ describe('idecore', () => {
   it('returns a validation error as a tool error the agent can read', async () => {
     const client = await connect((await setup()).port);
     const result = await client.callTool({ name: 'propose_plan', arguments: { goal: 'g', steps: [{ key: 'k', title: 't', rationale: '', targets: [{ componentId: 'nope', op: 'modify' }] }] } });
-    expect([result.isError, text(result)]).toEqual([true, 'IDE: step "k" names an unknown component "nope". Valid component ids: app (App).']);
+    expect([result.isError, text(result)]).toEqual([true, 'CodeRay: step "k" names an unknown component "nope". Valid component ids: app (App).']);
   });
 
   it('returns input that does not fit the schema as a tool error', async () => {

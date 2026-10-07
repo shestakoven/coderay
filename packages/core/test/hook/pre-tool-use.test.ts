@@ -16,7 +16,7 @@ interface Run {
 
 const SECRET = 's3cret';
 const INPUT = JSON.stringify({ tool_name: 'Write', tool_use_id: 'toolu_1', tool_input: { file_path: '/p/a.ts' }, cwd: '/p' });
-const answer = (permissionDecision: string, permissionDecisionReason = 'IDE: test') => JSON.stringify({ permissionDecision, permissionDecisionReason });
+const answer = (permissionDecision: string, permissionDecisionReason = 'CodeRay: test') => JSON.stringify({ permissionDecision, permissionDecisionReason });
 
 function runHook(configPath: string): Promise<Run> {
   return new Promise((resolve) => {
@@ -55,18 +55,18 @@ describe('pre-tool-use hook script', () => {
     const seen: { auth?: string; body?: string } = {};
     const url = await core((req, body, res) => {
       Object.assign(seen, { auth: req.headers.authorization, body });
-      res.writeHead(200, { 'content-type': 'application/json' }).end(answer('allow', 'IDE: allowed by plan p, step s.'));
+      res.writeHead(200, { 'content-type': 'application/json' }).end(answer('allow', 'CodeRay: allowed by plan p, step s.'));
     });
     const run = await runHook(config(url));
     expect([run.code, JSON.parse(run.stdout), seen]).toEqual([
       0,
-      { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'IDE: allowed by plan p, step s.' } },
+      { hookSpecificOutput: { hookEventName: 'PreToolUse', permissionDecision: 'allow', permissionDecisionReason: 'CodeRay: allowed by plan p, step s.' } },
       { auth: `Bearer ${SECRET}`, body: INPUT },
     ]);
   });
 
   it("prints the core's deny and exits 0", async () => {
-    const url = await core((_req, _body, res) => res.writeHead(200).end(answer('deny', 'IDE: no plan.')));
+    const url = await core((_req, _body, res) => res.writeHead(200).end(answer('deny', 'CodeRay: no plan.')));
     const run = await runHook(config(url));
     expect([run.code, JSON.parse(run.stdout).hookSpecificOutput.permissionDecision]).toEqual([0, 'deny']);
   });
@@ -77,15 +77,15 @@ describe('pre-tool-use hook script', () => {
     const port = (server.address() as AddressInfo).port;
     await new Promise<void>((resolve) => server.close(() => resolve()));
     const run = await runHook(config(`http://127.0.0.1:${port}/hook`));
-    expect([run.code, run.stdout, run.stderr]).toEqual([2, '', expect.stringContaining('IDE core unreachable')]);
+    expect([run.code, run.stdout, run.stderr]).toEqual([2, '', expect.stringContaining('CodeRay core unreachable')]);
     expect(run.stderr).not.toContain(SECRET);
   });
 
   it.each([
-    ['an error status', (res: ServerResponse) => res.writeHead(500).end(answer('allow')), 'IDE: the IDE core answered 500'],
+    ['an error status', (res: ServerResponse) => res.writeHead(500).end(answer('allow')), 'CodeRay: CodeRay core answered 500'],
     ['a body that is not JSON', (res: ServerResponse) => res.writeHead(200).end('nope'), undefined],
-    ['a decision other than allow or deny', (res: ServerResponse) => res.writeHead(200).end(answer('ask')), 'IDE: the IDE core sent an answer the hook cannot read'],
-    ['a decision without a reason', (res: ServerResponse) => res.writeHead(200).end(JSON.stringify({ permissionDecision: 'allow' })), 'IDE: the IDE core sent an answer the hook cannot read'],
+    ['a decision other than allow or deny', (res: ServerResponse) => res.writeHead(200).end(answer('ask')), 'CodeRay: CodeRay core sent an answer the hook cannot read'],
+    ['a decision without a reason', (res: ServerResponse) => res.writeHead(200).end(JSON.stringify({ permissionDecision: 'allow' })), 'CodeRay: CodeRay core sent an answer the hook cannot read'],
   ])('blocks with exit 2 on %s', async (_name, reply, exactStderr) => {
     const url = await core((_req, _body, res) => reply(res));
     const run = await runHook(config(url));
@@ -96,7 +96,7 @@ describe('pre-tool-use hook script', () => {
 
   it('blocks with exit 2 when its config file is missing', async () => {
     const run = await runHook(join(tempDir('ide-hook-'), 'missing.json'));
-    expect([run.code, run.stderr]).toEqual([2, expect.stringContaining('IDE:')]);
+    expect([run.code, run.stderr]).toEqual([2, expect.stringContaining('CodeRay:')]);
     expect(run.stderr).not.toContain(SECRET);
   });
 
@@ -117,7 +117,7 @@ describe('pre-tool-use hook script', () => {
   });
 
   it('exits 2, not 0, when a deny cannot be written to its stdout', async () => {
-    const url = await core((_req, _body, res) => res.writeHead(200).end(answer('deny', 'IDE: no plan.')));
+    const url = await core((_req, _body, res) => res.writeHead(200).end(answer('deny', 'CodeRay: no plan.')));
     const child = spawn(process.execPath, [HOOK_SCRIPT, config(url)], { stdio: ['pipe', 'pipe', 'ignore'] });
     child.stdout.destroy();
     child.stdin.end(INPUT);

@@ -166,7 +166,7 @@ describe('Settings: servers from Claude Code', () => {
     }
   });
 
-  it('adds a plugin row for a session server that neither the IDE registry nor Claude Code config lists', () => {
+  it('adds a plugin row for a session server that neither CodeRay registry nor Claude Code config lists', () => {
     const view = settingsWith([{ name: 'linear', source: 'user', type: 'http' }]);
     const html = render(view, [{ name: 'linear', status: 'connected' }, { name: 'context7', status: 'failed' }]);
     const row = rowOf(html, 'context7');
@@ -182,7 +182,7 @@ describe('Settings: servers from Claude Code', () => {
     expect(sourceOf(rowOf(html, 'linear'))).toEqual(['user']);
   });
 
-  it('does not list idecore or servers of the IDE registry that the session reports', () => {
+  it('does not list idecore or servers of CodeRay registry that the session reports', () => {
     const html = render(settingsWith([]), [
       { name: 'idecore', status: 'connected' },
       { name: 'docs', status: 'connected' },

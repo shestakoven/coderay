@@ -76,7 +76,7 @@ export class AccountLogin {
     // A core that dies without its shutdown path must not leave a sign-in running that could still save credentials.
     const onCoreExit = (): void => killGroup(child);
     if (child.pid !== undefined) process.on('exit', onCoreExit);
-    child.once('error', () => this.fail(attempt, `The IDE could not run ${this.options.claude}.`));
+    child.once('error', () => this.fail(attempt, `CodeRay could not run ${this.options.claude}.`));
     child.once('exit', (code) => {
       process.removeListener('exit', onCoreExit);
       if (code === 0) this.check(attempt);
@@ -112,7 +112,7 @@ export class AccountLogin {
       try {
         this.options.accounts.add({ id: attempt.id, email, createdAt: (this.options.now ?? Date.now)() });
       } catch (error) {
-        this.fail(attempt, `The IDE could not save the account (${(error as Error).message}).`);
+        this.fail(attempt, `CodeRay could not save the account (${(error as Error).message}).`);
         return;
       }
       this.attempt = null;

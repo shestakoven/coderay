@@ -1,8 +1,8 @@
-// The interactive claude of the IDE's agent terminal: no -p, a TTY. It runs the hooks of --settings the way claude does and prints what it does.
+// The interactive claude of CodeRay's agent terminal: no -p, a TTY. It runs the hooks of --settings the way claude does and prints what it does.
 //   FAKE_CLAUDE_TUI_TOOL    {"name","input"}: every turn runs this tool between the prompt and the answer.
 //   FAKE_CLAUDE_TUI_SLOW_MS every turn waits this long for Esc before it answers; Esc interrupts it.
 //   FAKE_CLAUDE_TUI_HOOK_SESSION the session id the turn hooks report, as another claude's would.
-// The answer is printed after the Stop hook: a test that sees it on screen knows the IDE has seen the turn end. "/exit" quits.
+// The answer is printed after the Stop hook: a test that sees it on screen knows CodeRay has seen the turn end. "/exit" quits.
 import { spawn } from 'node:child_process';
 import { appendFileSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';

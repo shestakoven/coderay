@@ -61,13 +61,13 @@ const { values } = parseArgs({
   },
 });
 const exitWithParent = values['exit-with-parent'];
-const HUB_OWNS_PROJECTS = 'This core runs inside the IDE hub: open and close projects through the hub.';
+const HUB_OWNS_PROJECTS = 'This core runs inside CodeRay hub: open and close projects through the hub.';
 const PARENT_GONE_DEADLINE_MS = 10_000;
 const SHUTDOWN_DEADLINE_MS = 30_000;
 
 const port = Number(values.port);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
-  console.error(`IDE core: invalid --port "${values.port}"`);
+  console.error(`CodeRay core: invalid --port "${values.port}"`);
   process.exit(1);
 }
 
@@ -106,10 +106,10 @@ if (values.hub) {
       child: { claude: values.claude, noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'] },
     });
   } catch (error) {
-    console.error(`IDE core failed to start: ${(error as Error).message}`);
+    console.error(`CodeRay core failed to start: ${(error as Error).message}`);
     process.exit(1);
   }
-  console.log(`IDE core: hub · IDE home: ${home}`);
+  console.log(`CodeRay core: hub · CodeRay home: ${home}`);
   // Under the app the token comes over stdin and the window gets it from the app; the log must not carry it.
   if (!exitWithParent) {
     if (values.ui) console.log(`  open: http://127.0.0.1:${hub.port}/#token=${token}`);
@@ -135,17 +135,17 @@ if (values.project.length === 0) {
       handover: (root, boundPort) => spawnSuccessor(successorArgs(process.argv.slice(2), root, boundPort), token),
     });
   } catch (error) {
-    console.error(`IDE core failed to start: ${(error as Error).message}`);
+    console.error(`CodeRay core failed to start: ${(error as Error).message}`);
     process.exit(1);
   }
-  console.log('IDE core: no project open');
+  console.log('CodeRay core: no project open');
   if (values.ui) console.log(`  open: http://127.0.0.1:${launcher.port}/#token=${token}`);
   for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
   for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => void launcher.close());
   try {
     await launcher.finished;
   } catch (error) {
-    console.error(`IDE core could not open the project: ${(error as Error).message}`);
+    console.error(`CodeRay core could not open the project: ${(error as Error).message}`);
     process.exit(1);
   }
   process.exit(0);
@@ -157,15 +157,15 @@ try {
   root = realpathSync.native(projectArg);
   if (!statSync(root).isDirectory()) throw new Error('not a directory');
 } catch {
-  console.error(`IDE core: project directory not found: ${projectArg}`);
+  console.error(`CodeRay core: project directory not found: ${projectArg}`);
   process.exit(1);
 }
 const projectName = basename(root);
 
 const lock = acquireCoreLock(projectDir(home, root));
 if (!lock.acquired) {
-  console.error(`IDE core: another IDE core (pid ${lock.holder}) is already running for ${root}.`);
-  console.error(`  Stop it first, or delete ${lock.path} if that process is not an IDE core.`);
+  console.error(`CodeRay core: another CodeRay core (pid ${lock.holder}) is already running for ${root}.`);
+  console.error(`  Stop it first, or delete ${lock.path} if that process is not a CodeRay core.`);
   process.exit(1);
 }
 // An exit that skips the shutdown (the hub vanishing during startup, a second Ctrl+C) must not leave the lock behind.
@@ -188,7 +188,7 @@ try {
       try {
         server?.broadcast(settingsSnapshot());
       } catch (error) {
-        console.error('IDE core: could not send the settings', error);
+        console.error('CodeRay core: could not send the settings', error);
       }
     },
   });
@@ -202,7 +202,7 @@ try {
       ? undefined
       : async (query, limit) => (mapService ? mapService.search(query, limit) : { ok: false, error: 'The project map is not ready yet.' }),
     port: () => {
-      if (!server) throw new Error('the IDE core is not listening yet');
+      if (!server) throw new Error('CodeRay core is not listening yet');
       return server.port;
     },
     shadowDir: join(projectDir(home, root), 'shadow.git'),
@@ -241,7 +241,7 @@ try {
       // The dev shell reloads the core on every code edit, which kills the agent that made the edit.
       if (process.env.IDE_AUTO_RESUME === '1' && agent.startedFromCrash()) {
         try {
-          agent.send('[IDE] The IDE core restarted to load new code and your process ended with it. Continue where you stopped.', { fromUser: false });
+          agent.send('[CodeRay] CodeRay core restarted to load new code and your process ended with it. Continue where you stopped.', { fromUser: false });
         } catch (error) {
           agent.notice(`The agent could not be resumed after the reload (${(error as Error).message}).`);
         }
@@ -264,7 +264,7 @@ try {
     try {
       server?.broadcast(sessionsSnapshot());
     } catch (error) {
-      console.error('IDE core: could not list the chats', error);
+      console.error('CodeRay core: could not list the chats', error);
     }
   };
 
@@ -527,7 +527,7 @@ try {
     // Every step has its own limit, yet one that never settles must not keep a stopped core alive.
     let step = 'the agent terminal';
     setTimeout(() => {
-      console.error(`IDE core: the shutdown is stuck at ${step}; exiting anyway.`);
+      console.error(`CodeRay core: the shutdown is stuck at ${step}; exiting anyway.`);
       process.exit(1);
     }, SHUTDOWN_DEADLINE_MS).unref();
     login.cancel();
@@ -576,8 +576,8 @@ try {
   }
   stopForParent = stop;
 
-  console.log(`IDE core: ${root}`);
-  console.log(`  agent: ${values.claude} · control mode ${policy.effective().mode} · IDE home: ${home}`);
+  console.log(`CodeRay core: ${root}`);
+  console.log(`  agent: ${values.claude} · control mode ${policy.effective().mode} · CodeRay home: ${home}`);
   // Under the hub these addresses would carry this core's token next to the hub's origin; the hub hands them to the UI instead.
   if (!exitWithParent) {
     if (values.ui) console.log(`  open: http://127.0.0.1:${running.port}/#token=${token}`);
@@ -656,6 +656,6 @@ try {
   }
 } catch (error) {
   lock.release();
-  console.error(`IDE core failed to start: ${(error as Error).message}`);
+  console.error(`CodeRay core failed to start: ${(error as Error).message}`);
   process.exit(1);
 }

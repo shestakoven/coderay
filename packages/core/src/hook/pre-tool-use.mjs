@@ -1,4 +1,4 @@
-// PreToolUse hook of the AI-Control IDE. Exit 2 blocks the call; exit 1, plain output and a timed-out hook all let it run (spike v1, v2, 2c).
+// PreToolUse hook of the AI-Control CodeRay. Exit 2 blocks the call; exit 1, plain output and a timed-out hook all let it run (spike v1, v2, 2c).
 import { readFileSync, writeSync } from 'node:fs';
 import { request } from 'node:http';
 
@@ -25,7 +25,7 @@ function writeOut(fd, text) {
 function block(why) {
   if (finished) return;
   finished = true;
-  writeOut(2, `IDE: ${String(why).slice(0, MAX_REASON_CHARS)}`);
+  writeOut(2, `CodeRay: ${String(why).slice(0, MAX_REASON_CHARS)}`);
   process.exit(2);
 }
 
@@ -64,18 +64,18 @@ process.stdin.on('end', () => {
       res.on('data', (chunk) => {
         body += chunk;
       });
-      res.on('error', (error) => block(`the IDE core connection failed: ${error.message}`));
+      res.on('error', (error) => block(`CodeRay core connection failed: ${error.message}`));
       res.on('end', () => {
-        if (res.statusCode !== 200) return block(`the IDE core answered ${res.statusCode}`);
+        if (res.statusCode !== 200) return block(`CodeRay core answered ${res.statusCode}`);
         const decision = JSON.parse(body);
         const valid = (decision?.permissionDecision === 'allow' || decision?.permissionDecision === 'deny')
           && typeof decision.permissionDecisionReason === 'string';
-        if (!valid) return block('the IDE core sent an answer the hook cannot read');
+        if (!valid) return block('CodeRay core sent an answer the hook cannot read');
         const context = typeof decision.additionalContext === 'string' && decision.additionalContext !== '' ? { additionalContext: decision.additionalContext } : {};
         answer({ permissionDecision: decision.permissionDecision, permissionDecisionReason: decision.permissionDecisionReason, ...context });
       });
     },
   );
-  req.on('error', (error) => block(`IDE core unreachable: ${error.message}`));
+  req.on('error', (error) => block(`CodeRay core unreachable: ${error.message}`));
   req.end(input);
 });

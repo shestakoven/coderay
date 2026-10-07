@@ -112,7 +112,7 @@ export class AccountStore {
   private dirOf(id: string): string {
     if (!isAccountId(id)) throw new AccountError('That is not a valid account id.');
     const dir = resolve(this.base, id);
-    if (!dir.startsWith(this.base + sep)) throw new AccountError('That account directory is outside the IDE home.');
+    if (!dir.startsWith(this.base + sep)) throw new AccountError('That account directory is outside CodeRay home.');
     return dir;
   }
 

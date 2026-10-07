@@ -233,11 +233,11 @@ describe('Supervisor.open', () => {
     expect([second.request.port, second.request.token]).not.toEqual([first.request.port, first.request.token]);
   });
 
-  it('refuses a project another IDE core holds, with the standard wording, and spawns nothing', async () => {
+  it('refuses a project another CodeRay core holds, with the standard wording, and spawns nothing', async () => {
     const h = harness();
     await openAll(h, ['/w/mine']);
     h.busy.set('/w/taken', busyMessage(4242));
-    expect(await settle(h.sup.open('/w/taken'))).toEqual({ id: projectId('/w/taken'), error: 'That project is already open in another IDE core (pid 4242).' });
+    expect(await settle(h.sup.open('/w/taken'))).toEqual({ id: projectId('/w/taken'), error: 'That project is already open in another CodeRay core (pid 4242).' });
     expect(h.childrenOf('/w/taken')).toHaveLength(0);
     expect(h.ids()).toEqual(['/w/mine']);
     expect(h.sup.activeId()).toBe(projectId('/w/mine'));
@@ -309,8 +309,8 @@ describe('Supervisor when a core fails', () => {
 
   it('says how the core exited when its stderr names no error', async () => {
     const { result, entry } = await failDuringStart(['starting\n', 'indexing\n'], { code: 3, signal: null });
-    expect(entry).toMatchObject({ state: 'failed', error: 'The IDE core exited (code 3).' });
-    expect(result.error).toBe('The IDE core exited (code 3).');
+    expect(entry).toMatchObject({ state: 'failed', error: 'CodeRay core exited (code 3).' });
+    expect(result.error).toBe('CodeRay core exited (code 3).');
   });
 
   it('names the signal of a core killed before listening', async () => {
@@ -330,7 +330,7 @@ describe('Supervisor when a core fails', () => {
     await openAll(h, ['/w/a', '/w/b']);
     h.childOf('/w/a').exit({ code: null, signal: 'SIGKILL' });
     await vi.advanceTimersByTimeAsync(0);
-    expect(h.entry('/w/a')).toMatchObject({ state: 'failed', error: 'The IDE core stopped unexpectedly (SIGKILL).', port: null, token: null });
+    expect(h.entry('/w/a')).toMatchObject({ state: 'failed', error: 'CodeRay core stopped unexpectedly (SIGKILL).', port: null, token: null });
     expect(h.ids()).toEqual(['/w/a', '/w/b']);
   });
 

@@ -74,7 +74,7 @@ export async function startLauncher(options: LauncherOptions): Promise<RunningLa
 
   const handle = (message: ClientMessage, reply: (message: ServerMessage) => void): void => {
     if (handingOver) {
-      reply({ type: 'error', message: 'The IDE core is restarting on the new project.' });
+      reply({ type: 'error', message: 'CodeRay core is restarting on the new project.' });
       return;
     }
     switch (message.type) {

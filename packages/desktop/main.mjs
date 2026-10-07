@@ -55,7 +55,7 @@ function startAppStack() {
   mkdirSync(dirname(LOG_PATH), { recursive: true });
   const log = openSync(LOG_PATH, 'a');
   const shellPath = loginShellPath();
-  if (!shellPath) writeSync(log, `IDE: could not read PATH from the login shell ${process.env.SHELL}; claude and git must be on ${process.env.PATH}\n`);
+  if (!shellPath) writeSync(log, `CodeRay: could not read PATH from the login shell ${process.env.SHELL}; claude and git must be on ${process.env.PATH}\n`);
   const hub = run(process.execPath, [
     join(resources, 'core/dist/bin/main.mjs'), '--hub', ...(project ? ['--project', project] : []),
     '--ui', join(resources, 'ui'), '--port', String(CORE_PORT), '--token-stdin', '--exit-with-parent',
@@ -139,7 +139,7 @@ app.whenReady().then(async () => {
     return;
   }
 
-  // The default menu binds Cmd+W to "Close Window"; the IDE needs that key to close a project.
+  // The default menu binds Cmd+W to "Close Window"; CodeRay needs that key to close a project.
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
     { role: 'editMenu' },

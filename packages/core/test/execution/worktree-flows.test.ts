@@ -115,7 +115,7 @@ describe('a write to the worktree that the plan does not cover', { timeout: 30_0
   });
 });
 
-describe('a worktree created while the IDE runs', { timeout: 30_000 }, () => {
+describe('a worktree created while CodeRay runs', { timeout: 30_000 }, () => {
   it('takes the files of its checkout as they are, then records the agent write against the content git has', async () => {
     const b = await worktreeFlow([AWAIT, INIT, result, AWAIT, INIT, plan, step('start'), write(A, 'a = 2\n'), HOLD, AWAIT], { worktreeFirst: false });
     b.session.send('first');
@@ -134,7 +134,7 @@ describe('a worktree created while the IDE runs', { timeout: 30_000 }, () => {
 describe.each([
   ['not gitignored', 'trees/w1'],
   ['guarded', '.claude/worktrees/w1'],
-] as const)('a worktree in a %s place removed while the IDE runs', { timeout: 30_000 }, (_kind, dir) => {
+] as const)('a worktree in a %s place removed while CodeRay runs', { timeout: 30_000 }, (_kind, dir) => {
   it('records no change for its files, forgets them at the next scan and raises nothing', async () => {
     const b = await worktreeFlow([AWAIT, INIT, result, AWAIT], { dir });
     const under = (): string[] => b.store.baselines().map((row) => row.path).filter((path) => path.startsWith(`${dir}/`));

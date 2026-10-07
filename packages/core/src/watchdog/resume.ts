@@ -27,7 +27,7 @@ function list(names: string[], maxNames: number, noun: string): string {
 }
 
 function sentences(i: ResumeInput, maxNames: number): string {
-  const parts = ['[IDE] The user answered the out-of-plan question.'];
+  const parts = ['[CodeRay] The user answered the out-of-plan question.'];
   if (i.kept.length) parts.push(`Kept as you wrote them: ${list(i.kept, maxNames, 'files')}.`);
   if (i.reverted.length) parts.push(`Restored to their earlier content: ${list(i.reverted, maxNames, 'files')}.`);
   if (i.added.length) parts.push(`Added to the approved plan: ${list(i.added, maxNames, 'files')}.`);
@@ -37,7 +37,7 @@ function sentences(i: ResumeInput, maxNames: number): string {
   if (i.withdrawnPlan) parts.push('The plan you proposed was still waiting for the user; the interrupt withdrew it, so propose it again if it is still needed.');
   if (i.killedSubagents.length) parts.push(`Stopped with it: ${list(i.killedSubagents, maxNames, 'subagents')}; their unfinished work is lost.`);
   if (i.backgroundShell) parts.push('A background shell is still running.');
-  if (i.unknownOrigin) parts.push('These files changed while the IDE was not running.');
+  if (i.unknownOrigin) parts.push('These files changed while CodeRay was not running.');
   if (i.failOpen) parts.push('A safety hook did not run for one call, so its file changes were treated as out of plan.');
   parts.push(CLOSING);
   return parts.join(' ');
@@ -59,7 +59,7 @@ export interface RollbackInput {
 }
 
 function rollbackSentences(i: RollbackInput, maxNames: number): string {
-  const parts = [`[IDE] Step "${short(i.stepKey)}" was rolled back by the user.`];
+  const parts = [`[CodeRay] Step "${short(i.stepKey)}" was rolled back by the user.`];
   if (i.restored.length) parts.push(`Restored: ${list(i.restored, maxNames, 'files')}.`);
   if (i.notRestored.length) parts.push(`Not restored: ${list(i.notRestored.map((f) => `${f.path} (${f.reason})`), maxNames, 'files')}.`);
   parts.push(i.stepReset === false

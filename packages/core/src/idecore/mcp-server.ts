@@ -17,7 +17,7 @@ export interface IdecoreRoute extends HttpRoute {
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
 
 const PROPOSE_DESCRIPTION = [
-  'Show your plan to the user on the IDE map before you change project files, and wait for the answer.',
+  'Show your plan to the user on CodeRay map before you change project files, and wait for the answer.',
   'Each step has a key, a title, a rationale and targets. A target is {"componentId": "<id from the system prompt>"} or {"path": "<project path>"}, with "op": "modify", "create" or "delete".',
   'Also send "flow" when the change adds or rewires parts: nodes {id, title, sub, kind, state, steps, files} and edges {from, to, label, state, step} that draw what the plan builds, like client → POST /users → UserService → User → users table.',
   'A node is "existing", "modify", "create" or "delete"; an edge is "existing", "new" or "removed"; "steps" and "step" are step keys. Use 5 to 12 nodes, one per responsibility, and label every new edge with what travels along it.',
@@ -26,7 +26,7 @@ const PROPOSE_DESCRIPTION = [
   'Once every step is done, files the plan covers may still be fixed until the user accepts the plan.',
 ].join(' ');
 
-const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time. The IDE checks the active step when your turn ends and asks once; it never marks a step done itself.';
+const STEP_DESCRIPTION = 'Mark a step of the approved plan as started (phase "start") before you work on it, and as finished (phase "done") after it. One step is active at a time. CodeRay checks the active step when your turn ends and asks once; it never marks a step done itself.';
 
 const target = z.object({ componentId: z.string().optional(), path: z.string().optional(), op: z.enum(['modify', 'create', 'delete']) });
 const flowNode = z.object({
@@ -49,8 +49,8 @@ const stepInput = { key: z.string(), phase: z.enum(['start', 'done']) };
 const TITLE_DESCRIPTION = 'Name this chat once, right after your first reply: 2 to 6 words describing the task, in the language the user writes in, no quotes. Returns {"ok": false} when the chat already has a name; that is fine, do not retry.';
 const titleInput = { title: z.string().max(200) };
 
-const MAP_OVERVIEW_DESCRIPTION = 'Read-only: the IDE project map. Returns every component with id, name, summary, file count and the components it depends on.';
-const MAP_COMPONENT_DESCRIPTION = 'Read-only: one component of the IDE project map by id: description, key files, all files with their exported symbols.';
+const MAP_OVERVIEW_DESCRIPTION = 'Read-only: CodeRay project map. Returns every component with id, name, summary, file count and the components it depends on.';
+const MAP_COMPONENT_DESCRIPTION = 'Read-only: one component of CodeRay project map by id: description, key files, all files with their exported symbols.';
 
 const SEARCH_DESCRIPTION = [
   'Semantic search over project files by meaning, for questions like "where is X handled" or "which file does Y" when you are getting to know the project.',

@@ -117,7 +117,7 @@ describe('FailOpenDetector', () => {
     expect(f.changes.changes()[0]).toMatchObject({ origin: 'agent-tool', toolUseIds: ['mcp1'], outOfPlan: true });
   });
 
-  it('checks the IDE own tools like any other', async () => {
+  it('checks CodeRay own tools like any other', async () => {
     const f = await fixture();
     f.detector.toolEnded(end({ toolUseId: 'ide1', tool: 'mcp__idecore__propose_plan' }));
     expect(f.decisions).toMatchObject([{ toolUseId: 'ide1', decision: 'hook-missing' }]);

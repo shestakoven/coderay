@@ -1,4 +1,4 @@
-// SessionStart hook of the AI-Control IDE: tells the core that claude runs the IDE's hooks. It never blocks a session, so every path exits 0.
+// SessionStart hook of the AI-Control CodeRay: tells the core that claude runs CodeRay's hooks. It never blocks a session, so every path exits 0.
 import { readFileSync } from 'node:fs';
 
 process.on('uncaughtException', () => process.exit(0));

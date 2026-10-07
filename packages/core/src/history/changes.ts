@@ -148,9 +148,9 @@ export class ChangeService {
   private readonly queue: Queued[] = [];
   private readonly lastRecorded = new Map<string, string | null>();
   private readonly unreadableSeen = new Set<string>();
-  // Files of a nested worktree that were there when the IDE first saw it but were not taken as baselines then.
+  // Files of a nested worktree that were there when CodeRay first saw it but were not taken as baselines then.
   private readonly unsighted = new Set<string>();
-  // HEAD of each nested worktree when the IDE first saw it: its tree is the checkout the IDE found, as git made it.
+  // HEAD of each nested worktree when CodeRay first saw it: its tree is the checkout CodeRay found, as git made it.
   private readonly seedHeads = new Map<string, string>();
   private readonly stamps = new Map<string, number>();
   private readonly graceMs: number;
@@ -324,7 +324,7 @@ export class ChangeService {
       const enforced = enforcedRels.includes(rel);
       const blob = blobs.get(rel) ?? null;
       const base = enforced ? baselines.get(rel) ?? fromGit.get(rel) : undefined;
-      // A file that was there before the IDE first saw it, with no version anywhere: whatever it held is not known.
+      // A file that was there before CodeRay first saw it, with no version anywhere: whatever it held is not known.
       const existedUnseen = enforced && base === undefined && this.unsighted.has(rel) && blob !== null;
       const beforeHash = enforced ? base?.hash ?? null : this.lastRecorded.get(rel) ?? null;
       const isUnreadable = unreadable.has(rel);
@@ -469,7 +469,7 @@ export class ChangeService {
     return { blobs, unreadable };
   }
 
-  // The before-image of a nested worktree's file the IDE has no baseline for: its index version, else its HEAD version.
+  // The before-image of a nested worktree's file CodeRay has no baseline for: its index version, else its HEAD version.
   private async gitBefore(
     missing: string[], nested: ReadonlyMap<string, WorktreeHit>, index: ReadonlyMap<string, GitEntry>, blobs: ReadonlyMap<string, StoredBlob>,
   ): Promise<Map<string, BaselineRecord>> {
@@ -511,7 +511,7 @@ export class ChangeService {
     }
   }
 
-  // Of files with no baseline, the ones that belong to the checkout the IDE first saw. Any other was written since, and
+  // Of files with no baseline, the ones that belong to the checkout CodeRay first saw. Any other was written since, and
   // what git holds of it now (a branch checked out, a file staged) is that write, not a version to start from.
   private async inCheckout(rels: string[], nested: ReadonlyMap<string, WorktreeHit>): Promise<Set<string>> {
     const found = new Set<string>();

@@ -85,7 +85,7 @@ describe('ChangeService for a file of a nested worktree', () => {
     expect((await f.shadow.read(committed))?.toString()).toBe(ORIGINAL);
   });
 
-  it('records a file the worktree does not have in git as a creation once the IDE has seen the worktree', async () => {
+  it('records a file the worktree does not have in git as a creation once CodeRay has seen the worktree', async () => {
     const f = await fixture();
     await f.service.handle(f.ev(A));
     f.put(`${WT}/backend/src/new.py`, 'new\n');
@@ -121,7 +121,7 @@ describe('ChangeService for a file of a nested worktree', () => {
     expect(f.baselines.get(A)?.hash).toBe(second!.afterHash);
   });
 
-  it('keeps the baseline of a file the IDE already knows ahead of its git version', async () => {
+  it('keeps the baseline of a file CodeRay already knows ahead of its git version', async () => {
     const f = await fixture();
     await f.service.handle(f.ev(`${WT}/README.md`));
     f.put(A, 'known\n');
@@ -366,7 +366,7 @@ describe('ChangeService at the first sight of a worktree', () => {
   });
 });
 
-describe('ChangeService for a file that lands in a worktree the IDE has already seen', () => {
+describe('ChangeService for a file that lands in a worktree CodeRay has already seen', () => {
   const BROUGHT = `${WT}/backend/src/brought.py`;
 
   it.each([
@@ -391,7 +391,7 @@ describe('ChangeService for a file that lands in a worktree the IDE has already 
     expect(f.service.changes()).toEqual([]);
   });
 
-  it('still takes a file of the checkout the IDE first saw, that landed after it looked, as it is', async () => {
+  it('still takes a file of the checkout CodeRay first saw, that landed after it looked, as it is', async () => {
     const f = await fixture();
     git(f.wt, 'rm', '-q', 'backend/src/other.py');
     await f.service.handle(f.ev(A));

@@ -163,7 +163,7 @@ describe('launcher connection', () => {
     expect(await waitFor(() => messages[0], 'project.info')).toMatchObject({ type: 'project.info' });
   });
 
-  it('creates no project lock or store in the IDE home while serving', async () => {
+  it('creates no project lock or store in CodeRay home while serving', async () => {
     const { launcher, home } = await launch();
     const { socket, messages } = await connect(launcher.port);
     send(socket, { type: 'fs.list', requestId: 'f1', path: home });

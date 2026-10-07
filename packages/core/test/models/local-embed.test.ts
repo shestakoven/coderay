@@ -138,6 +138,6 @@ describe('LocalEmbedModel', () => {
 describe('defaultWorkerUrl', () => {
   it('is the TypeScript worker beside a source module and the JavaScript worker beside a bundled one', () => {
     expect(defaultWorkerUrl('file:///repo/packages/core/src/models/local-embed.ts').href).toBe('file:///repo/packages/core/src/models/embed-worker.ts');
-    expect(defaultWorkerUrl('file:///Applications/IDE.app/Resources/core/main.mjs').href).toBe('file:///Applications/IDE.app/Resources/core/embed-worker.mjs');
+    expect(defaultWorkerUrl('file:///Applications/CodeRay.app/Resources/core/main.mjs').href).toBe('file:///Applications/CodeRay.app/Resources/core/embed-worker.mjs');
   });
 });

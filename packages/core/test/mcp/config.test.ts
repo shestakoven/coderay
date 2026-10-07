@@ -50,7 +50,7 @@ describe('parseEntry', () => {
   it('rejects the reserved names ide and idecore', () => {
     expect([parseEntry('ide', { command: 'x' }), parseEntry('idecore', { command: 'x' })]).toEqual([
       'ide: "ide" is reserved by Claude Code',
-      'idecore: "idecore" is reserved for the IDE\'s own server',
+      'idecore: "idecore" is reserved for CodeRay\'s own server',
     ]);
   });
 

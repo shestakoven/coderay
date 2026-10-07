@@ -97,7 +97,7 @@ async function startMain(mode: Mode, extraEnv: Record<string, string> = {}) {
   const chats = (): number[] => pidsLogged('chat');
   // The gate and MCP files of a run, which exist only while a claude runs or is about to.
   const runFiles = (): string[] => (existsSync(runDir(join(base, 'home'))) ? readdirSync(runDir(join(base, 'home'))).filter((name) => /\.(settings|hook|mcp)\.json$/.test(name)) : []);
-  // True once a hook check that was told to go on running after it reported has been sent SIGTERM, which is when the IDE starts waiting for it to stop.
+  // True once a hook check that was told to go on running after it reported has been sent SIGTERM, which is when CodeRay starts waiting for it to stop.
   const checkBeingStopped = (): boolean => readRecords(record).some((entry) => entry.ignoredSignal === 'SIGTERM');
   const signals = (): string[] => lines().filter((line) => /^SIG/.test(line));
   const prompted = (): boolean => lines().includes('prompted');
@@ -227,7 +227,7 @@ describe('main.ts and the agent terminal', { timeout: 120_000 }, () => {
       expect(mentions(main, 'error_during_execution')).toBe(false);
     });
 
-    it('counts the Esc the IDE types for a stop as the key', async () => {
+    it('counts the Esc CodeRay types for a stop as the key', async () => {
       const main = await turnRunning();
       main.send({ type: 'chat.stop' });
       main.writeTranscript(MARKER);
@@ -237,7 +237,7 @@ describe('main.ts and the agent terminal', { timeout: 120_000 }, () => {
 
   describe('a terminal closed while its hooks are checked', () => {
     // 'before': the check starts slowly and is still silent when the terminal is closed.
-    // 'after': the check has reported and the IDE is only waiting for it to stop, which takes seconds.
+    // 'after': the check has reported and CodeRay is only waiting for it to stop, which takes seconds.
     // Either way the test waits until the check is over, and then a while longer, for what a launch that went on would do.
     async function closedDuringCheck(when: 'before' | 'after') {
       const main = await startMain('obedient', when === 'before' ? { FAKE_CLAUDE_PROBE_STARTUP_MS: '3000' } : { FAKE_CLAUDE_PROBE_IGNORES_SIGTERM: '1' });

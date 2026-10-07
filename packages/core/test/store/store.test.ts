@@ -32,7 +32,7 @@ const plan: PlanRecord = {
 };
 
 const decision: ToolDecisionRecord = {
-  toolUseId: 'toolu_1', decision: 'allow', planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE: allowed', decidedAt: 11,
+  toolUseId: 'toolu_1', decision: 'allow', planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'CodeRay: allowed', decidedAt: 11,
 };
 
 const gateEvent: GateEventRecord = {
@@ -180,13 +180,13 @@ describe('openStore', () => {
     expect([store.latestSession()?.id, store.plans('s1').plans]).toEqual(['s1', [plan]]);
   });
 
-  it('refuses a history written by a newer IDE', () => {
+  it('refuses a history written by a newer CodeRay', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
     db.exec('PRAGMA user_version = 9');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 9, newer than this IDE understands (8)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 9, newer than this CodeRay understands (8)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {

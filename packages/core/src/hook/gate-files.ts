@@ -13,8 +13,8 @@ export const HOOK_DEADLINE_MS = 3_540_000;
 const SESSION_START_TIMEOUT_S = 30;
 const AGENT_EVENT_TIMEOUT_S = 30;
 // What the terminal's spinner says while a hook runs: a call's check takes moments, but it waits as long as the user has a question to answer.
-const GATE_STATUS = 'IDE gate: checking or waiting for you';
-const TURN_END_STATUS = 'IDE: waiting for you if a question is open';
+const GATE_STATUS = 'CodeRay gate: checking or waiting for you';
+const TURN_END_STATUS = 'CodeRay: waiting for you if a question is open';
 const TOOL_EVENTS = ['PostToolUse', 'PostToolUseFailure'];
 const SESSION_EVENTS = ['UserPromptSubmit', 'StopFailure', 'SubagentStart', 'SubagentStop', 'SessionStart'];
 const RUN_DIR_MODE = 0o700;
@@ -45,7 +45,7 @@ export function writeGateFiles(
   const event = (timeout: number, statusMessage?: string) => ({
     type: 'command', command: nodePath, args: [AGENT_EVENT_SCRIPT, files.hookConfigPath], timeout, ...(statusMessage === undefined ? {} : { statusMessage }),
   });
-  // The end of a turn waits for the user while a question about the agent's changes is open, and is where the IDE asks about a step left active.
+  // The end of a turn waits for the user while a question about the agent's changes is open, and is where CodeRay asks about a step left active.
   const hooks: Record<string, object[]> = {
     PreToolUse: [{ matcher: '*', hooks: [command] }],
     SessionStart: [{ hooks: [start] }],

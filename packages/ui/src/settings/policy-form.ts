@@ -87,12 +87,12 @@ export const levelKey = (view: PolicyView, level: PolicyLevel): string => `${vie
 const fieldText = (policy: Policy, field: keyof Policy): string =>
   field === 'guarded' || field === 'harness' || field === 'outsideAllowed' ? joinLines(policy[field]) : String(policy[field]);
 
-// Hands a project field back to the IDE value (the saved one, not an unsaved draft of the IDE level).
+// Hands a project field back to CodeRay value (the saved one, not an unsaved draft of CodeRay level).
 export function resetToInherited(form: PolicyForm, view: PolicyView, field: keyof Policy): PolicyForm {
   return { ...form, [field]: fieldText(view.ide, field), inherit: { ...form.inherit, [field]: true } };
 }
 
-// Any edit of a project field pins it, so the field stops following the IDE value.
+// Any edit of a project field pins it, so the field stops following CodeRay value.
 export function editField(form: PolicyForm, field: keyof Policy, value: string): PolicyForm {
   return { ...form, [field]: value, inherit: { ...form.inherit, [field]: false } };
 }

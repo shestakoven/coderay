@@ -323,7 +323,7 @@ export class RevertService {
       const first = own[0];
       if (!first) { result.preview.notRolledBack.push({ path: rel, why: 'no change of this step is recorded for it' }); continue; }
       if (isGitState(rel)) { result.preview.notRolledBack.push({ path: rel, why: 'git state is never rolled back' }); continue; }
-      if (own.some((c) => c.enforcement === 'recorded')) { result.preview.notRolledBack.push({ path: rel, why: 'the IDE only records this file, it cannot restore it' }); continue; }
+      if (own.some((c) => c.enforcement === 'recorded')) { result.preview.notRolledBack.push({ path: rel, why: 'CodeRay only records this file, it cannot restore it' }); continue; }
       if (beforeHash === afterHash) { result.preview.notRolledBack.push({ path: rel, why: 'the step left it as it was' }); continue; }
       const firstAt = all.indexOf(first);
       const ownSet = new Set(own);

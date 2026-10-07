@@ -3,7 +3,7 @@ import type { HookAnswer, HookGate } from '../../src/gate/hook-gate';
 import { hookRoute } from '../../src/gate/hook-route';
 import { startServer } from '../../src/server/server';
 
-const DENY: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'IDE: no' };
+const DENY: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'CodeRay: no' };
 
 async function served(observe?: (body: unknown) => void) {
   const order: string[] = [];

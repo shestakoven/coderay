@@ -171,7 +171,7 @@ describe('ChangeService recording', () => {
     for (const text of ['v1', 'v2', '{}']) expect(await f.shadow.read(blobHash(f.root, text))).toBeNull();
   });
 
-  it('labels an expected IDE write as ide, once, and does not stamp it with the step', async () => {
+  it('labels an expected CodeRay write as ide, once, and does not stamp it with the step', async () => {
     const f = await fixture();
     f.gate.value = approved('s');
     f.ledger.allowed(call({ toolUseId: 'w', tool: 'Bash', toolClass: 'shell' }));
@@ -414,7 +414,7 @@ describe('ChangeService corrections', () => {
     expect(byPath(f.service.changes(), 'y.ts')).toMatchObject({ origin: 'agent-tool', toolUseIds: ['call-1'] });
   });
 
-  it('re-attributes human changes inside a window to the call, sparing IDE claims and outside times', async () => {
+  it('re-attributes human changes inside a window to the call, sparing CodeRay claims and outside times', async () => {
     const f = await fixture();
     f.clock.now = 500;
     write(f.root, 'a.ts', 'in window');
@@ -616,7 +616,7 @@ exec '${real}' "$@"
     expect(f.store.baselines().find((b) => b.path === 'a.ts')!.hash).toBe(f.service.changes()[0]!.afterHash);
   });
 
-  it('still labels an IDE write as ide on the retry of a batch that failed', async () => {
+  it('still labels a CodeRay write as ide on the retry of a batch that failed', async () => {
     const f = await fixture();
     write(f.root, 'a.ts', 'by ide');
     f.ideWrites.expect('a.ts', sh(f.root, 'hash-object', 'a.ts').trim());

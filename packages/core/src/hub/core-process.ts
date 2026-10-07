@@ -145,7 +145,7 @@ export function coreProcessDeps(home: string, hubPort: () => number, flags: Chil
       try {
         return projectBusy(home, root);
       } catch (error) {
-        return `Could not check whether another IDE core has that project open: ${(error as Error).message}`;
+        return `Could not check whether another CodeRay core has that project open: ${(error as Error).message}`;
       }
     },
     newToken: () => randomBytes(24).toString('base64url'),

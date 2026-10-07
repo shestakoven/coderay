@@ -43,7 +43,7 @@ describe('parseHookEvent on Codex hooks', () => {
     [AT.stop, 'Stop, which lists no background tasks', { type: 'turn-end', lastMessage: 'A done', failed: false, runningTaskIds: null }],
     [AT.secondPrompt, 'the second prompt', { type: 'prompt', text: prompt(AT.secondPrompt), task: null }],
     [AT.interrupt, 'Esc', { type: 'interrupted' }],
-    [AT.sessionEnd, 'the end of the session, which the IDE does not follow', null],
+    [AT.sessionEnd, 'the end of the session, which CodeRay does not follow', null],
   ];
 
   it.each(expected)('event %i reads %s', (index, _what, event) => {

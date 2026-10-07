@@ -8,7 +8,7 @@ const NAME = /^[A-Za-z0-9_-]{1,64}$/;
 const VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?::-([^}]*))?\}/g;
 const RESERVED = new Map([
   ['ide', '"ide" is reserved by Claude Code'],
-  ['idecore', '"idecore" is reserved for the IDE\'s own server'],
+  ['idecore', '"idecore" is reserved for CodeRay\'s own server'],
   ['__proto__', '"__proto__" cannot be a server name'],
 ]);
 

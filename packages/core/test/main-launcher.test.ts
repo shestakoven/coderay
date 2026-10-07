@@ -56,7 +56,7 @@ describe('main.ts without --project', { timeout: 90_000 }, () => {
     const taken = await waitFor(() => /open: http:\/\/127\.0\.0\.1:(\d+)\//.exec(first.output.text)?.[1], `the first core address in:\n${first.output.text}`, 60_000);
     const second = spawnLauncher(base, taken);
     expect(await second.exited).toBe(1);
-    expect(second.output.text).toContain('IDE core failed to start: ');
+    expect(second.output.text).toContain('CodeRay core failed to start: ');
     expect(second.output.text).toContain('EADDRINUSE');
     expect(second.output.text).not.toContain('    at ');
   });

@@ -16,7 +16,7 @@ const run = (tool: string, targets: ClassifiedTarget[], gate: PlanGate = approve
   decide({ tool, toolClass: toolClass(tool), targets, gate, mode });
 
 describe('decide', () => {
-  it('allows the IDE tools and never checks read, subagent, configured MCP and interactive tools', () => {
+  it('allows CodeRay tools and never checks read, subagent, configured MCP and interactive tools', () => {
     expect(['mcp__idecore__step', 'Read', 'Agent', 'mcp__docs__search', 'AskUserQuestion'].map((tool) => run(tool, [], { state: 'none' }).outcome))
       .toEqual(['allow', 'unchecked', 'unchecked', 'unchecked', 'unchecked']);
   });
@@ -29,7 +29,7 @@ describe('decide', () => {
     const decision = run('Write', [target('enforced', 'src/app.ts')], { state: 'none' });
     expect([decision.outcome, decision.reason]).toEqual([
       'deny',
-      'IDE: no approved plan covers src/app.ts. Call mcp__idecore__propose_plan with your steps and their targets first, and wait for its result.',
+      'CodeRay: no approved plan covers src/app.ts. Call mcp__idecore__propose_plan with your steps and their targets first, and wait for its result.',
     ]);
   });
 
@@ -43,7 +43,7 @@ describe('decide', () => {
     const decision = run('Edit', [target('enforced', 'src/app.ts')], approved(null));
     expect([decision.outcome, decision.reason]).toEqual([
       'deny',
-      'IDE: plan plan-1 is approved, but no step is active. Call mcp__idecore__step with {"key": "<step key>", "phase": "start"} first.',
+      'CodeRay: plan plan-1 is approved, but no step is active. Call mcp__idecore__step with {"key": "<step key>", "phase": "start"} first.',
     ]);
   });
 
@@ -51,8 +51,8 @@ describe('decide', () => {
     const rejected = run('Write', [target('enforced', 'src/app.ts')], { state: 'rejected', planId: 'plan-1' });
     const closed = run('Write', [target('enforced', 'src/app.ts')], { state: 'closed', planId: 'plan-1' });
     expect([rejected.outcome, rejected.reason, closed.outcome, closed.reason]).toEqual([
-      'deny', "IDE: the user rejected plan plan-1. Stop and wait for the user's next message.",
-      'deny', 'IDE: plan plan-1 is closed. Call mcp__idecore__propose_plan for further changes.',
+      'deny', "CodeRay: the user rejected plan plan-1. Stop and wait for the user's next message.",
+      'deny', 'CodeRay: plan plan-1 is closed. Call mcp__idecore__propose_plan for further changes.',
     ]);
   });
 

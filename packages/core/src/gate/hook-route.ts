@@ -3,7 +3,7 @@ import type { HttpRoute } from '../server/server';
 import type { HookAnswer, HookGate } from './hook-gate';
 
 const MAX_HOOK_BODY_BYTES = 64 * 1024 * 1024;
-const GATE_FAILED: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' };
+const GATE_FAILED: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'CodeRay: the gate failed, so the call is blocked.' };
 
 export function hookRoute(options: { secret: string; gate: HookGate; observe?: (body: unknown) => void; note?: (body: unknown) => string | null }): HttpRoute {
   requireSecret(options.secret);

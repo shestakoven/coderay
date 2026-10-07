@@ -273,7 +273,7 @@ describe('IdentifierClassifier', () => {
   it('does not keep asking about an identifier the model leaves unanswered', async () => {
     const model = new ScriptedModel((request: StructuredRequest) => answer(request, { postgres: TABLE.postgres! }));
     const ids = [image('postgres'), pkg('mystery_sdk')];
-    // Like the IDE core: every change republishes the map, which requests what is still unclassified.
+    // Like CodeRay core: every change republishes the map, which requests what is still unclassified.
     const classifier = start(model, () => classifier.request(ids));
     classifier.request(ids);
     await elapse(MINUTE);

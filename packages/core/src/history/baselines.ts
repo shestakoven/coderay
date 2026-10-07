@@ -127,7 +127,7 @@ async function gitInternals(root: string): Promise<Map<string, string>> {
   return out;
 }
 
-// What the IDE saw at a nested worktree: its .git (inode and birth) and its git dir and HEAD; id null once it is gone.
+// What CodeRay saw at a nested worktree: its .git (inode and birth) and its git dir and HEAD; id null once it is gone.
 interface NestedMark { id: string | null; origin: string | null }
 interface NestedSeen { dir: string; mark: NestedMark }
 interface Candidates { rels: string[]; abs: Map<string, string>; nested: NestedSeen[] }
@@ -170,7 +170,7 @@ export function knownNested(baselines: Baselines, repo: NestedRepo): boolean {
   return mark !== null && sameMark(seenNested(baselines).get(repo.dir), mark);
 }
 
-// A nested worktree the IDE saw that is no longer one (removed, moved, replaced by another repository): nobody the IDE
+// A nested worktree CodeRay saw that is no longer one (removed, moved, replaced by another repository): nobody CodeRay
 // answers for deleted its files, so their baselines go silently and its paths are not tracked while the directory stays.
 // Returns the "<dir>/" prefixes of such worktrees among the ones `wanted` names.
 export function forgetGoneNested(root: string, baselines: Baselines, wanted: (dir: string) => boolean = () => true): string[] {
@@ -406,7 +406,7 @@ export async function scanTree(
   return { seeded: false, drift, unreadable };
 }
 
-// The first sight of a nested worktree while the IDE runs: its files as they are now become its baselines, as a scan
+// The first sight of a nested worktree while CodeRay runs: its files as they are now become its baselines, as a scan
 // would take them. The paths in hand and the files written just now are left to their watcher events; returned.
 export async function seedNested(
   root: string,

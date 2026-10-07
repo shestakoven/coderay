@@ -253,7 +253,7 @@ describe('AccountLogin keeps the sign-in secrets off disk and out of logs', () =
 
   const onDisk = (home: string): string => filesUnder(home).map((file) => readFileSync(file, 'utf8')).join('\n');
 
-  it('writes neither the URL nor the code anywhere under the IDE home after a successful sign-in, and logs neither', async () => {
+  it('writes neither the URL nor the code anywhere under CodeRay home after a successful sign-in, and logs neither', async () => {
     const logged = captureConsole();
     const { home, url, code, login, waiting, settled } = setup();
     login.start();

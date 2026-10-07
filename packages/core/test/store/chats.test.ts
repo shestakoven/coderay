@@ -47,7 +47,7 @@ describe('schema 4 migration', () => {
     expect(version).toBe(8);
   });
 
-  it('reads a session row written by an older IDE, with no model or effort, as the defaults', () => {
+  it('reads a session row written by an older CodeRay, with no model or effort, as the defaults', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
@@ -56,7 +56,7 @@ describe('schema 4 migration', () => {
     expect(freshStore(dir).session('old')).toMatchObject({ modelChoice: null, effort: null, conversationStarted: true });
   });
 
-  it('reads an effort the IDE does not know as the default', () => {
+  it('reads an effort CodeRay does not know as the default', () => {
     const dir = tempDir('ide-store-');
     const first = openStore(dir);
     first.saveSession(session('s1', 1, { effort: 'low' }));
@@ -298,7 +298,7 @@ describe('deleting a chat that has a plan', () => {
     feedback: null, flow: null, proposedAt: 10, decidedAt: 10,
   };
   const decision: ToolDecisionRecord = {
-    toolUseId: 'toolu_1', decision: 'allow', planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'IDE: allowed', decidedAt: 11,
+    toolUseId: 'toolu_1', decision: 'allow', planId: 'plan-1', planVersion: 1, stepKey: 'edit', targets: ['src/app.ts'], reason: 'CodeRay: allowed', decidedAt: 11,
   };
   const gateEvent: GateEventRecord = {
     id: 'ev-1', toolUseId: 'toolu_2', kind: 'pre-execution', mode: 'A', targets: ['src/other.ts'], prompt: null, resolution: 'denied', ts: 12, resolvedAt: 12,

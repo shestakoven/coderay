@@ -22,7 +22,7 @@ export function terminalLaunches(record: string): AgentLaunch[] {
   return recorded(record).flatMap((entry) => (entry.interactive && entry.argv && entry.pid ? [{ argv: entry.argv, pid: entry.pid }] : []));
 }
 
-// How many times the core has checked that the IDE's hook runs: the check is the one headless claude that keeps no session.
+// How many times the core has checked that CodeRay's hook runs: the check is the one headless claude that keeps no session.
 export const hookChecks = (record: string): number => recorded(record).filter((entry) => entry.argv?.includes('--no-session-persistence')).length;
 
 // The conversation the chat's own headless claude was started on.

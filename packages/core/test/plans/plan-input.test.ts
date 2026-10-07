@@ -46,7 +46,7 @@ describe('parsePlanInput', () => {
   it('lists the valid component ids when a target names an unknown one', async () => {
     const dir = await root();
     expect(parsePlanInput({ goal: 'g', steps: [step([{ componentId: 'nope', op: 'modify' }])] }, dir, components))
-      .toBe('IDE: step "edit" names an unknown component "nope". Valid component ids: app (App), lib (Lib).');
+      .toBe('CodeRay: step "edit" names an unknown component "nope". Valid component ids: app (App), lib (Lib).');
   });
 
   it('refuses a path outside the project, through .. or a symlink', async () => {
@@ -55,7 +55,7 @@ describe('parsePlanInput', () => {
     symlinkSync(outside, join(dir, 'link'));
     for (const path of ['../elsewhere.ts', '/etc/hosts', 'link/f.ts', '.']) {
       expect(parsePlanInput({ goal: 'g', steps: [step([{ path, op: 'modify' }])] }, dir, components))
-        .toBe(`IDE: "${path}" in step "edit" is not a path inside the project.`);
+        .toBe(`CodeRay: "${path}" in step "edit" is not a path inside the project.`);
     }
   });
 
@@ -63,7 +63,7 @@ describe('parsePlanInput', () => {
     const dir = await root();
     symlinkSync(join(tempDir('ide-outside-'), 'out.ts'), join(dir, 'src/out.ts'));
     expect(parsePlanInput({ goal: 'g', steps: [step([{ path: 'src/out.ts', op: 'create' }])] }, dir, components))
-      .toBe('IDE: "src/out.ts" in step "edit" is not a path inside the project.');
+      .toBe('CodeRay: "src/out.ts" in step "edit" is not a path inside the project.');
   });
 
   it('stores a path through a symlink inside the project as its real path', async () => {
@@ -85,19 +85,19 @@ describe('parsePlanInput', () => {
   it('refuses wildcards in a path but allows brackets', async () => {
     const dir = await root();
     expect(parsePlanInput({ goal: 'g', steps: [step([{ path: 'src/*.ts', op: 'modify' }])] }, dir, components))
-      .toBe('IDE: "src/*.ts" in step "edit" contains a wildcard; name files or directories.');
+      .toBe('CodeRay: "src/*.ts" in step "edit" contains a wildcard; name files or directories.');
     expect(parsePlanInput({ goal: 'g', steps: [step([{ path: 'app/[id]/page.tsx', op: 'create' }])] }, dir, components))
       .toMatchObject({ steps: [{ targets: [{ path: 'app/[id]/page.tsx' }] }] });
   });
 
   it.each([
-    [{}, 'IDE: the plan needs a "goal".'],
-    [{ goal: 'g', steps: [] }, 'IDE: the plan needs at least one step.'],
-    [{ goal: 'g', steps: [step([{ path: 'a', op: 'modify' }]), step([{ path: 'b', op: 'modify' }])] }, 'IDE: two steps have the key "edit"; keys must be unique.'],
-    [{ goal: 'g', steps: [step([])] }, 'IDE: step "edit" needs at least one target.'],
-    [{ goal: 'g', steps: [step([{ path: 'a', op: 'rename' }])] }, 'IDE: a target of step "edit" needs "op": "modify", "create" or "delete".'],
-    [{ goal: 'g', steps: [step([{ path: 'a', componentId: 'app', op: 'modify' }])] }, 'IDE: each target of step "edit" names either a "componentId" or a "path".'],
-    [{ goal: 'g', steps: [step([{ path: 'a', op: 'modify' }], { title: ' ' })] }, 'IDE: step "edit" needs a "title".'],
+    [{}, 'CodeRay: the plan needs a "goal".'],
+    [{ goal: 'g', steps: [] }, 'CodeRay: the plan needs at least one step.'],
+    [{ goal: 'g', steps: [step([{ path: 'a', op: 'modify' }]), step([{ path: 'b', op: 'modify' }])] }, 'CodeRay: two steps have the key "edit"; keys must be unique.'],
+    [{ goal: 'g', steps: [step([])] }, 'CodeRay: step "edit" needs at least one target.'],
+    [{ goal: 'g', steps: [step([{ path: 'a', op: 'rename' }])] }, 'CodeRay: a target of step "edit" needs "op": "modify", "create" or "delete".'],
+    [{ goal: 'g', steps: [step([{ path: 'a', componentId: 'app', op: 'modify' }])] }, 'CodeRay: each target of step "edit" names either a "componentId" or a "path".'],
+    [{ goal: 'g', steps: [step([{ path: 'a', op: 'modify' }], { title: ' ' })] }, 'CodeRay: step "edit" needs a "title".'],
   ])('refuses %j', async (raw, error) => {
     expect(parsePlanInput(raw, await root(), components)).toBe(error);
   });
@@ -159,7 +159,7 @@ describe('parsePlanInput', () => {
 
     it('refuses a flow file outside the project, naming the node and the path', async () => {
       const result = parsePlanInput(plan(flow(flowNode({ files: [{ op: '~', path: '../elsewhere.ts' }] }))), await root(), components);
-      expect(result).toEqual(expect.stringMatching(/^IDE: /));
+      expect(result).toEqual(expect.stringMatching(/^CodeRay: /));
       for (const mention of ['svc', '../elsewhere.ts']) expect(result).toEqual(expect.stringContaining(mention));
     });
 
@@ -172,17 +172,17 @@ describe('parsePlanInput', () => {
     it('refuses a flow step key that is not a key of its own plan, listing the keys of the plan', async () => {
       const steps = [step([{ path: 'src/app.ts', op: 'modify' }]), step([{ path: 'src/new.ts', op: 'create' }], { key: 'add' })];
       const result = parsePlanInput(plan(flow(flowNode({ steps: ['nope'] })), steps), await root(), components);
-      expect(result).toEqual(expect.stringMatching(/^IDE: /));
+      expect(result).toEqual(expect.stringMatching(/^CodeRay: /));
       for (const mention of ['nope', 'edit', 'add']) expect(result).toEqual(expect.stringContaining(mention));
     });
 
     it('refuses an invalid flow with the error naming the faulty value', async () => {
       const result = parsePlanInput(plan(flow(flowNode({ kind: 'robot' }))), await root(), components);
-      expect(result).toEqual(expect.stringMatching(/^IDE: .*robot/));
+      expect(result).toEqual(expect.stringMatching(/^CodeRay: .*robot/));
     });
 
     it('refuses a flow that is not an object', async () => {
-      expect(parsePlanInput(plan('nope'), await root(), components)).toEqual(expect.stringMatching(/^IDE: /));
+      expect(parsePlanInput(plan('nope'), await root(), components)).toEqual(expect.stringMatching(/^CodeRay: /));
     });
 
     it('returns a null flow when the plan has none', async () => {

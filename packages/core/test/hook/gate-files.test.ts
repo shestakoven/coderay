@@ -47,14 +47,14 @@ describe('writeGateFiles', () => {
   });
 
   it('runs every hook, gate and event alike, on the taken launcher', () => {
-    takeNodeLauncher({ IDE_NODE: '/Applications/IDE.app/node-launcher' });
+    takeNodeLauncher({ IDE_NODE: '/Applications/CodeRay.app/node-launcher' });
     const commands = gateCommands();
     expect(commands.length).toBeGreaterThan(5);
-    expect(new Set(commands)).toEqual(new Set(['/Applications/IDE.app/node-launcher']));
+    expect(new Set(commands)).toEqual(new Set(['/Applications/CodeRay.app/node-launcher']));
   });
 
   it('runs the hooks on an explicit nodePath even when IDE_NODE is set', () => {
-    takeNodeLauncher({ IDE_NODE: '/Applications/IDE.app/node-launcher' });
+    takeNodeLauncher({ IDE_NODE: '/Applications/CodeRay.app/node-launcher' });
     expect(new Set(gateCommands({ nodePath: '/opt/node/bin/node' }))).toEqual(new Set(['/opt/node/bin/node']));
   });
 });

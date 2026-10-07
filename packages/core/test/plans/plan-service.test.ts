@@ -347,7 +347,7 @@ describe('PlanService', () => {
     const { service } = await setup();
     await service.propose(small);
     service.step({ key: 'edit', phase: 'start' });
-    expect(await service.propose(big)).toEqual({ ok: false, error: 'IDE: the new version must keep step "edit", which is active.' });
+    expect(await service.propose(big)).toEqual({ ok: false, error: 'CodeRay: the new version must keep step "edit", which is active.' });
   });
 
   it('withdraws a waiting plan when its call is cancelled', async () => {
@@ -405,12 +405,12 @@ describe('PlanService', () => {
     await waiting(service);
     service.answer('plan-1', 1, { kind: 'approve' });
     await call;
-    expect(service.step({ key: 'zzz', phase: 'start' })).toEqual({ ok: false, error: 'IDE: plan plan-1 has no step "zzz". Its steps: a, b.' });
-    expect(service.step({ key: 'b', phase: 'done' })).toEqual({ ok: false, error: 'IDE: step "b" is not active; start it first.' });
+    expect(service.step({ key: 'zzz', phase: 'start' })).toEqual({ ok: false, error: 'CodeRay: plan plan-1 has no step "zzz". Its steps: a, b.' });
+    expect(service.step({ key: 'b', phase: 'done' })).toEqual({ ok: false, error: 'CodeRay: step "b" is not active; start it first.' });
     expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: true });
-    expect(service.step({ key: 'b', phase: 'start' })).toEqual({ ok: false, error: 'IDE: step "a" is still active; mark it done first.' });
+    expect(service.step({ key: 'b', phase: 'start' })).toEqual({ ok: false, error: 'CodeRay: step "a" is still active; mark it done first.' });
     expect(service.step({ key: 'a', phase: 'done' })).toEqual({ ok: true });
-    expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: false, error: 'IDE: step "a" is already done.' });
+    expect(service.step({ key: 'a', phase: 'start' })).toEqual({ ok: false, error: 'CodeRay: step "a" is already done.' });
     service.step({ key: 'b', phase: 'start' });
     service.step({ key: 'b', phase: 'done' });
     expect(latest(service)?.status).toBe('done');
@@ -419,7 +419,7 @@ describe('PlanService', () => {
 
   it('refuses steps before any plan is approved', async () => {
     const { service } = await setup();
-    expect(service.step({ key: 'edit', phase: 'start' })).toEqual({ ok: false, error: 'IDE: no plan is approved. Call mcp__idecore__propose_plan first and wait for its result.' });
+    expect(service.step({ key: 'edit', phase: 'start' })).toEqual({ ok: false, error: 'CodeRay: no plan is approved. Call mcp__idecore__propose_plan first and wait for its result.' });
   });
 
   it('expands the active step with out-of-scope files as a new version approved by the user', async () => {
@@ -550,7 +550,7 @@ describe('PlanService', () => {
   it('returns the validation error for an unknown component', async () => {
     const { service } = await setup();
     expect(await service.propose({ goal: 'g', steps: [{ key: 'k', title: 't', targets: [{ componentId: 'nope', op: 'modify' }] }] }))
-      .toEqual({ ok: false, error: 'IDE: step "k" names an unknown component "nope". Valid component ids: app (App), lib (Lib).' });
+      .toEqual({ ok: false, error: 'CodeRay: step "k" names an unknown component "nope". Valid component ids: app (App), lib (Lib).' });
   });
 
   describe('after the last step is done', () => {
@@ -713,7 +713,7 @@ describe('PlanService', () => {
     it('refuses an invalid flow with its error and stores no plan', async () => {
       const { service } = await setup();
       const result = await service.propose({ ...small, flow: flowFor('nope', 'src/app.ts') });
-      expect(result).toEqual({ ok: false, error: expect.stringMatching(/^IDE: /) });
+      expect(result).toEqual({ ok: false, error: expect.stringMatching(/^CodeRay: /) });
       for (const mention of ['nope', 'edit']) expect(result).toMatchObject({ error: expect.stringContaining(mention) });
       expect(service.plans()).toEqual([]);
     });

@@ -67,46 +67,46 @@ export function describeTargets(targets: ClassifiedTarget[]): string {
 }
 
 export function decide(input: GuardInput): GuardDecision {
-  if (input.toolClass === 'ide') return { ...NONE, outcome: 'allow', reason: "IDE: the IDE's own tool." };
-  if (UNCHECKED.has(input.toolClass)) return { ...NONE, outcome: 'unchecked', reason: 'IDE: this tool writes no project files.' };
+  if (input.toolClass === 'ide') return { ...NONE, outcome: 'allow', reason: "CodeRay: CodeRay's own tool." };
+  if (UNCHECKED.has(input.toolClass)) return { ...NONE, outcome: 'unchecked', reason: 'CodeRay: this tool writes no project files.' };
   if (input.toolClass === 'unknown') return unknownTool(input);
   const relevant = input.targets.filter((target) => NEEDS_PLAN.has(target.kind));
-  if (relevant.length === 0) return { ...NONE, outcome: 'unchecked', reason: 'IDE: no project files are written.' };
+  if (relevant.length === 0) return { ...NONE, outcome: 'unchecked', reason: 'CodeRay: no project files are written.' };
   const list = describeTargets(relevant);
   const gate = input.gate;
   if (gate.state === 'none') {
     return {
       ...NONE, relevant, outcome: 'deny',
-      reason: `IDE: no approved plan covers ${list}. Call mcp__idecore__propose_plan with your steps and their targets first, and wait for its result.`,
+      reason: `CodeRay: no approved plan covers ${list}. Call mcp__idecore__propose_plan with your steps and their targets first, and wait for its result.`,
     };
   }
   if (gate.state === 'rejected') {
-    return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `IDE: the user rejected plan ${gate.planId}. Stop and wait for the user's next message.` };
+    return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `CodeRay: the user rejected plan ${gate.planId}. Stop and wait for the user's next message.` };
   }
   if (gate.state === 'closed') {
-    return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `IDE: plan ${gate.planId} is closed. Call mcp__idecore__propose_plan for further changes.` };
+    return { ...NONE, relevant, planId: gate.planId, outcome: 'deny', reason: `CodeRay: plan ${gate.planId} is closed. Call mcp__idecore__propose_plan for further changes.` };
   }
   const stamp = { planId: gate.planId, version: gate.version };
   if (gate.activeStep === null && !gate.followUps) {
     return {
       ...NONE, ...stamp, relevant, outcome: 'deny',
-      reason: `IDE: plan ${gate.planId} is approved, but no step is active. Call mcp__idecore__step with {"key": "<step key>", "phase": "start"} first.`,
+      reason: `CodeRay: plan ${gate.planId} is approved, but no step is active. Call mcp__idecore__step with {"key": "<step key>", "phase": "start"} first.`,
     };
   }
   const outOfScope = relevant.filter((target) => !inScope(gate.scope, target));
   const base = { ...stamp, stepKey: gate.activeStep, relevant, outOfScope };
-  if (outOfScope.length === 0) return { ...base, outcome: 'allow', reason: `IDE: allowed by plan ${gate.planId}, ${gate.activeStep === null ? 'as a follow-up' : `step ${gate.activeStep}`}.` };
+  if (outOfScope.length === 0) return { ...base, outcome: 'allow', reason: `CodeRay: allowed by plan ${gate.planId}, ${gate.activeStep === null ? 'as a follow-up' : `step ${gate.activeStep}`}.` };
   const outside = describeTargets(outOfScope);
   const hint = outOfScope.some((target) => target.unowned) ? ` ${NO_OWNER}` : '';
   const one = outOfScope.length === 1;
   if (input.mode === 'A') {
     return {
       ...base, outcome: 'deny',
-      reason: `IDE: ${outside} ${one ? 'is' : 'are'} outside the approved plan ${gate.planId}. Propose a new version of the plan with mcp__idecore__propose_plan (keep the active and done steps) to include ${one ? 'it' : 'them'}.${hint}`,
+      reason: `CodeRay: ${outside} ${one ? 'is' : 'are'} outside the approved plan ${gate.planId}. Propose a new version of the plan with mcp__idecore__propose_plan (keep the active and done steps) to include ${one ? 'it' : 'them'}.${hint}`,
     };
   }
-  if (input.mode === 'C') return { ...base, outcome: 'flag', reason: `IDE: allowed and flagged (control mode C): ${outside} outside the approved plan ${gate.planId}.${hint}` };
-  return { ...base, outcome: 'ask', reason: `IDE: ${outside} outside the approved plan ${gate.planId}; waiting for the user.${hint}` };
+  if (input.mode === 'C') return { ...base, outcome: 'flag', reason: `CodeRay: allowed and flagged (control mode C): ${outside} outside the approved plan ${gate.planId}.${hint}` };
+  return { ...base, outcome: 'ask', reason: `CodeRay: ${outside} outside the approved plan ${gate.planId}; waiting for the user.${hint}` };
 }
 
 function inScope(scope: FrozenScope, target: ClassifiedTarget): boolean {
@@ -118,7 +118,7 @@ function inScope(scope: FrozenScope, target: ClassifiedTarget): boolean {
 }
 
 function unknownTool(input: GuardInput): GuardDecision {
-  if (input.mode === 'A') return { ...NONE, outcome: 'deny', reason: `IDE: ${input.tool} is a tool the IDE does not know; control mode A blocks it.` };
-  if (input.mode === 'C') return { ...NONE, outcome: 'flag', reason: `IDE: ${input.tool} is a tool the IDE does not know; allowed and flagged (control mode C).` };
-  return { ...NONE, outcome: 'ask', reason: `IDE: ${input.tool} is a tool the IDE does not know; waiting for the user.` };
+  if (input.mode === 'A') return { ...NONE, outcome: 'deny', reason: `CodeRay: ${input.tool} is a tool CodeRay does not know; control mode A blocks it.` };
+  if (input.mode === 'C') return { ...NONE, outcome: 'flag', reason: `CodeRay: ${input.tool} is a tool CodeRay does not know; allowed and flagged (control mode C).` };
+  return { ...NONE, outcome: 'ask', reason: `CodeRay: ${input.tool} is a tool CodeRay does not know; waiting for the user.` };
 }

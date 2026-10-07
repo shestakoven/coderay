@@ -33,7 +33,7 @@ describe('GitService refresh', () => {
     await wait(() => expect(seen.at(-1)?.busy).toBeNull());
   });
 
-  it('sees what git does outside the IDE, such as a git add typed in a terminal', async () => {
+  it('sees what git does outside CodeRay, such as a git add typed in a terminal', async () => {
     const root = await makeRepo({ 'a.txt': 'a\n' });
     await put(root, { 'a.txt': 'b\n' });
     const { git } = service(root, { debounceMs: 20 });
@@ -46,7 +46,7 @@ describe('GitService refresh', () => {
     await wait(() => expect(seen.at(-1)?.files[0]).toMatchObject({ index: 'modified', worktree: null }));
   });
 
-  it('finds a repository that appears after the IDE started', async () => {
+  it('finds a repository that appears after CodeRay started', async () => {
     const root = await makeRepo({}, false);
     await rm(join(root, '.git'), { recursive: true });
     const { git } = service(root, { debounceMs: 20 });

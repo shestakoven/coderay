@@ -92,10 +92,10 @@ export class PolicyStore {
     const read = (level: PolicyLevel): Partial<Policy> => {
       const path = this.pathOf(level);
       if (externalEdits[level]) {
-        problems.push(`${path} was edited outside Settings and is ignored until you confirm it: the IDE level falls back to the defaults, the project level to the IDE level`);
+        problems.push(`${path} was edited outside Settings and is ignored until you confirm it: CodeRay level falls back to the defaults, the project level to CodeRay level`);
         return {};
       }
-      return this.read(path, level === 'ide' ? 'IDE level' : 'project level', problems);
+      return this.read(path, level === 'ide' ? 'CodeRay level' : 'project level', problems);
     };
     const ide = { ...DEFAULT_POLICY, ...read('ide') };
     const project = read('project');

@@ -245,7 +245,7 @@ describe('AgentSession terminal launch', () => {
 
   describe('when the terminal is closed while the hooks are checked', () => {
     // 'before': the check starts slowly and is still silent when the terminal is closed (its hook then finds the files gone).
-    // 'after': the check has reported and the IDE is only waiting for it to stop, which it does not do at once.
+    // 'after': the check has reported and CodeRay is only waiting for it to stop, which it does not do at once.
     const closedDuringCheck = async (when: 'before' | 'after', options: Partial<Options> = {}) => {
       const h = await terminalHarness({ hooks: 'on', canaryMs: 2000, killGraceMs: 1500, ...options });
       if (when === 'after') h.env.FAKE_CLAUDE_PROBE_IGNORES_SIGTERM = '1';

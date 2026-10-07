@@ -82,11 +82,11 @@ describe('HookGate', () => {
     const { root, call, decisions } = await setup();
     const answer = await call('Write', { file_path: join(root, 'src/app.ts'), content: 'x' });
     expect(answer?.permissionDecision).toBe('deny');
-    expect(answer?.permissionDecisionReason).toMatch(/^IDE: no approved plan covers src\/app\.ts\. Call mcp__idecore__propose_plan/);
+    expect(answer?.permissionDecisionReason).toMatch(/^CodeRay: no approved plan covers src\/app\.ts\. Call mcp__idecore__propose_plan/);
     expect(decisions.map((decision) => [decision.decision, decision.targets])).toEqual([['deny', ['src/app.ts']]]);
   });
 
-  it("lets reads, subagents, configured MCP tools and the IDE's own tools through without a plan", async () => {
+  it("lets reads, subagents, configured MCP tools and CodeRay's own tools through without a plan", async () => {
     const { call } = await setup();
     const answers = await Promise.all(['Read', 'Agent', 'mcp__docs__search', 'mcp__idecore__propose_plan'].map((tool) => call(tool, {})));
     expect(answers.map((answer) => answer?.permissionDecision)).toEqual(['allow', 'allow', 'allow', 'allow']);
@@ -104,7 +104,7 @@ describe('HookGate', () => {
     expect((await call('Write', { file_path: join(home, '.claude/plans/plan.md') }))?.permissionDecision).toBe('allow');
   });
 
-  it('answers allow for AskUserQuestion and ExitPlanMode, which claude still puts to the IDE as its own prompts', async () => {
+  it('answers allow for AskUserQuestion and ExitPlanMode, which claude still puts to CodeRay as its own prompts', async () => {
     const { call, gate } = await setup();
     const answers = await Promise.all(['AskUserQuestion', 'ExitPlanMode'].map((tool, index) => call(tool, {}, undefined, `toolu_${index}`)));
     expect([answers.map((answer) => answer?.permissionDecision), gate.pending()]).toEqual([['allow', 'allow'], []]);
@@ -154,7 +154,7 @@ describe('HookGate', () => {
     await approve();
     const answer = call('Write', { file_path: join(root, 'src/other.ts'), content: 'x' });
     gate.answer((await pending()).id, 'deny');
-    expect((await answer)?.permissionDecisionReason).toBe("IDE: the user denied this call (src/other.ts). Stop and wait for the user's next message.");
+    expect((await answer)?.permissionDecisionReason).toBe("CodeRay: the user denied this call (src/other.ts). Stop and wait for the user's next message.");
   });
 
   it('expands the plan from the prompt and then allows the call under the new version', async () => {
@@ -219,7 +219,7 @@ describe('HookGate', () => {
       switchMode('A');
       gate.answer((await shown()).id, 'expand-plan');
       const result = await answer;
-      expect([result?.permissionDecision, result?.permissionDecisionReason]).toEqual(['deny', expect.stringMatching(/^IDE: src\/lib\/util\.ts is outside the approved plan/)]);
+      expect([result?.permissionDecision, result?.permissionDecisionReason]).toEqual(['deny', expect.stringMatching(/^CodeRay: src\/lib\/util\.ts is outside the approved plan/)]);
       expect([decisions.map((decision) => decision.decision), gate.pending()]).toEqual([['deny'], []]);
     });
 
@@ -303,7 +303,7 @@ describe('HookGate', () => {
     const answer = call('Write', { file_path: join(root, 'src/other.ts') });
     await pending();
     gate.dropForTool('toolu_1');
-    expect((await answer)?.permissionDecisionReason).toBe('IDE: the call ended before the user answered.');
+    expect((await answer)?.permissionDecisionReason).toBe('CodeRay: the call ended before the user answered.');
   });
 
   it('drops every waiting prompt and denies its call when the agent process ends', async () => {
@@ -316,7 +316,7 @@ describe('HookGate', () => {
     await waitFor(() => gate.prompts().filter((prompt) => prompt.status === 'pending').length === 2, 'two prompts shown');
     gate.dropAll();
     expect((await answers).map((answer) => answer?.permissionDecisionReason)).toEqual([
-      'IDE: the call ended before the user answered.', 'IDE: the call ended before the user answered.',
+      'CodeRay: the call ended before the user answered.', 'CodeRay: the call ended before the user answered.',
     ]);
     expect([gate.prompts().map((prompt) => prompt.status), decisions.map((decision) => decision.decision)]).toEqual([['dropped', 'dropped'], ['deny', 'deny']]);
   });
@@ -342,7 +342,7 @@ describe('HookGate', () => {
       expect(decisions.map((decision) => decision.decision)).toEqual(['deny']);
     });
 
-    it('lets the IDE own tools through while held', async () => {
+    it('lets CodeRay own tools through while held', async () => {
       const hold = new Hold();
       const { call } = await setup({ hold });
       hold.hold('event');
@@ -410,7 +410,7 @@ describe('HookGate', () => {
       const { root, call, decisions } = await setup({ hold, holdMs: 30 });
       hold.hold('event');
       const answer = await call('Write', { file_path: join(root, 'src/app.ts') });
-      expect(answer?.permissionDecisionReason).toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
+      expect(answer?.permissionDecisionReason).toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
       expect([answer?.permissionDecision, decisions]).toEqual(['deny', []]);
     });
 
@@ -462,7 +462,7 @@ describe('HookGate', () => {
       gate.withdrawPending('x');
       hold.release();
       const reply = await answer;
-      expect(reply?.permissionDecisionReason).toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
+      expect(reply?.permissionDecisionReason).toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
       expect(gate.prompts().map((prompt) => prompt.status)).toEqual(['dropped']);
     });
 
@@ -508,7 +508,7 @@ describe('HookGate', () => {
     const { root, call, approve } = await setup({ holdMs: 50 });
     await approve();
     expect((await call('Write', { file_path: join(root, 'src/other.ts') }))?.permissionDecisionReason)
-      .toBe("IDE: the user did not respond in time. Stop and wait for the user's next message.");
+      .toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
   });
 
   it('refuses a second answer to the same prompt', async () => {
@@ -530,7 +530,7 @@ describe('HookGate', () => {
     expect(() => gate.answer(prompt.id, 'expand-plan')).toThrow(GateError);
   });
 
-  it('asks about a tool the IDE does not know, with no targets', async () => {
+  it('asks about a tool CodeRay does not know, with no targets', async () => {
     const { call, pending } = await setup();
     void call('BrandNewTool', { anything: 1 });
     expect(await pending()).toMatchObject({ tool: 'BrandNewTool', targets: [], canExpand: false, preview: { kind: 'input' } });
@@ -732,7 +732,7 @@ describe('hookRoute', () => {
     const { post, root } = await served({ throwPolicy: true });
     const response = await post('s3cret', { tool_name: 'Write', tool_use_id: 't3', tool_input: { file_path: join(root, 'src/app.ts') }, cwd: root });
     expect(response.status).toBe(200);
-    expect(JSON.parse(response.body)).toEqual({ permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' });
+    expect(JSON.parse(response.body)).toEqual({ permissionDecision: 'deny', permissionDecisionReason: 'CodeRay: the gate failed, so the call is blocked.' });
   });
 });
 

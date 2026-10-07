@@ -167,7 +167,7 @@ describe('parseHookEvent', () => {
     });
   });
 
-  it.each([[null], ['Stop'], [{}], [hook('Notification', { message: 'x' })], [hook('PreCompact')], [{ hook_event_name: 5 }]])('is null for %j, which the IDE does not follow', (raw) => {
+  it.each([[null], ['Stop'], [{}], [hook('Notification', { message: 'x' })], [hook('PreCompact')], [{ hook_event_name: 5 }]])('is null for %j, which CodeRay does not follow', (raw) => {
     expect(parseHookEvent(raw)).toBeNull();
   });
 });

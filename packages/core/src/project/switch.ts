@@ -21,7 +21,7 @@ export function successorArgs(argv: string[], newRoot: string | null, port: numb
   return [...kept, ...(newRoot === null ? [] : ['--project', newRoot]), '--port', String(port)];
 }
 
-export const busyMessage = (pid: number | string): string => `That project is already open in another IDE core (pid ${pid}).`;
+export const busyMessage = (pid: number | string): string => `That project is already open in another CodeRay core (pid ${pid}).`;
 
 export function projectBusy(home: string, root: string): string | null {
   const probe = acquireCoreLock(projectDir(home, root));

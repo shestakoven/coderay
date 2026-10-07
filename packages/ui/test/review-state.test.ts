@@ -26,7 +26,7 @@ describe('reviewGroups', () => {
     expect(reviewGroups(view(), [plan()])).toEqual([]);
   });
 
-  it('returns no groups when the only change is an IDE change and there are no plans', () => {
+  it('returns no groups when the only change is a CodeRay change and there are no plans', () => {
     expect(reviewGroups(view({ changes: [change({ origin: 'ide' })] }), [])).toEqual([]);
   });
 
@@ -302,12 +302,12 @@ describe('reviewGroups', () => {
   });
 
   describe('ide changes', () => {
-    it('never shows a change made by the IDE', () => {
+    it('never shows a change made by CodeRay', () => {
       const history = view({ changes: [change({ origin: 'ide', path: 'src/ide.ts', stepKey: 'a' }), change({ origin: 'ide', planId: null, planVersion: null, stepKey: null })] });
       expect(reviewGroups(history, [plan()])).toEqual([]);
     });
 
-    it('shows the agent change next to an IDE change of the same step and not the IDE one', () => {
+    it('shows the agent change next to a CodeRay change of the same step and not CodeRay one', () => {
       const history = view({ changes: [change({ origin: 'ide', path: 'src/ide.ts' }), change({ origin: 'agent', path: 'src/agent.ts' })] });
       const groups = reviewGroups(history, [plan()]);
       expect(groups.flatMap(paths)).toEqual(['src/agent.ts']);
@@ -398,7 +398,7 @@ describe('reviewGroups', () => {
       expect(reviewGroups(history, [plan()]).map((g) => [g.key, g.files[0]?.ids])).toEqual([['p1/a', ['in-a']], ['p1/b', ['in-b']]]);
     });
 
-    it('leaves out the ids of recorded and IDE changes', () => {
+    it('leaves out the ids of recorded and CodeRay changes', () => {
       const history = view({
         changes: [
           change({ id: 'agent', path: 'src/a.ts', at: 1 }),

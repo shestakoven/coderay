@@ -78,14 +78,14 @@ export class PlanService {
   async propose(raw: unknown, signal?: AbortSignal): Promise<ProposeOutcome> {
     this.load();
     const session = this.loadedFor;
-    if (session === null || session === undefined) return { ok: false, error: 'IDE: there is no agent session.' };
+    if (session === null || session === undefined) return { ok: false, error: 'CodeRay: there is no agent session.' };
     const components = this.options.components();
     const input = parsePlanInput(raw, this.options.root, components);
     if (typeof input === 'string') return { ok: false, error: input };
     const reviewed = await this.options.review(input.steps);
     this.load();
-    if (this.loadedFor !== session) return { ok: false, error: 'IDE: the agent session changed while the plan was checked.' };
-    if (signal?.aborted) return { ok: false, error: 'IDE: the call was cancelled.' };
+    if (this.loadedFor !== session) return { ok: false, error: 'CodeRay: the agent session changed while the plan was checked.' };
+    if (signal?.aborted) return { ok: false, error: 'CodeRay: the call was cancelled.' };
     let open = this.openPlanId();
     let replaced: PlanRecord | null = null;
     const problem = open === null ? null : this.keepsProgress(open, input.steps);
@@ -154,22 +154,22 @@ export class PlanService {
     const input = isRecord(raw) ? raw : {};
     const key = typeof input.key === 'string' ? input.key : '';
     if (!key || (input.phase !== 'start' && input.phase !== 'done')) {
-      return { ok: false, error: 'IDE: step needs {"key": "<step key>", "phase": "start" | "done"}.' };
+      return { ok: false, error: 'CodeRay: step needs {"key": "<step key>", "phase": "start" | "done"}.' };
     }
     const gate = this.gate();
-    if (gate.state === 'rejected') return { ok: false, error: `IDE: the user rejected plan ${gate.planId}. Stop and wait for the user's next message.` };
-    if (gate.state === 'closed') return { ok: false, error: `IDE: plan ${gate.planId} is closed. Call mcp__idecore__propose_plan for further changes.` };
-    if (gate.state === 'none') return { ok: false, error: 'IDE: no plan is approved. Call mcp__idecore__propose_plan first and wait for its result.' };
+    if (gate.state === 'rejected') return { ok: false, error: `CodeRay: the user rejected plan ${gate.planId}. Stop and wait for the user's next message.` };
+    if (gate.state === 'closed') return { ok: false, error: `CodeRay: plan ${gate.planId} is closed. Call mcp__idecore__propose_plan for further changes.` };
+    if (gate.state === 'none') return { ok: false, error: 'CodeRay: no plan is approved. Call mcp__idecore__propose_plan first and wait for its result.' };
     const enforced = this.enforced(gate.planId)!;
     if (!enforced.steps.some((step) => step.key === key)) {
-      return { ok: false, error: `IDE: plan ${gate.planId} has no step "${key}". Its steps: ${enforced.steps.map((step) => step.key).join(', ')}.` };
+      return { ok: false, error: `CodeRay: plan ${gate.planId} has no step "${key}". Its steps: ${enforced.steps.map((step) => step.key).join(', ')}.` };
     }
     if (!this.states.has(gate.planId)) this.states.set(gate.planId, new Map());
     const states = this.states.get(gate.planId)!;
     const status = states.get(key) ?? 'pending';
-    if (status === 'done') return { ok: false, error: `IDE: step "${key}" is already done.` };
+    if (status === 'done') return { ok: false, error: `CodeRay: step "${key}" is already done.` };
     if (input.phase === 'start') {
-      if (gate.activeStep !== null && gate.activeStep !== key) return { ok: false, error: `IDE: step "${gate.activeStep}" is still active; mark it done first.` };
+      if (gate.activeStep !== null && gate.activeStep !== key) return { ok: false, error: `CodeRay: step "${gate.activeStep}" is still active; mark it done first.` };
       if (status !== 'active') {
         this.setStep(gate.planId, key, 'active');
         this.emitStep({ planId: gate.planId, version: gate.version, key, phase: 'start' });
@@ -177,7 +177,7 @@ export class PlanService {
       }
       return { ok: true };
     }
-    if (status !== 'active') return { ok: false, error: `IDE: step "${key}" is not active; start it first.` };
+    if (status !== 'active') return { ok: false, error: `CodeRay: step "${key}" is not active; start it first.` };
     this.setStep(gate.planId, key, 'done');
     this.emitStep({ planId: gate.planId, version: gate.version, key, phase: 'done' });
     if (enforced.steps.every((step) => states.get(step.key) === 'done')) {
@@ -316,7 +316,7 @@ export class PlanService {
     for (const record of this.records) {
       if (record.status !== 'proposed') continue;
       record.status = 'withdrawn';
-      record.feedback = 'The IDE core restarted while the plan waited for an answer.';
+      record.feedback = 'CodeRay core restarted while the plan waited for an answer.';
       record.decidedAt = this.now();
       this.save(record);
     }
@@ -413,7 +413,7 @@ export class PlanService {
   private keepsProgress(planId: string, steps: PlanStep[]): string | null {
     const keys = new Set(steps.map((step) => step.key));
     for (const [key, status] of this.states.get(planId) ?? []) {
-      if (status !== 'pending' && !keys.has(key)) return `IDE: the new version must keep step "${key}", which is ${status}.`;
+      if (status !== 'pending' && !keys.has(key)) return `CodeRay: the new version must keep step "${key}", which is ${status}.`;
     }
     return null;
   }

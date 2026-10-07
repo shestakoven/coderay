@@ -40,7 +40,7 @@ test('keep tells the agent what was kept', async ({ page }) => {
     .poll(() =>
       readRecords(core!.record)
         .flatMap((r) => (r.stdin?.type === 'user' ? [String((r.stdin.message as { content: unknown }).content)] : []))
-        .find((t) => t.includes('[IDE]') && t.includes('src/other.ts')),
+        .find((t) => t.includes('[CodeRay]') && t.includes('src/other.ts')),
     )
     .toBeTruthy();
 });

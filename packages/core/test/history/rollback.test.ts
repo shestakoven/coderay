@@ -456,7 +456,7 @@ describe('step rollback', () => {
     await f.stepWork('s1', [{ rel: 'a.ts', text: 'a-new' }, { rel: 'b.ts', text: 'b-new', by: 'tool' }]);
     await f.reverts.rollbackStep('plan-1', 's1', []);
     expect(f.notes).toHaveLength(1);
-    expect(f.notes[0]).toBe('[IDE] Step "s1" was rolled back by the user. Restored: a.ts. Not restored: b.ts (not confirmed). The step is pending again; start it with the step tool before changing files for it.');
+    expect(f.notes[0]).toBe('[CodeRay] Step "s1" was rolled back by the user. Restored: a.ts. Not restored: b.ts (not confirmed). The step is pending again; start it with the step tool before changing files for it.');
   });
 
   it('emits the step record to listeners', async () => {
@@ -517,7 +517,7 @@ describe('step rollback', () => {
 describe('rollbackMessage', () => {
   it('is factual and lists both sides', () => {
     expect(rollbackMessage({ stepKey: 'edit', restored: ['a.ts', 'b.ts'], notRestored: [{ path: 'c.ts', reason: 'not confirmed' }] })).toBe(
-      '[IDE] Step "edit" was rolled back by the user. Restored: a.ts, b.ts. Not restored: c.ts (not confirmed). The step is pending again; start it with the step tool before changing files for it.',
+      '[CodeRay] Step "edit" was rolled back by the user. Restored: a.ts, b.ts. Not restored: c.ts (not confirmed). The step is pending again; start it with the step tool before changing files for it.',
     );
   });
 
@@ -526,7 +526,7 @@ describe('rollbackMessage', () => {
     const text = rollbackMessage({ stepKey: 'k'.repeat(400), restored: many, notRestored: many.map((path) => ({ path, reason: 'changed again after the agent\'s change' })) });
     expect(text.length).toBeLessThanOrEqual(1500);
     expect(text).toMatch(/and \d+ more|\d+ files/);
-    expect(text.startsWith('[IDE] Step "')).toBe(true);
+    expect(text.startsWith('[CodeRay] Step "')).toBe(true);
   });
 
   it('omits the empty sides', () => {

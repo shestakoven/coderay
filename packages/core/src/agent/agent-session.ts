@@ -47,9 +47,9 @@ export interface AgentSessionOptions {
   killGraceMs?: number;
   gate?: SessionGate;
   canaryMs?: number;
-  // Writes to the agent's terminal; the IDE only ever sends Esc, to stop a turn.
+  // Writes to the agent's terminal; CodeRay only ever sends Esc, to stop a turn.
   terminalInput?: (data: string) => void;
-  // A turn the IDE holds in the terminal waits here for the user's answer; null when nothing holds it.
+  // A turn CodeRay holds in the terminal waits here for the user's answer; null when nothing holds it.
   holdTurnEnd?: (signal: AbortSignal) => Promise<void> | null;
   // The step the agent started and has not finished, in the plan the gate enforces.
   activeStep?: () => { planId: string; key: string; title: string } | null;
@@ -60,7 +60,7 @@ export interface AgentSessionOptions {
 const ACTIVE_SESSION_KEY = 'activeSessionId';
 
 const HOOK_OFF_NOTICE =
-  "The IDE's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
+  "CodeRay's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
 
 const GAP_NOTICE = "Calls made while the core was down may be missing; claude's transcript could not be read.";
 
@@ -69,7 +69,7 @@ const SESSION_ERRORS = {
   restarting: 'The session is restarting. Try again in a moment.',
   'prompt-gone': 'That question is no longer waiting for an answer.',
   'bad-answer': 'That answer does not fit the question.',
-  'no-gate': 'The IDE could not prepare the hook settings for claude, so the agent was not started.',
+  'no-gate': 'CodeRay could not prepare the hook settings for claude, so the agent was not started.',
   'hook-off': HOOK_OFF_NOTICE,
   'no-turn': 'The agent has no open turn to add a note to.',
   'busy-configure': 'Wait for the agent to finish or press Stop before changing the model.',
@@ -462,7 +462,7 @@ export class AgentSession {
     return reasons.length > 0 ? { decision: 'block', reason: reasons.join('\n\n') } : null;
   }
 
-  // The IDE never marks a step done itself: it asks once per turn, and the agent's answer stands.
+  // CodeRay never marks a step done itself: it asks once per turn, and the agent's answer stands.
   private stepNudge(): string[] {
     const step = this.options.activeStep?.();
     const turn = this.tracker.openTurnId();
@@ -474,11 +474,11 @@ export class AgentSession {
     const asked = `${step.planId}/${step.key}`;
     if (this.nudged.has(asked)) return [];
     this.nudged.add(asked);
-    this.apply(this.tracker.notice(`The IDE asked the agent about the step "${step.key}", which is still active.`));
-    return [`IDE: step ${JSON.stringify(step.key)} (${step.title}) is still active. If it is finished, call mcp__idecore__step {"key": ${JSON.stringify(step.key)}, "phase": "done"}; if not, say in one sentence why it stays open.`];
+    this.apply(this.tracker.notice(`CodeRay asked the agent about the step "${step.key}", which is still active.`));
+    return [`CodeRay: step ${JSON.stringify(step.key)} (${step.title}) is still active. If it is finished, call mcp__idecore__step {"key": ${JSON.stringify(step.key)}, "phase": "done"}; if not, say in one sentence why it stays open.`];
   }
 
-  // Keys typed into the agent's terminal. Only the user and the IDE type there, never the agent's tools.
+  // Keys typed into the agent's terminal. Only the user and CodeRay type there, never the agent's tools.
   terminalTyped(data: string): void {
     if (INTERRUPT_KEYS.has(data)) this.interruptKeyAt = Date.now();
   }
@@ -522,7 +522,7 @@ export class AgentSession {
     if (this.terminating) throw new SessionError('restarting');
     if (this.refused) throw new SessionError('hook-off');
     if (this.terminalOpen) {
-      // The terminal's input belongs to the user: the IDE's own message goes with the user's next one.
+      // The terminal's input belongs to the user: CodeRay's own message goes with the user's next one.
       if (options.fromUser !== false || images.length > 0) throw new SessionError('in-terminal');
       this.notes.push(text);
       return;
@@ -562,14 +562,14 @@ export class AgentSession {
     if (this.terminalOpen) {
       if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
       this.absorbed.push(text);
-      this.apply(this.tracker.notice('IDE note sent to the agent'));
+      this.apply(this.tracker.notice('CodeRay note sent to the agent'));
       return;
     }
     if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
     if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
     if (this.hookReady) this.process.write(userMessage(text, []));
     else this.pendingSends.push(userMessage(text, []));
-    this.apply(this.tracker.notice('IDE note sent to the agent'));
+    this.apply(this.tracker.notice('CodeRay note sent to the agent'));
   }
 
   stop(): boolean {
@@ -768,7 +768,7 @@ export class AgentSession {
   }
 
   // The terminal view runs claude's own interface on the chat's conversation, MCP servers and hooks; the chat's process stops first.
-  // Null when the IDE's hooks do not run (the session is then refused, as a chat whose canary stays silent) or the terminal was closed meanwhile.
+  // Null when CodeRay's hooks do not run (the session is then refused, as a chat whose canary stays silent) or the terminal was closed meanwhile.
   async terminalLaunch(): Promise<TerminalLaunch | null> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
@@ -866,7 +866,7 @@ export class AgentSession {
         gateArgs = ['--settings', settingsPath, '--append-system-prompt', this.options.gate.systemPrompt(), '--system-prompt-snapshot', 'off'];
       } catch (error) {
         console.error('agent: could not write the hook settings', error);
-        this.apply(this.tracker.notice(`The IDE could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));
+        this.apply(this.tracker.notice(`CodeRay could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));
         return null;
       }
     }
@@ -941,7 +941,7 @@ export class AgentSession {
       this.versionChecked = true;
       if (event.cliVersion !== null && isOlderVersion(event.cliVersion, MIN_CLAUDE_VERSION)) {
         changes.push(...this.tracker.notice(
-          `claude ${event.cliVersion} is older than ${MIN_CLAUDE_VERSION}, the version the IDE was verified with; tool names and stream events may differ.`,
+          `claude ${event.cliVersion} is older than ${MIN_CLAUDE_VERSION}, the version CodeRay was verified with; tool names and stream events may differ.`,
         ));
       }
     }
@@ -956,8 +956,8 @@ export class AgentSession {
       return this.tracker.prompt(event.requestId, body);
     }
     const reason = event.subtype === 'can_use_tool'
-      ? `The IDE does not answer permission prompts for ${event.toolName ?? 'this tool'}.`
-      : `The IDE does not handle "${event.subtype}" requests.`;
+      ? `CodeRay does not answer permission prompts for ${event.toolName ?? 'this tool'}.`
+      : `CodeRay does not handle "${event.subtype}" requests.`;
     console.warn(`agent: refused a ${event.subtype} request from claude: ${reason}`);
     const response = event.subtype === 'can_use_tool'
       ? { subtype: 'success', request_id: event.requestId, response: { behavior: 'deny', message: reason } }

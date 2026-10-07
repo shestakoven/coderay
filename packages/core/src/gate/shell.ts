@@ -31,7 +31,7 @@ export interface ShellWrites {
 type Part =
   | { kind: 'lit'; text: string }
   | { kind: 'tilde' }
-  // Text bash builds from how the word is spelled, which the IDE does not work out; dash when it may begin with -.
+  // Text bash builds from how the word is spelled, which CodeRay does not work out; dash when it may begin with -.
   | { kind: 'unread'; what: string; dash: boolean }
   | { kind: 'var'; name: string }
   | { kind: 'glob' }
@@ -97,7 +97,7 @@ const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', '
 // Reads write no file but --output, and run no program but what the repository's own configuration names.
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'rev-list', 'describe', 'merge-base', 'stash list', 'stash show']);
 const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
-// The options git takes before its command, with = after those that take a value; after any other one the IDE cannot tell which command runs.
+// The options git takes before its command, with = after those that take a value; after any other one CodeRay cannot tell which command runs.
 const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= --namespace= --config-env= --attr-source= --exec-path --bare -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs --no-replace-objects --no-advice -v --version -h --help');
 // Of those, the ones that run no program of the agent's choosing and leave refs and attributes as they are; -c only with a quiet editor or pager.
 const PURE_GLOBALS = new Set(['-C', '--git-dir', '--work-tree', '-P', '--no-pager', '-p', '--paginate', '--no-optional-locks', '--literal-pathspecs', '--no-replace-objects', '--no-advice', '-v', '--version', '-h', '--help']);
@@ -168,7 +168,7 @@ function taint(state: State, wild = true): void {
   state.wild ||= wild;
 }
 
-// A word the IDE cannot read, and a long option it does not know exactly, may be a backup option.
+// A word CodeRay cannot read, and a long option it does not know exactly, may be a backup option.
 function namesWhatItWrites(base: string, args: Word[]): boolean {
   if (!NAMING_WRITERS.has(base)) return false;
   if (base !== 'cp' && base !== 'mv') return true;
@@ -383,7 +383,7 @@ function readWord(src: string, start: number): [Word, number] {
 }
 
 // The brace expansion the { at start opens, if it does: a } that closes it in the same word, and a comma or .. between, none of
-// them quoted. dash when a word it makes may begin with -: an alternative is empty, starts with -, or starts with what the IDE
+// them quoted. dash when a word it makes may begin with -: an alternative is empty, starts with -, or starts with what CodeRay
 // does not follow. A sequence makes letters or numbers, so at most a negative count.
 function braceExpansion(src: string, start: number): { dash: boolean } | null {
   let depth = 0;
@@ -511,8 +511,8 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   for (const word of [...words, ...redirects.flatMap((redirect) => (redirect.word ? [redirect.word] : []))]) {
     for (const part of word.parts) {
       if (part.kind !== 'sub') continue;
-      // Where the IDE finds no end bash may find one, and run what follows as commands.
-      if (part.open) state.targets.push(unresolved(word.raw.slice(0, 60), 'a command substitution the IDE cannot read to its end'));
+      // Where CodeRay finds no end bash may find one, and run what follows as commands.
+      if (part.open) state.targets.push(unresolved(word.raw.slice(0, 60), 'a command substitution CodeRay cannot read to its end'));
       state.cwd.push(cwdOf(state));
       run(part.body, state, depth + 1);
       state.cwd.pop();
@@ -576,7 +576,7 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       return;
     case 'source':
     case '.':
-      state.targets.push(unresolved(name, `${name} runs a script the IDE cannot read`));
+      state.targets.push(unresolved(name, `${name} runs a script CodeRay cannot read`));
       return;
     case 'touch':
       for (const word of operands(args, ['-t', '-d', '-r'])) addTarget(word, state);
@@ -630,7 +630,7 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       return;
     }
     case 'eval':
-      state.targets.push(unresolved('eval', 'eval runs text the IDE cannot read'));
+      state.targets.push(unresolved('eval', 'eval runs text CodeRay cannot read'));
       return;
     default:
       if (ENV_SETTERS.has(name)) {
@@ -745,7 +745,7 @@ function git(args: Word[], state: State): void {
     if (text === null || !text.startsWith('-')) break;
     const name = text.split('=')[0]!;
     if (!GLOBAL_OPTIONS.has(name)) {
-      state.targets.push(unresolved(text, 'a git option the IDE cannot read'));
+      state.targets.push(unresolved(text, 'a git option CodeRay cannot read'));
       return;
     }
     // Configuration given on the command line can run any program: hooks, aliases, editors, merge drivers.
@@ -770,9 +770,9 @@ function git(args: Word[], state: State): void {
     if (literalText(arg) === '--output' && rest[at + 1]) addTarget(rest[at + 1]!, state);
     else if (first?.kind === 'lit' && first.text.startsWith('--output=')) {
       addTarget({ parts: [{ kind: 'lit', text: first.text.slice('--output='.length) }, ...arg.parts.slice(1)], raw: arg.raw }, state);
-    } else if (hidesOption(arg)) state.targets.push(unresolved(arg.raw, 'a git option the IDE cannot read'));
+    } else if (hidesOption(arg)) state.targets.push(unresolved(arg.raw, 'a git option CodeRay cannot read'));
   }
-  if (sub === null) state.targets.push(unresolved(word.raw, 'a git command the IDE cannot read'));
+  if (sub === null) state.targets.push(unresolved(word.raw, 'a git command CodeRay cannot read'));
   // checkout <tree-ish> <paths>, checkout -- <paths> and their kin write files and leave HEAD where it is.
   else if (sub === 'checkout' && (options === null || options.paths)) state.rewrites.push(...gitDirectories(global, state));
   else if (HISTORY_VERBS.has(sub) || (verb === 'stash push' && options !== null)) {
@@ -815,7 +815,7 @@ interface Options {
   paths: boolean;
 }
 
-// The operands and options of a git command when each option is among the safe ones; null for any other, or for a word the IDE cannot read.
+// The operands and options of a git command when each option is among the safe ones; null for any other, or for a word CodeRay cannot read.
 function parseOptions(args: Word[], safe: Map<string, boolean> | undefined): Options | null {
   if (!safe) return null;
   const parsed: Options = { words: [], flags: new Set(), values: new Map(), paths: false };
@@ -970,12 +970,12 @@ function nestedShell(args: Word[], state: State, depth: number): void {
   if (flag === -1) return;
   const script = args[flag + 1];
   if (script !== undefined && literalText(script) === '--') {
-    state.targets.push(unresolved('--', 'a shell script the IDE cannot read'));
+    state.targets.push(unresolved('--', 'a shell script CodeRay cannot read'));
     return;
   }
   const text = script ? literalText(script) : null;
   if (text === null) {
-    state.targets.push(unresolved(script?.raw ?? '-c', 'a shell script the IDE cannot read'));
+    state.targets.push(unresolved(script?.raw ?? '-c', 'a shell script CodeRay cannot read'));
     return;
   }
   state.cwd.push(cwdOf(state));
@@ -1059,7 +1059,7 @@ function addTarget(word: Word, state: State, extra: TargetExtra = {}): void {
   }
   if (value.text === '' || DEVICE.test(value.text)) return;
   for (const cwd of value.text.startsWith('/') ? ['/'] : cwdOf(state)) {
-    if (cwd === null) state.targets.push({ ...base, path: null, temp: false, unresolved: 'a relative path after a cd the IDE cannot follow' });
+    if (cwd === null) state.targets.push({ ...base, path: null, temp: false, unresolved: 'a relative path after a cd CodeRay cannot follow' });
     else state.targets.push({ ...base, path: posix.resolve(cwd, value.text), temp: false, unresolved: null });
   }
 }

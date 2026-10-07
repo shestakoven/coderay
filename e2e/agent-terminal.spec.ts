@@ -123,7 +123,7 @@ test('Esc during a slow turn shows the turn as stopped in the chat', async ({ pa
   await expect(page.locator('.working')).toHaveCount(0);
 });
 
-test('without the IDE\'s hook the terminal does not open, and every new attempt checks again', async ({ page }) => {
+test('without CodeRay\'s hook the terminal does not open, and every new attempt checks again', async ({ page }) => {
   const c = await open(page, 'multi-turn', { FAKE_CLAUDE_HOOKS: 'off' });
   const notices = page.getByText(/hook did not start, so the agent was not started/);
 
@@ -244,7 +244,7 @@ test('hook events of another conversation are not the chat\'s', async ({ page })
   await expect(page.locator('.working')).toHaveCount(0);
 });
 
-test('the IDE gate guards the agent terminal: a write without an approved plan is blocked', async ({ page }) => {
+test('CodeRay gate guards the agent terminal: a write without an approved plan is blocked', async ({ page }) => {
   await open(page, 'multi-turn', { FAKE_CLAUDE_TUI_TOOL: JSON.stringify({ name: 'Write', input: { file_path: 'out.txt', content: 'x' } }) });
   await openTerminal(page);
   await typeInTerminal(page, 'write the file');

@@ -125,7 +125,7 @@ describe('projectBusy', () => {
   it('names the holder while another core serves the project, and frees up afterwards', () => {
     const home = tempDir('ide-busy-');
     const held = acquireCoreLock(projectDir(home, '/work/app'));
-    expect(projectBusy(home, '/work/app')).toBe(`That project is already open in another IDE core (pid ${process.pid}).`);
+    expect(projectBusy(home, '/work/app')).toBe(`That project is already open in another CodeRay core (pid ${process.pid}).`);
     expect(projectBusy(home, '/work/other')).toBeNull();
     held.release();
     expect(projectBusy(home, '/work/app')).toBeNull();

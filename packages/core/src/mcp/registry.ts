@@ -161,7 +161,7 @@ export class McpRegistry {
     for (const [name, entry] of project.servers) {
       const hash = entryHash(name, entry);
       if (ide.servers.has(name)) {
-        servers.push({ name, level: 'project', entry, entryHash: hash, status: 'shadowed', reason: 'an IDE-level server has the same name', prepared: null });
+        servers.push({ name, level: 'project', entry, entryHash: hash, status: 'shadowed', reason: 'a CodeRay-level server has the same name', prepared: null });
       } else if (!edited.trust && approvedBy(name, entry)) {
         servers.push(this.withEnv({ name, level: 'project', entry, entryHash: hash, status: 'ready', reason: null, prepared: null }));
       } else {
@@ -172,7 +172,7 @@ export class McpRegistry {
     }
     return {
       servers,
-      problems: [...ide.problems.map((problem) => `IDE level: ${problem}`), ...project.problems.map((problem) => `project level: ${problem}`)],
+      problems: [...ide.problems.map((problem) => `CodeRay level: ${problem}`), ...project.problems.map((problem) => `project level: ${problem}`)],
       externalEdits: { ...edited, trustApproves },
     };
   }
@@ -216,7 +216,7 @@ export class McpRegistry {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null;
         return `${path} could not be read (${(error as NodeJS.ErrnoException).code ?? 'unknown error'}); project servers were not read`;
       }
-      if (stat.isSymbolicLink()) return `${path} is a symbolic link; the IDE does not read or write project settings through links`;
+      if (stat.isSymbolicLink()) return `${path} is a symbolic link; CodeRay does not read or write project settings through links`;
       if (path === dirname(this.projectPath) && !stat.isDirectory()) return `${path} is not a directory; project servers were not read`;
     }
     return null;

@@ -26,7 +26,7 @@ describe('GitService guarded operations', () => {
     await git.commit('wip');
   });
 
-  it('discards the work-tree side back to the index, deletes an untracked file, and claims both as IDE writes', async () => {
+  it('discards the work-tree side back to the index, deletes an untracked file, and claims both as CodeRay writes', async () => {
     const root = await makeRepo({ 'a.txt': 'a\n' });
     await put(root, { 'a.txt': 'staged\n' });
     sh(root, 'add', 'a.txt');

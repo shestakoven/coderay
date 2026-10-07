@@ -579,7 +579,7 @@ body.resizing .resizer { pointer-events: auto; }
 .terminal-host .xterm { height: 100%; }
 .terminal-host .xterm-viewport { background-color: transparent !important; }
 
-/* Agent view: the IDE's chat or claude's own terminal interface */
+/* Agent view: CodeRay's chat or claude's own terminal interface */
 .agent-view { display: flex; gap: 2px; padding: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; flex: none; }
 .chat-header .agent-view button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--muted); padding: 2px 8px; border-radius: var(--r-1); font-size: calc(12px * var(--fs-scale, 1)); line-height: 18px; }
 .chat-header .agent-view button:hover:not(.on) { color: var(--fg); }

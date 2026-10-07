@@ -49,7 +49,7 @@ const followUpsOf = (changes: ChangeView[], planId: string, plans: PlanView[]): 
 
 export const followUpFiles = (history: HistoryView, plans: PlanView[], planId: string): ReviewFile[] => files(followUpsOf(history.changes.filter(isReviewable), planId, plans));
 
-// Out-of-plan changes come first: they are the ones that need a human decision. External changes (made outside the IDE's agent) come last.
+// Out-of-plan changes come first: they are the ones that need a human decision. External changes (made outside CodeRay's agent) come last.
 export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGroup[] {
   const reviewable = history.changes.filter(isReviewable);
   const agentChanges = reviewable.filter(byAgent);

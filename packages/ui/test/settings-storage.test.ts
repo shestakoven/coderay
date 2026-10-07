@@ -39,7 +39,7 @@ describe('remembered scope', () => {
     expect(loadScope(memoryStorage({ [SCOPE_KEY]: 'ide' }))).toBe('ide');
   });
 
-  it.each(['project', 'IDE', 'all', ''])('falls back to This project for the stored value %j', (value) => {
+  it.each(['project', 'CodeRay', 'all', ''])('falls back to This project for the stored value %j', (value) => {
     expect(loadScope(memoryStorage({ [SCOPE_KEY]: value }))).toBe('project');
   });
 

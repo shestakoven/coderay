@@ -249,7 +249,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         if (error instanceof ScanAborted || scanFailing) return;
         scanFailing = true;
         console.error('execution: the periodic scan failed', error);
-        if (error instanceof ScanError) notice(`The IDE could not check the project files for changes (${error.message}).`);
+        if (error instanceof ScanError) notice(`CodeRay could not check the project files for changes (${error.message}).`);
       })
       .finally(() => {
         scanning = null;

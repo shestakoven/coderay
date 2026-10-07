@@ -24,8 +24,8 @@ const PREVIEW_CHARS = 20_000;
 const KEPT_CLOSED = 50;
 const KEPT_DECIDED = 100_000;
 const STATUS_MS = 5_000;
-const NO_RESPONSE = "IDE: the user did not respond in time. Stop and wait for the user's next message.";
-const CALL_ENDED = 'IDE: the call ended before the user answered.';
+const NO_RESPONSE = "CodeRay: the user did not respond in time. Stop and wait for the user's next message.";
+const CALL_ENDED = 'CodeRay: the call ended before the user answered.';
 
 export interface HookAnswer {
   permissionDecision: 'allow' | 'deny';
@@ -143,7 +143,7 @@ export class HookGate {
 
   async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
     const input = parseHookInput(raw, this.options.root);
-    if (!input) return deny('IDE: the hook input could not be read.');
+    if (!input) return deny('CodeRay: the hook input could not be read.');
     this.inflight.set(input.toolUseId, (this.inflight.get(input.toolUseId) ?? 0) + 1);
     try {
       return await this.admit(input, signal, this.now() + (this.options.holdMs ?? GATE_HOLD_MS));
@@ -278,15 +278,15 @@ export class HookGate {
       return deny(reason);
     }
     if (outcome === 'deny') {
-      const reason = `IDE: the user denied this call (${describeTargets(judged.decision.outOfScope) || input.toolName}). Stop and wait for the user's next message.`;
+      const reason = `CodeRay: the user denied this call (${describeTargets(judged.decision.outOfScope) || input.toolName}). Stop and wait for the user's next message.`;
       this.close(view, event, 'deny', 'denied');
       this.record(input, judged, 'ask-denied', reason);
       return deny(reason);
     }
     if (outcome === 'allow-once') {
       this.close(view, event, 'allow-once', 'allowed-once');
-      this.record(input, judged, 'ask-approved', 'IDE: the user allowed this call once.');
-      return allow('IDE: the user allowed this call once.');
+      this.record(input, judged, 'ask-approved', 'CodeRay: the user allowed this call once.');
+      return allow('CodeRay: the user allowed this call once.');
     }
     const generation = this.options.hold?.generation();
     const again = await this.judge(input);

@@ -8,7 +8,7 @@ const input = (o: Partial<ResumeInput> = {}): ResumeInput => ({
 describe('resumeMessage', () => {
   it('names kept and reverted files, the check-the-state sentence and the killed subagents', () => {
     const text = resumeMessage(input({ kept: ['a.ts'], reverted: ['b.ts'], interrupted: true, killedSubagents: ['Explore agent'] }));
-    expect(text).toMatch(/^\[IDE\]/);
+    expect(text).toMatch(/^\[CodeRay\]/);
     expect(text).toContain('a.ts');
     expect(text).toContain('b.ts');
     expect(text).toMatch(/check the current state of the kept files/i);
@@ -22,7 +22,7 @@ describe('resumeMessage', () => {
       kept: ['k.ts'], reverted: ['r.ts'], added: ['p.ts'], mine: ['m.ts'], conflicts: [{ path: 'c.ts', reason: 'edited since' }],
       interrupted: true, killedSubagents: ['S'], backgroundShell: true, unknownOrigin: true, failOpen: true,
     }));
-    const at = ['k.ts', 'r.ts', 'p.ts', 'm.ts', 'c.ts (edited since)', 'partial', 'unfinished work', 'background shell', 'IDE was not running', 'safety hook', 'Check the current state'].map((s) => text.indexOf(s));
+    const at = ['k.ts', 'r.ts', 'p.ts', 'm.ts', 'c.ts (edited since)', 'partial', 'unfinished work', 'background shell', 'CodeRay was not running', 'safety hook', 'Check the current state'].map((s) => text.indexOf(s));
     expect(at.every((i) => i >= 0)).toBe(true);
     expect([...at].sort((a, b) => a - b)).toEqual(at);
   });
@@ -53,7 +53,7 @@ describe('resumeMessage', () => {
       kept: long('k'), reverted: long('r'), added: long('a'), mine: long('m'), conflicts: long('c').map((path) => ({ path, reason: 'edited since' })), interrupted: true,
     }));
     expect(text.length).toBeLessThanOrEqual(1500);
-    expect(text).toMatch(/^\[IDE\]/);
+    expect(text).toMatch(/^\[CodeRay\]/);
     expect(text.endsWith('continue from it rather than redoing them.')).toBe(true);
     expect(text).toContain('Kept as you wrote them');
   });
@@ -70,8 +70,8 @@ describe('resumeMessage', () => {
       interrupted: true, killedSubagents: ['Explore agent'], backgroundShell: true, unknownOrigin: true, failOpen: true,
     }));
     expect(text.length).toBeLessThanOrEqual(1500);
-    expect(text).toMatch(/^\[IDE\]/);
-    for (const phrase of ['may be partial', 'Explore agent', 'their unfinished work is lost', 'background shell', 'IDE was not running', 'safety hook']) expect(text).toContain(phrase);
+    expect(text).toMatch(/^\[CodeRay\]/);
+    for (const phrase of ['may be partial', 'Explore agent', 'their unfinished work is lost', 'background shell', 'CodeRay was not running', 'safety hook']) expect(text).toContain(phrase);
     expect(text.endsWith('continue from it rather than redoing them.')).toBe(true);
     expect(text).toContain('and 199 more');
   });

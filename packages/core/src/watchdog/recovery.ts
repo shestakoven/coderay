@@ -58,7 +58,7 @@ export async function recoverBaselines(o: RecoverBaselinesOptions): Promise<void
     if (error instanceof ScanAborted) return;
     const reason = error instanceof Error ? error.message : String(error);
     console.error('recovery: could not check the files changed while the core was down', error);
-    o.notice?.(`The IDE could not check which files changed while it was not running (${reason}).`);
+    o.notice?.(`CodeRay could not check which files changed while it was not running (${reason}).`);
   }
   try {
     const orphans = o.changes.changes().filter((c: ChangeView) => c.origin === 'unknown' && c.enforcement === 'enforced' && c.eventId === null && c.resolution === null);

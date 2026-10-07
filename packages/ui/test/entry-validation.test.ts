@@ -33,7 +33,7 @@ describe('validateEntryForm', () => {
       expect(check(stdio({ name: ' idecore ' }))).toEqual({ name: check(stdio({ name: 'idecore' })).name });
     });
 
-    it.each(['IDE', 'ide2', 'my-ide', 'constructor', 'toString', 'hasOwnProperty', 'prototype'])('accepts the ordinary name %j', (name) => {
+    it.each(['CodeRay', 'ide2', 'my-ide', 'constructor', 'toString', 'hasOwnProperty', 'prototype'])('accepts the ordinary name %j', (name) => {
       expect(check(stdio({ name }))).toEqual({});
     });
 

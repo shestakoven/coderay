@@ -38,23 +38,23 @@ export function projectPath(path: string, root: string): string | null {
 }
 
 export function parsePlanInput(raw: unknown, root: string, components: ComponentRef[]): PlanInput | string {
-  if (!isRecord(raw)) return 'IDE: propose_plan needs {"goal": "...", "steps": [...]}.';
+  if (!isRecord(raw)) return 'CodeRay: propose_plan needs {"goal": "...", "steps": [...]}.';
   const goal = text(raw.goal);
-  if (!goal) return 'IDE: the plan needs a "goal".';
-  if (!Array.isArray(raw.steps) || raw.steps.length === 0) return 'IDE: the plan needs at least one step.';
-  if (raw.steps.length > MAX_STEPS) return `IDE: a plan can have at most ${MAX_STEPS} steps.`;
+  if (!goal) return 'CodeRay: the plan needs a "goal".';
+  if (!Array.isArray(raw.steps) || raw.steps.length === 0) return 'CodeRay: the plan needs at least one step.';
+  if (raw.steps.length > MAX_STEPS) return `CodeRay: a plan can have at most ${MAX_STEPS} steps.`;
   const byId = new Map(components.map((component) => [component.id, component]));
   const steps: PlanStep[] = [];
   const keys = new Set<string>();
   for (const [index, value] of raw.steps.entries()) {
-    if (!isRecord(value)) return `IDE: step ${index + 1} is not an object.`;
+    if (!isRecord(value)) return `CodeRay: step ${index + 1} is not an object.`;
     const key = text(value.key);
-    if (!key) return `IDE: step ${index + 1} needs a "key".`;
-    if (keys.has(key)) return `IDE: two steps have the key "${key}"; keys must be unique.`;
+    if (!key) return `CodeRay: step ${index + 1} needs a "key".`;
+    if (keys.has(key)) return `CodeRay: two steps have the key "${key}"; keys must be unique.`;
     const title = text(value.title);
-    if (!title) return `IDE: step "${key}" needs a "title".`;
-    if (!Array.isArray(value.targets) || value.targets.length === 0) return `IDE: step "${key}" needs at least one target.`;
-    if (value.targets.length > MAX_TARGETS) return `IDE: step "${key}" has more than ${MAX_TARGETS} targets.`;
+    if (!title) return `CodeRay: step "${key}" needs a "title".`;
+    if (!Array.isArray(value.targets) || value.targets.length === 0) return `CodeRay: step "${key}" needs at least one target.`;
+    if (value.targets.length > MAX_TARGETS) return `CodeRay: step "${key}" has more than ${MAX_TARGETS} targets.`;
     const targets: PlanTarget[] = [];
     for (const target of value.targets) {
       const parsed = parseTarget(target, key, root, byId);
@@ -70,19 +70,19 @@ export function parsePlanInput(raw: unknown, root: string, components: Component
 }
 
 function parseTarget(value: unknown, key: string, root: string, byId: Map<string, ComponentRef>): PlanTarget | string {
-  if (!isRecord(value)) return `IDE: a target of step "${key}" is not an object.`;
-  if (typeof value.op !== 'string' || !OPS.includes(value.op)) return `IDE: a target of step "${key}" needs "op": "modify", "create" or "delete".`;
+  if (!isRecord(value)) return `CodeRay: a target of step "${key}" is not an object.`;
+  if (typeof value.op !== 'string' || !OPS.includes(value.op)) return `CodeRay: a target of step "${key}" needs "op": "modify", "create" or "delete".`;
   const op = value.op as TargetOp;
   const componentId = typeof value.componentId === 'string' && value.componentId !== '' ? value.componentId : null;
   const path = typeof value.path === 'string' && value.path !== '' ? value.path : null;
-  if ((componentId === null) === (path === null)) return `IDE: each target of step "${key}" names either a "componentId" or a "path".`;
+  if ((componentId === null) === (path === null)) return `CodeRay: each target of step "${key}" names either a "componentId" or a "path".`;
   if (componentId !== null) {
-    if (!byId.has(componentId)) return `IDE: step "${key}" names an unknown component "${componentId}". ${validIds(byId)}`;
+    if (!byId.has(componentId)) return `CodeRay: step "${key}" names an unknown component "${componentId}". ${validIds(byId)}`;
     return { componentId, op };
   }
-  if (WILDCARD.test(path!)) return `IDE: "${path}" in step "${key}" contains a wildcard; name files or directories.`;
+  if (WILDCARD.test(path!)) return `CodeRay: "${path}" in step "${key}" contains a wildcard; name files or directories.`;
   const rel = projectPath(path!, root);
-  if (rel === null) return `IDE: "${path}" in step "${key}" is not a path inside the project.`;
+  if (rel === null) return `CodeRay: "${path}" in step "${key}" is not a path inside the project.`;
   return { path: rel, op };
 }
 

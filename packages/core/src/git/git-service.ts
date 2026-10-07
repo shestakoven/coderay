@@ -344,7 +344,7 @@ export class GitService {
     if (reason !== null) throw new GitError(`Cannot ${what} while ${reason}.`);
   }
 
-  // The write is the IDE's own: the watchdog must not take it for an agent's.
+  // The write is CodeRay's own: the watchdog must not take it for an agent's.
   private claim(place: Place, path: string, sha: string | null): void {
     if (place.prefix === '') this.o.ideWrites.expect(path, sha);
     else if (path.startsWith(place.prefix)) this.o.ideWrites.expect(path.slice(place.prefix.length), sha);

@@ -15,7 +15,7 @@ describe('PolicyStore', () => {
     expect(setup().policy.effective()).toEqual(DEFAULT_POLICY);
   });
 
-  it('protects secrets, git hooks, config and exclude rules, the IDE config and Claude settings by default, and allows Claude plan and memory files outside the project', () => {
+  it('protects secrets, git hooks, config and exclude rules, CodeRay config and Claude settings by default, and allows Claude plan and memory files outside the project', () => {
     expect(DEFAULT_POLICY).toEqual({
       mode: 'B',
       guarded: ['.env*', '.git/hooks/', '.git/config', '.git/info/', '.ide/mcp.json', '.claude/'],
@@ -25,7 +25,7 @@ describe('PolicyStore', () => {
     });
   });
 
-  it('lets the project override replace only the IDE-level fields it sets', () => {
+  it('lets the project override replace only CodeRay-level fields it sets', () => {
     const { policy } = setup();
     policy.save('ide', { mode: 'A', autoApproveMaxFiles: 2 });
     policy.save('project', { mode: 'C', guarded: ['.env*'] });
@@ -73,7 +73,7 @@ describe('PolicyStore', () => {
     writeFileSync(join(home, 'policy.json'), JSON.stringify({ mode: 'C', guarded: [] }));
     const view = policy.view();
     expect([view.effective, view.externalEdits]).toEqual([DEFAULT_POLICY, { ide: true, project: false }]);
-    expect(view.problems).toEqual([`${join(home, 'policy.json')} was edited outside Settings and is ignored until you confirm it: the IDE level falls back to the defaults, the project level to the IDE level`]);
+    expect(view.problems).toEqual([`${join(home, 'policy.json')} was edited outside Settings and is ignored until you confirm it: CodeRay level falls back to the defaults, the project level to CodeRay level`]);
     expect(view.edited).toEqual({ ide: JSON.stringify({ mode: 'C', guarded: [] }), project: null });
     policy.confirmExternalEdits(view.hashes);
     expect(policy.effective()).toEqual({ ...DEFAULT_POLICY, mode: 'C', guarded: [] });
@@ -102,7 +102,7 @@ describe('PolicyStore', () => {
     expect([view.effective, view.problems]).toEqual([DEFAULT_POLICY, [`project level: ${join(projectDir(home, root), 'policy.json')} is not valid JSON`]]);
   });
 
-  it('does not let a corrupt ledger and an absent IDE-level policy file cancel each other out to hide an outside edit', () => {
+  it('does not let a corrupt ledger and an absent CodeRay-level policy file cancel each other out to hide an outside edit', () => {
     const { home, policy } = setup();
     policy.save('project', { mode: 'C' });
     writeFileSync(join(home, 'policy-ledger.json'), '{ corrupt');

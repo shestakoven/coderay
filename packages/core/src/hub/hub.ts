@@ -113,7 +113,7 @@ export async function startHub(options: HubOptions): Promise<RunningHub> {
         if (clone?.requestId === message.requestId) clone.handle.cancel();
         return;
       case 'project.close':
-        reply({ type: 'project.close.result', requestId: message.requestId, error: 'The IDE hub closes a project with hub.close.' });
+        reply({ type: 'project.close.result', requestId: message.requestId, error: 'CodeRay hub closes a project with hub.close.' });
         return;
       case 'hub.activate':
         if (!supervisor.activate(message.id)) reply({ type: 'error', message: `There is no open project with id "${message.id}".` });
@@ -128,7 +128,7 @@ export async function startHub(options: HubOptions): Promise<RunningHub> {
         reply({ type: 'hub.restart.result', requestId: message.requestId, error: await supervisor.restart(message.id) });
         return;
       default:
-        reply({ type: 'error', message: `"${message.type}" goes to a project core, not to the IDE hub.` });
+        reply({ type: 'error', message: `"${message.type}" goes to a project core, not to CodeRay hub.` });
     }
   };
 
@@ -141,7 +141,7 @@ export async function startHub(options: HubOptions): Promise<RunningHub> {
     greeting: () => [{ type: 'hub.snapshot', hub: snapshot() }],
     onClientMessage: (message, reply) => {
       if (closing) {
-        reply({ type: 'error', message: 'The IDE hub is shutting down.' });
+        reply({ type: 'error', message: 'CodeRay hub is shutting down.' });
         return;
       }
       handle(message, reply).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));
@@ -161,7 +161,7 @@ export async function startHub(options: HubOptions): Promise<RunningHub> {
         writeOpenProjects(options.home, text);
         saved = text;
       } catch (error) {
-        console.error(`IDE hub: could not save the open projects: ${(error as Error).message}`);
+        console.error(`CodeRay hub: could not save the open projects: ${(error as Error).message}`);
       }
     }
     for (const project of projects) {

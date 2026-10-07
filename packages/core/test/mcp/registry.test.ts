@@ -24,7 +24,7 @@ function setup(env: NodeJS.ProcessEnv = {}) {
 }
 
 describe('McpRegistry', () => {
-  it('gives the session the IDE-level servers added through Settings, with ${VAR} in headers left for claude to expand', () => {
+  it('gives the session CodeRay-level servers added through Settings, with ${VAR} in headers left for claude to expand', () => {
     const { registry } = setup({ TOKEN: 's3cret' });
     registry.save('ide', 'docs', { ...docs, headers: { Authorization: 'Bearer ${TOKEN}' } }, null);
     expect(registry.sessionServers()).toEqual({ docs: { ...docs, headers: { Authorization: 'Bearer ${TOKEN}' } } });
@@ -61,7 +61,7 @@ describe('McpRegistry', () => {
     expect(registry.sessionServers()).toEqual({});
   });
 
-  it('lets the IDE-level server win a name clash and marks the project entry shadowed', () => {
+  it('lets CodeRay-level server win a name clash and marks the project entry shadowed', () => {
     const { registry, writeProjectFile } = setup();
     registry.save('ide', 'docs', docs, null);
     writeProjectFile({ docs: { type: 'http', url: 'https://other.example/mcp' } });
@@ -83,7 +83,7 @@ describe('McpRegistry', () => {
     expect(JSON.parse(readFileSync(join(root, '.ide', 'mcp.json'), 'utf8'))).toEqual({ mcpServers: { docs } });
   });
 
-  it('registers a project save with the hash of the bytes it writes, before writing, and an IDE-level save not at all', () => {
+  it('registers a project save with the hash of the bytes it writes, before writing, and a CodeRay-level save not at all', () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
     const expected: { rel: string; hash: string; existed: boolean }[] = [];
@@ -96,7 +96,7 @@ describe('McpRegistry', () => {
     expect(expected).toEqual([{ rel: '.ide/mcp.json', hash: blobHash(text), existed: false }]);
   });
 
-  it('unapproves IDE-level servers after ~/.ide/mcp.json is edited outside Settings, until the edits are confirmed', () => {
+  it('unapproves CodeRay-level servers after ~/.ide/mcp.json is edited outside Settings, until the edits are confirmed', () => {
     const { registry, home, confirm } = setup();
     registry.save('ide', 'docs', docs, null);
     writeFileSync(join(home, 'mcp.json'), JSON.stringify({ mcpServers: { docs, extra: { command: 'evil' } } }));
@@ -145,7 +145,7 @@ describe('McpRegistry', () => {
     confirm();
     registry.save('ide', 'docs', docs, null);
     expect(JSON.parse(readFileSync(join(home, 'mcp.json'), 'utf8')).mcpServers).toEqual({ broken: { type: 'sse' }, docs });
-    expect(registry.view().problems).toEqual(['IDE level: broken: "type" must be "stdio" or "http"']);
+    expect(registry.view().problems).toEqual(['CodeRay level: broken: "type" must be "stdio" or "http"']);
   });
 
   it('saves servers whose names are properties every object inherits', () => {
@@ -291,7 +291,7 @@ describe('McpRegistry', () => {
     expect(statSync(join(home, 'settings-ledger.json')).mode & 0o777).toBe(0o600);
   });
 
-  it('treats a project .ide that is a regular file as unreadable instead of throwing, returning IDE servers and builtins only', () => {
+  it('treats a project .ide that is a regular file as unreadable instead of throwing, returning CodeRay servers and builtins only', () => {
     const { registry, root } = setup();
     registry.save('ide', 'docs', docs, null);
     writeFileSync(join(root, '.ide'), 'not a directory');
@@ -383,7 +383,7 @@ describe('McpRegistry servers Claude Code loads itself', () => {
     expect(registry.view().claudeCodeServers).toEqual([{ name: 'linear', source: 'user', type: 'http' }]);
   });
 
-  it('leaves out a Claude Code server with the same name as an IDE-level server', () => {
+  it('leaves out a Claude Code server with the same name as a CodeRay-level server', () => {
     const { registry, claudeJsonPath } = setup();
     registry.save('ide', 'linear', docs, null);
     writeJson(claudeJsonPath, { mcpServers: { linear: { command: 'npx' }, figma: docs } });

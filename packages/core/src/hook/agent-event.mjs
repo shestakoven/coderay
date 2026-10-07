@@ -1,4 +1,4 @@
-// Event hook of the AI-Control IDE: reports what the agent does and passes the core's answer (a note for the agent) back to claude.
+// Event hook of the AI-Control CodeRay: reports what the agent does and passes the core's answer (a note for the agent) back to claude.
 // It never blocks the agent, so every path exits 0.
 import { readFileSync, writeSync } from 'node:fs';
 import { request } from 'node:http';
@@ -42,6 +42,6 @@ try {
   );
   if (res.status === 200 && res.text !== '') writeSync(1, res.text);
 } catch {
-  // the core is unreachable: the agent goes on without the IDE's notes
+  // the core is unreachable: the agent goes on without CodeRay's notes
 }
 process.exit(0);

@@ -172,7 +172,7 @@ describe('an agent in the terminal that is Codex, followed through its hooks', (
       expect([snapshot(t), t.heard.interrupts]).toEqual([before, 0]);
     });
 
-    it('counts the Esc the IDE typed for a stop as the key', async () => {
+    it('counts the Esc CodeRay typed for a stop as the key', async () => {
       const { t, feed } = await codexTerminal();
       feed(0, AT.secondPrompt);
       expect(t.h.session.stop()).toBe(true);

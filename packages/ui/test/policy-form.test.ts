@@ -9,7 +9,7 @@ const view = (project: Partial<Policy> = {}): PolicyView => ({
 });
 
 describe('policy form', () => {
-  it('shows the IDE level with every field set, and the project level with inherited fields marked', () => {
+  it('shows CodeRay level with every field set, and the project level with inherited fields marked', () => {
     expect(policyForm(view(), 'ide')).toMatchObject({ mode: 'B', autoApproveMaxFiles: '3', guarded: '.env*\n.claude/', inherit: { mode: false, guarded: false } });
     expect(policyForm(view({ mode: 'A' }), 'project')).toMatchObject({ mode: 'A', inherit: { mode: false, guarded: true, autoApproveMaxFiles: true } });
   });

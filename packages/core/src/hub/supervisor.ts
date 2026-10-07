@@ -9,7 +9,7 @@ export const STOP_TIMEOUT_MS = 5_000;
 export const POLL_MS = 200;
 const STDERR_TAIL_CHARS = 2048;
 const MAX_ERROR_CHARS = 300;
-const SHUTTING_DOWN = 'The IDE hub is shutting down.';
+const SHUTTING_DOWN = 'CodeRay hub is shutting down.';
 const CLOSED_EARLY = 'The project was closed before its core started.';
 
 export function projectId(root: string): string {
@@ -67,16 +67,16 @@ interface Entry {
 }
 
 export function describeExit(exit: CoreExit, stderr: string): string {
-  if ('error' in exit) return `Could not start the IDE core: ${exit.error.message}`;
-  if (exit.code === null) return `The IDE core stopped unexpectedly (${exit.signal ?? 'unknown signal'}).`;
-  const holder = /another IDE core \(pid (\d+)\)/.exec(stderr);
+  if ('error' in exit) return `Could not start CodeRay core: ${exit.error.message}`;
+  if (exit.code === null) return `CodeRay core stopped unexpectedly (${exit.signal ?? 'unknown signal'}).`;
+  const holder = /another CodeRay core \(pid (\d+)\)/.exec(stderr);
   if (holder) return busyMessage(holder[1] ?? '?');
   const reason = stderr
     .split('\n')
     .map((line) => line.replace(/\u001b\[[0-9;]*m/g, '').trim())
     .filter((line) => line !== '' && !line.startsWith('at ') && /error|fatal|failed/i.test(line))
     .at(-1);
-  return reason ? reason.slice(0, MAX_ERROR_CHARS) : `The IDE core exited (code ${exit.code}).`;
+  return reason ? reason.slice(0, MAX_ERROR_CHARS) : `CodeRay core exited (code ${exit.code}).`;
 }
 
 export class Supervisor {
@@ -215,7 +215,7 @@ export class Supervisor {
     try {
       port = await this.deps.freePort();
     } catch (error) {
-      if (entry.generation === generation) this.fail(entry, `Could not find a free port for the IDE core: ${(error as Error).message}`);
+      if (entry.generation === generation) this.fail(entry, `Could not find a free port for CodeRay core: ${(error as Error).message}`);
       return;
     }
     if (entry.generation !== generation) return;
@@ -251,7 +251,7 @@ export class Supervisor {
         entry.generation += 1;
         // Stopped before the failure shows, so a restart cannot race the old core for the project lock.
         await this.stop(run);
-        if (entry.generation === generation + 1) this.fail(entry, `The IDE core did not start listening within ${Math.round(this.limits.startTimeoutMs / 1000)} s.`);
+        if (entry.generation === generation + 1) this.fail(entry, `CodeRay core did not start listening within ${Math.round(this.limits.startTimeoutMs / 1000)} s.`);
         return;
       }
       await Promise.race([this.deps.sleep(this.limits.pollMs), run.exited]);

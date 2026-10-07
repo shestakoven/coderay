@@ -26,7 +26,7 @@ const pairs = (count: number) => {
 type Mention = string | RegExp;
 
 function refused(result: unknown, ...mentions: Mention[]): void {
-  expect(result).toEqual(expect.stringMatching(/^IDE: /));
+  expect(result).toEqual(expect.stringMatching(/^CodeRay: /));
   for (const mention of mentions) {
     expect(result).toEqual(typeof mention === 'string' ? expect.stringContaining(mention) : expect.stringMatching(mention));
   }

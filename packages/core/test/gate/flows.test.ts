@@ -192,7 +192,7 @@ describe('the gate end to end', { timeout: 15_000 }, () => {
     await turnClosed(f);
     expect([f.file('src/app.ts'), f.records().find((record) => record.hook)?.hook]).toEqual([
       ORIGINAL['src/app.ts'],
-      expect.objectContaining({ allowed: false, exit: 2, reason: expect.stringContaining('IDE core unreachable') }),
+      expect.objectContaining({ allowed: false, exit: 2, reason: expect.stringContaining('CodeRay core unreachable') }),
     ]);
   });
 });

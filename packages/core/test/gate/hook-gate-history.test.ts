@@ -215,8 +215,8 @@ describe('HookGate for history commands in a repository with an origin and an ig
       ["cat <<'EOF'\n$(git reset --hard)\nEOF", null],
       ['git checkout main', 'sub/x.txt (uncommitted)'],
       ['git checkout dirbranch', '.env (uncommitted)'],
-      ['git --super-prefix=x reset --hard', 'a git option the IDE cannot read'],
-      ['echo "$(git status', 'a command substitution the IDE cannot read to its end'],
+      ['git --super-prefix=x reset --hard', 'a git option CodeRay cannot read'],
+      ['echo "$(git status', 'a command substitution CodeRay cannot read to its end'],
     ];
     const results = await verdicts(bash, rows.map(([command]) => command));
     expect(results.map(([command, decision, reason], i) => [command, decision, rows[i]![1] === null || (reason ?? '').includes(rows[i]![1]!)])).toEqual(
