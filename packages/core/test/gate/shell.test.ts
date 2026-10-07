@@ -469,6 +469,10 @@ describe('shellWrites for loops', () => {
     expect(targets(command)).toEqual(['? the variable $f']);
   });
 
+  it.each(['HOME', 'TMPDIR', 'TMP'])('a loop over %s leaves it unknown in a script that also rebinds a variable', (name) => {
+    expect(targets(`let x=1; for ${name} in a b; do rm $${name}/x; done`)).toEqual([`? the variable $${name}`]);
+  });
+
   it.each(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'coproc', 'declare', 'typeset', 'local', 'function'])(
     '%s in a loop body leaves $f unknown',
     (word) => {
