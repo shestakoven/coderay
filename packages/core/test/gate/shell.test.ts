@@ -310,3 +310,72 @@ describe('shellWrites', () => {
     expect(targets('cmd <> out.txt')).toEqual(['/p/out.txt']);
   });
 });
+
+describe('shellWrites moves', () => {
+  const moves = (command: string) => writes(command).moves;
+
+  it.each([
+    'rm a', 'rmdir a', 'unlink a', 'mv a b', 'cp a b', 'cp -n a b', 'cp --recursive --force a b', 'cp -r --target-directory=d a', 'mv -t d a', 'echo x | tee a', 'touch a', 'mkdir a', 'truncate -s 0 a', 'chmod +x a', 'chown u a', 'chgrp g a',
+  ])('reports the history a call moves when it goes on to write only files it names, as in %s', (writer) => {
+    expect(moves(`git -C wt reset --hard && ${writer}`)).toEqual(['/p/wt']);
+  });
+
+  it('keeps a pure call that commits as history, as the gate has always judged it, and reports no moves for it', () => {
+    const pure = writes('git -C wt commit -qm x && git -C wt reset --hard HEAD~1');
+    expect([pure.history, pure.moves]).toEqual([['/p/wt'], []]);
+  });
+
+  it.each([
+    "cd wt && echo evil > /tmp/x && sed -n 'w src/evil.py' /tmp/x && git add -A && git commit -qm w && git reset -q",
+    'git -C wt reset --hard && sed -i s/a/b/ a',
+    'git -C wt reset --hard && sed -i.py s/a/b/ a',
+    "git -C wt reset --hard && sed -i '1e cmd' a",
+    "git -C wt reset --hard && sed -n 'w out' in",
+    'git -C wt reset --hard && cp -b -S .py x P',
+    'git -C wt reset --hard && cp -bS.py x P',
+    'git -C wt reset --hard && cp --backup=numbered x P',
+    'git -C wt reset --hard && mv -b a b',
+    'git -C wt reset --hard && mv --suffix=.py a b',
+    'git -C wt reset --hard o && cp --suf=.x a b',
+    'git -C wt reset --hard o && cp --back a b',
+    'git -C wt reset --hard o && cp --b a b',
+    'git -C wt reset --hard o && mv --ba=t a b',
+    'git -C wt reset --hard && cp --unknown-option a b',
+    'git -C wt reset --hard && cp $OPTS x P',
+    'git -C wt reset --hard && cp a b && git add -A && git commit -qm w',
+    'git -C wt reset --hard && cp a b && git commit -qam w',
+    'git -C wt reset --hard && cp a b && git stash push',
+    'git -C wt reset --hard && cp a b && git stash pop',
+    'git -C wt reset --hard && cp a b && git add b',
+  ])('reports no moves, since what a commit or a stash takes in may come from a file no target names, for %s', (command) => {
+    expect(moves(command)).toEqual([]);
+  });
+
+  it.each([
+    'git -C wt reset --hard',
+    'git -C wt checkout -- a && cp a b',
+    'git -C wt clean -fd && cp a b',
+    'git -C wt reset --hard && rm *.log',
+    'git -C wt reset --hard && rm a *.log',
+    'git -C wt reset --hard && eval "$X"',
+    'git -C wt reset --hard && npm run gen',
+    'git -C wt reset --hard && ./cp a b',
+    'git -C wt reset --hard && $CMD a',
+    'git -C wt reset --hard && ln -s a b',
+    'git -C wt reset --hard && install a b',
+    'git -C wt reset --hard && dd of=a',
+    'git -C wt reset --hard && find . -fprint out',
+    'git -C wt reset --hard && ls | xargs gen',
+    'git -C wt reset --hard && ./gen && cp a b',
+    'git -C wt reset --hard && f() { :; }',
+    'git -C wt reset --hard && sudo cp a b',
+    'git -C wt reset --hard && env X=1 cp a b',
+    'git -C wt reset --hard && set -a',
+    'git -C wt reset --hard && export x',
+    'git -c core.hooksPath=h -C wt reset --hard',
+    'git -C wt reset --hard && git config core.hooksPath h',
+    'PATH=/x git -C wt reset --hard',
+  ])('reports no moves for %s', (command) => {
+    expect(moves(command)).toEqual([]);
+  });
+});

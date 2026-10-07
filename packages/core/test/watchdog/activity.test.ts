@@ -291,21 +291,42 @@ describe('ActivityLedger attribution scope', () => {
 });
 
 describe('ActivityLedger for a history call', () => {
-  it('gives git the files it leaves tracked or deletes under its directory and the root refs, and the agent every other file', () => {
+  it('gives git, in the repository around the project, the files it leaves tracked or deletes and the refs, and the agent every other file', () => {
     const { ledger } = make();
-    ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', targets: ['pkg/dirty.txt'], history: [{ dir: 'pkg', top: '/p/pkg', head: 'abc' }] }));
+    ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', targets: ['pkg/dirty.txt'], history: [{ dir: '', top: '/p', head: 'abc' }] }));
     const origin = (rel: string, scope: { tracked?: boolean; deleted?: boolean } = {}) => ledger.attribute(rel, 100, scope).origin;
     expect({
-      deletedUnder: origin('pkg/gone.txt', { tracked: false, deleted: true }),
+      deleted: origin('pkg/gone.txt', { tracked: false, deleted: true }),
+      tracked: origin('pkg/sub/kept.txt', { tracked: true }),
+      untracked: origin('pkg/new.txt', { tracked: false }),
+      target: origin('pkg/dirty.txt', { tracked: true }),
+      head: origin('.git/HEAD', { tracked: false }),
+      ref: origin('.git/refs/heads/x', { tracked: false }),
+    }).toEqual({ deleted: 'git', tracked: 'git', untracked: 'agent-tool', target: 'agent', head: 'git', ref: 'git' });
+  });
+
+  it('leaves a concurrent call allowed once what an outer history call did not write', () => {
+    const { ledger } = make();
+    ledger.allowed(call({ toolUseId: 'history', tool: 'Bash', toolClass: 'shell', history: [{ dir: '', top: '/p', head: 'abc' }] }));
+    ledger.allowed(call({ toolUseId: 'once', tool: 'Bash', toolClass: 'shell', allowedOnce: true }));
+    expect(ledger.attribute('src/new.ts', 100, { tracked: false, enforced: true })).toEqual({ origin: 'agent', toolUseIds: ['once'], allowedOnce: true });
+    expect(ledger.attribute('src/kept.ts', 100, { tracked: true, enforced: true })).toEqual({ origin: 'git', toolUseIds: ['history'], allowedOnce: false });
+  });
+
+  it('gives git every file under the directory of a nested repository, tracked yet or not, and the refs, and the agent every other file', () => {
+    const { ledger } = make();
+    ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', targets: ['pkg/dirty.txt'], history: [{ dir: 'pkg', top: '/p/pkg', head: 'abc' }] }));
+    const origin = (rel: string, scope: { tracked?: boolean } = {}) => ledger.attribute(rel, 100, scope).origin;
+    expect({
       trackedUnder: origin('pkg/sub/kept.txt', { tracked: true }),
       newUnder: origin('pkg/new.txt', { tracked: false }),
       trackedOutside: origin('other/kept.txt', { tracked: true }),
-      deletedOutside: origin('other/gone.txt', { tracked: false, deleted: true }),
+      deletedOutside: origin('other/gone.txt', { tracked: false }),
       target: origin('pkg/dirty.txt', { tracked: true }),
       head: origin('.git/HEAD', { tracked: false }),
       ref: origin('.git/refs/heads/x', { tracked: false }),
     }).toEqual({
-      deletedUnder: 'git', trackedUnder: 'git', newUnder: 'agent-tool', trackedOutside: 'agent-tool', deletedOutside: 'agent-tool',
+      trackedUnder: 'git', newUnder: 'git', trackedOutside: 'agent-tool', deletedOutside: 'agent-tool',
       target: 'agent', head: 'git', ref: 'git',
     });
   });

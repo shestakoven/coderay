@@ -23,6 +23,9 @@ export interface ShellWrites {
   history: (string | null)[];
   // For each history command, the commits it brings into the work tree besides HEAD; null when the command does not say which.
   incoming: (string[] | null)[];
+  // The directories of history commands in a call that is not pure only because it writes named files: judged as rewrites, but what git
+  // moves there is still git's, and what the writers name is the agent's.
+  moves: (string | null)[];
 }
 
 type Part =
@@ -67,6 +70,8 @@ interface State {
   incoming: (string[] | null)[];
   // Whether every command so far only moves history or reads.
   pure: boolean;
+  // Whether a command ran that may write what no target names, or commit or stash what it wrote: an unknown program, sed, plumbing, configuration, a function, git add or commit.
+  wild: boolean;
   // A GIT_ variable was set, so git may run on another repository or index than its directory says.
   gitEnv: boolean;
 }
@@ -128,6 +133,11 @@ const QUIET_SETTINGS = new Set(['GIT_EDITOR', 'GIT_SEQUENCE_EDITOR', 'GIT_PAGER'
 const QUIET_PROGRAMS = new Set(['true', ':', 'cat']);
 const WORK_TREE_REWRITES = new Set(['restore', 'stash', 'clean', 'apply', 'am']);
 const WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp', 'sed', 'ln', 'install', 'dd']);
+// The writers whose args name every file they write (not sed, whose script writes any file with w, e or a backup suffix).
+const NAMING_WRITERS = new Set(['rm', 'rmdir', 'unlink', 'mv', 'cp', 'tee', 'touch', 'mkdir', 'truncate', 'chmod', 'chown', 'chgrp']);
+// The long options of cp and mv that write nothing besides the files they name; GNU getopt accepts any abbreviation of --backup and --suffix, which write a backup under a name of their own.
+const NAMING_LONG_OPTIONS = new Set(['--target-directory', '--no-target-directory', '--force', '--interactive', '--no-clobber', '--verbose', '--recursive', '--archive', '--update', '--parents']);
+const BACKUP_SHORT_OPTION = /^-[A-Za-z]*[bS]/;
 const XARGS_WRITES = 'xargs runs a command that writes files it reads from its input';
 const SHELLS = new Set(['bash', 'sh', 'zsh', 'dash']);
 const PLAIN_MKTEMP_FLAGS = new Set(['-d', '-q', '-u', '--directory', '--quiet', '--dry-run', '--tmpdir']);
@@ -142,13 +152,30 @@ const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, gitEnv: false };
+  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
   run(command, state, 0);
   // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
   const pure = state.pure && state.targets.length === 0;
   const rewrites = pure ? state.rewrites : [...state.rewrites, ...state.history];
   const history = pure ? state.history : [];
-  return { targets: state.targets, allTracked: rewrites.length + history.length > 0, rewrites, history, incoming: pure ? state.incoming : [] };
+  const named = !state.wild && state.targets.every((target) => target.unresolved === null);
+  return { targets: state.targets, allTracked: rewrites.length + history.length > 0, rewrites, history, incoming: pure ? state.incoming : [], moves: pure || !named ? [] : state.history };
+}
+
+// The call is no longer pure; wild when what ran may also write files no target names.
+function taint(state: State, wild = true): void {
+  state.pure = false;
+  state.wild ||= wild;
+}
+
+// A word the IDE cannot read, and a long option it does not know exactly, may be a backup option.
+function namesWhatItWrites(base: string, args: Word[]): boolean {
+  if (!NAMING_WRITERS.has(base)) return false;
+  if (base !== 'cp' && base !== 'mv') return true;
+  return args.every((word) => {
+    const text = literalText(word);
+    return text !== null && !BACKUP_SHORT_OPTION.test(text) && (!text.startsWith('--') || text === '--' || NAMING_LONG_OPTIONS.has(text.split('=')[0]!));
+  });
 }
 
 function run(script: string, state: State, depth: number): void {
@@ -190,7 +217,7 @@ function run(script: string, state: State, depth: number): void {
       // name() defines a function, which may shadow any command and run at any later point.
       if (token.op === '(' && words.length > 0 && next?.t === 'op' && next.op === ')') {
         words = [];
-        state.pure = false;
+        taint(state);
         state.nesting += 1;
         i += 1;
         continue;
@@ -506,13 +533,15 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   const wrapped = unwrap(args);
   for (const word of args.slice(0, args.length - wrapped.length)) {
     if (isAssignment(word)) assign(word, state);
-    else if (['env', 'sudo'].includes(posix.basename(literalText(word) ?? ''))) state.pure = false;
+    else if (['env', 'sudo'].includes(posix.basename(literalText(word) ?? ''))) taint(state);
   }
   if (wrapped.length === 0) return;
   const name = literalText(wrapped[0]!);
   const base = posix.basename(name ?? '');
   // Only a name looked up on the PATH is the program it says: ./cat or /tmp/x/git can be anything.
-  if (name === null || name.includes('/') || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) state.pure = false;
+  if (name === null || name.includes('/') || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) {
+    taint(state, name === null || name.includes('/') || !namesWhatItWrites(base, wrapped.slice(1)));
+  }
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
   if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
 }
@@ -535,7 +564,7 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       return;
     case 'set':
       // set -a exports every later assignment, set -k takes them from anywhere, and set -- or a word replaces $1 ….
-      if (!args.every((word) => /^[-+][euxo]+$|^(pipefail|errexit|nounset|xtrace)$/.test(literalText(word) ?? ''))) state.pure = false;
+      if (!args.every((word) => /^[-+][euxo]+$|^(pipefail|errexit|nounset|xtrace)$/.test(literalText(word) ?? ''))) taint(state);
       return;
     case 'rm':
     case 'rmdir':
@@ -607,7 +636,7 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       if (ENV_SETTERS.has(name)) {
         for (const word of args) {
           if (isAssignment(word)) assign(word, state);
-          else state.pure = false;
+          else taint(state);
         }
         return;
       }
@@ -721,7 +750,7 @@ function git(args: Word[], state: State): void {
     }
     // Configuration given on the command line can run any program: hooks, aliases, editors, merge drivers.
     const setting = literalText(args[i + 1] ?? EMPTY) ?? '';
-    if (text === '-c' ? !quiet(setting.split('=')[0]!.toLowerCase(), setting.slice(setting.indexOf('=') + 1)) : !PURE_GLOBALS.has(name)) state.pure = false;
+    if (text === '-c' ? !quiet(setting.split('=')[0]!.toLowerCase(), setting.slice(setting.indexOf('=') + 1)) : !PURE_GLOBALS.has(name)) taint(state);
     i += GLOBAL_OPTIONS.get(name) && name === text ? 2 : 1;
   }
   const word = args[i];
@@ -732,7 +761,9 @@ function git(args: Word[], state: State): void {
   const [verb, operands] = sub === 'stash' ? stashCommand(rest) : [sub, rest];
   const options = verb === null ? null : parseOptions(operands, SAFE_OPTIONS.get(verb));
   const harmless = verb !== null && spares(verb, operands, options);
-  if (!harmless) state.pure = false;
+  if (!harmless) taint(state);
+  // What a commit or a stash takes in may be a file that a program wrote and no target names; it stays pure, as the gate has always judged it.
+  if (verb !== null && (verb === 'add' || verb === 'commit' || (verb.startsWith('stash') && !GIT_READS.has(verb)))) state.wild = true;
   // git diff, log and show write their output to a file with --output.
   for (const [at, arg] of rest.entries()) {
     const first = arg.parts[0];
@@ -1068,7 +1099,7 @@ function assign(word: Word, state: State): void {
   if (PROTECTED_VARS.has(name)) state.poisoned.add(name);
   if (quiet(name, literalText({ parts: value, raw: '' }) ?? '')) return;
   // A variable can point git at another repository, index or editor, or put another program on the PATH.
-  state.pure = false;
+  taint(state);
   if (name.startsWith('GIT_')) state.gitEnv = true;
 }
 

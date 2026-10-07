@@ -150,11 +150,13 @@ export class ActivityLedger {
   }
 }
 
-// A history call may write every file it leaves tracked or deletes in its repository, and the repository's refs.
+// A history call may write every file it leaves tracked or deletes in its repository, and the repository's refs. In a nested repository (dir not "")
+// it may write any file there: git writes a file it adds before it writes the index, so at the time of the write the file is not yet tracked.
+// Which it did is settled when the call ends.
 function historyMade(call: ToolCall, rel: string, scope: AttributionScope): boolean {
   const history = call.history ?? [];
   if (history.length === 0) return false;
-  return isGitState(rel) || ((scope.tracked !== false || scope.deleted === true) && history.some((h) => under(rel, h.dir)));
+  return isGitState(rel) || history.some((h) => under(rel, h.dir) && (h.dir !== '' || scope.tracked !== false || scope.deleted === true));
 }
 
 function ids(entries: Entry[]): string[] {
