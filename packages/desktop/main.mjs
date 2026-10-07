@@ -129,6 +129,8 @@ app.on('window-all-closed', () => app.quit());
 
 // Awaiting ready at top level deadlocks Electron's ESM entry: the app only becomes ready after the module finishes.
 app.whenReady().then(async () => {
+  // The built app takes its icon from the bundle; the dev shell is plain Electron.
+  if (!packaged) app.dock?.setIcon(join(dirname(fileURLToPath(import.meta.url)), 'build/icon.png'));
   try {
     await (packaged ? startAppStack() : startDevStack());
   } catch (error) {
