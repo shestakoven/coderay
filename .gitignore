@@ -10,3 +10,5 @@ playwright-report/
 .omc/
 .nodeterm/
 .serena/
+packages/desktop/out/
+packages/desktop/dist/
