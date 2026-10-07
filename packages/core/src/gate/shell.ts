@@ -200,7 +200,7 @@ function readsOnly(base: string, args: Word[]): boolean {
   });
 }
 
-// A word the IDE cannot read may be any option, so sed must have none.
+// A word the IDE cannot read may be any option, so sed must have none; GNU sed takes options after operands and BSD sed does not, so none may follow an operand.
 function readingSed(args: Word[]): boolean {
   const scripts: string[] = [];
   const words: string[] = [];
@@ -212,6 +212,7 @@ function readingSed(args: Word[]): boolean {
       words.push(...args.slice(i + 1).map((word) => literalText(word) ?? ''));
       break;
     }
+    if (words.length > 0 && text.startsWith('-') && text !== '-') return false;
     if (/^-[nErszu]*e$/.test(text) || text === '--expression') {
       const script = literalText(args[i + 1] ?? EMPTY);
       if (script === null || args[i + 1] === undefined) return false;
