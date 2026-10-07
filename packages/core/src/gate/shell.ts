@@ -166,7 +166,7 @@ const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const MAX_DEPTH = 8;
 const MAX_LOOP_PATHS = 32;
 // Words that read or assign a variable behind an assignment the IDE reads: arithmetic (let, the operands of -eq and the like), select, read and its kin, eval and source, a trap or an alias that runs later, a nameref.
-const REBINDERS = new Set(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'coproc', 'declare', 'typeset', 'local', 'function', '-eq', '-ne', '-lt', '-le', '-gt', '-ge']);
+const REBINDERS = new Set(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'compgen', 'coproc', 'declare', 'typeset', 'local', 'function', '-eq', '-ne', '-lt', '-le', '-gt', '-ge']);
 // Values that stay one word with no wildcard, whatever the quoting of the variable.
 const PLAIN_VALUE = /^[\w.,:@%+=/-]+$/;
 const TEMP_ROOT = '/\0temp';
@@ -220,7 +220,10 @@ function rebinds(tokens: Token[]): boolean {
     }
     if (token.t !== 'word') return false;
     const text = literalText(token.word);
-    if (token.word.parts.some((part) => part.kind === 'var' && part.name === '((…))')) return true;
+    // Arithmetic hides in the spelling: $(( … )) nested in a substitution, $[ … ], and ${x:f=5}, ${a[f=5]} in a parameter expansion.
+    if (token.word.raw.includes('((') || token.word.raw.includes('$[') || /\$\{[^}]*=/.test(token.word.raw)) return true;
+    // exec {f}>file puts a descriptor number in f.
+    if (next?.t === 'redir' && /^\{[A-Za-z_]\w*\}$/.test(token.word.raw)) return true;
     if (text === null) return false;
     if (text === '((…))' || REBINDERS.has(text) || /\[[^\]]*=/.test(text)) return true;
     return text === 'printf' && next?.t === 'word' && (literalText(next.word) ?? '').startsWith('-v');
@@ -1165,12 +1168,13 @@ function loopWords(word: Word, state: State): Word[] {
 // for NAME in WORDS: while the loop runs NAME is one of the words; a list the IDE cannot read leaves it unknown.
 function bindLoop(args: Word[], state: State): void {
   const name = literalText(args[0] ?? EMPTY);
-  if (state.loopsOff || name === null || !/^[A-Za-z_]\w*$/.test(name)) return;
+  if (name === null || !/^[A-Za-z_]\w*$/.test(name)) return;
   state.loops.delete(name);
   if (PROTECTED_VARS.has(name)) {
     state.poisoned.add(name);
     return;
   }
+  if (state.loopsOff) return;
   const values = args.slice(2).map(literalText);
   if (literalText(args[1] ?? EMPTY) !== 'in' || values.length === 0) return;
   if (values.every((value): value is string => value !== null && PLAIN_VALUE.test(value))) state.loops.set(name, values);
