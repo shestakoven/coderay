@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, realpathSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { ControlMode } from '@ide/protocol';
@@ -8,6 +8,7 @@ import type { ComponentRef } from '../../src/plans/plan-input';
 import { PlanService } from '../../src/plans/plan-service';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { openStore } from '../../src/store/store';
+import type { ToolCall } from '../../src/watchdog/activity';
 import { sessionRecord, tempDir, waitFor, writeTree } from '../helpers';
 import { git, isolateGit } from '../worktree-fixture';
 
@@ -221,5 +222,25 @@ describe('HookGate for history commands in a repository with an origin and an ig
     expect(results.map(([command, decision, reason], i) => [command, decision, rows[i]![1] === null || (reason ?? '').includes(rows[i]![1]!)])).toEqual(
       rows.map(([command, asked]) => [command, asked === null ? 'allow' : 'deny', true]),
     );
+  });
+});
+
+describe('HookGate for a history command that the call also follows with writes to named files', () => {
+  it('names the nested worktree the command moves history in, and no other directory, unless the call may write files it does not name', async () => {
+    const { root, gate, bash } = await setup('C');
+    repoWithOrigin(root);
+    const calls: ToolCall[] = [];
+    gate.onAllowed((call) => calls.push(call));
+    const rows: [command: string, dirs: string[]][] = [
+      ['cd .worktrees/wt && git reset --hard && touch notes.txt', ['.worktrees/wt']],
+      ['git -C .worktrees/wt reset --hard && touch notes.txt', ['.worktrees/wt']],
+      ['git -C .worktrees/wt reset --hard && touch .worktrees/wt/notes.txt', ['.worktrees/wt']],
+      ['git -C .worktrees/wt reset --hard && ./gen.sh', []],
+      ['git reset --hard && touch notes.txt', []],
+      [`cd "$D" && git reset --hard && touch ${join(root, 'notes.txt')}`, []],
+    ];
+    for (const [i, [command]] of rows.entries()) expect([command, (await bash(command, root, `toolu_${i}`))?.permissionDecision]).toEqual([command, 'allow']);
+    expect(calls.map((call) => [call.toolUseId, (call.history ?? []).map((h) => h.dir)])).toEqual(rows.map(([, dirs], i) => [`toolu_${i}`, dirs]));
+    expect(calls[0]!.history).toEqual([{ dir: '.worktrees/wt', top: join(realpathSync(root), '.worktrees/wt'), head: git(join(root, '.worktrees/wt'), 'rev-parse', 'HEAD').trim() }]);
   });
 });

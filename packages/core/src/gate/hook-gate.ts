@@ -333,6 +333,10 @@ export class HookGate {
       if (dir !== null) history.push({ dir, top: repo.top, head: repo.head });
       for (const path of repo.dirty) dirty.set(join(repo.top, path), { raw: path, abs: join(repo.top, path), mkdir: false, deleting: false });
     }
+    for (const dir of writes.moves) {
+      const nested = await this.nestedHistory(dir);
+      if (nested !== null) history.push(nested);
+    }
     const landings: Landing[] = [];
     for (const target of writes.targets) {
       if (target.unresolved !== null) found.push(special('unresolved', target.word, target.unresolved));
@@ -364,6 +368,20 @@ export class HookGate {
       // git status hides edits to a file marked --assume-unchanged (a lowercase tag), and git overwrites them.
       const assumed = listed.split('\0').filter((entry) => /^[a-z] /.test(entry)).map((entry) => entry.slice(2));
       return { top: repoTop, head: sha, dirty: [...new Set([...dirty, ...assumed, ...overwritten])] };
+    } catch {
+      return null;
+    }
+  }
+
+  // The history call of a nested worktree that a rewrite names, which asks about nothing: what git moves there is still git's.
+  private async nestedHistory(dir: string | null): Promise<HistoryCall | null> {
+    if (dir === null || worktreeAt(this.options.root, realTarget(dir, '/')) === null) return null;
+    const run = createRun(realTarget(dir, '/'));
+    const read = { readOnly: true, timeoutMs: STATUS_MS };
+    try {
+      const [top, head] = (await Promise.all([run(['rev-parse', '--show-toplevel'], read), run(['rev-parse', '--verify', 'HEAD'], read)])).map((out) => out.trim());
+      const at = this.projectDir(top!);
+      return at === null ? null : { dir: at, top: top!, head: head! };
     } catch {
       return null;
     }
