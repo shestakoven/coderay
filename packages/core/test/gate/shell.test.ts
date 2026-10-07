@@ -427,3 +427,53 @@ describe('shellWrites moves', () => {
     expect([got.history, got.rewrites, got.moves]).toEqual([[], ['/p'], []]);
   });
 });
+
+describe('shellWrites for loops', () => {
+  it.each([
+    ['for f in linux macos windows; do docker compose -f docker-compose.$f.yml config 2>/tmp/err.$f && echo ok; done', ['/tmp/err.linux', '/tmp/err.macos', '/tmp/err.windows']],
+    ['for f in a b; do rm src/$f; done', ['/p/src/a', '/p/src/b']],
+    ['for a in 1 2; do for b in x y; do rm $a/$b; done; done', ['/p/1/x', '/p/1/y', '/p/2/x', '/p/2/y']],
+    ['for f in a b; do rm ${f}.txt "$f".bak; done', ['/p/a.txt', '/p/b.txt', '/p/a.bak', '/p/b.bak']],
+    ['for f in a; do :; done; rm $f', ['/p/a']],
+    ['for f in ..; do rm $f/x; done', ['/x']],
+    ['for f in a b; do bash -c true; rm $f; done', ['/p/a', '/p/b']],
+  ])('%s names one target per value', (command, expected) => {
+    expect(targets(command)).toEqual(expected);
+  });
+
+  it.each([
+    'for f in a b; do f=../x; rm $f; done',
+    'for f in a b; do f+=x; rm $f; done',
+    'for f in a b; do read f; rm $f; done',
+    'for f in a b; do mapfile f; rm $f; done',
+    'for f in a b; do readarray f; rm $f; done',
+    'for f in a b; do getopts x f; rm $f; done',
+    'for f in a b; do printf -v f x; rm $f; done',
+    'for f in a b; do unset f; rm $f; done',
+    'for f in a b; do for f in *.c; do rm $f; done; done',
+    'for f in $(ls); do rm $f; done',
+    'for f in *.c; do rm $f; done',
+    'for f in "*.c"; do rm $f; done',
+    'for f in "a b"; do rm $f; done',
+    'for f in a.c; do rm ${f%.c}; done',
+    'for f in a; do rm ${f/a/..}; done',
+    'for f in a; do rm ${f:-z}; done',
+    'for f in a; do rm ${f[0]}; done',
+    'for f in a b; do bash -c "rm src/\\$f"; done',
+    'for f a b; do rm $f; done',
+  ])('%s leaves $f unknown', (command) => {
+    expect(targets(command)).toEqual(['? the variable $f']);
+  });
+
+  it.each(['HOME', 'TMPDIR', 'TMP'])('a loop over %s leaves it unknown', (name) => {
+    expect(targets(`for ${name} in a b; do rm $${name}/x; done`)).toEqual([`? the variable $${name}`]);
+  });
+
+  it('names at most 32 paths for one word and leaves the variable unknown beyond that', () => {
+    const nested = (outer: number, inner: number) => {
+      const values = (count: number) => Array.from({ length: count }, (_, i) => `v${i}`).join(' ');
+      return `for a in ${values(outer)}; do for b in ${values(inner)}; do rm $a/$b; done; done`;
+    };
+    expect([targets(nested(4, 8)).length, targets(nested(3, 11))]).toEqual([32, ['? the variable $a']]);
+  });
+});
