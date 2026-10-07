@@ -45,7 +45,7 @@ function runningTool(chat: ChatState): string | null {
 }
 
 export function deriveStatus({ connection, chat, plan, prompts, watchdog }: StatusInput): ProjectStatus {
-  if (connection === 'closed') return { kind: 'error', line: 'The IDE core is not reachable' };
+  if (connection === 'closed') return { kind: 'error', line: 'The CodeRay core is not reachable' };
   const status = chat.session?.status;
   if (status === 'crashed' || status === 'refused') return { kind: 'error', line: status === 'crashed' ? 'The agent stopped unexpectedly' : 'The agent refused to start' };
   const question = pendingChatQuestion(chat);

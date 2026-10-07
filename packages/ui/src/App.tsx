@@ -131,7 +131,7 @@ export function App() {
   const statusOf = useCallback((id: string): ProjectStatus => {
     const project = live.current.projects.find((candidate) => candidate.id === id);
     if (project?.state === 'starting') return STARTING;
-    if (project?.state === 'failed') return { kind: 'error', line: project.error ?? 'The IDE core stopped.' };
+    if (project?.state === 'failed') return { kind: 'error', line: project.error ?? 'The CodeRay core stopped.' };
     return live.current.status[id] ?? IDLE;
   }, []);
 
@@ -155,7 +155,7 @@ export function App() {
       const before = coreStates.current[project.id];
       coreStates.current[project.id] = project.state;
       if (before === 'running' && project.state === 'failed' && (project.id !== projects.activeId || !document.hasFocus())) {
-        notify(project.id, `${tabLabels(projects.projects)[project.id] ?? project.name} stopped`, project.error ?? 'The IDE core stopped.', 'error', project.id !== projects.activeId);
+        notify(project.id, `${tabLabels(projects.projects)[project.id] ?? project.name} stopped`, project.error ?? 'The CodeRay core stopped.', 'error', project.id !== projects.activeId);
       }
     }
   }, [projects.projects, projects.activeId, notify]);
@@ -257,17 +257,17 @@ export function App() {
 
   const shownName = activeProject(projects)?.name;
   useEffect(() => {
-    document.title = shownName ? `${shownName} · AI Control IDE` : 'AI Control IDE';
+    document.title = shownName ? `${shownName} · CodeRay` : 'CodeRay';
   }, [shownName]);
 
   const info: ProjectInfo = useMemo(() => ({ root: activeProject(projects)?.root ?? null, name: activeProject(projects)?.name ?? '', home: projects.home, recent: projects.recent.filter((item) => !projects.projects.some((project) => project.root === item.path)) }), [projects]);
 
   if (!token) {
-    return <div className="no-token">Open the address the IDE core printed when it started: it carries this launch's access token.</div>;
+    return <div className="no-token">Open the address the CodeRay core printed when it started: it carries this launch's access token.</div>;
   }
   if (projects.mode === 'pending') {
     return connection === 'closed'
-      ? <div className="no-token">Cannot reach the IDE core. It may have stopped; start it again.</div>
+      ? <div className="no-token">Cannot reach the CodeRay core. It may have stopped; start it again.</div>
       : <div className="app boot" aria-busy="true" />;
   }
   if (projects.projects.length === 0) {

@@ -43,7 +43,7 @@ export function StartScreen({ info, status, browse, start, dispatchStart, send }
       </header>
       <main className="start-body">
         <section className="start-main" aria-label="Start">
-          <h1 className="start-title">AI Control IDE</h1>
+          <h1 className="start-title">CodeRay</h1>
           <p className="start-lead muted">Open a project, start a new one or clone a repository.</p>
           <div className="start-actions">
             <ActionRow icon="plus" title="Create" hint="A new folder with an empty git repository" expanded={start.view === 'create'} disabled={busy} onClick={() => toggle('create')} />

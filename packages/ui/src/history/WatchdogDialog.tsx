@@ -55,7 +55,7 @@ export function WatchdogDialog({ event, diffs, send, requestDiff }: Props) {
         {event.toolCalls.map((call) => <li key={call.toolUseId}><b>{call.tool}</b> <span className="muted">{call.summary}</span></li>)}
       </ul>
       {event.backgroundShell && <p className="note">A background shell was still running.</p>}
-      {event.unknownOrigin && <p className="note">These files changed while the IDE was not running.</p>}
+      {event.unknownOrigin && <p className="note">These files changed while CodeRay was not running.</p>}
       <p className="muted wd-legend">
         {(['keep', 'revert', 'mine'] as const).map((a) => <span key={a}><b>{ANSWER_LABEL[a]}</b>: {ANSWER_HINT[a]}. </span>)}
       </p>
@@ -121,7 +121,7 @@ function DirRow({ group, choice, onDir, onFile, onDiff, diffs, requested, failed
                 ))}
               </span>
             </div>
-            {failed[path] && <div className="note">Not connected to the IDE core: the diff was not requested.</div>}
+            {failed[path] && <div className="note">Not connected to the CodeRay core: the diff was not requested.</div>}
             {requested[path] && <DiffView result={result} />}
           </div>
         );

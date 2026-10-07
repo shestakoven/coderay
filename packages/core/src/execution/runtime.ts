@@ -375,7 +375,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       if (closing) return;
       failure = describe(error);
       console.error('execution: the watchdog could not start', error);
-      notice(`The IDE could not start watching the project files (${failure}), so the agent will not start.`);
+      notice(`CodeRay could not start watching the project files (${failure}), so the agent will not start.`);
       return;
     }
     if (closing) {

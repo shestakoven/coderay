@@ -189,7 +189,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       return false;
     }
     if (!link.current?.send(message)) {
-      dispatchChat({ type: 'error', message: 'Not connected to the IDE core.' });
+      dispatchChat({ type: 'error', message: 'Not connected to the CodeRay core.' });
       return false;
     }
     if (message.type === 'chat.stop') stoppedByUser.current = true;

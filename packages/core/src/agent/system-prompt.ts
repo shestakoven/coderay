@@ -6,7 +6,7 @@ export function systemPrompt(components: { id: string; name: string }[], mapTool
     ? [`- …and ${components.length - MAX_LISTED_COMPONENTS} more; name project paths for those.`]
     : [];
   return [
-    'You are working inside the AI-Control IDE. It shows your plan on a map of the project and blocks changes that no approved plan covers.',
+    'You are working inside CodeRay. It shows your plan on a map of the project and blocks changes that no approved plan covers.',
     ...(mapTools
       ? ['', 'Before your first Grep, Glob or exploratory Bash command in a session, call mcp__idecore__map_overview. Do not explore the project by hand before it.']
       : []),

@@ -25,7 +25,7 @@ function workDir(): string {
   return work;
 }
 
-const startScreen = (page: Page) => page.getByRole('heading', { name: 'AI Control IDE' });
+const startScreen = (page: Page) => page.getByRole('heading', { name: 'CodeRay' });
 const recent = (page: Page) => page.getByRole('complementary', { name: 'Recent projects' });
 
 const folders = (page: Page) => page.getByRole('list', { name: 'Folders' });

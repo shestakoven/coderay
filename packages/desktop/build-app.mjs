@@ -10,7 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { build as bundle } from 'esbuild';
 import { Arch, Platform, build } from 'electron-builder';
 
-const PRODUCT_NAME = 'IDE';
+const PRODUCT_NAME = 'CodeRay';
 const notarize = !process.argv.includes('--no-notarize');
 const dmg = !process.argv.includes('--dir');
 
@@ -78,7 +78,7 @@ const artifacts = await build({
   projectDir: desktop,
   targets: Platform.MAC.createTarget([dmg ? 'dmg' : 'dir'], Arch.arm64),
   config: {
-    appId: 'com.shestakov.ide',
+    appId: 'com.shestakov.coderay',
     productName: PRODUCT_NAME,
     directories: { output: 'dist' },
     files: ['main.mjs', 'chrome-insets.mjs', 'package.json'],

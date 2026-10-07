@@ -9,7 +9,7 @@ export const agentReason = (prompt: GatePromptView): string => prompt.reason ?? 
 
 export function promptHint(prompt: GatePromptView): string {
   const target = promptTarget(prompt);
-  if (!target) return `The IDE does not know the tool ${prompt.tool}. The call waits for your answer.`;
+  if (!target) return `CodeRay does not know the tool ${prompt.tool}. The call waits for your answer.`;
   const why = {
     enforced: target.uncommitted ? 'has uncommitted changes, and is not in the approved plan' : 'is not in the approved plan',
     outside: 'is outside the project',

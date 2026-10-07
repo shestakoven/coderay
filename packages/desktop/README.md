@@ -1,6 +1,6 @@
 # @ide/desktop
 
-Electron-оболочка IDE: dev-окно вокруг dev-стека (`pnpm desktop`) и сборка `.app` для macOS (`pnpm desktop:dist`, см. «Сборка для macOS»).
+Electron-оболочка CodeRay: dev-окно вокруг dev-стека (`pnpm desktop`) и сборка `.app` для macOS (`pnpm desktop:dist`, см. «Сборка для macOS»).
 
 ## Запуск
 
@@ -34,9 +34,9 @@ pnpm desktop -- .            # разработка самой IDE в IDE: hub �
 ## Сборка для macOS
 
 ```
-pnpm desktop:dist                    # подписанный и нотаризованный dist/IDE-<версия>-arm64.dmg
+pnpm desktop:dist                    # подписанный и нотаризованный dist/CodeRay-<версия>-arm64.dmg
 pnpm desktop:dist -- --no-notarize   # только подпись, для быстрой проверки
-pnpm desktop:dist -- --dir           # только dist/mac-arm64/IDE.app, без .dmg
+pnpm desktop:dist -- --dir           # только dist/mac-arm64/CodeRay.app, без .dmg
 ```
 
 Нужны сертификат `Developer ID Application: Evgenii Shestakov (4N9UMF2P33)` в связке ключей и профиль `notarytool` с именем `notary` (другой профиль задаёт `APPLE_KEYCHAIN_PROFILE`). При первой подписи `codesign` спрашивает доступ к ключу: «Разрешать всегда». Сборка только под arm64.
@@ -54,7 +54,7 @@ pnpm desktop:dist -- --dir           # только dist/mac-arm64/IDE.app, бе
 - берёт `PATH` из login shell: из Finder приходит урезанный PATH, на котором нет `claude`;
 - запускает hub без vite: hub сам отдаёт UI, окно открывается на его порту;
 - передаёт токен через stdin с `--exit-with-parent`: если приложение убито, даже SIGKILL, hub и core завершаются сами;
-- пишет вывод core в `~/Library/Logs/IDE/core.log`; если core упал до старта, показывает окно с путём к логу;
+- пишет вывод core в `~/Library/Logs/CodeRay/core.log`; если core упал до старта, показывает окно с путём к логу;
 - держит один экземпляр: повторный запуск фокусирует уже открытое окно.
 
 Ограничения сборки: общий с dev-окном `~/.ide`, поэтому один проект не открыть в обоих сразу (блокировка проекта); нет иконки и автообновления.

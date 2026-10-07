@@ -67,7 +67,7 @@ export function OpenProjectDialog({ info, controller, send, onClose, onCloseProj
               {closing ? 'Closing…' : 'Close project'}
             </button>
           )}
-          {opening && <span className="muted">Restarting the IDE core on the new project…</span>}
+          {opening && <span className="muted">Restarting the CodeRay core on the new project…</span>}
           <button onClick={onClose} disabled={opening}>Cancel</button>
           <button className="primary" disabled={state.path === null || opening} onClick={() => state.path && open(state.path)}>
             Open this folder

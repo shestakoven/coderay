@@ -78,7 +78,7 @@ export function ProjectNote({ project, onRestart, onClose }: { project: HubProje
   return (
     <div className="project-note" role="alert">
       <b>{project.name} is not running</b>
-      <span className="problem">{project.error ?? 'The IDE core stopped.'}</span>
+      <span className="problem">{project.error ?? 'The CodeRay core stopped.'}</span>
       <div className="note-row">
         <button className="pbtn primary" onClick={onRestart}>Try again</button>
         <button className="pbtn" onClick={onClose}>Close project</button>

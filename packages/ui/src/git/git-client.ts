@@ -16,7 +16,7 @@ export class GitClient {
     const requestId = crypto.randomUUID();
     return new Promise((resolve) => {
       this.waiting.set(requestId, resolve);
-      if (!this.send(make(requestId))) this.fail(requestId, 'Not connected to the IDE core.');
+      if (!this.send(make(requestId))) this.fail(requestId, 'Not connected to the CodeRay core.');
     });
   }
 
@@ -28,7 +28,7 @@ export class GitClient {
   }
 
   dropAll(): void {
-    for (const requestId of [...this.waiting.keys()]) this.fail(requestId, 'The connection to the IDE core was lost.');
+    for (const requestId of [...this.waiting.keys()]) this.fail(requestId, 'The connection to the CodeRay core was lost.');
   }
 
   private fail(requestId: string, error: string): void {

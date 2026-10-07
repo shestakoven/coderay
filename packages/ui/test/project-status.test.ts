@@ -35,7 +35,7 @@ const status = (over: Partial<StatusInput> = {}): ProjectStatus =>
   deriveStatus({ connection: 'open', chat: chat(), plan: null, prompts: [], watchdog: false, ...over });
 
 const IDLE = { kind: 'idle', line: 'Idle' };
-const UNREACHABLE = { kind: 'error', line: 'The IDE core is not reachable' };
+const UNREACHABLE = { kind: 'error', line: 'The CodeRay core is not reachable' };
 const CRASHED = { kind: 'error', line: 'The agent stopped unexpectedly' };
 const WATCHDOG = { kind: 'attention', line: 'The watchdog needs a decision' };
 

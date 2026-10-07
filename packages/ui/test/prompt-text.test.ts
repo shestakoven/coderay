@@ -23,7 +23,7 @@ describe('prompt text', () => {
       'src/b.ts is not in the approved plan. The call waits for your answer.',
       '/etc/hosts is outside the project. The call waits for your answer.',
       '$OUT cannot be known before the call runs. The call waits for your answer.',
-      'The IDE does not know the tool BrandNewTool. The call waits for your answer.',
+      'CodeRay does not know the tool BrandNewTool. The call waits for your answer.',
     ]);
   });
 

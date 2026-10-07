@@ -60,7 +60,7 @@ const HEADER_NAME = /^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/;
 // A Map: an object literal would swallow the __proto__ key instead of reserving it.
 const RESERVED = new Map([
   ['ide', 'Claude Code reserves "ide".'],
-  ['idecore', '"idecore" is the IDE\'s own server.'],
+  ['idecore', '"idecore" is CodeRay\'s own server.'],
   ['__proto__', 'This name cannot be used.'],
 ]);
 

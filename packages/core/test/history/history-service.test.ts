@@ -232,7 +232,7 @@ describe('HistoryService', { timeout: 30_000 }, () => {
       const handled = b.rt.history.handle({ type: 'change.revert', requestId: 'c', changeIds: ['c1'] }, reply);
       await b.rt.close();
       await handled;
-      expect(replies).toEqual([{ type: 'history.result', requestId: 'c', error: 'the IDE core is shutting down' }]);
+      expect(replies).toEqual([{ type: 'history.result', requestId: 'c', error: 'the CodeRay core is shutting down' }]);
       expect(revert).not.toHaveBeenCalled();
     });
 
@@ -295,10 +295,10 @@ describe('HistoryService', { timeout: 30_000 }, () => {
     await b.rt.close();
     await handled;
     expect(replies.map((m) => [m.type, 'requestId' in m ? m.requestId : null, m.type === 'error' ? m.message : (m as { error: string | null }).error])).toEqual([
-      ['history.result', 'd', 'the IDE core is shutting down'],
-      ['history.result', 'u', 'the IDE core is shutting down'],
-      ['history.result', 'r', 'the IDE core is shutting down'],
-      ['error', null, 'the IDE core is shutting down'],
+      ['history.result', 'd', 'the CodeRay core is shutting down'],
+      ['history.result', 'u', 'the CodeRay core is shutting down'],
+      ['history.result', 'r', 'the CodeRay core is shutting down'],
+      ['error', null, 'the CodeRay core is shutting down'],
     ]);
     expect([diff, undo, rollback, answer].map((spy) => spy.mock.calls.length)).toEqual([0, 0, 0, 0]);
   });

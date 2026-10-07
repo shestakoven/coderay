@@ -12,9 +12,9 @@ export interface Category {
 export const CATEGORIES: Category[] = [
   { id: 'agent', label: 'Agent control', icon: 'shield', intro: 'What happens when the agent writes outside the plan you approved, and which plans go through without a click.' },
   { id: 'mcp', label: 'MCP servers', icon: 'server', intro: 'Tools the agent can call. Project servers run only after you approve them on this machine.' },
-  { id: 'paths', label: 'Paths', icon: 'folder', intro: 'Which files the IDE protects, which it only records, and which places outside the project the agent may write to.' },
-  { id: 'accounts', label: 'Accounts', icon: 'user', intro: 'The Claude sign-in every agent in the IDE runs under.' },
-  { id: 'appearance', label: 'Appearance', icon: 'sliders', intro: 'How the IDE looks on this machine. Changes apply at once and stay local.' },
+  { id: 'paths', label: 'Paths', icon: 'folder', intro: 'Which files CodeRay protects, which it only records, and which places outside the project the agent may write to.' },
+  { id: 'accounts', label: 'Accounts', icon: 'user', intro: 'The Claude sign-in every agent in CodeRay runs under.' },
+  { id: 'appearance', label: 'Appearance', icon: 'sliders', intro: 'How CodeRay looks on this machine. Changes apply at once and stay local.' },
 ];
 
 export type BlockId =
@@ -36,13 +36,13 @@ export const BLOCKS: Block[] = [
   { id: 'mode', category: 'agent', title: 'When the agent writes outside the plan', help: 'Choose whether such a write is blocked, asked about, or allowed and flagged.', keywords: ['control mode', 'block', 'ask', 'allow', 'flag', 'out of plan', 'policy', 'watchdog'] },
   { id: 'auto-approve', category: 'agent', title: 'Approve small plans automatically', help: 'Plans that touch only a few ordinary files start without asking.', keywords: ['auto approve', 'automatic', 'plan', 'files', 'limit'] },
   { id: 'guarded', category: 'paths', title: 'Guarded paths', help: 'Always enforced, even when gitignored.', keywords: ['protect', 'gitignore', 'env', 'secrets', 'hooks', 'enforced', 'glob', 'pattern'] },
-  { id: 'harness', category: 'paths', title: 'Harness paths', help: 'Plugin state the IDE records but never enforces.', keywords: ['plugin', 'state', 'recorded', 'omc', 'gitignore', 'glob', 'pattern'] },
+  { id: 'harness', category: 'paths', title: 'Harness paths', help: 'Plugin state CodeRay records but never enforces.', keywords: ['plugin', 'state', 'recorded', 'omc', 'gitignore', 'glob', 'pattern'] },
   { id: 'outside-allowed', category: 'paths', title: 'Allowed outside the project', help: 'Places the agent may write to without leaving the plan.', keywords: ['outside', 'absolute', 'home', 'temp', 'directory', 'folder'] },
-  { id: 'mcp-servers', category: 'mcp', title: 'Servers you added', help: 'Configured in the IDE for one project or for all of them. Changes apply when the session restarts.', keywords: ['mcp', 'server', 'tool', 'stdio', 'http', 'command', 'url', 'env', 'approve', 'trust'] },
+  { id: 'mcp-servers', category: 'mcp', title: 'Servers you added', help: 'Configured in CodeRay for one project or for all of them. Changes apply when the session restarts.', keywords: ['mcp', 'server', 'tool', 'stdio', 'http', 'command', 'url', 'env', 'approve', 'trust'] },
   { id: 'claude-code-servers', category: 'mcp', title: 'From Claude Code', help: 'Loaded by Claude Code itself. Edit them with claude mcp.', keywords: ['claude code', 'plugin', 'mcp', 'claude mcp', 'read only'] },
   { id: 'accounts', category: 'accounts', title: 'Claude accounts', help: 'Choose the sign-in the agent runs under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'claude', 'oauth'] },
   { id: 'density', category: 'appearance', title: 'Density', help: 'How much room rows, tabs and panels take.', keywords: ['compact', 'comfortable', 'spacing', 'rows'] },
-  { id: 'font-size', category: 'appearance', title: 'Text size', help: 'Scales the text across the IDE.', keywords: ['font', 'size', 'zoom', 'larger', 'smaller', 'text'] },
+  { id: 'font-size', category: 'appearance', title: 'Text size', help: 'Scales the text across CodeRay.', keywords: ['font', 'size', 'zoom', 'larger', 'smaller', 'text'] },
   { id: 'reduced-motion', category: 'appearance', title: 'Reduce motion', help: 'Turns off animations and transitions.', keywords: ['animation', 'motion', 'accessibility', 'transition'] },
   { id: 'canvas-dots', category: 'appearance', title: 'Dots on the map', help: 'The dotted grid behind the map canvas.', keywords: ['grid', 'background', 'canvas', 'map', 'dots'] },
 ];

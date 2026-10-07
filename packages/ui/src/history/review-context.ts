@@ -35,11 +35,11 @@ function titleOf(section: ReviewSection): string {
 }
 
 function reasonOf(section: ReviewSection, event: WatchdogEventView | undefined): string | null {
-  if (section.key === 'external') return 'The IDE saw this change but it did not come from the agent\'s tracked tool calls. You or another tool may have made it.';
+  if (section.key === 'external') return 'CodeRay saw this change but it did not come from the agent\'s tracked tool calls. You or another tool may have made it.';
   if (!section.outOfPlan) return null;
   const parts = ['The agent wrote this file, but no step of the approved plan lists it.'];
   if (event?.kind === 'fail-open') parts.push('The write guard was not running, so the edit was not checked beforehand.');
-  if (event?.unknownOrigin) parts.push('The file changed while the IDE was not running, so who made the change is unknown.');
+  if (event?.unknownOrigin) parts.push('The file changed while CodeRay was not running, so who made the change is unknown.');
   return parts.join(' ');
 }
 

@@ -247,7 +247,7 @@ try {
         }
       }
     } catch (error) {
-      agent.notice(`The IDE could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
+      agent.notice(`CodeRay could not start watching the project files (${(error as Error).message}), so the agent will not start.`);
     } finally {
       watched = true;
     }
@@ -491,7 +491,7 @@ try {
     ],
     onClientMessage: (message, reply) => {
       if (closing) {
-        reply({ type: 'error', message: 'The IDE core is shutting down.' });
+        reply({ type: 'error', message: 'The CodeRay core is shutting down.' });
         return;
       }
       handle(message, reply).catch((error: unknown) => reply({ type: 'error', message: (error as Error).message }));

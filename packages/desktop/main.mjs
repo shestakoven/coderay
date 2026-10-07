@@ -132,7 +132,7 @@ app.whenReady().then(async () => {
   try {
     await (packaged ? startAppStack() : startDevStack());
   } catch (error) {
-    dialog.showErrorBox('IDE could not start', `${error.message}.${LOG_PATH ? ` The log is ${LOG_PATH}.` : ''}`);
+    dialog.showErrorBox('CodeRay could not start', `${error.message}.${LOG_PATH ? ` The log is ${LOG_PATH}.` : ''}`);
     app.quit();
     return;
   }

@@ -15,10 +15,10 @@ describe('GitClient', () => {
 
   it('settles a request with an error when it cannot be sent or the connection drops', async () => {
     const offline = new GitClient(() => false);
-    expect((await offline.request((requestId) => ({ type: 'git.init', requestId }))).error).toBe('Not connected to the IDE core.');
+    expect((await offline.request((requestId) => ({ type: 'git.init', requestId }))).error).toBe('Not connected to the CodeRay core.');
     const online = new GitClient(() => true);
     const pending = online.request((requestId) => ({ type: 'git.branches', requestId }));
     online.dropAll();
-    expect((await pending).error).toBe('The connection to the IDE core was lost.');
+    expect((await pending).error).toBe('The connection to the CodeRay core was lost.');
   });
 });

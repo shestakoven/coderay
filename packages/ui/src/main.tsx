@@ -14,7 +14,7 @@ applyAppearance(document.documentElement, loadAppearance(localStorageOrUndefined
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ErrorBoundary label="The IDE">
+    <ErrorBoundary label="CodeRay">
       <App />
     </ErrorBoundary>
   </StrictMode>,

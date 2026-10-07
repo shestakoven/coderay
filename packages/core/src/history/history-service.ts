@@ -154,7 +154,7 @@ export class HistoryService {
 
   private async available(): Promise<void> {
     await this.o.ready();
-    if (this.closed) throw new Error('the IDE core is shutting down');
+    if (this.closed) throw new Error('the CodeRay core is shutting down');
     const failure = this.o.unavailable();
     if (failure !== null) throw new Error(`the watchdog is unavailable (${failure})`);
   }

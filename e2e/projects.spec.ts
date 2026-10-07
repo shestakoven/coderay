@@ -16,7 +16,7 @@ const tabs = (page: Page) => page.getByRole('tablist', { name: 'Open projects' }
 
 async function expectShown(page: Page, name: string): Promise<void> {
   await expect(tab(page, name)).toHaveAttribute('aria-selected', 'true');
-  await expect(page).toHaveTitle(`${name} · AI Control IDE`);
+  await expect(page).toHaveTitle(`${name} · CodeRay`);
 }
 
 test('shows a tab per project of the hub and switches by click and by keyboard', async ({ page }) => {

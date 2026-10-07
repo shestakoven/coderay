@@ -212,7 +212,7 @@ function Body({ file, result, noRequest, onRetry, children }: { file: ReviewItem
   const diff = result.diff;
   if (!diff) return null;
   if (diff.binary) return <Notice icon="file-kind" title="Binary file" text={kindOf(file) === 'new' ? 'The agent added a file that is not text, so there is no diff to read.' : kindOf(file) === 'deleted' ? 'The agent deleted a file that is not text.' : 'This file is not text, so there is no diff to read. Accept or revert it as a whole.'} />;
-  if (diff.missing) return <Notice icon="info" title="The saved copy is gone" text="The IDE no longer holds this version of the file, so it cannot show the diff. Accepting still works." />;
+  if (diff.missing) return <Notice icon="info" title="The saved copy is gone" text="CodeRay no longer holds this version of the file, so it cannot show the diff. Accepting still works." />;
   return <>{children}</>;
 }
 

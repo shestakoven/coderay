@@ -152,7 +152,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         )}
         <span className="spacer" />
         <div className="agent-view" role="radiogroup" aria-label="Agent view">
-          <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="The IDE's chat">
+          <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="CodeRay's chat">
             <Icon name="comment" size={13} />Chat
           </button>
           <button role="radio" aria-checked={view === 'terminal'} className={view === 'terminal' ? 'on' : undefined} onClick={() => onView('terminal')} title="Claude Code's own terminal interface: every slash command works">

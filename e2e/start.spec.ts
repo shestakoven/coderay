@@ -52,7 +52,7 @@ function sourceRepo(): string {
 test('shows the start screen when the core has no project', async ({ page }) => {
   launcher = await startLauncher();
   await page.goto(launcher.url);
-  await expect(page.getByRole('heading', { name: 'AI Control IDE' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'CodeRay' })).toBeVisible();
   await expect(page.getByText('No recent projects yet.')).toBeVisible();
   for (const title of ['Create', 'Open', 'Clone']) await expect(action(page, title)).toBeVisible();
 });
@@ -159,6 +159,6 @@ test('closing the project returns to the start screen', async ({ page }) => {
   await expect(page.getByText('core connected')).toBeVisible();
   await page.keyboard.press('ControlOrMeta+KeyP');
   await page.getByRole('option', { name: /Close this project/ }).click();
-  await expect(page.getByRole('heading', { name: 'AI Control IDE' })).toBeVisible({ timeout: 60_000 });
+  await expect(page.getByRole('heading', { name: 'CodeRay' })).toBeVisible({ timeout: 60_000 });
   await expect(page.locator('.start-recent-row')).toHaveCount(1);
 });
