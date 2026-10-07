@@ -33,7 +33,8 @@ type Part =
   | { kind: 'tilde' }
   // Text bash builds from how the word is spelled, which the IDE does not work out; dash when it may begin with -.
   | { kind: 'unread'; what: string; dash: boolean }
-  | { kind: 'var'; name: string }
+  // modified: an operator in ${…} (%, #, /, :-, [i] …) makes the value something other than the variable's.
+  | { kind: 'var'; name: string; modified?: boolean }
   | { kind: 'glob' }
   | { kind: 'sub'; body: string; open?: boolean };
 
@@ -64,6 +65,8 @@ interface State {
   nesting: number;
   mktemp: Set<string>;
   poisoned: Set<string>;
+  // Loop variables whose every value the IDE can read: for NAME in a b c.
+  loops: Map<string, string[]>;
   targets: ShellTarget[];
   rewrites: (string | null)[];
   history: (string | null)[];
@@ -159,11 +162,14 @@ const DEVICE = /^\/dev\/(null|stdout|stderr|tty|zero|fd\/\d+)$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const MAX_DEPTH = 8;
+const MAX_LOOP_PATHS = 32;
+// Values that stay one word with no wildcard, whatever the quoting of the variable.
+const PLAIN_VALUE = /^[\w.,:@%+=/-]+$/;
 const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
+  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), loops: new Map(), targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
   run(command, state, 0);
   // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
   const pure = state.pure && state.targets.length === 0;
@@ -487,7 +493,8 @@ function readDollar(src: string, i: number): [Part | null, number] {
   if (next === '{') {
     const end = src.indexOf('}', i + 2);
     const inner = src.slice(i + 2, end === -1 ? src.length : end);
-    return [nested(inner) ?? { kind: 'var', name: NAME.exec(inner)?.[0] ?? inner }, end === -1 ? src.length : end + 1];
+    const name = NAME.exec(inner)?.[0] ?? inner;
+    return [nested(inner) ?? { kind: 'var', name, modified: name !== inner }, end === -1 ? src.length : end + 1];
   }
   const name = NAME.exec(src.slice(i + 1))?.[0];
   if (name) return [{ kind: 'var', name }, i + 1 + name.length];
@@ -600,6 +607,8 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   if (name === null || name.includes('/') || (base !== 'git' && !ENV_SETTERS.has(base) && !readsOnly(base, wrapped.slice(1)))) {
     taint(state, name === null || name.includes('/') || !namesWhatItWrites(base, wrapped.slice(1)));
   }
+  const appended = name === null ? null : /^([A-Za-z_]\w*)\+=/.exec(name);
+  if (appended) state.loops.delete(appended[1]!);
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
   if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
 }
@@ -667,6 +676,17 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       return;
     case 'git':
       git(args, state);
+      return;
+    case 'for':
+      bindLoop(args, state);
+      return;
+    case 'read':
+    case 'mapfile':
+    case 'readarray':
+    case 'getopts':
+    case 'printf':
+    case 'unset':
+      state.loops.clear();
       return;
     case 'find':
       find(args, state);
@@ -1037,7 +1057,10 @@ function nestedShell(args: Word[], state: State, depth: number): void {
     return;
   }
   state.cwd.push(cwdOf(state));
+  const loops = state.loops;
+  state.loops = new Map();
   run(text, state, depth + 1);
+  state.loops = loops;
   state.cwd.pop();
 }
 
@@ -1104,7 +1127,41 @@ function tempValue(rest: Part[]): WordValue {
   return inside === TEMP_ROOT || inside.startsWith(`${TEMP_ROOT}/`) ? { temp: true } : leaves;
 }
 
+// A word with a loop variable stands for one word per value of the variable.
+function loopWords(word: Word, state: State): Word[] {
+  let variants: Part[][] = [[]];
+  for (const part of word.parts) {
+    const values = part.kind === 'var' && !part.modified ? state.loops.get(part.name) : undefined;
+    if (values === undefined) {
+      variants = variants.map((parts) => [...parts, part]);
+    } else if (variants.length * values.length > MAX_LOOP_PATHS) {
+      return [word];
+    } else {
+      variants = variants.flatMap((parts) => values.map((text): Part[] => [...parts, { kind: 'lit', text }]));
+    }
+  }
+  return variants.map((parts) => ({ ...word, parts }));
+}
+
+// for NAME in WORDS: while the loop runs NAME is one of the words; a list the IDE cannot read leaves it unknown.
+function bindLoop(args: Word[], state: State): void {
+  const name = literalText(args[0] ?? EMPTY);
+  if (name === null || !/^[A-Za-z_]\w*$/.test(name)) return;
+  state.loops.delete(name);
+  if (PROTECTED_VARS.has(name)) {
+    state.poisoned.add(name);
+    return;
+  }
+  const values = args.slice(2).map(literalText);
+  if (literalText(args[1] ?? EMPTY) !== 'in' || values.length === 0) return;
+  if (values.every((value): value is string => value !== null && PLAIN_VALUE.test(value))) state.loops.set(name, values);
+}
+
 function addTarget(word: Word, state: State, extra: TargetExtra = {}): void {
+  for (const variant of loopWords(word, state)) addResolvedTarget(variant, state, extra);
+}
+
+function addResolvedTarget(word: Word, state: State, extra: TargetExtra): void {
   const base = { word: word.raw, mkdir: extra.mkdir ?? false, deleting: extra.deleting ?? false, names: extra.names ?? [] };
   const value = wordValue(word, state);
   if ('temp' in value) {
@@ -1154,6 +1211,7 @@ function assign(word: Word, state: State): void {
   const only = value.length === 1 ? value[0] : undefined;
   if (only?.kind === 'sub' && isPlainMktemp(only.body)) state.mktemp.add(name);
   else state.mktemp.delete(name);
+  state.loops.delete(name);
   if (PROTECTED_VARS.has(name)) state.poisoned.add(name);
   if (quiet(name, literalText({ parts: value, raw: '' }) ?? '')) return;
   // A variable can point git at another repository, index or editor, or put another program on the PATH.
