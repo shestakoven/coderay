@@ -1,8 +1,18 @@
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { HOOK_SCRIPT, removeGateFiles, SESSION_START_SCRIPT, writeGateFiles } from '../../src/hook/gate-files';
+import { takeNodeLauncher } from '../../src/node-exec';
 import { tempDir } from '../helpers';
+
+afterEach(() => takeNodeLauncher({}));
+
+const hookCommands = (settingsPath: string): string[] =>
+  Object.values(JSON.parse(readFileSync(settingsPath, 'utf8')).hooks as Record<string, { hooks: { command: string }[] }[]>)
+    .flatMap((entries) => entries.flatMap((entry) => entry.hooks.map((hook) => hook.command)));
+
+const gateCommands = (hook: { nodePath?: string } = {}): string[] =>
+  hookCommands(writeGateFiles(tempDir('run-'), 'k-s1', { url: 'http://127.0.0.1:1/hook', secret: 's', events: true, ...hook }).settingsPath);
 
 describe('writeGateFiles', () => {
   it("writes a PreToolUse command hook for every tool, run by the core's Node, and its private config", () => {
@@ -34,5 +44,17 @@ describe('writeGateFiles', () => {
     const files = writeGateFiles(dir, 'key-s1', { url: 'http://127.0.0.1:1/hook', secret: 's' });
     removeGateFiles(dir, 'key-s1');
     expect([existsSync(files.settingsPath), existsSync(files.hookConfigPath)]).toEqual([false, false]);
+  });
+
+  it('runs every hook, gate and event alike, on the taken launcher', () => {
+    takeNodeLauncher({ IDE_NODE: '/Applications/IDE.app/node-launcher' });
+    const commands = gateCommands();
+    expect(commands.length).toBeGreaterThan(5);
+    expect(new Set(commands)).toEqual(new Set(['/Applications/IDE.app/node-launcher']));
+  });
+
+  it('runs the hooks on an explicit nodePath even when IDE_NODE is set', () => {
+    takeNodeLauncher({ IDE_NODE: '/Applications/IDE.app/node-launcher' });
+    expect(new Set(gateCommands({ nodePath: '/opt/node/bin/node' }))).toEqual(new Set(['/opt/node/bin/node']));
   });
 });

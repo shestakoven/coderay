@@ -14,6 +14,9 @@ export const READY_TIMEOUT_MS = 10 * 60 * 1000;
 const CLOSED_MESSAGE = 'embedding model closed';
 const CLOSE_WAIT_MS = 15_000;
 
+// From source the worker is TypeScript beside this module; in the app's bundle it is JavaScript beside the bundle.
+export const defaultWorkerUrl = (moduleUrl: string): URL => new URL(moduleUrl.endsWith('.ts') ? './embed-worker.ts' : './embed-worker.mjs', moduleUrl);
+
 export interface LocalEmbedOptions {
   cacheDir: string;
   workerUrl?: URL;
@@ -55,7 +58,7 @@ export class LocalEmbedModel implements EmbedModel {
     });
     this.ready.catch(() => undefined);
     this.readyTimer = setTimeout(() => this.fail('timed out loading the embedding model'), READY_TIMEOUT_MS).unref();
-    this.worker = new Worker(options.workerUrl ?? new URL('./embed-worker.ts', import.meta.url), {
+    this.worker = new Worker(options.workerUrl ?? defaultWorkerUrl(import.meta.url), {
       workerData: { cacheDir: options.cacheDir, modelId: BGE_SMALL.id, pooling: BGE_SMALL.pooling },
     });
     this.worker.unref();

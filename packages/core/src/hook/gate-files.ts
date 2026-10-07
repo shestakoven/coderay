@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { writeFileNoFollow } from '../mcp/config';
+import { nodeExecutable } from '../node-exec';
 
 export const HOOK_SCRIPT = fileURLToPath(new URL('./pre-tool-use.mjs', import.meta.url));
 export const SESSION_START_SCRIPT = fileURLToPath(new URL('./session-start.mjs', import.meta.url));
@@ -38,7 +39,7 @@ export function writeGateFiles(
   chmodSync(dir, RUN_DIR_MODE);
   const files = pathsOf(dir, base);
   writeFileNoFollow(files.hookConfigPath, JSON.stringify({ url: hook.url, secret: hook.secret, sessionId: hook.sessionId, deadlineMs: hook.deadlineMs ?? HOOK_DEADLINE_MS }), PRIVATE_FILE_MODE);
-  const nodePath = hook.nodePath ?? process.execPath;
+  const nodePath = hook.nodePath ?? nodeExecutable();
   const command = { type: 'command', command: nodePath, args: [HOOK_SCRIPT, files.hookConfigPath], timeout: HOOK_TIMEOUT_S, ...(hook.events ? { statusMessage: GATE_STATUS } : {}) };
   const start = { type: 'command', command: nodePath, args: [SESSION_START_SCRIPT, files.hookConfigPath], timeout: SESSION_START_TIMEOUT_S };
   const event = (timeout: number, statusMessage?: string) => ({

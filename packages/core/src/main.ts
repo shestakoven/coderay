@@ -20,6 +20,7 @@ import { createPythonAdapter } from './lang/python';
 import { createSwiftAdapter } from './lang/swift';
 import { createTypeScriptAdapter } from './lang/typescript';
 import { acquireCoreLock } from './lock';
+import { takeNodeLauncher } from './node-exec';
 import { descendants, isAlive, signal as sendSignal } from './os-process';
 import { MapService } from './map/map-service';
 import { buildSnapshot } from './map/snapshot';
@@ -90,6 +91,7 @@ const leaveWithParent = (): void => {
 };
 const stdinToken = exitWithParent ? await followParent(process.stdin, leaveWithParent) : values['token-stdin'] ? readFileSync(0, 'utf8').trim() : '';
 const token = values['token-stdin'] ? stdinToken || randomBytes(24).toString('base64url') : takeLaunchToken(process.env, () => randomBytes(24).toString('base64url'));
+takeNodeLauncher();
 
 if (values.hub) {
   let hub: RunningHub;
@@ -108,8 +110,13 @@ if (values.hub) {
     process.exit(1);
   }
   console.log(`IDE core: hub · IDE home: ${home}`);
-  if (values.ui) console.log(`  open: http://127.0.0.1:${hub.port}/#token=${token}`);
-  for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+  // Under the app the token comes over stdin and the window gets it from the app; the log must not carry it.
+  if (!exitWithParent) {
+    if (values.ui) console.log(`  open: http://127.0.0.1:${hub.port}/#token=${token}`);
+    for (const origin of values['allow-origin']) console.log(`  dev UI: ${origin}/#token=${token}`);
+  }
+  // The app quitting closes the hub's stdin right after its SIGTERM; the cores must still stop in order, not be swept.
+  stopForParent = () => void hub.close().then(() => process.exit(0));
   await new Promise<void>((resolveStop) => {
     for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP'] as const) process.on(signal, () => void hub.close().then(resolveStop));
   });

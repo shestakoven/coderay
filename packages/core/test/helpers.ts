@@ -1,4 +1,4 @@
-import { mkdtempSync, realpathSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -70,5 +70,21 @@ export function mapStatus(overrides: Partial<MapStatus> = {}): MapStatus {
     modelDownloadBytes: null,
     warnings: [],
     ...overrides,
+  };
+}
+
+// An executable standing in for the Node launcher: when run, it records the IDE_NODE and HOME it got, its own path and its arguments, then exits.
+export function recordingLauncher(): { path: string; ran: () => { ideNode: string; home: string; argv: string[] } | undefined } {
+  const dir = tempDir('ide-launcher-');
+  const path = join(dir, 'launcher');
+  const record = join(dir, 'ran');
+  writeFileSync(path, `#!/bin/sh\nprintf '%s\\n' "\${IDE_NODE-unset}" "\${HOME-unset}" "$0" "$@" > '${record}.tmp' && mv '${record}.tmp' '${record}'\n`, { mode: 0o755 });
+  return {
+    path,
+    ran: () => {
+      if (!existsSync(record)) return undefined;
+      const [ideNode = '', home = '', ...argv] = readFileSync(record, 'utf8').trimEnd().split('\n');
+      return { ideNode, home, argv };
+    },
   };
 }

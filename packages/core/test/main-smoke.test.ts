@@ -1,5 +1,5 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -11,7 +11,7 @@ import { fixture, tempDir, waitFor, writeTree } from './helpers';
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 
-async function startMain(): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
+async function startMain(options: { claude?: string; env?: Record<string, string> } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
   const base = tempDir('main-smoke-');
   const root = join(base, 'project');
   const bin = join(base, 'bin');
@@ -22,10 +22,10 @@ async function startMain(): Promise<{ messages: ServerMessage[]; socket: WebSock
   execFileSync('git', ['init', '-q'], { cwd: root });
   const child: ChildProcess = spawn(
     process.execPath,
-    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', FAKE_CLAUDE],
+    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE],
     {
       cwd: REPO,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl') },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -59,5 +59,15 @@ describe('main.ts', { timeout: 90_000 }, () => {
     const result = await waitFor(() => messages.find((m) => m.type === 'history.result'), 'the diff result');
     expect(result).toMatchObject({ requestId: 'r1', error: expect.stringMatching(/./) });
     expect(messages.filter((m) => m.type === 'history.result')).toHaveLength(1);
+  });
+
+  it('hands neither IDE_NODE nor ELECTRON_RUN_AS_NODE on to the claude it starts', async () => {
+    const dir = tempDir('main-env-');
+    const seen = join(dir, 'seen');
+    const claude = join(dir, 'claude');
+    writeFileSync(claude, `#!/bin/sh\nprintf '%s %s\\n' "\${IDE_NODE-unset}" "\${ELECTRON_RUN_AS_NODE-unset}" >> '${seen}'\n`, { mode: 0o755 });
+    const { socket } = await startMain({ claude, env: { IDE_NODE: join(dir, 'launcher'), ELECTRON_RUN_AS_NODE: '1' } });
+    socket.send(JSON.stringify({ type: 'chat.send', text: 'hello' }));
+    expect(await waitFor(() => (existsSync(seen) ? readFileSync(seen, 'utf8').trim() : ''), 'the claude to start')).toBe('unset unset');
   });
 });

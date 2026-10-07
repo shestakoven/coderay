@@ -3,6 +3,7 @@ import { randomBytes } from 'node:crypto';
 import { connect, createServer, type AddressInfo } from 'node:net';
 import { basename } from 'node:path';
 import type { Readable } from 'node:stream';
+import { coreEnv, nodeExecutable } from '../node-exec';
 import { descendants, forceKill, isAlive, signal } from '../os-process';
 import { projectBusy } from '../project/switch';
 import type { CoreChild, CoreExit, SupervisorDeps } from './supervisor';
@@ -43,7 +44,7 @@ export function childCoreArgs({ root, port, home, hubPort }: ChildCoreTarget, fl
 
 export function spawnCore(args: string[], token: string, label: string): CoreChild {
   // Detached: a Ctrl+C in the hub's terminal reaches only the hub, which then stops each core in order.
-  const child = spawn(process.execPath, [...process.execArgv, process.argv[1] ?? '', ...args], { detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  const child = spawn(nodeExecutable(), [...process.execArgv, process.argv[1] ?? '', ...args], { detached: true, stdio: ['pipe', 'pipe', 'pipe'], env: coreEnv() });
   const stderrListeners: ((text: string) => void)[] = [];
   const exitListeners: ((exit: CoreExit) => void)[] = [];
   let result: CoreExit | undefined;

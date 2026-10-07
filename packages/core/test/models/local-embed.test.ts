@@ -1,6 +1,6 @@
 import { readdirSync } from 'node:fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { BGE_SMALL, LocalEmbedModel, READY_TIMEOUT_MS } from '../../src/models/local-embed';
+import { BGE_SMALL, defaultWorkerUrl, LocalEmbedModel, READY_TIMEOUT_MS } from '../../src/models/local-embed';
 import type { EmbedStatus } from '../../src/models/types';
 import { tempDir, waitFor, writeTree } from '../helpers';
 
@@ -132,5 +132,12 @@ describe('LocalEmbedModel', () => {
       await model.close();
       expect(model.status().state).toBe('ready');
     });
+  });
+});
+
+describe('defaultWorkerUrl', () => {
+  it('is the TypeScript worker beside a source module and the JavaScript worker beside a bundled one', () => {
+    expect(defaultWorkerUrl('file:///repo/packages/core/src/models/local-embed.ts').href).toBe('file:///repo/packages/core/src/models/embed-worker.ts');
+    expect(defaultWorkerUrl('file:///Applications/IDE.app/Resources/core/main.mjs').href).toBe('file:///Applications/IDE.app/Resources/core/embed-worker.mjs');
   });
 });
