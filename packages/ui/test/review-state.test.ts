@@ -126,6 +126,32 @@ describe('reviewGroups', () => {
     });
   });
 
+  describe('follow-ups', () => {
+    it('lists a plan change with no step under Follow-ups after the steps, and leaves an out-of-plan one outside', () => {
+      const history = view({
+        changes: [
+          change({ path: 'src/a.ts', stepKey: 'a' }),
+          change({ path: 'src/fix.ts', stepKey: null }),
+          change({ path: 'src/stray.ts', stepKey: null, outOfPlan: true }),
+        ],
+      });
+      expect(reviewGroups(history, [plan({ status: 'done' })]).map((g) => [g.key, g.title, paths(g)])).toEqual([
+        ['outside', 'Outside the plan', ['src/stray.ts']],
+        ['p1/a', 'API', ['src/a.ts']],
+        ['p1/', 'Follow-ups', ['src/fix.ts']],
+      ]);
+    });
+
+    it('flags the group of an added step and no other', () => {
+      const steps = [
+        { key: 'a', order: 1, title: 'API', rationale: '', status: 'done' as const, targets: [] },
+        { key: 'b', order: 2, title: 'DB', rationale: '', status: 'done' as const, targets: [], extra: true },
+      ];
+      const history = view({ changes: [change({ stepKey: 'a' }), change({ stepKey: 'b' }), change({ stepKey: null })] });
+      expect(reviewGroups(history, [plan({ steps, status: 'done' })]).map((g) => [g.key, Boolean(g.extra)])).toEqual([['p1/a', false], ['p1/b', true], ['p1/', false]]);
+    });
+  });
+
   describe('one row per file', () => {
     it('merges a file changed twice in one step into one row', () => {
       const history = view({

@@ -142,12 +142,35 @@ export function changeIndex(h: HistoryView, snapshot: MapSnapshot | null): Map<s
 }
 
 export interface StepGroup {
+  key: string;
   stepKey: string | null;
   title: string;
   rationale: string | null;
   summary: SummaryView | null;
   changes: ChangeView[];
+  git: boolean;
 }
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+const byAgent = (change: ChangeView): boolean => change.origin === 'agent' || change.origin === 'agent-tool';
+
+// A write the plan covers, made once its steps ran out: stamped with a version that is done (or since accepted), but with no step.
+export const isFollowUp = (change: ChangeView, planId: string, plans: PlanView[]): boolean =>
+  byAgent(change) && change.planId === planId && change.stepKey === null && !change.outOfPlan
+  && plans.some((plan) => plan.id === planId && plan.version === change.planVersion && (plan.status === 'done' || plan.status === 'closed'));
+
+// What git wrote, one entry per git call.
+function gitCalls(changes: ChangeView[]): Map<string, ChangeView[]> {
+  const byCall = new Map<string, ChangeView[]>();
+  for (const change of changes) {
+    const call = change.toolUseIds[0];
+    if (change.origin === 'git' && change.enforcement === 'enforced' && call !== undefined) byCall.set(call, [...(byCall.get(call) ?? []), change]);
+  }
+  return byCall;
+}
+
+const gitLabel = (command: string | undefined, changes: ChangeView[]): string => `${command ?? 'git'} · ${plural(new Set(changes.map((c) => c.path)).size, 'file')}`;
 
 const latestVersions = (plans: PlanView[]): Map<string, PlanView> => {
   const byPlan = new Map<string, PlanView>();
@@ -161,31 +184,38 @@ const latestVersions = (plans: PlanView[]): Map<string, PlanView> => {
 export const latestPlanVersion = (plans: PlanView[], planId: string): PlanView | null =>
   latestVersions(plans.filter((plan) => plan.id === planId)).get(planId) ?? null;
 
-export function changesByStep(h: HistoryView, plans: PlanView[], nodeId: string, snapshot: MapSnapshot | null): StepGroup[] {
+export function changesByStep(
+  h: HistoryView, plans: PlanView[], nodeId: string, snapshot: MapSnapshot | null, commandOf: (toolUseId: string) => string | undefined = () => undefined,
+): StepGroup[] {
   const changes = nodeChanges(h, snapshot, nodeId).changes;
   const latest = latestVersions(plans);
   const stepOf = (change: ChangeView) =>
-    change.planId !== null && change.stepKey !== null && (change.origin === 'agent' || change.origin === 'agent-tool')
+    change.planId !== null && change.stepKey !== null && byAgent(change)
       ? latest.get(change.planId)?.steps.find((s) => s.key === change.stepKey)
       : undefined;
   const groups: StepGroup[] = [];
+  const none = { stepKey: null, rationale: null, summary: null, git: false };
   for (const plan of latest.values()) {
     for (const step of [...plan.steps].sort((a, b) => a.order - b.order)) {
       const own = changes.filter((c) => c.planId === plan.id && stepOf(c)?.key === step.key);
       if (own.length === 0) continue;
       const summary = h.summaries.find((s) => s.scope === 'step' && s.ref === `${plan.id}/${step.key}`) ?? null;
-      groups.push({ stepKey: step.key, title: step.title, rationale: step.rationale || null, summary, changes: own });
+      groups.push({ key: `${plan.id}/${step.key}`, stepKey: step.key, title: step.title, rationale: step.rationale || null, summary, changes: own, git: false });
     }
+    const followUps = changes.filter((c) => isFollowUp(c, plan.id, plans));
+    if (followUps.length > 0) groups.push({ ...none, key: `${plan.id}/`, title: 'Follow-ups', changes: followUps });
   }
-  const rest = changes.filter((c) => stepOf(c) === undefined);
-  if (rest.length > 0) groups.push({ stepKey: null, title: 'No step', rationale: null, summary: null, changes: rest });
-  return groups;
+  const calls = [...gitCalls(changes)].map(([call, own]): StepGroup => ({ ...none, key: `git:${call}`, title: gitLabel(commandOf(call), own), changes: own, git: true }));
+  const grouped = new Set([...groups, ...calls].flatMap((group) => group.changes.map((c) => c.id)));
+  const rest = changes.filter((c) => !grouped.has(c.id));
+  if (rest.length > 0) groups.push({ ...none, key: 'none', title: 'No step', changes: rest });
+  return [...groups, ...calls];
 }
 
 export const chatFilterIds = (h: HistoryView, nodeId: string, snapshot: MapSnapshot | null): Set<string> =>
   new Set(ownChanges(h, snapshot, nodeId).flatMap((c) => c.toolUseIds));
 
-export type TimelineKind = 'step' | 'event' | 'revert' | 'gate';
+export type TimelineKind = 'step' | 'event' | 'revert' | 'gate' | 'git';
 export interface TimelineItem {
   id: string;
   kind: TimelineKind;
@@ -200,11 +230,14 @@ const EVENT_TONE: Record<WatchdogEventView['resolution'], TimelineItem['tone']> 
   pending: 'warn', kept: 'ok', reverted: 'warn', 'plan-expanded': 'ok', 'relabeled-human': 'ok', flagged: 'error', mixed: 'warn', dropped: 'muted',
 };
 const GATE_TONE: Record<string, TimelineItem['tone']> = { 'allowed-once': 'ok', 'plan-expanded': 'ok', denied: 'error', flagged: 'warn' };
-const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
 
-export function timelineItems(plans: PlanView[], h: HistoryView): TimelineItem[] {
+export function timelineItems(plans: PlanView[], h: HistoryView, commandOf: (toolUseId: string) => string | undefined = () => undefined): TimelineItem[] {
   const items: TimelineItem[] = [];
   const latest = latestVersions(plans);
+  for (const [call, own] of gitCalls(h.changes)) {
+    const files = [...new Set(own.map((c) => c.path))].sort();
+    items.push({ id: `git:${call}`, kind: 'git', at: Math.min(...own.map((c) => c.at)), label: gitLabel(commandOf(call), own), tone: 'muted', files, ref: {} });
+  }
   for (const checkpoint of h.checkpoints) {
     const plan = latest.get(checkpoint.planId);
     const step = plan?.steps.find((s) => s.key === checkpoint.stepKey);

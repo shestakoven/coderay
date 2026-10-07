@@ -418,6 +418,15 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
 
   it('does not seal a step or ask for its summary after close', async () => {
     const b = await build({ scenario: 'gate-small-plan' });
+    // The seal waits for the changes to settle. Holding that until close() has finished makes close() win the race it would otherwise only usually win.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    onTestFinished(release);
+    const idle = b.rt.changes.idle.bind(b.rt.changes);
+    vi.spyOn(b.rt.changes, 'idle').mockImplementationOnce(async () => {
+      await held;
+      return idle();
+    });
     const step: { done: boolean; closed?: Promise<void> } = { done: false };
     b.rt.gate.plans.onStep((event) => {
       if (event.phase !== 'done') return;
@@ -427,6 +436,11 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     await b.send();
     await waitFor(() => step.done, 'the step done');
     await step.closed;
-    expect([b.rt.checkpoints.views().map((view) => view.sealedAt), b.rt.summarizer.views()]).toEqual([[null], []]);
+    // A component summary may be asked for before close, when the watcher records the step's write; nothing may be asked after it.
+    const asked = () => b.rt.summarizer.views().map((view) => `${view.scope}:${view.ref}`);
+    const atClose = asked();
+    release();
+    await new Promise((resolve) => setImmediate(resolve));
+    expect([b.rt.checkpoints.views().map((view) => view.sealedAt), asked(), atClose.filter((ref) => ref.startsWith('step:'))]).toEqual([[null], atClose, []]);
   });
 });

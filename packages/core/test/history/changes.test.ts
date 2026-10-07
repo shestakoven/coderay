@@ -73,7 +73,7 @@ async function fixture(o: { root?: string; shadow?: (real: ShadowRepo) => Shadow
   return { root, service, ledger, ideWrites, baselines, checkpoints, shadow, store, clock, gate, session, ev: (rel, exists = true) => ({ rel, exists, at: clock.now, wall: Date.now() }) };
 }
 
-const approved = (activeStep: string | null): PlanGate => ({ state: 'approved', planId: 'p1', version: 2, scope: { files: [], globs: [] } as never, activeStep });
+const approved = (activeStep: string | null): PlanGate => ({ state: 'approved', planId: 'p1', version: 2, scope: { files: [], globs: [] } as never, activeStep, followUps: false });
 const byPath = (changes: ChangeView[], path: string): ChangeView => changes.find((c) => c.path === path)!;
 
 describe('ChangeService recording', () => {

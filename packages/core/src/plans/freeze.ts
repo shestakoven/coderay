@@ -1,8 +1,9 @@
-import { statSync } from 'node:fs';
+import { statSync, type Stats } from 'node:fs';
 import { join, posix } from 'node:path';
 import type { FrozenScope, PlanReview, PlanStep, Policy } from '@ide/protocol';
 import { classifyPaths } from '../gate/paths';
 import { escapeGlob, globMatches, globSpecificity } from '../gate/scope';
+import { worktreeBases } from '../gate/worktrees';
 import type { ComponentRef } from './plan-input';
 
 export interface ReviewContext {
@@ -20,13 +21,18 @@ export interface ReviewResult {
 
 const MIN_SIBLINGS = 2;
 
-function isDirectory(root: string, rel: string): boolean {
-  try {
-    return statSync(join(root, rel)).isDirectory();
-  } catch {
-    return false;
-  }
+// A plan names a worktree file by its path inside the worktree, so the file or directory may exist only there.
+function statIn(root: string, rel: string): Stats[] {
+  return [root, ...worktreeBases(root)].flatMap((base) => {
+    try {
+      return [statSync(join(base, rel))];
+    } catch {
+      return [];
+    }
+  });
 }
+
+const isDirectory = (root: string, rel: string): boolean => statIn(root, rel).some((stat) => stat.isDirectory());
 
 export function freezeScope(steps: PlanStep[], root: string, components: ComponentRef[]): FrozenScope {
   const byId = new Map(components.map((component) => [component.id, component]));
@@ -113,8 +119,9 @@ export async function reviewPlan(steps: PlanStep[], ctx: ReviewContext): Promise
     const rel = info.rel as string;
     if (info.guarded) notes.push(`${rel} is a guarded path`);
     else if (info.cls !== 'enforced') notes.push(`${rel} is ${info.why}`);
-    owners[rel] = owner(rel, info.exists);
-    if (!info.exists && owners[rel] === null) {
+    const exists = info.exists || statIn(ctx.root, rel).length > 0;
+    owners[rel] = owner(rel, exists);
+    if (!exists && owners[rel] === null) {
       const both = globOwners(ctx.components, rel);
       notes.push(both.length > 1 ? `${rel} matches the globs of ${both.map((component) => component.name).join(' and ')}` : `the map cannot place the new file ${rel} in a component`);
     }

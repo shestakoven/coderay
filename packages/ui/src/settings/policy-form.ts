@@ -104,7 +104,7 @@ export interface PolicyChange {
 }
 
 const modeText = (mode: ControlMode): string => MODE_LABEL[mode];
-const limitText = (text: string): string => (text.trim() === '0' ? 'off' : `up to ${text.trim()} files`);
+const limitText = (text: string): string => (text.trim() === '0' ? 'off' : `up to ${text.trim()} ${text.trim() === '1' ? 'file' : 'files'}`);
 
 function listDelta(before: string, after: string): string {
   const was = lines(before);

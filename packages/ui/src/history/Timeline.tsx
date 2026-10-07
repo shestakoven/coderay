@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useReducer, useState, type ReactNode } from 'react';
 import type { ClientMessage, HistoryView, PlanView, RollbackPreview } from '@ide/protocol';
-import type { ChatState } from '../chat/chat-state';
+import { toolSummary, type ChatState } from '../chat/chat-state';
 import { Icon } from '../layout/Icon';
 import type { BottomTab } from '../layout/panel-state';
 import { timelineItems, type TimelineItem } from './history-state';
@@ -39,7 +39,7 @@ export function timelineSummary(items: TimelineItem[]): string {
 export function Timeline({ plans, latestPlan, history, results, chat, send, onSelect, open, onToggle, tab, onTab, terminal, terminalCount, leading, trailing, compact }: Props) {
   const [rollback, dispatch] = useReducer(rollbackReducer, null);
   const [undoing, setUndoing] = useState<Record<string, string>>({});
-  const items = useMemo(() => timelineItems(plans, history), [plans, history]);
+  const items = useMemo(() => timelineItems(plans, history, (id) => toolSummary(chat, id)), [plans, history, chat.items]);
 
   useEffect(() => {
     if (!rollback?.requestId) return;

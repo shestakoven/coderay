@@ -14,8 +14,8 @@ export function systemPrompt(components: { id: string; name: string }[], mapTool
     'Rules:',
     '1. Before you change any project file (Write, Edit, NotebookEdit, or a shell command that writes, moves or deletes files), call mcp__idecore__propose_plan with a goal and steps. Each step has a key, a title, a rationale and targets. A target is {"componentId": "<id from the list below>"} or {"path": "<project path>"}, with "op": "modify", "create" or "delete". A file your commands remove (rm, mv) needs its own "delete" target, even when the plan creates it. When the change adds or rewires parts, send a "flow" with the steps: the parts it adds or touches and how requests move between them (the tool description has the shape).',
     '2. Wait for its result. "approved": go on. "changes_requested": revise the plan using the feedback and propose it again. "rejected": stop and wait for the user.',
-    '3. Before you work on a step, call mcp__idecore__step with {"key": "<key>", "phase": "start"}; when it is finished, call it with "phase": "done". One step is active at a time.',
-    '4. A write outside the approved plan is blocked or waits for the user. If you need more files, call propose_plan again with the whole plan, keeping the active and done steps.',
+    '3. Before you work on a step, call mcp__idecore__step with {"key": "<key>", "phase": "start"}; when it is finished, call it with "phase": "done". One step is active at a time. When your turn ends with a step still active, the IDE asks once: close it, or say in a sentence why it stays open.',
+    '4. A write outside the approved plan is blocked or waits for the user. If you need more files, call propose_plan again with the whole plan, keeping the active and done steps: a proposal that keeps the done steps extends the current plan. Once every step is done, files the plan covers may still be fixed until the user accepts the plan.',
     '5. Reading files and running commands that write no project files need no plan.',
     '6. Tool errors that start with "IDE:" come from this IDE on behalf of the user. Follow them.',
     ...(mapTools

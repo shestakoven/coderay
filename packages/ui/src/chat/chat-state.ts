@@ -94,6 +94,11 @@ export function turnGroups(state: ChatState): TurnGroup[] {
 export const childItems = (state: ChatState, toolUseId: string): ChatItem[] =>
   Object.values(state.items).filter((item) => item.parentToolUseId === toolUseId).sort(bySeq);
 
+export const toolSummary = (state: ChatState, toolUseId: string): string | undefined => {
+  const item = state.items[toolUseId];
+  return item?.kind === 'tool' ? item.summary : undefined;
+};
+
 export const runningTasks = (state: ChatState): TaskView[] => Object.values(state.tasks).filter((task) => task.endedAt === null);
 
 export const canSend = (state: ChatState): boolean => openTurns(state).length === 0;

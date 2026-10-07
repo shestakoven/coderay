@@ -23,6 +23,10 @@ describe('shellWrites', () => {
     ['ls -la; grep -r foo src; npm test', []],
     ['echo > ~/notes.txt', ['/home/u/notes.txt']],
     ['echo > /abs/x.txt', ['/abs/x.txt']],
+    ['[[ 1 ]] > .env', ['/p/.env']],
+    ['r\\\nm "\\\n.env"', ['/p/.env']],
+    ["git push origin {a,b} && git commit -m $'a\\nb'", []],
+    ['rm .e{m..o}v', ['? brace expansion']],
   ])('%s', (command, expected) => {
     expect(targets(command)).toEqual(expected);
   });
@@ -56,7 +60,10 @@ describe('shellWrites', () => {
     expect(writes(command).targets.filter((target) => !target.deleting).map((target) => [target.path, target.names])).toEqual([[`/p/${dir}`, ['a.ts']]]);
   });
 
-  it.each(['source s.sh', '. s.sh', "bash -c -- 'touch x'", 'echo x > ~other/f.ts', "echo x > $'a\\n.ts'", 'echo x > $\'a\\x41.ts\''])('%s has an unresolved target', (command) => {
+  it.each([
+    'source s.sh', '. s.sh', "bash -c -- 'touch x'", 'echo x > ~other/f.ts', "echo x > $'a\\n.ts'", 'echo x > $\'a\\x41.ts\'', 'echo x > ~+/f.ts',
+    'git log -1 {--output=.env,}', 'git log -1 $"--output=.env"',
+  ])('%s has an unresolved target', (command) => {
     expect(writes(command).targets.some((target) => target.unresolved !== null)).toBe(true);
   });
 
@@ -71,6 +78,7 @@ describe('shellWrites', () => {
     '$T/../*',
     '$T/../../t/x',
     '$T/$X/../../f',
+    '$T/{a,../../x}',
   ])('a mktemp variable in %s leaves the temporary directory', (path) => {
     const got = writes(`T=$(mktemp -d); echo x > ${path}`).targets;
     expect(got.map((target) => [target.temp, target.unresolved !== null])).toEqual([[false, true]]);
@@ -187,14 +195,47 @@ describe('shellWrites', () => {
     ['cd "$D" && git -C sub reset --hard', [null]],
     ['cd "$D" && git -C /abs/wt reset --hard', ['/abs/wt']],
     ['git status && git -C sub log', []],
-  ])('%s rewrites the work tree in %j', (command, dirs) => {
-    expect(writes(command).rewrites).toEqual(dirs);
+  ])('%s moves history in %j', (command, dirs) => {
+    expect(writes(command).history).toEqual(dirs);
+  });
+
+  it('judges git in both directories wherever a cd may not run: after && or ||, in a pipeline or the background, in a block, and after a function, an alias or CDPATH', () => {
+    const rows: [command: string, history: string[], rewrites: string[]][] = [
+      ['cd sub && git reset --hard', ['/p/sub'], []],
+      ['false && cd sub; git reset --hard', ['/p', '/p/sub'], []],
+      ['cd sub & git reset --hard', ['/p', '/p/sub'], []],
+      ['git status | cd sub; git reset --hard', ['/p', '/p/sub'], []],
+      ['if true; then cd sub; fi; git reset --hard', ['/p', '/p/sub'], []],
+      ['f() { :; }; cd sub && git reset --hard', [], ['/p', '/p/sub']],
+      ['alias cd=true; cd sub && git reset --hard', [], ['/p', '/p/sub']],
+      ['CDPATH=/x cd sub && git reset --hard', [], ['/p', '/p/sub']],
+    ];
+    expect(rows.map(([command]) => [command, writes(command).history, writes(command).rewrites])).toEqual(rows);
+  });
+
+  it('reads each of checkout, switch, reset, pull, merge, rebase, cherry-pick and revert as history, and none as a work tree rewrite', () => {
+    const verbs = ['checkout', 'switch', 'reset', 'pull', 'merge', 'rebase', 'cherry-pick', 'revert'];
+    expect(verbs.map((verb) => [verb, writes(`git ${verb} x`).history, writes(`git ${verb} x`).rewrites])).toEqual(verbs.map((verb) => [verb, ['/p'], []]));
+  });
+
+  it('cannot say where git runs once a GIT_ variable is set, however it is set, so the call rewrites a work tree nobody named', () => {
+    for (const command of ['GIT_DIR=x git reset --hard', 'export GIT_WORK_TREE=w; git checkout main', 'env GIT_DIR=x git rebase main', 'cd sub && GIT_INDEX_FILE=i git merge main']) {
+      expect([command, writes(command).rewrites, writes(command).history]).toEqual([command, [null], []]);
+    }
+    for (const command of ['GIT_DIR=x git rm a.ts', 'export GIT_WORK_TREE=w; git mv a b']) {
+      expect([command, writes(command).targets.map((target) => [target.path, target.unresolved !== null])]).toEqual([command, [[null, true]]]);
+    }
+  });
+
+  it('keeps restore, clean, stash, apply and am as work tree rewrites, apart from the history commands', () => {
+    expect(writes('git restore . && git -C sub stash && git clean -fd && git am p.patch && git apply p.patch').rewrites).toEqual(['/p', '/p', '/p', '/p', '/p/sub']);
+    expect([writes('git restore .').history, writes('git rebase main').rewrites]).toEqual([[], []]);
   });
 
   it('keeps an earlier rewrite when a later git apply only touches the index, and the other way round', () => {
-    expect(writes('git reset --hard && git apply --cached p.patch').rewrites).toEqual(['/p']);
-    expect(writes('git apply --cached p.patch && git reset --hard').rewrites).toEqual(['/p']);
-    expect(writes('git reset --hard && git apply --cached p.patch').allTracked).toBe(true);
+    expect(writes('git restore . && git apply --cached p.patch').rewrites).toEqual(['/p']);
+    expect(writes('git apply --cached p.patch && git restore .').rewrites).toEqual(['/p']);
+    expect(writes('git restore . && git apply --cached p.patch').allTracked).toBe(true);
   });
 
   it('does not mark git apply that only touches the index', () => {

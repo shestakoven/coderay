@@ -86,13 +86,13 @@ describe('AgentSession terminal launch', () => {
   });
 
   describe('the hook settings of the check and of the terminal', () => {
-    const GATE_HOOKS = ['PreToolUse', 'SessionStart'];
-    const EVENT_HOOKS = ['PostToolUse', 'PostToolUseFailure', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'];
+    const GATE_HOOKS = ['PreToolUse', 'SessionStart', 'Stop'];
+    const EVENT_HOOKS = ['PostToolUse', 'PostToolUseFailure', 'StopFailure', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'];
 
-    it('checks the hooks with the hooks of the gate and no event hook', async () => {
+    it('checks the hooks with the hooks of the gate and the end of the turn, and no other event hook', async () => {
       const h = await terminalHarness({ hooks: 'on', canaryMs: 5000 });
       await h.session.terminalLaunch();
-      expect(h.gateWrites[0]).toEqual({ events: false, hooks: GATE_HOOKS, eventScript: false });
+      expect(h.gateWrites[0]).toEqual({ events: false, hooks: GATE_HOOKS, eventScript: true });
     });
 
     it('starts the claude of the terminal with the event hooks as well, after the check', async () => {
@@ -103,7 +103,7 @@ describe('AgentSession terminal launch', () => {
       expect(hooksOf(flag(launch?.args, '--settings') as string)).toEqual([...GATE_HOOKS, ...EVENT_HOOKS].sort());
     });
 
-    it('starts the headless check on settings that hold no event hook at the moment it reads them', async () => {
+    it('starts the headless check on settings that hold no event hook but the end of the turn at the moment it reads them', async () => {
       const h = await terminalHarness({ hooks: 'on', canaryMs: 5000 });
       await h.session.terminalLaunch();
       expect(h.spawned()[0]?.hookNames).toEqual(GATE_HOOKS);
@@ -112,7 +112,7 @@ describe('AgentSession terminal launch', () => {
     it('does not write the event hooks at all when the hooks never report', async () => {
       const h = await terminalHarness({ hooks: 'off', canaryMs: 800, scenario: stubbornClaude() });
       expect(await h.session.terminalLaunch()).toBeNull();
-      expect(h.gateWrites).toEqual([{ events: false, hooks: GATE_HOOKS, eventScript: false }]);
+      expect(h.gateWrites).toEqual([{ events: false, hooks: GATE_HOOKS, eventScript: true }]);
     });
 
     it('checks again with settings without the event hooks after a refusal, and writes those of the terminal once the hooks run', async () => {

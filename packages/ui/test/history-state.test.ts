@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { ChangeView, CheckpointView, HistoryView, PlanView, WatchdogEventView } from '@ide/protocol';
 import {
-  changesByStep, chatFilterIds, historyReducer, initialHistoryState, nodeChanges, pendingEvent, timelineItems, type HistoryState,
+  changesByStep, chatFilterIds, historyReducer, initialHistoryState, isFollowUp, nodeChanges, pendingEvent, timelineItems, type HistoryState,
 } from '../src/history/history-state';
 import { demoSnapshot } from './snapshot';
 
@@ -120,6 +120,35 @@ describe('changesByStep', () => {
     ]);
     expect(groups[0]).toMatchObject({ rationale: 'why a', summary: { text: 'did a' } });
     expect(groups[1]).toMatchObject({ rationale: null, summary: null });
+  });
+
+  it('labels follow-ups, and shows each git call as one row after the rest', () => {
+    const h = view({
+      changes: [
+        change({ id: 'f1', planId: 'p1', planVersion: 1, stepKey: null, at: 1 }),
+        change({ id: 'o1', planId: 'p1', stepKey: null, outOfPlan: true, at: 2 }),
+        change({ id: 'g1', origin: 'git', toolUseIds: ['t1'], at: 3 }),
+        change({ id: 'g2', origin: 'git', path: 'src/api/b.ts', toolUseIds: ['t1'], at: 4 }),
+      ],
+    });
+    const groups = changesByStep(h, [plan({ status: 'done' })], 'folder:src/api', demoSnapshot(), (id) => (id === 't1' ? 'git rebase main' : undefined));
+    expect(groups.map((g) => [g.title, g.git, g.changes.map((c) => c.id)])).toEqual([
+      ['Follow-ups', false, ['f1']], ['No step', false, ['o1']], ['git rebase main · 2 files', true, ['g1', 'g2']],
+    ]);
+  });
+});
+
+describe('Follow-ups', () => {
+  it('hold a write with no step only when its own plan version is done or closed', () => {
+    const stray = change({ planId: 'p1', planVersion: 1, stepKey: null });
+    const verdict = (...plans: PlanView[]) => isFollowUp(stray, 'p1', plans);
+    expect([
+      verdict(plan({ status: 'done' })), verdict(plan({ status: 'closed' })),
+      verdict(plan({ status: 'approved' })), verdict(plan({ status: 'superseded' }), plan({ version: 2, status: 'done' })),
+      verdict(plan({ id: 'p2', status: 'done' })), verdict(),
+    ]).toEqual([true, true, false, false, false, false]);
+    const titles = (status: PlanView['status']) => changesByStep(view({ changes: [stray] }), [plan({ status })], 'folder:src/api', demoSnapshot()).map((g) => g.title);
+    expect([titles('done'), titles('approved')]).toEqual([['Follow-ups'], ['No step']]);
   });
 });
 

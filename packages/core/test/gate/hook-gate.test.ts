@@ -613,7 +613,7 @@ describe('HookGate', () => {
   it('never offers to expand the plan for a git command that rewrites the whole work tree', async () => {
     const { call, approve, pending, gate } = await setup();
     await approve();
-    void call('Bash', { command: 'git checkout .' });
+    void call('Bash', { command: 'git restore .' });
     const prompt = await pending();
     expect(prompt.canExpand).toBe(false);
     expect(() => gate.answer(prompt.id, 'expand-plan')).toThrow(GateError);
@@ -625,6 +625,46 @@ describe('HookGate', () => {
     await plans.propose({ goal: 'Fix', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ path: 'src/app.ts', op: 'modify' }] }] });
     await call('Write', { file_path: join(root, 'src/app.ts'), content: 'x' });
     expect(store.gateEvents('s1')).toEqual([]);
+  });
+});
+
+describe('HookGate once every step of the plan is done', () => {
+  const twoSteps = {
+    goal: 'Fix',
+    steps: [
+      { key: 'first', title: 'First', rationale: '', targets: [{ path: 'src/app.ts', op: 'modify' }] },
+      { key: 'last', title: 'Last', rationale: '', targets: [{ path: 'src/other.ts', op: 'modify' }] },
+    ],
+  };
+  async function finished() {
+    const s = await setup();
+    await s.plans.propose(twoSteps);
+    for (const key of ['first', 'last']) {
+      s.plans.step({ key, phase: 'start' });
+      s.plans.step({ key, phase: 'done' });
+    }
+    return s;
+  }
+
+  it('lets an edit of a file the plan covers through without a prompt, stamped with the plan and no step', async () => {
+    const { root, call, gate, store, decisions } = await finished();
+    const answer = await call('Edit', { file_path: join(root, 'src/app.ts'), old_string: 'a', new_string: 'b' });
+    expect(answer?.permissionDecision).toBe('allow');
+    expect(decisions.at(-1)).toMatchObject({ decision: 'allow', planVersion: 1, stepKey: null });
+    expect([gate.pending(), store.gateEvents('s1')]).toEqual([[], []]);
+  });
+
+  it('still asks about a file outside the plan, and Add to plan puts it on the last step while the plan stays done', async () => {
+    const { root, call, pending, gate, plans } = await finished();
+    const answer = call('Edit', { file_path: join(root, 'src/lib/util.ts'), old_string: 'c', new_string: 'd' });
+    const prompt = await pending();
+    expect(prompt).toMatchObject({ canExpand: true, mode: 'B', targets: [{ path: 'src/lib/util.ts', inScope: false }] });
+    gate.answer(prompt.id, 'expand-plan');
+    expect((await answer)?.permissionDecision).toBe('allow');
+    const plan = plans.plans().at(-1)!;
+    expect([plan.version, plan.status]).toEqual([2, 'done']);
+    expect(plan.steps.map((step) => [step.key, step.targets.some((target) => target.path === 'src/lib/util.ts')])).toEqual([['first', false], ['last', true]]);
+    expect(plans.gate()).toMatchObject({ state: 'approved', followUps: true });
   });
 });
 
@@ -703,7 +743,7 @@ describe('HookGate onAllowed', () => {
     h.gate.onAllowed((call) => calls.push(call));
     return { ...h, calls };
   }
-  const base = { parentToolUseId: null, allTracked: false, cwdRel: null, background: false, allowedOnce: false };
+  const base = { parentToolUseId: null, allTracked: false, cwdRel: null, background: false, allowedOnce: false, history: [] };
 
   it('reports an allowed write with its project-relative target and no allow-once', async () => {
     const { root, call, approve, calls } = await watched();
@@ -821,7 +861,7 @@ describe('HookGate onAllowed', () => {
   it('reports allTracked from the shell heuristic', async () => {
     const { call, approve, calls } = await watched({ mode: 'C' });
     await approve();
-    await call('Bash', { command: 'git checkout .' });
+    await call('Bash', { command: 'git restore .' });
     expect(calls).toMatchObject([{ tool: 'Bash', allTracked: true }]);
   });
 

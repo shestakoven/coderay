@@ -2,7 +2,8 @@ import type { GatePromptView, GateTarget } from '@ide/protocol';
 
 export const promptTarget = (prompt: GatePromptView): GateTarget | null => prompt.targets.find((target) => !target.inScope) ?? null;
 
-export const targetLabel = (target: GateTarget | null, fallback: string): string => (target ? `${target.deleting ? 'delete ' : ''}${target.path}` : fallback);
+export const targetLabel = (target: GateTarget | null, fallback: string): string =>
+  (target ? `${target.deleting ? 'delete ' : ''}${target.path}${target.uncommitted ? ' (uncommitted)' : ''}` : fallback);
 
 export const agentReason = (prompt: GatePromptView): string => prompt.reason ?? 'The agent wrote nothing before this call.';
 
@@ -10,7 +11,7 @@ export function promptHint(prompt: GatePromptView): string {
   const target = promptTarget(prompt);
   if (!target) return `The IDE does not know the tool ${prompt.tool}. The call waits for your answer.`;
   const why = {
-    enforced: 'is not in the approved plan',
+    enforced: target.uncommitted ? 'has uncommitted changes, and is not in the approved plan' : 'is not in the approved plan',
     outside: 'is outside the project',
     unresolved: 'cannot be known before the call runs',
     'all-tracked': 'rewrites every tracked file',

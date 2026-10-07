@@ -83,4 +83,8 @@ describe('describeProgress', () => {
       { text: 'embedding 640 / 2879 files', tone: 'muted', title: 'Computing file embeddings with the local model; nothing leaves this machine' },
     ]);
   });
+
+  it('counts one file as a file', () => {
+    expect(describeProgress({ indexing: { indexed: 1 }, embedding: { done: 0, total: 1 } }).map((chip) => chip.text)).toEqual(['indexing… 1 file', 'embedding 0 / 1 file']);
+  });
 });

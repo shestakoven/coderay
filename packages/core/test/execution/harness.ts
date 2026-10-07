@@ -29,6 +29,8 @@ export interface Built {
   shadowDir: string;
   generate: ReturnType<typeof vi.fn>;
   records(): FakeRecord[];
+  // What the core typed into the agent's terminal.
+  typed: string[];
   send(): Promise<void>;
   write(rel: string, content: string): void;
   changes(): ChangeView[];
@@ -72,11 +74,12 @@ export async function build(options: BuildOptions): Promise<Built> {
     provider: { fast: { generate } }, files: () => [],
     ...options.runtime,
   });
+  const typed: string[] = [];
   const recordFile = join(home, `record-${n}.jsonl`);
   const fake = fakeClaude(scenarioPath, recordFile);
   const session = new AgentSession({
     root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000,
-    mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), gate: rt.sessionGate,
+    mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), ...rt.sessionOptions, terminalInput: (data) => typed.push(data),
   });
   rt.attach(session);
   server = await startServer({ port: 0, token: 'ui', snapshot: () => null, routes: rt.gate.routes });
@@ -93,7 +96,7 @@ export async function build(options: BuildOptions): Promise<Built> {
   if (options.start !== false) await rt.start();
   return {
     rt, session, store, root, home, shadowDir, generate,
-    records: () => readRecords(recordFile),
+    records: () => readRecords(recordFile), typed,
     send: async () => {
       session.send('go');
       await waitFor(() => session.hasOpenTurn(), 'turn open');

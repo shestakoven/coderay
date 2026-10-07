@@ -45,7 +45,7 @@ function ComponentDetails({ component, tabs }: { component: MapComponent; tabs: 
       )}
       {component.stale && <p className="warn">Changed a lot since the last grouping.</p>}
       <p className="muted">
-        {component.source} · {component.globs.join(', ') || 'no globs'} · {component.files.length} files
+        {component.source} · {component.globs.join(', ') || 'no globs'} · {component.files.length} {component.files.length === 1 ? 'file' : 'files'}
       </p>
     </DetailsAside>
   );

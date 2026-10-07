@@ -83,6 +83,7 @@ export function ReviewList({ sections, totals, decisions, selected, tally, filte
                   <Icon name={folded ? 'chevron-right' : 'chevron-down'} size={14} />
                   {section.outOfPlan && <Icon name="alert" size={13} />}
                   <span className="rv-group-name">{section.title}</span>
+                  {section.extra && <span className="added-chip" title="Added after you approved the plan">added</span>}
                 </button>
                 <span className="rv-group-count">{totals[section.key]?.decided ?? decided}/{totals[section.key]?.total ?? section.files.length}</span>
                 {open.length > 0 && !filtering && (

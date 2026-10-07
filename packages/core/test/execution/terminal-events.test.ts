@@ -17,7 +17,7 @@ const flag = (argv: readonly string[] | undefined, name: string) => {
 const readSettings = (path: string | undefined): Settings => JSON.parse(readFileSync(path ?? '', 'utf8')) as Settings;
 const hookNames = (settings: Settings) => Object.keys(settings.hooks).sort();
 const WITH_EVENTS = ['PostToolUse', 'PostToolUseFailure', 'PreToolUse', 'SessionStart', 'Stop', 'StopFailure', 'SubagentStart', 'SubagentStop', 'UserPromptSubmit'];
-const WITHOUT_EVENTS = ['PreToolUse', 'SessionStart'];
+const CHAT_HOOKS = ['PreToolUse', 'SessionStart', 'Stop'];
 
 describe('the execution runtime and the agent in the terminal', { timeout: 30_000 }, () => {
   describe('the hook settings it writes', () => {
@@ -26,9 +26,9 @@ describe('the execution runtime and the agent in the terminal', { timeout: 30_00
       expect(hookNames(readSettings(b.rt.sessionGate.write('s-terminal', true).settingsPath))).toEqual(WITH_EVENTS);
     });
 
-    it.each([[undefined], [false]])('writes no event hooks for the chat of a session when events is %s', async (events) => {
+    it.each([[undefined], [false]])('writes only the end of the turn as an event hook for the chat of a session when events is %s', async (events) => {
       const b = await build({ scenario: WAIT_TURN });
-      expect(hookNames(readSettings(b.rt.sessionGate.write('s-chat', events).settingsPath))).toEqual(WITHOUT_EVENTS);
+      expect(hookNames(readSettings(b.rt.sessionGate.write('s-chat', events).settingsPath))).toEqual(CHAT_HOOKS);
     });
 
     it('writes the event hooks into the settings a terminal starts with', async () => {
@@ -38,11 +38,11 @@ describe('the execution runtime and the agent in the terminal', { timeout: 30_00
       expect(hookNames(readSettings(flag(launch?.args, '--settings')))).toEqual(WITH_EVENTS);
     });
 
-    it('writes none into the settings a chat starts with', async () => {
+    it('writes only the end of the turn into the settings a chat starts with', async () => {
       const b = await build({ scenario: WAIT_TURN, claudeEnv: { FAKE_CLAUDE_HOOKS: 'on' } });
       await b.send();
       const argv = await waitFor(() => b.records().find((record) => record.argv)?.argv, 'claude started');
-      expect(hookNames(readSettings(flag(argv, '--settings')))).toEqual(WITHOUT_EVENTS);
+      expect(hookNames(readSettings(flag(argv, '--settings')))).toEqual(CHAT_HOOKS);
     });
   });
 

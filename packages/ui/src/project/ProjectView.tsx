@@ -9,7 +9,7 @@ import { GitDiffView } from '../git/GitDiffView';
 import { GitPanel, type GitSelection } from '../git/GitPanel';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
-import { canSend, chatReducer, initialChatState } from '../chat/chat-state';
+import { canSend, chatReducer, initialChatState, toolSummary } from '../chat/chat-state';
 import { dialogEvent, eventFilePaths } from '../history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from '../history/history-state';
 import { WatchdogDialog } from '../history/WatchdogDialog';
@@ -18,6 +18,7 @@ import { projectPathOf } from '../history/project-path';
 import { ReviewMode } from '../history/ReviewMode';
 import { ReviewPanel } from '../history/ReviewPanel';
 import { reviewSections, sectionFiles } from '../history/review-model';
+import { followUpFiles } from '../history/review-state';
 import { Timeline } from '../history/Timeline';
 import { DetailsPanel, type DetailsTab } from '../map/DetailsPanel';
 import { initialMapState, mapReducer } from '../map/map-state';
@@ -357,6 +358,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     const owners = new Set(snapshot?.files.filter((file) => wanted.has(file.path)).flatMap((file) => (file.componentId ? [file.componentId] : [])));
     if (owners.size > 0) focusComponents([...owners]);
   };
+  const followUps = useMemo(() => (shown ? followUpFiles(hist.history, plans.plans, shown.id) : []), [hist.history, plans.plans, shown]);
   const reviewFiles = useMemo(() => sectionFiles(reviewSections(hist.history, plans.plans)).length, [hist.history, plans.plans]);
   const mapChips = [...describeProgress(progress), ...(snapshot ? describeMapStatus(snapshot.status) : [])].filter((chip) => chip.tone !== 'ok');
   const mapDetails = (
@@ -374,6 +376,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           onFilter={(filter) => dispatchChat({ type: 'filter', filter })}
           diffs={hist.results}
           requestDiff={requestDiff}
+          commandOf={(id) => toolSummary(chat, id)}
         />
       )}
     />
@@ -480,7 +483,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   prompts={pendingPrompts(plans.prompts)}
                   dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
                   planDock={shown && waitsForUser(shown) && (
-                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} onHoverStep={setHoverStep} />
+                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} working={activity.busy} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} onHoverStep={setHoverStep} />
                   )}
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
@@ -509,9 +512,12 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 plan={shown}
                 snapshot={snapshot}
                 open
+                working={activity.busy}
+                followUps={followUps}
                 onAnswer={answerPlan}
                 onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])}
                 onHoverStep={setHoverStep}
+                onShowFiles={showPathsOnMap}
               />
             ) : (
               <div className="empty muted">{shown ? 'The plan is waiting for your answer above the chat.' : 'No plan yet. When the agent proposes one, it appears above the chat and on the map.'}</div>

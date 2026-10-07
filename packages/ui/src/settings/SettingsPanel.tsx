@@ -305,7 +305,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
                 >
                   <Icon name={item.icon} size={16} />
                   <span className="sw-tab-label">{item.label}</span>
-                  {count > 0 && <span className={`sw-tab-count${searching ? '' : ' warn'}`} aria-label={searching ? `${count} matches` : `${count} to review`}>{count}</span>}
+                  {count > 0 && <span className={`sw-tab-count${searching ? '' : ' warn'}`} aria-label={searching ? `${count} ${count === 1 ? 'match' : 'matches'}` : `${count} to review`}>{count}</span>}
                 </button>
               );
             })}

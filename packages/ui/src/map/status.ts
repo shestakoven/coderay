@@ -10,6 +10,8 @@ export interface StatusChip {
 
 const MIB = 1024 * 1024;
 
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
 export function describeMapStatus(status: MapStatus): StatusChip[] {
   const chips: StatusChip[] = [];
   if (status.layer === 'folder') {
@@ -51,7 +53,7 @@ function placementLine({ embeddingPlacement }: MapStatus): string {
 function groupingChip({ sending }: MapStatus): StatusChip {
   if (!sending) return { text: 'grouping…', tone: 'muted', title: 'Waiting for embeddings before asking Haiku' };
   return {
-    text: `grouping… sent ${sending.paths} paths, ${sending.symbols} symbol names, ${sending.links} dependency counts`,
+    text: `grouping… sent ${plural(sending.paths, 'path')}, ${plural(sending.symbols, 'symbol name')}, ${plural(sending.links, 'dependency count')}`,
     tone: 'muted',
     title:
       'Haiku receives the project name, file paths, exported symbol names, import counts between groups, and the names and summaries of previous components. File contents are never sent.',
@@ -62,14 +64,14 @@ export function describeProgress(progress: MapProgress): StatusChip[] {
   const chips: StatusChip[] = [];
   if (progress.indexing) {
     chips.push({
-      text: `indexing… ${progress.indexing.indexed} files`,
+      text: `indexing… ${plural(progress.indexing.indexed, 'file')}`,
       tone: 'muted',
       title: 'Reading and parsing source files; the map appears when this finishes',
     });
   }
   if (progress.embedding) {
     chips.push({
-      text: `embedding ${progress.embedding.done} / ${progress.embedding.total} files`,
+      text: `embedding ${progress.embedding.done} / ${plural(progress.embedding.total, 'file')}`,
       tone: 'muted',
       title: 'Computing file embeddings with the local model; nothing leaves this machine',
     });

@@ -88,9 +88,9 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
     canary,
     routes: [
       idecore,
-      hookRoute({ secret, gate, observe: (body) => session?.toolCalled(body) }),
+      hookRoute({ secret, gate, observe: (body) => session?.toolCalled(body), note: (body) => session?.callNote(body) ?? null }),
       aliveRoute({ secret, canary }),
-      eventRoute({ secret, handle: (sessionId, event) => session?.hookEvent(sessionId, event) ?? null }),
+      eventRoute({ secret, handle: (sessionId, event, signal) => session?.hookEvent(sessionId, event, signal) ?? null }),
     ],
     mcpEntry: () => ({ type: 'http', url: url('/mcp'), headers: { Authorization: `Bearer ${secret}` }, timeout: IDECORE_TIMEOUT_MS }),
     sessionGate: {

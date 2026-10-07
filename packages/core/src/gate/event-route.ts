@@ -7,7 +7,8 @@ const MAX_EVENT_BODY_BYTES = 64 * 1024 * 1024;
 // The answer is written to claude's hook output as is: a note for the agent, or a request to go on.
 export type EventAnswer = object | null;
 
-export function eventRoute(options: { secret: string; handle: (sessionId: string, event: unknown) => EventAnswer }): HttpRoute {
+// An answer may wait for the user; the signal aborts when claude stops waiting for the hook.
+export function eventRoute(options: { secret: string; handle: (sessionId: string, event: unknown, signal: AbortSignal) => EventAnswer | Promise<EventAnswer> }): HttpRoute {
   requireSecret(options.secret);
   return {
     path: '/hook/event',
@@ -28,12 +29,17 @@ export function eventRoute(options: { secret: string; handle: (sessionId: string
           res.writeHead(400).end();
           return;
         }
+        const connection = new AbortController();
+        res.on('close', () => {
+          if (!res.writableEnded) connection.abort();
+        });
         let answer: EventAnswer = null;
         try {
-          answer = options.handle(body.sessionId, body.event);
+          answer = await options.handle(body.sessionId, body.event, connection.signal);
         } catch (error) {
           console.error('agent: could not handle a hook event', error);
         }
+        if (res.writableEnded || res.destroyed) return;
         if (answer === null) res.writeHead(204).end();
         else res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer));
       })();

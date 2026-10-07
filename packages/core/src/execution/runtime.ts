@@ -2,10 +2,11 @@ import { lstat } from 'node:fs/promises';
 import { join } from 'node:path';
 import ignore from 'ignore';
 import type { ChangeView } from '@ide/protocol';
-import type { AgentSession, SessionGate } from '../agent/agent-session';
+import type { AgentSession, AgentSessionOptions, SessionGate } from '../agent/agent-session';
 import type { ToolEndInfo } from '../agent/tracker';
 import { FailOpenDetector } from '../gate/failopen';
 import { Hold } from '../gate/hold';
+import { GATE_HOLD_MS } from '../gate/hook-gate';
 import { classifyPaths, guardedMatcher } from '../gate/paths';
 import { createGateRuntime, type GateRuntime, type GateRuntimeOptions } from '../gate/runtime';
 import { toolClass } from '../gate/tools';
@@ -13,6 +14,7 @@ import { Baselines, newScanCache, ScanAborted, ScanError, scanTree } from '../hi
 import { ChangeService } from '../history/changes';
 import { Checkpoints } from '../history/checkpoints';
 import { DiffService } from '../history/diff';
+import { GitOps } from '../history/git-ops';
 import { HistoryService } from '../history/history-service';
 import { IdeWrites } from '../history/ide-writes';
 import { RevertService } from '../history/revert';
@@ -64,6 +66,8 @@ export interface ExecutionRuntime {
   close(): Promise<void>;
   unavailable(): string | null;
   canLeave(): string | null;
+  // What the agent session takes from the runtime: main.ts and the tests hand this same object to AgentSession.
+  sessionOptions: Required<Pick<AgentSessionOptions, 'gate' | 'holdTurnEnd' | 'activeStep'>>;
   agentBusy(): string | null;
   onChangesUpserted(listener: (changes: ChangeView[]) => void): () => boolean;
 }
@@ -94,6 +98,8 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
   const ideWrites = new IdeWrites();
   const ledger = new ActivityLedger({ graceMs: o.ledgerGraceMs });
   const checkpoints = new Checkpoints(o.store, sessionId);
+  const gitOps = new GitOps({ root: o.root, settle: (toolUseId) => changes.settleGit(toolUseId) });
+  const gitFailed = (error: unknown): void => console.error('execution: could not tell what git changed', error);
   const changes = new ChangeService({
     root: o.root,
     get policy() {
@@ -101,6 +107,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     },
     shadow, baselines, ideWrites, ledger, plans: gate.plans, store: o.store, checkpoints, sessionId,
     toolStamp: (toolUseId) => session?.toolStamp(toolUseId) ?? null,
+    gitMoved: (toolUseId) => gitOps.moved(toolUseId),
   });
   const agent: WatchdogSession = {
     hasOpenTurn: () => session?.hasOpenTurn() ?? false,
@@ -109,6 +116,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     runningShell: () => session?.runningShell() ?? false,
     processAlive: () => session?.processAlive() ?? false,
     interrupt: () => session?.interrupt() ?? false,
+    interruptResumes: () => session?.interruptResumes() ?? true,
     send: (text) => attached().send(text, { fromUser: false }),
     sendAbsorbed: (text) => attached().sendAbsorbed(text),
     queueNote: (text) => attached().queueNote(text),
@@ -307,7 +315,10 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     const ids = new Set(revertRecord.changeIds);
     publish(changes.changes().filter((change) => ids.has(change.id)));
   });
-  gate.gate.onAllowed((call) => ledger.allowed(call));
+  gate.gate.onAllowed((call) => {
+    ledger.allowed(call);
+    gitOps.begin(call);
+  });
   gate.plans.onStep((event) => {
     if (closing) return;
     try {
@@ -397,6 +408,21 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
       if (watchdog.isPending()) return 'Resolve the watchdog question before switching chats.';
       return null;
     },
+    sessionOptions: {
+      gate: sessionGate,
+      activeStep: () => gate.plans.active(),
+      // The agent in a terminal cannot be told to go on once its turn has ended, so the end of a turn waits for the user's answer.
+      holdTurnEnd(signal) {
+        if (!watchdog.holdsTurn() || !hold.isHeld()) return null;
+        const deadline = Date.now() + (o.holdMs ?? GATE_HOLD_MS);
+        return (async () => {
+          while (watchdog.holdsTurn() && hold.isHeld() && !signal.aborted) {
+            const left = deadline - Date.now();
+            if (left <= 0 || (await hold.wait(signal, left)) !== 'released') return;
+          }
+        })();
+      },
+    },
     onChangesUpserted(listener) {
       upserted.add(listener);
       return () => upserted.delete(listener);
@@ -414,12 +440,17 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
         }
         ledger.ended(info.toolUseId);
         if (toolClass(info.tool) === 'subagent' && !next.hasLiveTask(info.toolUseId)) ledger.taskEnded(info.toolUseId);
+        gitOps.toolEnded(info.toolUseId).catch(gitFailed);
         detector.toolEnded(info);
       });
-      next.onTaskEnd((toolUseId) => ledger.taskEnded(toolUseId));
+      next.onTaskEnd((toolUseId) => {
+        ledger.taskEnded(toolUseId);
+        gitOps.end(toolUseId).catch(gitFailed);
+      });
       next.onInterrupt(() => ledger.interrupted());
       next.onProcessExit(() => {
         ledger.clear();
+        gitOps.endAll().catch(gitFailed);
         if (!watchdog.isPending()) hold.release();
       });
       next.onNewSession(() => {

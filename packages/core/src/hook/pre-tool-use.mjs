@@ -71,7 +71,8 @@ process.stdin.on('end', () => {
         const valid = (decision?.permissionDecision === 'allow' || decision?.permissionDecision === 'deny')
           && typeof decision.permissionDecisionReason === 'string';
         if (!valid) return block('the IDE core sent an answer the hook cannot read');
-        answer({ permissionDecision: decision.permissionDecision, permissionDecisionReason: decision.permissionDecisionReason });
+        const context = typeof decision.additionalContext === 'string' && decision.additionalContext !== '' ? { additionalContext: decision.additionalContext } : {};
+        answer({ permissionDecision: decision.permissionDecision, permissionDecisionReason: decision.permissionDecisionReason, ...context });
       });
     },
   );

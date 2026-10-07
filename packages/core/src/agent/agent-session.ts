@@ -49,6 +49,10 @@ export interface AgentSessionOptions {
   canaryMs?: number;
   // Writes to the agent's terminal; the IDE only ever sends Esc, to stop a turn.
   terminalInput?: (data: string) => void;
+  // A turn the IDE holds in the terminal waits here for the user's answer; null when nothing holds it.
+  holdTurnEnd?: (signal: AbortSignal) => Promise<void> | null;
+  // The step the agent started and has not finished, in the plan the gate enforces.
+  activeStep?: () => { planId: string; key: string; title: string } | null;
   transcriptsDir?: string;
   canLeave?: () => string | null;
 }
@@ -109,6 +113,7 @@ const INTERRUPT_KEYS = new Set(['\x1b', '\x03']);
 const INTERRUPT_CONFIRM_MS = 5000;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
+const NEVER_ABORTED = new AbortController().signal;
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
@@ -149,6 +154,8 @@ export class AgentSession {
   private terminalOpen = false;
   private readonly transcriptTail = new TranscriptTail((line) => this.agentEvents(parseTranscriptLine(line)));
   private absorbed: string[] = [];
+  private nudgedTurn: string | null = null;
+  private readonly nudged = new Set<string>();
   private interruptKeyAt = Number.NEGATIVE_INFINITY;
 
   constructor(options: AgentSessionOptions) {
@@ -307,6 +314,11 @@ export class AgentSession {
     return this.process !== null || this.terminalOpen;
   }
 
+  // The chat's process takes a message after an interrupt; a terminal's input belongs to the user.
+  interruptResumes(): boolean {
+    return !this.terminalOpen;
+  }
+
   onInterrupt(listener: () => void): () => boolean {
     this.interruptListeners.add(listener);
     return () => this.interruptListeners.delete(listener);
@@ -377,38 +389,57 @@ export class AgentSession {
 
   // The gate's PreToolUse hook: the call starts before the gate decides on it.
   toolCalled(raw: unknown): void {
-    if (!this.terminalOpen || !this.fromTerminal(raw)) return;
+    if (!this.terminalOpen || !this.fromAgent(raw)) return;
     const event = parseHookEvent(raw);
     if (event?.type === 'tool-start') this.apply(this.tracker.agentEvent(event));
   }
 
-  // An event hook of the agent in the terminal; the answer goes back to claude as the hook's output.
-  hookEvent(sessionId: string, raw: unknown): object | null {
+  // An event hook of the agent; the answer goes back to claude as the hook's output. A chat's agent reports only the end of its turn, a terminal's everything.
+  hookEvent(sessionId: string, raw: unknown, signal?: AbortSignal): object | null | Promise<object | null> {
     const session = this.session;
-    if (!this.terminalOpen || !session || sessionId !== session.id) return null;
+    if (!session || sessionId !== session.id) return null;
     const event = parseHookEvent(raw);
+    // The chat's stream closes its turns; only the answer to the end of one is the hook's.
+    if (!this.terminalOpen) return event?.type === 'turn-end' && !event.failed && this.fromAgent(raw) ? this.turnEndBlock() : null;
     // Only the terminal's claude runs the event hooks, so its SessionStart names the conversation it is in: after /clear or /resume a new one.
     if (event?.type === 'conversation' && event.claudeSessionId !== session.claudeSessionId) {
       this.update({ claudeSessionId: event.claudeSessionId, conversationStarted: false });
       const moved = event.source === 'clear' ? 'The conversation was cleared in the terminal' : event.source === 'resume' ? 'The terminal switched to another conversation' : null;
       if (moved) this.apply(this.tracker.notice(`${moved}; the chat goes on with that one.`));
     }
-    if (!this.fromTerminal(raw)) return null;
+    if (!this.fromAgent(raw)) return null;
     const transcriptPath = hookEventInfo(raw)?.transcriptPath;
     if (transcriptPath) this.transcriptTail.follow(transcriptPath);
     if (!event || event.type === 'conversation') return null;
-    return this.answerHook(event, hookEventInfo(raw)?.name ?? '');
+    return this.answerHook(event, hookEventInfo(raw)?.name ?? '', signal);
   }
 
-  private fromTerminal(raw: unknown): boolean {
+  // The agent's next call of its own carries the note the user's answer left, so the turn goes on with it instead of waiting for the user.
+  callNote(raw: unknown): string | null {
+    if (!this.terminalOpen || !this.fromAgent(raw) || this.absorbed.length === 0) return null;
+    const event = parseHookEvent(raw);
+    return event?.type === 'tool-start' && event.agentId === null ? this.absorbed.splice(0).join('\n\n') : null;
+  }
+
+  private fromAgent(raw: unknown): boolean {
     const claudeSessionId = (raw as { session_id?: unknown } | null)?.session_id;
     return claudeSessionId === this.session?.claudeSessionId;
   }
 
-  private answerHook(event: AgentEvent, hookName: string): object | null {
-    if (event.type === 'turn-end' && !event.failed && this.absorbed.length > 0) {
-      // A note that came too late for a tool step keeps the agent going instead of ending its turn.
-      return { decision: 'block', reason: this.absorbed.splice(0).join('\n\n') };
+  private answerHook(event: AgentEvent, hookName: string, signal: AbortSignal = NEVER_ABORTED, waited = false): object | null | Promise<object | null> {
+    if (event.type === 'turn-end' && !event.failed) {
+      // The turn does not end while the user decides what to do with the agent's changes: the answer then keeps it going.
+      const held = waited || this.absorbed.length > 0 ? null : this.options.holdTurnEnd?.(signal);
+      if (held) {
+        return held.then(() => {
+          if (!signal.aborted) return this.answerHook(event, hookName, signal, true);
+          // Claude stopped waiting for the answer, and its turn ends all the same.
+          this.agentEvents([event]);
+          return null;
+        });
+      }
+      const block = this.turnEndBlock();
+      if (block) return block;
     }
     this.agentEvents([event]);
     if (event.type === 'prompt' && event.task === null) {
@@ -422,6 +453,29 @@ export class AgentSession {
       return { hookSpecificOutput: { hookEventName: hookName, additionalContext: this.absorbed.splice(0).join('\n\n') } };
     }
     return null;
+  }
+
+  // Keeps the agent going at the end of its turn: with the notes the user's answer left too late for a tool step, and with a question about a step it left active.
+  // They are one reason, so a turn never meets two blocks where one will do.
+  private turnEndBlock(): object | null {
+    const reasons = [...this.absorbed.splice(0), ...this.stepNudge()];
+    return reasons.length > 0 ? { decision: 'block', reason: reasons.join('\n\n') } : null;
+  }
+
+  // The IDE never marks a step done itself: it asks once per turn, and the agent's answer stands.
+  private stepNudge(): string[] {
+    const step = this.options.activeStep?.();
+    const turn = this.tracker.openTurnId();
+    if (!step || turn === null) return [];
+    if (turn !== this.nudgedTurn) {
+      this.nudgedTurn = turn;
+      this.nudged.clear();
+    }
+    const asked = `${step.planId}/${step.key}`;
+    if (this.nudged.has(asked)) return [];
+    this.nudged.add(asked);
+    this.apply(this.tracker.notice(`The IDE asked the agent about the step "${step.key}", which is still active.`));
+    return [`IDE: step ${JSON.stringify(step.key)} (${step.title}) is still active. If it is finished, call mcp__idecore__step {"key": ${JSON.stringify(step.key)}, "phase": "done"}; if not, say in one sentence why it stays open.`];
   }
 
   // Keys typed into the agent's terminal. Only the user and the IDE type there, never the agent's tools.
@@ -724,7 +778,7 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     this.syncAccount();
     const session = this.session;
-    // The headless check gets no event hooks: every event then comes from the terminal's own claude.
+    // The headless check runs no turn, so none of its hooks reports an event: every event then comes from the terminal's own claude.
     const probeFiles = session && this.launchFiles(session, false);
     if (!session || !probeFiles) throw new SessionError('no-gate');
     this.terminalOpen = true;

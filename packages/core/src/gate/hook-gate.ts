@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { statSync } from 'node:fs';
+import { lstatSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
 import type { ControlMode, GateAnswer, GatePreview, GatePromptView, GateTarget, GateTargetKind, Policy, ToolDecision } from '@ide/protocol';
 import { summarizeToolInput } from '../agent/tools';
+import { createRun, type GitRun } from '../git/git-run';
+import { parseStatus } from '../git/status-parse';
 import { isRecord } from '../json';
 import { globOwners, ownerIndex } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
@@ -13,7 +15,7 @@ import type { Hold } from './hold';
 import { classifyPaths, expandHome, realTarget } from './paths';
 import { refreshWorktrees, worktreeAt } from './worktrees';
 import { decide, describeTargets, targetName, type ClassifiedTarget, type GuardDecision } from './scope-guard';
-import type { ToolCall } from '../watchdog/activity';
+import type { HistoryCall, ToolCall } from '../watchdog/activity';
 import { shellWrites, type ShellTarget } from './shell';
 import { FILE_PATH_FIELD, toolClass, type ToolClass } from './tools';
 
@@ -21,12 +23,14 @@ export const GATE_HOLD_MS = 3_530_000;
 const PREVIEW_CHARS = 20_000;
 const KEPT_CLOSED = 50;
 const KEPT_DECIDED = 100_000;
+const STATUS_MS = 5_000;
 const NO_RESPONSE = "IDE: the user did not respond in time. Stop and wait for the user's next message.";
 const CALL_ENDED = 'IDE: the call ended before the user answered.';
 
 export interface HookAnswer {
   permissionDecision: 'allow' | 'deny';
   permissionDecisionReason: string;
+  additionalContext?: string;
 }
 
 export interface GateContext {
@@ -63,6 +67,13 @@ interface HookInput {
 interface Judged {
   decision: GuardDecision;
   targets: ClassifiedTarget[];
+  history: HistoryCall[];
+}
+
+interface RepoState {
+  top: string;
+  head: string | null;
+  dirty: string[];
 }
 
 interface Landing {
@@ -292,32 +303,75 @@ export class HookGate {
   private async judge(input: HookInput): Promise<Judged> {
     const policy = this.options.policy();
     const cls = toolClass(input.toolName);
-    const targets = await this.targets(cls, input, policy);
-    return { decision: decide({ tool: input.toolName, toolClass: cls, targets, gate: this.options.plans.gate(), mode: policy.mode }), targets };
+    const { targets, history } = await this.targets(cls, input, policy);
+    return { decision: decide({ tool: input.toolName, toolClass: cls, targets, gate: this.options.plans.gate(), mode: policy.mode }), targets, history };
   }
 
-  private async targets(cls: ToolClass, input: HookInput, policy: Policy): Promise<ClassifiedTarget[]> {
+  private async targets(cls: ToolClass, input: HookInput, policy: Policy): Promise<{ targets: ClassifiedTarget[]; history: HistoryCall[] }> {
     const home = this.options.home ?? homedir();
     if (cls === 'file-writer') {
       const path = input.toolInput[FILE_PATH_FIELD[input.toolName] as string];
-      if (typeof path !== 'string' || path === '') return [special('unresolved', String(path ?? ''), 'no file path in the call')];
-      return this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false, deleting: false }], policy, home);
+      if (typeof path !== 'string' || path === '') return { targets: [special('unresolved', String(path ?? ''), 'no file path in the call')], history: [] };
+      return { targets: await this.classify([{ raw: path, abs: realTarget(expandHome(path, home), input.cwd), mkdir: false, deleting: false }], policy, home), history: [] };
     }
-    if (cls !== 'shell') return [];
+    if (cls !== 'shell') return { targets: [], history: [] };
     const command = input.toolInput.command;
-    if (typeof command !== 'string') return [special('unresolved', '', 'no command in the call')];
+    if (typeof command !== 'string') return { targets: [special('unresolved', '', 'no command in the call')], history: [] };
     const env = this.options.env ?? process.env;
     const writes = shellWrites(command, input.cwd, { home, vars: { TMPDIR: env.TMPDIR, TMP: env.TMP } });
     await refreshWorktrees(this.options.root);
     // A rewrite inside a nested worktree touches that worktree only, which is no reason to ask for the whole project.
     const rewritesProject = writes.rewrites.some((dir) => dir === null || worktreeAt(this.options.root, realTarget(dir, '/')) === null);
-    const found: ClassifiedTarget[] = rewritesProject ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
+    const repos = await Promise.all(writes.history.map((dir, i) => this.repoState(dir, writes.incoming[i]!)));
+    // A history command is judged by the local files it may discard or overwrite; when git cannot say which, it may touch every tracked file.
+    const found: ClassifiedTarget[] = rewritesProject || repos.includes(null) ? [special('all-tracked', 'git work tree', 'a git command that rewrites the work tree')] : [];
+    const history: HistoryCall[] = [];
+    const dirty = new Map<string, Landing>();
+    for (const repo of repos) {
+      if (repo === null) continue;
+      const dir = this.projectDir(repo.top);
+      if (dir !== null) history.push({ dir, top: repo.top, head: repo.head });
+      for (const path of repo.dirty) dirty.set(join(repo.top, path), { raw: path, abs: join(repo.top, path), mkdir: false, deleting: false });
+    }
     const landings: Landing[] = [];
     for (const target of writes.targets) {
       if (target.unresolved !== null) found.push(special('unresolved', target.word, target.unresolved));
       else if (!target.temp) landings.push(...landingsOf(target));
     }
-    return [...found, ...(await this.classify(landings, policy, home))];
+    const uncommitted = (await this.classify([...dirty.values()], policy, home)).map((target) => ({ ...target, uncommitted: true }));
+    return { targets: [...found, ...uncommitted, ...(await this.classify(landings, policy, home))], history };
+  }
+
+  // HEAD, and the files a git command may overwrite where it runs: tracked ones with uncommitted changes, and untracked or ignored ones
+  // (an .env) that a commit it brings in tracks. Null when that cannot be read.
+  private async repoState(dir: string | null, incoming: string[] | null): Promise<RepoState | null> {
+    if (dir === null || incoming === null) return null;
+    const run = createRun(realTarget(dir, '/'));
+    const read = { readOnly: true, timeoutMs: STATUS_MS };
+    try {
+      const [top, status, listed, commits] = await Promise.all([
+        run(['rev-parse', '--show-toplevel'], read),
+        run(['status', '--porcelain=v2', '--branch', '-z', '--untracked-files=no'], read),
+        run(['ls-files', '-v', '-z'], read),
+        Promise.all(incoming.map((ref) => commitOf(run, ref))),
+      ]);
+      const { sha, files } = parseStatus(status);
+      const repoTop = top.trim();
+      const added = await Promise.all(commits.filter((commit) => commit !== null).map((commit) =>
+        run(sha === null ? ['ls-tree', '-r', '--name-only', '-z', commit] : ['diff', '--name-only', '-z', '--no-renames', '--diff-filter=A', sha, commit], read)));
+      const overwritten = added.flatMap((names) => names.split('\0')).flatMap((path) => (path === '' ? [] : clobbered(repoTop, path)));
+      const dirty = files.flatMap((file) => (file.origPath === null ? [file.path] : [file.path, file.origPath]));
+      // git status hides edits to a file marked --assume-unchanged (a lowercase tag), and git overwrites them.
+      const assumed = listed.split('\0').filter((entry) => /^[a-z] /.test(entry)).map((entry) => entry.slice(2));
+      return { top: repoTop, head: sha, dirty: [...new Set([...dirty, ...assumed, ...overwritten])] };
+    } catch {
+      return null;
+    }
+  }
+
+  // Where a repository's top lies under the project root ("" for the root, or for a repository around it); null for any other repository.
+  private projectDir(top: string): string | null {
+    return this.relativeCwd(top) ?? (relative(top, this.options.root).startsWith('..') ? null : '');
   }
 
   private async classify(landings: Landing[], policy: Policy, home: string): Promise<ClassifiedTarget[]> {
@@ -358,6 +412,7 @@ export class HookGate {
       inScope: !outOfScope.has(target),
       deleting: target.deleting,
       componentId: target.kind === 'enforced' && target.rel !== null ? owner(target.scopeRel ?? target.rel, target.exists) : null,
+      ...(target.uncommitted ? { uncommitted: true } : {}),
     }));
     return {
       id: this.newId(), toolUseId: input.toolUseId, parentToolUseId: context.parentToolUseId, tool: input.toolName,
@@ -395,7 +450,7 @@ export class HookGate {
       toolUseId: input.toolUseId, parentToolUseId: this.options.context(input.toolUseId).parentToolUseId, tool: input.toolName, toolClass: cls,
       targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
       allTracked: judged.targets.some((target) => target.kind === 'all-tracked'),
-      cwdRel: background && cls === 'shell' ? this.relativeCwd(input.cwd) : null, background, allowedOnce,
+      cwdRel: background && cls === 'shell' ? this.relativeCwd(input.cwd) : null, background, allowedOnce, history: judged.history,
     };
     for (const listener of this.allowedListeners) {
       try {
@@ -461,6 +516,36 @@ function parseHookInput(raw: unknown, root: string): HookInput | null {
     toolUseId: raw.tool_use_id,
     cwd: typeof raw.cwd === 'string' && raw.cwd !== '' ? raw.cwd : root,
   };
+}
+
+// A name git resolves, or a branch of exactly one remote, which checkout and switch take for a new local branch.
+async function commitOf(run: GitRun, ref: string): Promise<string | null> {
+  const read = { readOnly: true, timeoutMs: STATUS_MS };
+  try {
+    return (await run(['rev-parse', '--verify', '--quiet', `${ref}^{commit}`], read)).trim();
+  } catch (error) {
+    // ORIG_HEAD is absent until the first rebase, merge or reset, and an --abort then has nothing to go back to.
+    if (ref === 'ORIG_HEAD') return null;
+    const remote = new Set((await run(['for-each-ref', '--format=%(objectname)', `refs/remotes/*/${ref}`], read)).split('\n').filter(Boolean));
+    if (remote.size !== 1) throw error;
+    return [...remote][0]!;
+  }
+}
+
+// What git overwrites to add path: a file or link where it needs one of the directories, or the path itself; nothing when neither is on disk.
+function clobbered(top: string, path: string): string[] {
+  const names = path.split('/');
+  for (let i = 1; i <= names.length; i += 1) {
+    const at = names.slice(0, i).join('/');
+    let directory: boolean;
+    try {
+      directory = lstatSync(join(top, at)).isDirectory();
+    } catch {
+      return [];
+    }
+    if (i === names.length || !directory) return [at];
+  }
+  return [];
 }
 
 function special(kind: 'unresolved' | 'all-tracked', raw: string, why: string): ClassifiedTarget {

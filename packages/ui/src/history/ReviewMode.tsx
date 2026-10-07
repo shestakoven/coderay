@@ -8,6 +8,7 @@ import { contextOf } from './review-context';
 import { acceptFiles, fileState, isOpen, nextOpen, requestChanges, step, tally as tallyOf, undoAccept, type Decisions, type FileState, type Position } from './review-flow';
 import { focusIsHere, keyOf, typing } from './review-keys';
 import { filterSections, type ListFilter } from './review-list';
+import { planOnMap } from '../plan/plan-state';
 import { reviewSections, sectionFiles, type ReviewItem, type ReviewSection } from './review-model';
 import { loadReviewed, saveReviewed } from './review-progress';
 import { clampListWidth, LIST_WIDTH, loadPrefs, loadRequested, savePrefs, saveRequested, type ReviewPrefs } from './review-store';
@@ -44,6 +45,7 @@ const diffKey = (file: ReviewItem): string => `${file.path}:${file.before}:${fil
 
 export function ReviewMode({ history, plans, results, chatItems, requestDiff, send, root, onShowOnMap, onShowInChat, onExit }: Props) {
   const sections = useMemo(() => reviewSections(history, plans), [history, plans]);
+  const finished = useMemo(() => { const plan = planOnMap(plans); return plan?.status === 'done' ? plan : null; }, [plans]);
   const [decisions, setDecisions] = useState<Decisions>(() => ({ reviewed: loadReviewed(window.localStorage, root), requested: loadRequested(window.localStorage, root) }));
   const [comments, setComments] = useState<ReviewComment[]>(() => loadComments(window.localStorage, root));
   const [prefs, setPrefs] = useState<ReviewPrefs>(() => loadPrefs(window.localStorage));
@@ -391,6 +393,7 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
             tally={tally}
             unsentComments={pending.length}
             onRequest={requestFixes}
+            onAcceptPlan={finished ? () => send({ type: 'plan.answer', planId: finished.id, version: finished.version, answer: { kind: 'accept' } }) : undefined}
             onContinue={() => setSelected(nextOpen(sections, decisions, null))}
             onExit={onExit}
           />

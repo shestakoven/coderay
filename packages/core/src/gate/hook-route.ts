@@ -5,7 +5,7 @@ import type { HookAnswer, HookGate } from './hook-gate';
 const MAX_HOOK_BODY_BYTES = 64 * 1024 * 1024;
 const GATE_FAILED: HookAnswer = { permissionDecision: 'deny', permissionDecisionReason: 'IDE: the gate failed, so the call is blocked.' };
 
-export function hookRoute(options: { secret: string; gate: HookGate; observe?: (body: unknown) => void }): HttpRoute {
+export function hookRoute(options: { secret: string; gate: HookGate; observe?: (body: unknown) => void; note?: (body: unknown) => string | null }): HttpRoute {
   requireSecret(options.secret);
   return {
     path: '/hook',
@@ -36,8 +36,25 @@ export function hookRoute(options: { secret: string; gate: HookGate; observe?: (
           return GATE_FAILED;
         });
         if (answer === null || res.writableEnded || res.destroyed) return;
-        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(answer));
+        res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(withNote(answer, takeNote(options.note, body))));
       })();
     },
   };
+}
+
+function takeNote(note: ((body: unknown) => string | null) | undefined, body: unknown): string | null {
+  try {
+    return note?.(body) ?? null;
+  } catch (error) {
+    console.error('gate: could not take the note for a tool call', error);
+    return null;
+  }
+}
+
+// An allowed call carries the note as context; a denied one has only its reason to carry it.
+function withNote(answer: HookAnswer, note: string | null): HookAnswer {
+  if (note === null) return answer;
+  return answer.permissionDecision === 'allow'
+    ? { ...answer, additionalContext: note }
+    : { ...answer, permissionDecisionReason: `${answer.permissionDecisionReason}\n\n${note}` };
 }

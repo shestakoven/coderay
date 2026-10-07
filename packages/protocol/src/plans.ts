@@ -20,9 +20,10 @@ export type StepStatus = 'pending' | 'active' | 'done';
 
 export interface PlanStepView extends PlanStep {
   status: StepStatus;
+  extra?: boolean;
 }
 
-export type PlanStatus = 'proposed' | 'approved' | 'changes-requested' | 'rejected' | 'withdrawn' | 'superseded' | 'done';
+export type PlanStatus = 'proposed' | 'approved' | 'changes-requested' | 'rejected' | 'withdrawn' | 'superseded' | 'done' | 'closed';
 
 export type ApprovedBy = 'user-card' | 'user-expand' | 'auto';
 
@@ -92,7 +93,7 @@ export interface PlanView {
   decidedAt: number | null;
 }
 
-export type PlanAnswer = { kind: 'approve' } | { kind: 'changes'; feedback: string } | { kind: 'reject'; feedback: string };
+export type PlanAnswer = { kind: 'approve' } | { kind: 'accept' } | { kind: 'changes'; feedback: string } | { kind: 'reject'; feedback: string };
 
 export type ToolDecision = 'allow' | 'unchecked' | 'ask-approved' | 'ask-denied' | 'deny' | 'flag' | 'hook-missing' | 'hook-pending';
 
@@ -106,6 +107,7 @@ export interface GateTarget {
   inScope: boolean;
   deleting: boolean;
   componentId: string | null;
+  uncommitted?: boolean;
 }
 
 export type GatePreview =

@@ -1,5 +1,5 @@
 import type { ChangeView, HistoryView, PlanView, SummaryView } from '@ide/protocol';
-import { latestPlanVersion } from './history-state';
+import { isFollowUp, latestPlanVersion } from './history-state';
 
 export interface ReviewFile {
   path: string;
@@ -18,6 +18,7 @@ export interface ReviewGroup {
   files: ReviewFile[];
   added: number;
   removed: number;
+  extra?: boolean;
 }
 
 const byAgent = (change: ChangeView): boolean => change.origin === 'agent' || change.origin === 'agent-tool';
@@ -36,15 +37,21 @@ function files(changes: ChangeView[]): ReviewFile[] {
   }));
 }
 
-const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryView | null, changes: ChangeView[]): ReviewGroup => {
+const group = (key: string, title: string, outOfPlan: boolean, summary: SummaryView | null, changes: ChangeView[], extra = false): ReviewGroup => {
   const rows = files(changes);
-  return { key, title, outOfPlan, summary, files: rows, added: rows.reduce((sum, row) => sum + row.added, 0), removed: rows.reduce((sum, row) => sum + row.removed, 0) };
+  return { key, title, outOfPlan, summary, files: rows, added: rows.reduce((sum, row) => sum + row.added, 0), removed: rows.reduce((sum, row) => sum + row.removed, 0), extra };
 };
+
+// 'recorded' marks files the gate does not enforce: gitignored, repository internals and harness paths. What git wrote is not the agent's work.
+const isReviewable = (change: ChangeView): boolean => change.enforcement === 'enforced' && change.resolution !== 'reverted' && change.origin !== 'git';
+
+const followUpsOf = (changes: ChangeView[], planId: string, plans: PlanView[]): ChangeView[] => changes.filter((change) => isFollowUp(change, planId, plans));
+
+export const followUpFiles = (history: HistoryView, plans: PlanView[], planId: string): ReviewFile[] => files(followUpsOf(history.changes.filter(isReviewable), planId, plans));
 
 // Out-of-plan changes come first: they are the ones that need a human decision. External changes (made outside the IDE's agent) come last.
 export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGroup[] {
-  // 'recorded' marks files the gate does not enforce: gitignored, git internals and harness paths.
-  const reviewable = history.changes.filter((change) => change.enforcement === 'enforced' && change.resolution !== 'reverted');
+  const reviewable = history.changes.filter(isReviewable);
   const agentChanges = reviewable.filter(byAgent);
   const claimed = new Set<string>();
   const stepGroups: ReviewGroup[] = [];
@@ -57,8 +64,13 @@ export function reviewGroups(history: HistoryView, plans: PlanView[]): ReviewGro
       if (own.length === 0) continue;
       own.forEach((change) => claimed.add(change.id));
       const summary = history.summaries.find((s) => s.scope === 'step' && s.ref === `${plan.id}/${step.key}`) ?? null;
-      stepGroups.push(group(`${plan.id}/${step.key}`, step.title, false, summary, own));
+      stepGroups.push(group(`${plan.id}/${step.key}`, step.title, false, summary, own, step.extra));
     }
+    const followUps = followUpsOf(agentChanges, plan.id, plans);
+    if (followUps.length === 0) continue;
+    followUps.forEach((change) => claimed.add(change.id));
+    // The empty step key cannot clash with a real step's.
+    stepGroups.push(group(`${plan.id}/`, 'Follow-ups', false, null, followUps));
   }
   const unclaimed = reviewable.filter((change) => !claimed.has(change.id) && change.origin !== 'ide');
   const outside = unclaimed.filter((change) => change.origin !== 'human');

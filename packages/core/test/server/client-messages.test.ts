@@ -121,6 +121,8 @@ describe('parseClientMessage', () => {
       .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'changes', feedback: 'less' } });
     expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'approve' } })))
       .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'approve' } });
+    expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'accept' } })))
+      .toEqual({ type: 'plan.answer', planId: 'p', version: 2, answer: { kind: 'accept' } });
     expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 1.5, answer: { kind: 'approve' } }))).toBeNull();
     expect(parseClientMessage(JSON.stringify({ type: 'plan.answer', planId: 'p', version: 1, answer: { kind: 'reject' } }))).toBeNull();
   });
