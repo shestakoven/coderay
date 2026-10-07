@@ -107,6 +107,24 @@ async function setup() {
 
 const MOVED = ['backend/src/a.py', ...Array.from({ length: 12 }, (_, i) => `pkg/m${i}.py`)].sort();
 
+// The worktree's origin has branch "x": "other" plus a README, a compose.yml and src/foo.txt.
+async function setupWithOrigin() {
+  const set = await setup();
+  const origin = tempDir('nwt-origin-');
+  git(origin, 'init', '-q', '--bare');
+  git(set.wt, 'remote', 'add', 'origin', origin);
+  git(set.wt, 'checkout', '-q', '-b', 'x', 'other');
+  await writeTree(set.wt, { README: 'one\ntwo\nthree\n', 'compose.yml': 'name: test\n', 'src/foo.txt': 'foo\n' });
+  git(set.wt, 'add', '-A');
+  git(set.wt, 'commit', '-q', '-m', 'x');
+  git(set.wt, 'push', '-q', 'origin', 'x');
+  git(set.wt, 'checkout', '-q', 'work');
+  git(set.wt, 'branch', '-q', '-D', 'x');
+  return set;
+}
+
+const BROUGHT = [...MOVED, 'README', 'compose.yml', 'src/foo.txt'].sort();
+
 describe('ChangeService for a history command in a nested worktree', () => {
   it('gives git what the command moved, however many files and whatever else the call writes, and the agent the file it names and what git did not move', async () => {
     const { root, bash } = await setup();
@@ -127,6 +145,18 @@ describe('ChangeService for a history command in a nested worktree', () => {
     const { root, bash } = await setup();
     const evil = await bash(`cd ${join(root, WT)} && echo evil | sed -n 'w backend/src/evil.py' && git add -A && git commit -qm w && git reset -q`, 'toolu_sed');
     expect(evil).toEqual({ 'backend/src/evil.py': 'agent-tool' });
+  });
+
+  it('gives git what a fast-forward brought in when the call goes on to read with sed, and the agent what the same call writes with sed', async () => {
+    const call = async (sed: string, id: string) => {
+      const { root, bash } = await setupWithOrigin();
+      const command = `cd ${join(root, WT)} && git fetch -q origin && git log --oneline HEAD..origin/x && git merge --ff-only origin/x >/dev/null && git log --oneline -1 && grep -rn foo src | grep -v bar; ${sed}; grep -n t compose.yml`;
+      return bash(command, id);
+    };
+    expect(await call('sed -n 1,2p README', 'toolu_read')).toEqual(Object.fromEntries(BROUGHT.map((rel) => [rel, 'git'])));
+    const written = await call("sed -n 'w notes.txt' README", 'toolu_write');
+    expect(written['notes.txt']).toBe('agent-tool');
+    expect(Object.values(written)).not.toContain('git');
   });
 
   it('keeps every file the agent, when the call also runs a program the gate cannot read', async () => {

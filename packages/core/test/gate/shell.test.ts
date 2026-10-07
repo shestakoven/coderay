@@ -378,4 +378,52 @@ describe('shellWrites moves', () => {
   ])('reports no moves for %s', (command) => {
     expect(moves(command)).toEqual([]);
   });
+
+  it.each([
+    'sed -n 45,60p f',
+    "sed -n '/a/,/b/p' f",
+    "sed '$!d' f",
+    "sed 's/a/b/g' f",
+    'sed -ne 5p f',
+    "sed -nE 's/(a|b)+/x/p' f",
+    'sed --quiet --expression=2,3p f',
+    "sed -n -e 1p -e '2,+3p' -- f",
+    'sed -e 1p -n f',
+    'sed -n -e 1p f g',
+    'sort -u f',
+    'cut -d: -f1 f | tr a b; diff a b; jq .a f; stat f; basename x; dirname x',
+    'rg -n x src | head',
+  ])('keeps a merge as history, with no rewrites, when the call goes on to read with %s', (reader) => {
+    const got = writes(`git merge --ff-only origin/x && ${reader}`);
+    expect([got.history, got.rewrites, got.moves]).toEqual([['/p'], [], []]);
+  });
+
+  it.each([
+    "sed 's/a/b/w out' f",
+    "sed -n 'w out' f",
+    'sed -n 1e f',
+    "sed 's/a/b/e' f",
+    'sed -i s/a/b/ f',
+    'sed --in-place s/a/b/ f',
+    'sed -f s.sed f',
+    'sed -f p f',
+    'sed -n 1p $F',
+    "sed 's;a;b;;w x' f",
+    "sed -n 'p;w out' f",
+    "sed -n 'w out;p' f",
+    "sed -n -e 1p -e 'w out' f",
+    "sed 's/.*/H/w payload' -e 1p f",
+    "sed 's/.*/H/w payload' --expression=1p f",
+    "sed 's/.*/H/w payload' -ne 1p f",
+    'sort -o f',
+    'sort -uo f',
+    'sort --out=f',
+    'sort --compress-program=./x f',
+    'sort $F',
+    'rg --pre ./x x',
+    'rg --hostname-bin ./x x',
+  ])('judges a merge as a rewrite, with no moves, when the call goes on with %s, which may write what no target names', (writer) => {
+    const got = writes(`git merge --ff-only origin/x && ${writer}`);
+    expect([got.history, got.rewrites, got.moves]).toEqual([[], ['/p'], []]);
+  });
 });
