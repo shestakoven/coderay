@@ -70,7 +70,7 @@ interface State {
   incoming: (string[] | null)[];
   // Whether every command so far only moves history or reads.
   pure: boolean;
-  // Whether a command ran that may write what no target names, or commit or stash what it wrote: an unknown program, sed, plumbing, configuration, a function, git add or commit.
+  // Whether a command ran that may write what no target names, or commit or stash what it wrote: an unknown program, a sed that may write, plumbing, configuration, a function, git add or commit.
   wild: boolean;
   // A GIT_ variable was set, so git may run on another repository or index than its directory says.
   gitEnv: boolean;
@@ -97,6 +97,17 @@ const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', '
 // Reads write no file but --output, and run no program but what the repository's own configuration names.
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'rev-list', 'describe', 'merge-base', 'stash list', 'stash show']);
 const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
+// Programs that only read and print; what they print goes through a redirect, which is a target of its own.
+const READERS = new Set(['cut', 'tr', 'diff', 'jq', 'stat', 'basename', 'dirname']);
+// Readers with an option that writes a file or runs a program: sort -o and --compress-program, rg --pre and --hostname-bin.
+const READERS_UNLESS = new Map([
+  ['sort', /^(-[A-Za-z]*o|--[oc])/],
+  ['rg', /^--(pre|host)/],
+]);
+// A sed script that cannot write a file or run a command: one p, d, q, Q or = or s command with an address that selects lines, and for s no w or e flag.
+const SED_ADDRESS = String.raw`(?:\d+|\$|/(?:[^/\\\n]|\\.)*/[Im]*)`;
+const READING_SED = new RegExp(String.raw`^\s*(?:${SED_ADDRESS}(?:,(?:${SED_ADDRESS}|\+\d+))?!?)?\s*(?:[pdqQ=]|s([^\s\\])(?:(?!\1)[^\n])*\1(?:(?!\1)[^\n])*\1[gpiImM0-9]*)\s*$`);
+const READING_SED_OPTIONS = new Set(['--quiet', '--silent', '--regexp-extended', '--separate', '--null-data', '--posix', '--unbuffered', '--debug', '--sandbox']);
 // The options git takes before its command, with = after those that take a value; after any other one the IDE cannot tell which command runs.
 const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= --namespace= --config-env= --attr-source= --exec-path --bare -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs --no-replace-objects --no-advice -v --version -h --help');
 // Of those, the ones that run no program of the agent's choosing and leave refs and attributes as they are; -c only with a quiet editor or pager.
@@ -176,6 +187,52 @@ function namesWhatItWrites(base: string, args: Word[]): boolean {
     const text = literalText(word);
     return text !== null && !BACKUP_SHORT_OPTION.test(text) && (!text.startsWith('--') || text === '--' || NAMING_LONG_OPTIONS.has(text.split('=')[0]!));
   });
+}
+
+// Whether the program, called with these arguments, writes no file and runs nothing of the agent's choosing.
+function readsOnly(base: string, args: Word[]): boolean {
+  if (HARMLESS.has(base) || READERS.has(base)) return true;
+  if (base === 'sed') return readingSed(args);
+  const writing = READERS_UNLESS.get(base);
+  return writing !== undefined && args.every((word) => {
+    const text = literalText(word);
+    return text !== null && !writing.test(text);
+  });
+}
+
+// A word the IDE cannot read may be any option, so sed must have none.
+function readingSed(args: Word[]): boolean {
+  const scripts: string[] = [];
+  const words: string[] = [];
+  let expressions = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const text = literalText(args[i]!);
+    if (text === null) return false;
+    if (text === '--') {
+      words.push(...args.slice(i + 1).map((word) => literalText(word) ?? ''));
+      break;
+    }
+    if (/^-[nErszu]*e$/.test(text) || text === '--expression') {
+      const script = literalText(args[i + 1] ?? EMPTY);
+      if (script === null || args[i + 1] === undefined) return false;
+      scripts.push(script);
+      expressions = true;
+      i += 1;
+    } else if (text.startsWith('--expression=')) {
+      scripts.push(text.slice('--expression='.length));
+      expressions = true;
+    } else if (text.startsWith('-') && text !== '-') {
+      if (!/^-[nErszu]+$/.test(text) && !READING_SED_OPTIONS.has(text)) return false;
+    } else {
+      words.push(text);
+    }
+  }
+  if (!expressions) {
+    const script = words.shift();
+    if (script === undefined) return false;
+    scripts.push(script);
+  }
+  return scripts.every((script) => READING_SED.test(script));
 }
 
 function run(script: string, state: State, depth: number): void {
@@ -539,7 +596,7 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   const name = literalText(wrapped[0]!);
   const base = posix.basename(name ?? '');
   // Only a name looked up on the PATH is the program it says: ./cat or /tmp/x/git can be anything.
-  if (name === null || name.includes('/') || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) {
+  if (name === null || name.includes('/') || (base !== 'git' && !ENV_SETTERS.has(base) && !readsOnly(base, wrapped.slice(1)))) {
     taint(state, name === null || name.includes('/') || !namesWhatItWrites(base, wrapped.slice(1)));
   }
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
