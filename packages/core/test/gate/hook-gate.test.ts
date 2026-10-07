@@ -36,6 +36,7 @@ interface Options {
   holdMs?: number;
   context?: GateContext;
   throwPolicy?: boolean;
+  tempRoots?: string[];
   hold?: Hold;
   onPolicy?: () => void;
   now?: () => number;
@@ -52,7 +53,7 @@ async function setup(options: Options = {}) {
   const policy = { ...DEFAULT_POLICY, mode: options.mode ?? 'B' };
   const plans = new PlanService({
     root, store, sessionId: () => 's1', components: () => components,
-    review: (steps) => reviewPlan(steps, { root, policy, components, home, tempRoots: [] }),
+    review: (steps) => reviewPlan(steps, { root, policy, components, home, tempRoots: options.tempRoots ?? [] }),
   });
   const gate = new HookGate({
     root, store, sessionId: () => 's1',
@@ -63,7 +64,7 @@ async function setup(options: Options = {}) {
     },
     plans, components: () => components,
     context: () => options.context ?? { parentToolUseId: null, lastMessage: 'Fixing the greeting.' },
-    home, tempRoots: [], holdMs: options.holdMs, hold: options.hold, now: options.now,
+    home, tempRoots: options.tempRoots ?? [], holdMs: options.holdMs, hold: options.hold, now: options.now,
   });
   const decisions: ToolDecisionRecord[] = [];
   gate.onDecision((decision) => decisions.push(decision));
@@ -96,6 +97,15 @@ describe('HookGate', () => {
     const { call } = await setup();
     expect((await call('Bash', { command: 'npm test && ls -la' }))?.permissionDecision).toBe('allow');
     expect((await call('Bash', { command: 'echo x > src/new.ts' }))?.permissionDecision).toBe('deny');
+  });
+
+  it('lets a call through that writes temporary files a for loop names, as it does for the file spelled out', async () => {
+    const scratch = tempDir('ide-scratch-');
+    const { call, gate } = await setup({ tempRoots: [scratch] });
+    const loop = `for f in linux macos windows; do docker compose -f docker-compose.$f.yml config 2>${scratch}/err.$f && echo ok; done`;
+    const literal = `docker compose -f docker-compose.linux.yml config 2>${scratch}/err.linux && echo ok`;
+    const answers = await Promise.all([loop, literal].map((command, index) => call('Bash', { command }, undefined, `toolu_${index}`)));
+    expect([answers.map((answer) => answer?.permissionDecision), gate.pending()]).toEqual([['allow', 'allow'], []]);
   });
 
   it("lets writes to gitignored files and to Claude Code's plan files through without a plan", async () => {

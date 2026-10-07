@@ -33,7 +33,8 @@ type Part =
   | { kind: 'tilde' }
   // Text bash builds from how the word is spelled, which CodeRay does not work out; dash when it may begin with -.
   | { kind: 'unread'; what: string; dash: boolean }
-  | { kind: 'var'; name: string }
+  // modified: an operator in ${…} (%, #, /, :-, [i] …) makes the value something other than the variable's.
+  | { kind: 'var'; name: string; modified?: boolean }
   | { kind: 'glob' }
   | { kind: 'sub'; body: string; open?: boolean };
 
@@ -64,13 +65,17 @@ interface State {
   nesting: number;
   mktemp: Set<string>;
   poisoned: Set<string>;
+  // Loop variables whose every value CodeRay can read: for NAME in a b c.
+  loops: Map<string, string[]>;
+  // A construct ran or may run that changes a variable without an assignment CodeRay reads: no loop variable is known from then on.
+  loopsOff: boolean;
   targets: ShellTarget[];
   rewrites: (string | null)[];
   history: (string | null)[];
   incoming: (string[] | null)[];
   // Whether every command so far only moves history or reads.
   pure: boolean;
-  // Whether a command ran that may write what no target names, or commit or stash what it wrote: an unknown program, sed, plumbing, configuration, a function, git add or commit.
+  // Whether a command ran that may write what no target names, or commit or stash what it wrote: an unknown program, a sed that may write, plumbing, configuration, a function, git add or commit.
   wild: boolean;
   // A GIT_ variable was set, so git may run on another repository or index than its directory says.
   gitEnv: boolean;
@@ -97,6 +102,17 @@ const HISTORY_VERBS = new Set(['checkout', 'switch', 'reset', 'pull', 'merge', '
 // Reads write no file but --output, and run no program but what the repository's own configuration names.
 const GIT_READS = new Set(['status', 'log', 'diff', 'show', 'rev-parse', 'ls-files', 'rev-list', 'describe', 'merge-base', 'stash list', 'stash show']);
 const HARMLESS = new Set(['cd', 'pwd', 'echo', 'true', 'false', ':', 'sleep', 'ls', 'cat', 'head', 'tail', 'wc', 'grep', 'test', '[', 'set', 'exit', 'fi', 'done', 'which']);
+// Programs that only read and print; what they print goes through a redirect, which is a target of its own.
+const READERS = new Set(['cut', 'tr', 'diff', 'jq', 'stat', 'basename', 'dirname']);
+// Readers with an option that writes a file or runs a program: sort -o and --compress-program, rg --pre and --hostname-bin.
+const READERS_UNLESS = new Map([
+  ['sort', /^(-[A-Za-z]*o|--[oc])/],
+  ['rg', /^--(pre|host)/],
+]);
+// A sed script that cannot write a file or run a command: one p, d, q, Q or = or s command with an address that selects lines, and for s no w or e flag.
+const SED_ADDRESS = String.raw`(?:\d+|\$|/(?:[^/\\\n]|\\.)*/[Im]*)`;
+const READING_SED = new RegExp(String.raw`^\s*(?:${SED_ADDRESS}(?:,(?:${SED_ADDRESS}|\+\d+))?!?)?\s*(?:[pdqQ=]|s([^\s\\])(?:(?!\1)[^\n])*\1(?:(?!\1)[^\n])*\1[gpiImM0-9]*)\s*$`);
+const READING_SED_OPTIONS = new Set(['--quiet', '--silent', '--regexp-extended', '--separate', '--null-data', '--posix', '--unbuffered', '--debug', '--sandbox']);
 // The options git takes before its command, with = after those that take a value; after any other one CodeRay cannot tell which command runs.
 const GLOBAL_OPTIONS = optionTable('-C= -c= --git-dir= --work-tree= --namespace= --config-env= --attr-source= --exec-path --bare -P --no-pager -p --paginate --no-optional-locks --literal-pathspecs --glob-pathspecs --noglob-pathspecs --icase-pathspecs --no-replace-objects --no-advice -v --version -h --help');
 // Of those, the ones that run no program of the agent's choosing and leave refs and attributes as they are; -c only with a quiet editor or pager.
@@ -148,11 +164,16 @@ const DEVICE = /^\/dev\/(null|stdout|stderr|tty|zero|fd\/\d+)$/;
 const NAME = /^[A-Za-z_][A-Za-z0-9_]*/;
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const MAX_DEPTH = 8;
+const MAX_LOOP_PATHS = 32;
+// Words that read or assign a variable behind an assignment CodeRay reads: arithmetic (let, the operands of -eq and the like), select, read and its kin, eval and source, a trap or an alias that runs later, a nameref.
+const REBINDERS = new Set(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'compgen', 'coproc', 'declare', 'typeset', 'local', 'function', '-eq', '-ne', '-lt', '-le', '-gt', '-ge']);
+// Values that stay one word with no wildcard, whatever the quoting of the variable.
+const PLAIN_VALUE = /^[\w.,:@%+=/-]+$/;
 const TEMP_ROOT = '/\0temp';
 const EMPTY: Word = { parts: [], raw: '' };
 
 export function shellWrites(command: string, cwd: string, env: ShellEnv): ShellWrites {
-  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
+  const state: State = { env, cwd: [[cwd]], nesting: 0, mktemp: new Set(), poisoned: new Set(), loops: new Map(), loopsOff: false, targets: [], rewrites: [], history: [], incoming: [], pure: true, wild: false, gitEnv: false };
   run(command, state, 0);
   // History is spared only in a command that can write nothing else: a commit built with plumbing and reset onto in one call is the agent's.
   const pure = state.pure && state.targets.length === 0;
@@ -178,12 +199,80 @@ function namesWhatItWrites(base: string, args: Word[]): boolean {
   });
 }
 
+// Whether the program, called with these arguments, writes no file and runs nothing of the agent's choosing.
+function readsOnly(base: string, args: Word[]): boolean {
+  if (HARMLESS.has(base) || READERS.has(base)) return true;
+  if (base === 'sed') return readingSed(args);
+  const writing = READERS_UNLESS.get(base);
+  return writing !== undefined && args.every((word) => {
+    const text = literalText(word);
+    return text !== null && !writing.test(text);
+  });
+}
+
+// Whether the script has a construct that can change a variable without an assignment CodeRay reads.
+function rebinds(tokens: Token[]): boolean {
+  return tokens.some((token, i) => {
+    const next = tokens[i + 1];
+    if (token.t === 'op') {
+      // ((…)), for ((…)) and name() { … }: a function may be called before the line that defines it, and sets any variable.
+      return token.op === '(' && (next?.t === 'op' && (next.op === '(' || next.op === ')'));
+    }
+    if (token.t !== 'word') return false;
+    const text = literalText(token.word);
+    // Arithmetic hides in the spelling: $(( … )) nested in a substitution, $[ … ], and ${x:f=5}, ${a[f=5]} in a parameter expansion.
+    if (token.word.raw.includes('((') || token.word.raw.includes('$[') || /\$\{[^}]*=/.test(token.word.raw)) return true;
+    // exec {f}>file puts a descriptor number in f.
+    if (next?.t === 'redir' && /^\{[A-Za-z_]\w*\}$/.test(token.word.raw)) return true;
+    if (text === null) return false;
+    if (text === '((…))' || REBINDERS.has(text) || /\[[^\]]*=/.test(text)) return true;
+    return text === 'printf' && next?.t === 'word' && (literalText(next.word) ?? '').startsWith('-v');
+  });
+}
+
+// A word CodeRay cannot read may be any option, so sed must have none; GNU sed takes options after operands and BSD sed does not, so none may follow an operand.
+function readingSed(args: Word[]): boolean {
+  const scripts: string[] = [];
+  const words: string[] = [];
+  let expressions = false;
+  for (let i = 0; i < args.length; i += 1) {
+    const text = literalText(args[i]!);
+    if (text === null) return false;
+    if (text === '--') {
+      words.push(...args.slice(i + 1).map((word) => literalText(word) ?? ''));
+      break;
+    }
+    if (words.length > 0 && text.startsWith('-') && text !== '-') return false;
+    if (/^-[nErszu]*e$/.test(text) || text === '--expression') {
+      const script = literalText(args[i + 1] ?? EMPTY);
+      if (script === null || args[i + 1] === undefined) return false;
+      scripts.push(script);
+      expressions = true;
+      i += 1;
+    } else if (text.startsWith('--expression=')) {
+      scripts.push(text.slice('--expression='.length));
+      expressions = true;
+    } else if (text.startsWith('-') && text !== '-') {
+      if (!/^-[nErszu]+$/.test(text) && !READING_SED_OPTIONS.has(text)) return false;
+    } else {
+      words.push(text);
+    }
+  }
+  if (!expressions) {
+    const script = words.shift();
+    if (script === undefined) return false;
+    scripts.push(script);
+  }
+  return scripts.every((script) => READING_SED.test(script));
+}
+
 function run(script: string, state: State, depth: number): void {
   if (depth > MAX_DEPTH) {
     state.targets.push(unresolved(script.slice(0, 60), 'commands nested too deeply'));
     return;
   }
   const tokens = lex(script);
+  if (rebinds(tokens)) state.loopsOff = true;
   let words: Word[] = [];
   let redirects: Redirect[] = [];
   let before = '';
@@ -429,7 +518,8 @@ function readDollar(src: string, i: number): [Part | null, number] {
   if (next === '{') {
     const end = src.indexOf('}', i + 2);
     const inner = src.slice(i + 2, end === -1 ? src.length : end);
-    return [nested(inner) ?? { kind: 'var', name: NAME.exec(inner)?.[0] ?? inner }, end === -1 ? src.length : end + 1];
+    const name = NAME.exec(inner)?.[0] ?? inner;
+    return [nested(inner) ?? { kind: 'var', name, modified: name !== inner }, end === -1 ? src.length : end + 1];
   }
   const name = NAME.exec(src.slice(i + 1))?.[0];
   if (name) return [{ kind: 'var', name }, i + 1 + name.length];
@@ -539,8 +629,15 @@ function simpleCommand(words: Word[], redirects: Redirect[], state: State, depth
   const name = literalText(wrapped[0]!);
   const base = posix.basename(name ?? '');
   // Only a name looked up on the PATH is the program it says: ./cat or /tmp/x/git can be anything.
-  if (name === null || name.includes('/') || (base !== 'git' && !HARMLESS.has(base) && !ENV_SETTERS.has(base))) {
+  if (name === null || name.includes('/') || (base !== 'git' && !ENV_SETTERS.has(base) && !readsOnly(base, wrapped.slice(1)))) {
     taint(state, name === null || name.includes('/') || !namesWhatItWrites(base, wrapped.slice(1)));
+  }
+  const appended = name === null ? null : /^([A-Za-z_]\w*)\+=/.exec(name);
+  if (appended) state.loops.delete(appended[1]!);
+  // A command named by a variable may be read, let or any other builtin.
+  if (name === null) {
+    state.loopsOff = true;
+    state.loops.clear();
   }
   // After anything impure (an alias, CDPATH, a function) a cd may not go where it says.
   if (name) command(base, wrapped.slice(1), state, depth, maybe || state.nesting > 0 || !state.pure);
@@ -609,6 +706,9 @@ function command(name: string, args: Word[], state: State, depth: number, maybe:
       return;
     case 'git':
       git(args, state);
+      return;
+    case 'for':
+      bindLoop(args, state);
       return;
     case 'find':
       find(args, state);
@@ -979,7 +1079,10 @@ function nestedShell(args: Word[], state: State, depth: number): void {
     return;
   }
   state.cwd.push(cwdOf(state));
+  const loops = state.loops;
+  state.loops = new Map();
   run(text, state, depth + 1);
+  state.loops = loops;
   state.cwd.pop();
 }
 
@@ -1046,7 +1149,42 @@ function tempValue(rest: Part[]): WordValue {
   return inside === TEMP_ROOT || inside.startsWith(`${TEMP_ROOT}/`) ? { temp: true } : leaves;
 }
 
+// A word with a loop variable stands for one word per value of the variable.
+function loopWords(word: Word, state: State): Word[] {
+  let variants: Part[][] = [[]];
+  for (const part of word.parts) {
+    const values = part.kind === 'var' && !part.modified ? state.loops.get(part.name) : undefined;
+    if (values === undefined) {
+      variants = variants.map((parts) => [...parts, part]);
+    } else if (variants.length * values.length > MAX_LOOP_PATHS) {
+      return [word];
+    } else {
+      variants = variants.flatMap((parts) => values.map((text): Part[] => [...parts, { kind: 'lit', text }]));
+    }
+  }
+  return variants.map((parts) => ({ ...word, parts }));
+}
+
+// for NAME in WORDS: while the loop runs NAME is one of the words; a list CodeRay cannot read leaves it unknown.
+function bindLoop(args: Word[], state: State): void {
+  const name = literalText(args[0] ?? EMPTY);
+  if (name === null || !/^[A-Za-z_]\w*$/.test(name)) return;
+  state.loops.delete(name);
+  if (PROTECTED_VARS.has(name)) {
+    state.poisoned.add(name);
+    return;
+  }
+  if (state.loopsOff) return;
+  const values = args.slice(2).map(literalText);
+  if (literalText(args[1] ?? EMPTY) !== 'in' || values.length === 0) return;
+  if (values.every((value): value is string => value !== null && PLAIN_VALUE.test(value))) state.loops.set(name, values);
+}
+
 function addTarget(word: Word, state: State, extra: TargetExtra = {}): void {
+  for (const variant of loopWords(word, state)) addResolvedTarget(variant, state, extra);
+}
+
+function addResolvedTarget(word: Word, state: State, extra: TargetExtra): void {
   const base = { word: word.raw, mkdir: extra.mkdir ?? false, deleting: extra.deleting ?? false, names: extra.names ?? [] };
   const value = wordValue(word, state);
   if ('temp' in value) {
@@ -1096,6 +1234,7 @@ function assign(word: Word, state: State): void {
   const only = value.length === 1 ? value[0] : undefined;
   if (only?.kind === 'sub' && isPlainMktemp(only.body)) state.mktemp.add(name);
   else state.mktemp.delete(name);
+  state.loops.delete(name);
   if (PROTECTED_VARS.has(name)) state.poisoned.add(name);
   if (quiet(name, literalText({ parts: value, raw: '' }) ?? '')) return;
   // A variable can point git at another repository, index or editor, or put another program on the PATH.

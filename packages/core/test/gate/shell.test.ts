@@ -378,4 +378,126 @@ describe('shellWrites moves', () => {
   ])('reports no moves for %s', (command) => {
     expect(moves(command)).toEqual([]);
   });
+
+  it.each([
+    'sed -n 45,60p f',
+    "sed -n '/a/,/b/p' f",
+    "sed '$!d' f",
+    "sed 's/a/b/g' f",
+    'sed -ne 5p f',
+    "sed -nE 's/(a|b)+/x/p' f",
+    'sed --quiet --expression=2,3p f',
+    "sed -n -e 1p -e '2,+3p' -- f",
+    'sed -e 1p -n f',
+    'sed -n -e 1p f g',
+    'sort -u f',
+    'cut -d: -f1 f | tr a b; diff a b; jq .a f; stat f; basename x; dirname x',
+    'rg -n x src | head',
+  ])('keeps a merge as history, with no rewrites, when the call goes on to read with %s', (reader) => {
+    const got = writes(`git merge --ff-only origin/x && ${reader}`);
+    expect([got.history, got.rewrites, got.moves]).toEqual([['/p'], [], []]);
+  });
+
+  it.each([
+    "sed 's/a/b/w out' f",
+    "sed -n 'w out' f",
+    'sed -n 1e f',
+    "sed 's/a/b/e' f",
+    'sed -i s/a/b/ f',
+    'sed --in-place s/a/b/ f',
+    'sed -f s.sed f',
+    'sed -f p f',
+    'sed -n 1p $F',
+    "sed 's;a;b;;w x' f",
+    "sed -n 'p;w out' f",
+    "sed -n 'w out;p' f",
+    "sed -n -e 1p -e 'w out' f",
+    "sed 's/.*/H/w payload' -e 1p f",
+    "sed 's/.*/H/w payload' --expression=1p f",
+    "sed 's/.*/H/w payload' -ne 1p f",
+    'sort -o f',
+    'sort -uo f',
+    'sort --out=f',
+    'sort --compress-program=./x f',
+    'sort $F',
+    'rg --pre ./x x',
+    'rg --hostname-bin ./x x',
+  ])('judges a merge as a rewrite, with no moves, when the call goes on with %s, which may write what no target names', (writer) => {
+    const got = writes(`git merge --ff-only origin/x && ${writer}`);
+    expect([got.history, got.rewrites, got.moves]).toEqual([[], ['/p'], []]);
+  });
+});
+
+describe('shellWrites for loops', () => {
+  it.each([
+    ['for f in linux macos windows; do docker compose -f docker-compose.$f.yml config 2>/tmp/err.$f && echo ok; done', ['/tmp/err.linux', '/tmp/err.macos', '/tmp/err.windows']],
+    ['for f in a b; do rm src/$f; done', ['/p/src/a', '/p/src/b']],
+    ['for a in 1 2; do for b in x y; do rm $a/$b; done; done', ['/p/1/x', '/p/1/y', '/p/2/x', '/p/2/y']],
+    ['for f in a b; do rm ${f}.txt "$f".bak; done', ['/p/a.txt', '/p/b.txt', '/p/a.bak', '/p/b.bak']],
+    ['for f in a; do :; done; rm $f', ['/p/a']],
+    ['for f in ..; do rm $f/x; done', ['/x']],
+    ['for f in a b; do bash -c true; rm $f; done', ['/p/a', '/p/b']],
+    ["python3 - <<'EOF'\ntext = open(p).read()\nEOF\nfor f in a b; do cmd 2>/tmp/err.$f; done", ['/tmp/err.a', '/tmp/err.b']],
+    ["for f in a b; do printf '%s' x; rm $f; done", ['/p/a', '/p/b']],
+  ])('%s names one target per value', (command, expected) => {
+    expect(targets(command)).toEqual(expected);
+  });
+
+  it.each([
+    'for f in a b; do f=../x; rm $f; done',
+    'for f in a b; do f+=x; rm $f; done',
+    'for f in a b; do printf -v f x; rm $f; done',
+    'for f in a b; do (( f=7 )); rm $f; done',
+    'for ((f=0; f<2; f++)); do rm $f; done',
+    'for f in /tmp/a; do g; cp x $f; g() { f=x; }; done',
+    'for f in a b; do echo $((f=5)); rm $f; done',
+    'for f in a b; do a[f=5]=x; rm $f; done',
+    'r=read; for f in a b; do $r f; rm $f; done',
+    '$r x; for f in a b; do rm $f; done',
+    'for f in a b; do for f in *.c; do rm $f; done; done',
+    'for f in $(ls); do rm $f; done',
+    'for f in *.c; do rm $f; done',
+    'for f in "*.c"; do rm $f; done',
+    'for f in "a b"; do rm $f; done',
+    'for f in a.c; do rm ${f%.c}; done',
+    'for f in a; do rm ${f/a/..}; done',
+    'for f in a; do rm ${f:-z}; done',
+    'for f in a; do rm ${f[0]}; done',
+    'for f in a b; do bash -c "rm src/\\$f"; done',
+    'for f a b; do rm $f; done',
+  ])('%s leaves $f unknown', (command) => {
+    expect(targets(command)).toEqual(['? the variable $f']);
+  });
+
+  it.each(['HOME', 'TMPDIR', 'TMP'])('a loop over %s leaves it unknown in a script that also rebinds a variable', (name) => {
+    expect(targets(`let x=1; for ${name} in a b; do rm $${name}/x; done`)).toEqual([`? the variable $${name}`]);
+  });
+
+  it.each(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'coproc', 'declare', 'typeset', 'local', 'function'])(
+    '%s in a loop body leaves $f unknown',
+    (word) => {
+      const got = targets(`for f in a b; do ${word} f; rm $f; done`);
+      expect([got.includes('? the variable $f'), got.includes('/p/a')]).toEqual([true, false]);
+    },
+  );
+
+  it.each(['-eq', '-ne', '-lt', '-le', '-gt', '-ge'])('[[ 1 %s f=5 ]] leaves $f unknown', (operator) => {
+    expect(targets(`for f in a b; do [[ 1 ${operator} f=5 ]]; rm $f; done`)).toEqual(['? the variable $f']);
+  });
+
+  it('leaves $f unknown after an eval, which also stays unknown', () => {
+    expect(targets('for f in a b; do eval "f=x"; rm $f; done')).toEqual(['? eval runs text CodeRay cannot read', '? the variable $f']);
+  });
+
+  it.each(['HOME', 'TMPDIR', 'TMP'])('a loop over %s leaves it unknown', (name) => {
+    expect(targets(`for ${name} in a b; do rm $${name}/x; done`)).toEqual([`? the variable $${name}`]);
+  });
+
+  it('names at most 32 paths for one word and leaves the variable unknown beyond that', () => {
+    const nested = (outer: number, inner: number) => {
+      const values = (count: number) => Array.from({ length: count }, (_, i) => `v${i}`).join(' ');
+      return `for a in ${values(outer)}; do for b in ${values(inner)}; do rm $a/$b; done; done`;
+    };
+    expect([targets(nested(4, 8)).length, targets(nested(3, 11))]).toEqual([32, ['? the variable $a']]);
+  });
 });
