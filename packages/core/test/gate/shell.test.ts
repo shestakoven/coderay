@@ -437,6 +437,8 @@ describe('shellWrites for loops', () => {
     ['for f in a; do :; done; rm $f', ['/p/a']],
     ['for f in ..; do rm $f/x; done', ['/x']],
     ['for f in a b; do bash -c true; rm $f; done', ['/p/a', '/p/b']],
+    ["python3 - <<'EOF'\ntext = open(p).read()\nEOF\nfor f in a b; do cmd 2>/tmp/err.$f; done", ['/tmp/err.a', '/tmp/err.b']],
+    ["for f in a b; do printf '%s' x; rm $f; done", ['/p/a', '/p/b']],
   ])('%s names one target per value', (command, expected) => {
     expect(targets(command)).toEqual(expected);
   });
@@ -444,12 +446,14 @@ describe('shellWrites for loops', () => {
   it.each([
     'for f in a b; do f=../x; rm $f; done',
     'for f in a b; do f+=x; rm $f; done',
-    'for f in a b; do read f; rm $f; done',
-    'for f in a b; do mapfile f; rm $f; done',
-    'for f in a b; do readarray f; rm $f; done',
-    'for f in a b; do getopts x f; rm $f; done',
     'for f in a b; do printf -v f x; rm $f; done',
-    'for f in a b; do unset f; rm $f; done',
+    'for f in a b; do (( f=7 )); rm $f; done',
+    'for ((f=0; f<2; f++)); do rm $f; done',
+    'for f in /tmp/a; do g; cp x $f; g() { f=x; }; done',
+    'for f in a b; do echo $((f=5)); rm $f; done',
+    'for f in a b; do a[f=5]=x; rm $f; done',
+    'r=read; for f in a b; do $r f; rm $f; done',
+    '$r x; for f in a b; do rm $f; done',
     'for f in a b; do for f in *.c; do rm $f; done; done',
     'for f in $(ls); do rm $f; done',
     'for f in *.c; do rm $f; done',
@@ -463,6 +467,22 @@ describe('shellWrites for loops', () => {
     'for f a b; do rm $f; done',
   ])('%s leaves $f unknown', (command) => {
     expect(targets(command)).toEqual(['? the variable $f']);
+  });
+
+  it.each(['select', 'let', 'eval', 'source', '.', 'trap', 'alias', 'read', 'mapfile', 'readarray', 'getopts', 'unset', 'wait', 'coproc', 'declare', 'typeset', 'local', 'function'])(
+    '%s in a loop body leaves $f unknown',
+    (word) => {
+      const got = targets(`for f in a b; do ${word} f; rm $f; done`);
+      expect([got.includes('? the variable $f'), got.includes('/p/a')]).toEqual([true, false]);
+    },
+  );
+
+  it.each(['-eq', '-ne', '-lt', '-le', '-gt', '-ge'])('[[ 1 %s f=5 ]] leaves $f unknown', (operator) => {
+    expect(targets(`for f in a b; do [[ 1 ${operator} f=5 ]]; rm $f; done`)).toEqual(['? the variable $f']);
+  });
+
+  it('leaves $f unknown after an eval, which also stays unknown', () => {
+    expect(targets('for f in a b; do eval "f=x"; rm $f; done')).toEqual(['? eval runs text the IDE cannot read', '? the variable $f']);
   });
 
   it.each(['HOME', 'TMPDIR', 'TMP'])('a loop over %s leaves it unknown', (name) => {
