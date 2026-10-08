@@ -2,8 +2,7 @@
 .ide/*.sqlite*
 node_modules/
 .worktrees/
-spike/out/
-spike/.cache/
+spike/
 packages/ui/dist/
 test-results/
 playwright-report/
