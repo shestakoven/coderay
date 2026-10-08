@@ -146,6 +146,16 @@ describe('describe and message', () => {
     ].join('\n'));
   });
 
+  it('names a comment on a request by what was asked, never by an id the agent has not seen', () => {
+    const asked: Change[] = [
+      { kind: 'ask', id: '~ask-1', after: 'svc', text: 'rate-limit sign-ups' },
+      noteChange(nodeKey('~ask-1'), 'per IP or per account?'),
+    ];
+    const text = message(describeChanges(asked, withAsks(flow, viewOf(asked).asks)));
+    expect(text).toContain('- requested part "rate-limit sign-ups": per IP or per account?');
+    expect(text).not.toContain('~ask-');
+  });
+
   it('leaves out a group that has no items', () => {
     const onlyAsks = message(describeChanges([changes[0] as Change], flow));
     expect(onlyAsks).toContain('Add');

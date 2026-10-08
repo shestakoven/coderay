@@ -9,8 +9,8 @@ test.afterEach(async () => {
   core = undefined;
 });
 
-async function openWaitingPlan(page: Page): Promise<void> {
-  core = await startCore('gate-flow-plan');
+async function openWaitingPlan(page: Page, scenario = 'gate-flow-plan'): Promise<void> {
+  core = await startCore(scenario);
   await page.goto(core.url);
   await sendMessage(page, 'fix them');
   await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · waiting for you');
@@ -32,6 +32,9 @@ async function draft(page: Page, id: string, key: 'c' | 'a', text: string): Prom
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('steer-pop')).toBeHidden();
 }
+
+// A key the map ignores leaves nothing to wait for: two frames let the render a wrong reaction would cause happen first.
+const settle = (page: Page) => page.evaluate('new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))');
 
 const expectChanges = (page: Page, count: number) =>
   expect(page.getByTestId('steer-changes')).toHaveText(new RegExp(`^${count}\\s*changes?$`));
@@ -185,4 +188,108 @@ test('removing a requested part from the list takes the comment written on it al
   await page.getByTestId('steer-item').filter({ hasText: 'after Greeter (greeter)' }).getByRole('button', { name: 'Remove this change' }).click();
   await expect(page.getByTestId('flow-node-~ask-1')).toHaveCount(0);
   await expect(page.getByTestId('steer-changes')).toHaveCount(0);
+});
+
+test('keys belong to the map: not with focus elsewhere, in any layout, and not on the link of a request', async ({ page }) => {
+  await openWaitingPlan(page);
+  const pop = page.getByTestId('steer-pop');
+  await select(page, 'app');
+
+  await page.getByRole('tab').filter({ hasText: /^Plan$/ }).focus();
+  await page.keyboard.press('c');
+  await settle(page);
+  await expect(pop).toHaveCount(0);
+  await page.locator(':focus').evaluate((el) => el.blur());
+
+  await page.locator('body').dispatchEvent('keydown', { code: 'KeyC', key: 'с' });
+  await expect(pop).toBeVisible();
+  await pop.locator('textarea').fill('use the shared formatter');
+  await page.keyboard.press('Enter');
+  await expectChanges(page, 1);
+
+  await page.locator('body').dispatchEvent('keydown', { code: 'KeyZ', key: 'Z', ctrlKey: true, shiftKey: true });
+  await settle(page);
+  await expectChanges(page, 1);
+  await page.locator('body').dispatchEvent('keydown', { code: 'KeyZ', key: 'я', ctrlKey: true });
+  await expect(page.getByTestId('steer-changes')).toHaveCount(0);
+
+  await draft(page, 'greeter', 'a', 'log every greeting');
+  await page.getByTestId('flow-edge-1').click();
+  await page.keyboard.press('c');
+  await expect(pop).toBeVisible();
+  await page.keyboard.press('Escape');
+  await expect(pop).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  await expect(page.getByTestId('flow-details')).toHaveCount(0);
+
+  // The pill of a request's link is not interactive: the mouse lands on the line under it, which is how a user reaches the link.
+  const requested = page.getByTestId('flow-edge-2');
+  await requested.hover({ force: true });
+  await expect(requested).toContainText('requested');
+  await expect(requested.getByRole('button', { name: 'Comment' })).toHaveCount(0);
+  await requested.click({ force: true });
+  await expect(page.getByTestId('flow-details')).toBeVisible();
+  await expect(page.getByTestId('flow-details').getByRole('button', { name: 'Comment' })).toHaveCount(0);
+  await page.keyboard.press('c');
+  await settle(page);
+  await expect(pop).toHaveCount(0);
+});
+
+test('a draft is not drawn once the plan is answered from the plan dock', async ({ page }) => {
+  await openWaitingPlan(page);
+  await draft(page, 'app', 'c', 'use the shared formatter');
+  await draft(page, 'greeter', 'a', 'log every greeting');
+  const ghost = page.getByTestId('flow-node-~ask-1');
+  await expect(ghost).toBeVisible();
+
+  const panel = page.getByTestId('plan-panel');
+  await panel.getByRole('button', { name: 'Approve' }).click();
+  await expect(panel).toContainText('Plan v1 · done');
+  await expect(ghost).toHaveCount(0);
+  await expect(page.getByTestId('flow-node-app')).not.toContainText('use the shared formatter');
+  await expect(page.getByTestId('steer-bar')).toHaveCount(0);
+});
+
+test('leaving the editor with text keeps it, and Esc throws it away', async ({ page }) => {
+  await openWaitingPlan(page);
+  const pop = page.getByTestId('steer-pop');
+  const app = page.getByTestId('flow-node-app');
+
+  await select(page, 'app');
+  await page.keyboard.press('c');
+  await pop.locator('textarea').fill('use the shared formatter');
+  await page.locator('.react-flow__pane').click({ position: { x: 40, y: 420 } });
+  await expect(pop).toHaveCount(0);
+  await expect(app).toContainText('use the shared formatter');
+  await expectChanges(page, 1);
+
+  await select(page, 'greeter');
+  await page.keyboard.press('c');
+  await pop.locator('textarea').fill('thrown away');
+  await page.keyboard.press('Escape');
+  await expect(pop).toHaveCount(0);
+  await expect(page.getByTestId('flow-node-greeter')).not.toContainText('thrown away');
+  await expectChanges(page, 1);
+});
+
+test('the map shows today without what does not exist yet, and the sent bar spins only while the agent works', async ({ page }) => {
+  await openWaitingPlan(page, 'gate-flow-plan-hold');
+  const details = page.getByTestId('flow-details');
+  await select(page, 'greeter');
+  await expect(details).toBeVisible();
+  await page.getByRole('button', { name: 'Now', exact: true }).click();
+  await expect(details).toHaveCount(0);
+  await page.getByRole('button', { name: 'After the plan', exact: true }).click();
+  await expect(details).toBeVisible();
+
+  await draft(page, 'app', 'c', 'use the shared formatter');
+  await page.getByTestId('steer-send').click();
+  const bar = page.getByTestId('steer-bar');
+  await expect(bar).toHaveAttribute('data-phase', 'sending');
+  await expect(bar).toContainText('it is revising the plan');
+  await expect(bar.locator('.pf-spin')).toBeVisible();
+
+  await page.getByRole('button', { name: 'Stop' }).click();
+  await expect(bar).toContainText('it is not working on the plan now');
+  await expect(bar.locator('.pf-spin')).toHaveCount(0);
 });
