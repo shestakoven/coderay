@@ -45,8 +45,11 @@ export function draftReducer(state: DraftState, action: DraftAction): DraftState
     }
     case 'unask':
       return commit(state, state.present.filter((change) => !(change.kind === 'ask' && change.id === action.id) && !(change.kind === 'note' && change.target === nodeKey(action.id))));
-    case 'remove':
-      return commit(state, state.present.filter((_, index) => index !== action.index));
+    case 'remove': {
+      const gone = state.present[action.index];
+      // A request takes the comments written on its part along.
+      return commit(state, state.present.filter((change, index) => index !== action.index && !(gone?.kind === 'ask' && change.kind === 'note' && change.target === nodeKey(gone.id))));
+    }
     case 'undo': {
       const previous = state.past[state.past.length - 1];
       return previous === undefined ? state : { ...state, past: state.past.slice(0, -1), present: previous };

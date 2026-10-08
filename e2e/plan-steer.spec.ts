@@ -175,3 +175,14 @@ test('Approve as is with a pending draft approves the plan and sends nothing as 
   await expect.poll(() => core?.file('src/app.ts')).toBe("export const greeting = 'hello';\n");
   await expect(page.getByTestId('steer-changes')).toHaveCount(0);
 });
+
+test('removing a requested part from the list takes the comment written on it along', async ({ page }) => {
+  await openWaitingPlan(page);
+  await draft(page, 'greeter', 'a', 'log every greeting');
+  await draft(page, 'ask-1', 'c', 'which logger?');
+  await expectChanges(page, 2);
+  await openList(page);
+  await page.getByTestId('steer-item').filter({ hasText: 'after Greeter (greeter)' }).getByRole('button', { name: 'Remove this change' }).click();
+  await expect(page.getByTestId('flow-node-ask-1')).toHaveCount(0);
+  await expect(page.getByTestId('steer-changes')).toHaveCount(0);
+});
