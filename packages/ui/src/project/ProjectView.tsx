@@ -432,7 +432,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 </ReactFlowProvider>
               ) : mode === 'flow' && flowPlan?.flow ? (
                 <ReactFlowProvider>
-                  <PlanFlowView plan={flowPlan} flow={flowPlan.flow} hoverStep={hoverStep} />
+                  <PlanFlowView plan={flowPlan} flow={flowPlan.flow} hoverStep={hoverStep} onAnswer={answerPlan} />
                 </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>

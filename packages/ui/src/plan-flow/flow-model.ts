@@ -6,7 +6,8 @@ export type NodePhase = StepPhase | 'none';
 
 const DRAWN = new Set(['proposed', 'approved', 'done']);
 
-export const flowOf = (plan: PlanView | null): PlanFlow | null => (plan !== null && DRAWN.has(plan.status) ? plan.flow : null);
+// The map stays while the agent revises a plan the user sent changes on, so the answer does not make it vanish.
+export const flowOf = (plan: PlanView | null): PlanFlow | null => (plan !== null && (DRAWN.has(plan.status) || plan.status === 'changes-requested') ? plan.flow : null);
 
 export function stepPhase(plan: PlanView, key: string): StepPhase {
   if (plan.status === 'proposed') return 'proposed';
