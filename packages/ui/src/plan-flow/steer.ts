@@ -41,7 +41,7 @@ export function draftReducer(state: DraftState, action: DraftAction): DraftState
     case 'ask': {
       const text = action.text.trim();
       if (text === '') return state;
-      return commit(state, [...state.present, { kind: 'ask', id: `ask-${state.seq + 1}`, after: action.after, text }], state.seq + 1);
+      return commit(state, [...state.present, { kind: 'ask', id: `${ASK_PREFIX}${state.seq + 1}`, after: action.after, text }], state.seq + 1);
     }
     case 'unask':
       return commit(state, state.present.filter((change) => !(change.kind === 'ask' && change.id === action.id) && !(change.kind === 'note' && change.target === nodeKey(action.id))));
@@ -79,7 +79,9 @@ export function viewOf(changes: readonly Change[]): DraftView {
   return view;
 }
 
-export const isAsk = (id: string): boolean => id.startsWith('ask-');
+// The tilde keeps a request apart from any id the agent picked for its own parts.
+const ASK_PREFIX = '~ask-';
+export const isAsk = (id: string): boolean => id.startsWith(ASK_PREFIX);
 
 const clip = (text: string, max: number): string => (text.length <= max ? text : `${text.slice(0, max - 1).trimEnd()}…`);
 
@@ -112,7 +114,9 @@ export function describe(changes: readonly Change[], flow: PlanFlow): Item[] {
   const byId = new Map(flow.nodes.map((node) => [node.id, node]));
   const name = (id: string): string => {
     const node = byId.get(id);
-    return node === undefined ? id : `${node.title} (${node.id})`;
+    if (node === undefined) return id;
+    // The agent never saw a request's id; it knows the part by what was asked.
+    return isAsk(id) ? `requested part "${node.title}"` : `${node.title} (${node.id})`;
   };
   return changes.map((change, index): Item => {
     if (change.kind === 'ask') return { group: 'ask', index, title: `after ${name(change.after)}`, detail: change.text };

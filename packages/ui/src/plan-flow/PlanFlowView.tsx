@@ -3,6 +3,7 @@ import type { PlanAnswer, PlanFlow, PlanView } from '@ide/protocol';
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { focusIsHere, keyOf, typing } from '../history/review-keys';
 import { MapBackground, MapControls } from '../map/canvas';
 import { LayoutMenu } from '../map/LayoutMenu';
 import { DEFAULT_LAYOUT, type Direction } from '../map/layout-settings';
@@ -16,7 +17,7 @@ import { loadFlowDirection, saveFlowDirection } from './flow-settings';
 import { EDGE_COLOR } from './flow-style';
 import { SteerBar, type BarPhase } from './SteerBar';
 import { SteerRail } from './SteerRail';
-import { describe, draftReducer, edgeKey, EMPTY_DRAFT, isAsk, message, nodeKey, viewOf, withAsks, type DraftView } from './steer';
+import { describe, draftReducer, edgeKey, EMPTY_DRAFT, isAsk, message, nodeKey, viewOf, withAsks, type Change, type DraftView } from './steer';
 import { useTweened } from './use-tweened';
 
 const elk = new ELK({ workerUrl: elkWorkerUrl });
@@ -200,7 +201,8 @@ function Canvas({ plan, flow, view, direction, hoverStep, draft, tools, selectio
           dim: focus !== null && !focus.edges.has(index),
           selected: selectedEdge === index,
           steer: {
-            tools, index,
+            // A request's link is not commented on: its place in the list moves when another request goes.
+            tools: tools && !ask, index,
             note: draft.notes.get(edgeKey(index)),
             editing: editor?.kind === 'note' && editor.target === edgeKey(index),
             active: hoverEdge === index || selectedEdge === index,
@@ -248,13 +250,25 @@ function Canvas({ plan, flow, view, direction, hoverStep, draft, tools, selectio
   );
 }
 
-const isTyping = (target: EventTarget | null): boolean => target instanceof HTMLElement && (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.tagName === 'SELECT' || target.isContentEditable);
+const NO_CHANGES: Change[] = [];
+
+// Today's view has no new parts and no new links, so it has nothing to say about them.
+function shows(flow: PlanFlow, selection: FlowSelection, view: FlowView): boolean {
+  if (view === 'plan') return true;
+  if (selection.t === 'node') return flow.nodes.some((node) => node.id === selection.id && node.state !== 'create');
+  const edge = flow.edges[selection.i];
+  return edge !== undefined && edge.state !== 'new';
+}
 
 interface WorkspaceProps {
   plan: PlanView;
   flow: PlanFlow;
   hoverStep: string | null;
   onAnswer: (answer: PlanAnswer) => void;
+  // Whether the keys belong to this map: its project is on screen and no review covers it.
+  keys: boolean;
+  // Whether the agent has a turn open.
+  working: boolean;
   view: FlowView;
   onView: (view: FlowView) => void;
   direction: Direction;
@@ -264,17 +278,20 @@ interface WorkspaceProps {
 }
 
 // One plan version: the draft, the selection and the open editor live and die with it.
-function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, direction, onDirection, railOpen, onRail }: WorkspaceProps) {
+function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, keys, working, view, onView, direction, onDirection, railOpen, onRail }: WorkspaceProps) {
   const [draft, dispatch] = useReducer(draftReducer, EMPTY_DRAFT);
   const [selection, setSelection] = useState<FlowSelection | null>(null);
   const [editor, setEditor] = useState<Editor>(null);
   const [railStep, setRailStep] = useState<string | null>(null);
+  const canvas = useRef<HTMLDivElement>(null);
 
   const waiting = plan.status === 'proposed';
   const barPhase: BarPhase | null = waiting ? 'idle' : plan.status === 'changes-requested' ? 'sending' : null;
-  const dv = useMemo(() => viewOf(draft.present), [draft.present]);
+  // The draft is only drawn while the plan waits: once it is answered elsewhere, nothing unsent may look sent.
+  const changes = waiting ? draft.present : NO_CHANGES;
+  const dv = useMemo(() => viewOf(changes), [changes]);
   const flow = useMemo(() => withAsks(planFlow, dv.asks), [planFlow, dv.asks]);
-  const items = useMemo(() => describe(draft.present, flow), [draft.present, flow]);
+  const items = useMemo(() => describe(changes, flow), [changes, flow]);
   const text = useMemo(() => message(items), [items]);
   const stats = useMemo(() => summarize(planFlow), [planFlow]);
 
@@ -317,11 +334,13 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, di
   }, [onAnswer]);
 
   useEffect(() => {
-    if (!waiting) return;
+    if (!waiting || !keys) return;
     const onKey = (event: KeyboardEvent): void => {
-      if (isTyping(event.target)) return;
+      // Only while focus is on the map or nowhere: a click in the chat or a button elsewhere keeps its own keys.
+      if (typing(event.target) || !focusIsHere(canvas.current, event.target)) return;
       const meta = event.metaKey || event.ctrlKey;
-      if (meta && event.key.toLowerCase() === 'z') {
+      const key = keyOf(event);
+      if (meta && event.code === 'KeyZ' && !event.shiftKey) {
         event.preventDefault();
         dispatch({ t: 'undo' });
         return;
@@ -339,16 +358,21 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, di
         return;
       }
       if (selection === null || meta || event.altKey) return;
-      const key = event.key.toLowerCase();
-      if (key === 'c') act.openNote(selection.t === 'node' ? nodeKey(selection.id) : edgeKey(selection.i));
-      else if (selection.t === 'node' && key === 'a' && !isAsk(selection.id) && view === 'plan') act.openAsk(selection.id);
-      else if (selection.t === 'node' && (key === 'backspace' || key === 'delete') && isAsk(selection.id)) act.remove(selection.id);
-      else return;
+      if (selection.t === 'node') {
+        if (key === 'c') act.openNote(nodeKey(selection.id));
+        else if (key === 'a' && !isAsk(selection.id) && view === 'plan') act.openAsk(selection.id);
+        else if ((key === 'Backspace' || key === 'Delete') && isAsk(selection.id)) act.remove(selection.id);
+        else return;
+      } else {
+        const edge = flow.edges[selection.i];
+        if (key === 'c' && edge !== undefined && !isAsk(edge.to)) act.openNote(edgeKey(selection.i));
+        else return;
+      }
       event.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [waiting, draft.present.length, selection, editor, act, send, view]);
+  }, [waiting, keys, draft.present.length, selection, editor, flow, act, send, view]);
 
   const tools = waiting && view === 'plan';
   const select = useCallback((next: FlowSelection | null) => {
@@ -356,7 +380,7 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, di
     setEditor(null);
   }, []);
   return (
-    <div className={`pf-canvas${barPhase === null ? '' : ' has-bar'}`} data-testid="plan-flow">
+    <div ref={canvas} className={`pf-canvas${barPhase === null ? '' : ' has-bar'}`} data-testid="plan-flow">
       <Canvas
         key={`${plan.id}@${plan.version}:${direction}`}
         plan={plan} flow={flow} view={view} direction={direction} hoverStep={hoverStep ?? railStep}
@@ -379,7 +403,7 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, di
         </div>
       </div>
       <SteerRail plan={plan} flow={flow} open={railOpen} onToggle={() => onRail(!railOpen)} onHover={setRailStep} />
-      {selection !== null && (
+      {selection !== null && shows(flow, selection, view) && (
         <FlowDetails
           plan={plan} flow={flow} selection={selection} view={view} onClose={() => select(null)}
           steer={{ tools, draft: dv, onNote: act.openNote, onAsk: act.openAsk, onRemove: act.remove }}
@@ -387,7 +411,7 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, di
       )}
       {barPhase !== null && (
         <SteerBar
-          phase={barPhase} version={plan.version} steps={plan.steps.length} files={stats.files}
+          phase={barPhase} working={working} version={plan.version} steps={plan.steps.length} files={stats.files}
           items={items} canUndo={draft.past.length > 0} text={text}
           onUndo={() => dispatch({ t: 'undo' })} onReset={() => dispatch({ t: 'clear' })} onRemove={(index) => dispatch({ t: 'remove', index })}
           onSend={send} onApprove={approve}
@@ -397,7 +421,7 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, view, onView, di
   );
 }
 
-export function PlanFlowView({ plan, flow, hoverStep, onAnswer }: { plan: PlanView; flow: PlanFlow; hoverStep: string | null; onAnswer: (answer: PlanAnswer) => void }) {
+export function PlanFlowView({ plan, flow, hoverStep, onAnswer, keys, working }: { plan: PlanView; flow: PlanFlow; hoverStep: string | null; onAnswer: (answer: PlanAnswer) => void; keys: boolean; working: boolean }) {
   const [view, setView] = useState<FlowView>('plan');
   const [direction, setDirection] = useState<Direction>(() => loadFlowDirection(window.localStorage));
   const [railOpen, setRailOpen] = useState(true);
@@ -408,7 +432,7 @@ export function PlanFlowView({ plan, flow, hoverStep, onAnswer }: { plan: PlanVi
   return (
     <Workspace
       key={`${plan.id}@${plan.version}`}
-      plan={plan} flow={flow} hoverStep={hoverStep} onAnswer={onAnswer}
+      plan={plan} flow={flow} hoverStep={hoverStep} onAnswer={onAnswer} keys={keys} working={working}
       view={view} onView={setView} direction={direction} onDirection={changeDirection} railOpen={railOpen} onRail={setRailOpen}
     />
   );

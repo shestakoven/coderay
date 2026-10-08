@@ -91,10 +91,10 @@ describe('draftReducer', () => {
 
 describe('viewOf', () => {
   it('maps the comments by target and lists the asks', () => {
-    const changes: Change[] = [noteChange('n:web', 'a'), { kind: 'ask', id: 'ask-7', after: 'api', text: 'x' }, noteChange('e:0', 'b')];
+    const changes: Change[] = [noteChange('n:web', 'a'), { kind: 'ask', id: '~ask-7', after: 'api', text: 'x' }, noteChange('e:0', 'b')];
     const view = viewOf(changes);
     expect(Object.fromEntries(view.notes)).toEqual({ 'n:web': 'a', 'e:0': 'b' });
-    expect(view.asks).toEqual([{ id: 'ask-7', after: 'api', text: 'x' }]);
+    expect(view.asks).toEqual([{ id: '~ask-7', after: 'api', text: 'x' }]);
   });
 });
 
@@ -104,15 +104,15 @@ describe('withAsks', () => {
   });
 
   it('adds a part to create for each ask, linked as a new "requested" link from the part it follows', () => {
-    const out = withAsks(flow, [{ id: 'ask-1', after: 'api', text: 'rate-limit' }, { id: 'ask-2', after: 'web', text: 'cache' }]);
-    const added = out.nodes.filter((candidate) => candidate.id.startsWith('ask-'));
+    const out = withAsks(flow, [{ id: '~ask-1', after: 'api', text: 'rate-limit' }, { id: '~ask-2', after: 'web', text: 'cache' }]);
+    const added = out.nodes.filter((candidate) => candidate.id.startsWith('~ask-'));
     expect(added.map(({ id, state, steps }) => ({ id, state, steps }))).toEqual([
-      { id: 'ask-1', state: 'create', steps: [] },
-      { id: 'ask-2', state: 'create', steps: [] },
+      { id: '~ask-1', state: 'create', steps: [] },
+      { id: '~ask-2', state: 'create', steps: [] },
     ]);
     expect(out.edges.slice(flow.edges.length)).toEqual([
-      expect.objectContaining({ from: 'api', to: 'ask-1', label: 'requested', state: 'new' }),
-      expect.objectContaining({ from: 'web', to: 'ask-2', label: 'requested', state: 'new' }),
+      expect.objectContaining({ from: 'api', to: '~ask-1', label: 'requested', state: 'new' }),
+      expect.objectContaining({ from: 'web', to: '~ask-2', label: 'requested', state: 'new' }),
     ]);
     expect(out.nodes.slice(0, flow.nodes.length)).toEqual(flow.nodes);
   });
@@ -120,7 +120,7 @@ describe('withAsks', () => {
 
 describe('describe and message', () => {
   const changes: Change[] = [
-    { kind: 'ask', id: 'ask-1', after: 'svc', text: 'rate-limit sign-ups per IP' },
+    { kind: 'ask', id: '~ask-1', after: 'svc', text: 'rate-limit sign-ups per IP' },
     noteChange(nodeKey('api'), 'return 409 on a duplicate'),
     noteChange(edgeKey(1), 'pass the email lowercased'),
   ];

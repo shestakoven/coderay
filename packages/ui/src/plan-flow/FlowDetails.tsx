@@ -42,7 +42,7 @@ export function FlowDetails({ plan, flow, selection, view, steer, onClose }: { p
         <div className="pf-detail-sub">{from?.title} {'→'} {to?.title} {'·'} {edge.state}</div>
         {step && <p className="pf-detail-why">{step.rationale}</p>}
         {note !== undefined && <p className="pf-detail-note"><Icon name="comment" size={12} /> {note}</p>}
-        {steer.tools && view === 'plan' && (
+        {steer.tools && view === 'plan' && !isAsk(edge.to) && (
           <div className="pf-acts">
             <Action icon="comment" label={note === undefined ? 'Comment' : 'Edit comment'} kbd="C" on={note !== undefined} onClick={() => steer.onNote(edgeKey(selection.i))} />
           </div>

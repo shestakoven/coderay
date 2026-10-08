@@ -7,8 +7,10 @@ const GROUP_ICON = { note: 'comment', ask: 'plus' } as const;
 export type BarPhase = 'idle' | 'sending';
 
 // The answer to a waiting plan: approve it, or send what was collected on the map.
-export function SteerBar({ phase, version, steps, files, items, canUndo, text, onUndo, onReset, onRemove, onSend, onApprove }: {
+export function SteerBar({ phase, working, version, steps, files, items, canUndo, text, onUndo, onReset, onRemove, onSend, onApprove }: {
   phase: BarPhase;
+  // Whether the agent has a turn open: the spinner is only honest while it does.
+  working: boolean;
   version: number;
   steps: number;
   files: number;
@@ -40,8 +42,8 @@ export function SteerBar({ phase, version, steps, files, items, canUndo, text, o
   if (phase === 'sending') {
     return (
       <div className="pf-bar sending" data-testid="steer-bar" data-phase="sending" role="status">
-        <span className="pf-spin" />
-        <span className="pf-bar-text"><b>Sent to the agent</b> · it is revising the plan…</span>
+        {working ? <span className="pf-spin" /> : <span className="pf-bar-dot still" />}
+        <span className="pf-bar-text"><b>Sent to the agent</b> · {working ? 'it is revising the plan…' : 'it is not working on the plan now'}</span>
       </div>
     );
   }

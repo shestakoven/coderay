@@ -32,7 +32,16 @@ export function Pop({ label, placeholder, initial = '', action, onSave, onCancel
   return (
     <div className={`pf-pop nodrag nopan nowheel${below ? ' below' : ''}`} onClick={stop} onMouseDown={stop} onDoubleClick={stop} data-testid="steer-pop">
       <div className="pf-pop-label">{label}</div>
-      <textarea autoFocus rows={2} placeholder={placeholder} value={text} onChange={(event) => setText(event.target.value)} onKeyDown={onKeyDown} />
+      <textarea
+        autoFocus
+        rows={2}
+        placeholder={placeholder}
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={onKeyDown}
+        // Leaving the editor (a click on the map, on Send or on Approve) keeps what was typed; only Esc throws it away.
+        onBlur={() => document.hasFocus() && text.trim() !== '' && text !== initial && onSave(text)}
+      />
       <div className="pf-pop-foot">
         <span><kbd>↵</kbd> {action} · <kbd>esc</kbd> cancel</span>
         <button type="button" className="pf-pop-save" disabled={empty} onClick={submit}>{action}</button>

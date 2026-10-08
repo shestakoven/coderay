@@ -152,9 +152,9 @@
 /* In vertical layouts links meet the card at the top and bottom, so the tools stand at its side. */
 .pf-tools.side { left: -38px; right: auto; margin: 0; top: 50%; flex-direction: column; transform: translate(4px, -50%); }
 .pf-tools.side::after { left: auto; right: -9px; bottom: 0; top: 0; width: 9px; height: auto; }
-.pf-card:hover .pf-tools.side, .pf-card.selected .pf-tools.side { transform: translate(0, -50%); }
+.pf-card:hover .pf-tools.side, .pf-card.selected .pf-tools.side, .pf-card:focus-within .pf-tools.side { transform: translate(0, -50%); }
 .pf-tools.side [data-tip]:hover::after { left: auto; right: calc(100% + 8px); bottom: 50%; transform: translateY(50%); }
-.pf-card:hover .pf-tools, .pf-card.selected .pf-tools { opacity: 1; transform: none; pointer-events: auto; }
+.pf-card:hover .pf-tools, .pf-card.selected .pf-tools, .pf-card:focus-within .pf-tools { opacity: 1; transform: none; pointer-events: auto; }
 .pf-tool { width: 24px; height: 24px; display: inline-flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; transition: background 0.1s, color 0.1s; }
 .pf-tool:hover { background: var(--raised); color: var(--fg); }
 .pf-tool.on { color: var(--accent-hover); background: var(--plan-soft); }
@@ -210,6 +210,7 @@
 /* Approval bar */
 .pf-bar { position: absolute; z-index: 9; left: 50%; bottom: 18px; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 7px 8px 7px 14px; background: color-mix(in srgb, var(--surface) 94%, transparent); backdrop-filter: blur(12px); border: 1px solid var(--border); border-radius: 14px; box-shadow: 0 12px 34px rgba(0, 0, 0, 0.5); font-size: calc(12.5px * var(--fs-scale, 1)); white-space: nowrap; transition: border-color 0.2s; }
 .pf-bar.dirty { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); padding-left: 8px; }
+.pf-bar-dot.still { animation: none; background: var(--muted); box-shadow: none; }
 .pf-bar-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-hover); box-shadow: 0 0 0 0 rgba(84, 138, 247, 0.5); animation: pf-ping 2.2s ease-out infinite; }
 @keyframes pf-ping { 0% { box-shadow: 0 0 0 0 rgba(84, 138, 247, 0.5); } 70%, 100% { box-shadow: 0 0 0 8px rgba(84, 138, 247, 0); } }
 .pf-bar-text b { color: var(--fg); font-weight: 650; }
@@ -250,7 +251,7 @@
 .pf-draft-title { font-weight: 600; font-size: calc(12.5px * var(--fs-scale, 1)); }
 .pf-draft-detail { color: var(--muted); font-size: calc(11.5px * var(--fs-scale, 1)); line-height: 1.4; }
 .pf-draft-x { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; background: none; border: 0; border-radius: 6px; color: var(--muted); cursor: pointer; opacity: 0; }
-.pf-draft-row:hover .pf-draft-x { opacity: 1; }
+.pf-draft-row:hover .pf-draft-x, .pf-draft-x:focus-visible { opacity: 1; }
 .pf-draft-x:hover { background: var(--raised); color: var(--fg); }
 .pf-draft-raw { margin: 0; padding: 10px 12px; background: var(--canvas); border-radius: 8px; color: var(--fg); font-family: var(--font-mono); font-size: calc(11px * var(--fs-scale, 1)); line-height: 1.55; white-space: pre-wrap; }
 
