@@ -293,3 +293,15 @@ test('the map shows today without what does not exist yet, and the sent bar spin
   await expect(bar).toContainText('it is not working on the plan now');
   await expect(bar.locator('.pf-spin')).toHaveCount(0);
 });
+
+test('clicking Approve plan while a comment is typed keeps the comment and does not approve', async ({ page }) => {
+  await openWaitingPlan(page);
+  await select(page, 'app');
+  await page.keyboard.press('c');
+  await page.getByTestId('steer-pop').locator('textarea').fill('typed, then approve clicked');
+  await page.getByTestId('steer-approve').click();
+  // The click first keeps the typed text as a comment, and the bar turns into its "changes" form: a plan with a remark is never approved by one click.
+  await expect(page.getByTestId('steer-changes')).toContainText(/1\s*change/);
+  await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · waiting for you');
+  await expect(page.getByTestId('flow-node-app')).toContainText('typed, then approve clicked');
+});
