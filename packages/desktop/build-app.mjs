@@ -3,12 +3,14 @@
 //   pnpm desktop:dist                    signed and notarized .dmg
 //   pnpm desktop:dist -- --no-notarize   signed only, for a quick local check
 //   pnpm desktop:dist -- --dir           the .app only, without the .dmg
+// The .dmg is for the first install; the .zip and latest-mac.yml next to it are what the installed app updates from.
 import { execFileSync } from 'node:child_process';
 import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build as bundle } from 'esbuild';
 import { Arch, Platform, build } from 'electron-builder';
+import { RELEASES } from './releases.mjs';
 
 const PRODUCT_NAME = 'CodeRay';
 const notarize = !process.argv.includes('--no-notarize');
@@ -76,12 +78,15 @@ chmodSync(launcher, 0o755);
 if (notarize) process.env.APPLE_KEYCHAIN_PROFILE ??= 'notary';
 const artifacts = await build({
   projectDir: desktop,
-  targets: Platform.MAC.createTarget([dmg ? 'dmg' : 'dir'], Arch.arm64),
+  targets: Platform.MAC.createTarget(dmg ? ['dmg', 'zip'] : ['dir'], Arch.arm64),
+  // Uploading is release.mjs's job: the .dmg still has to be notarized after this returns.
+  publish: 'never',
   config: {
     appId: 'com.shestakov.coderay',
     productName: PRODUCT_NAME,
     directories: { output: 'dist' },
-    files: ['main.mjs', 'chrome-insets.mjs', 'package.json'],
+    files: ['main.mjs', 'chrome-insets.mjs', 'updater.mjs', 'package.json'],
+    publish: { provider: 'github', ...RELEASES },
     // Chromium's own strings (menus, dialogs, spellcheck); each locale is a file to sign.
     electronLanguages: ['en', 'ru'],
     extraResources: [

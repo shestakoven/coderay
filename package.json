@@ -15,6 +15,7 @@
     "build:watch": "pnpm --filter @ide/ui exec vite build --watch",
     "desktop": "pnpm --filter @ide/desktop start",
     "desktop:dist": "pnpm --filter @ide/desktop dist",
+    "desktop:release": "pnpm --filter @ide/desktop release",
     "dev:ui":"pnpm --filter @ide/ui exec vite",
     "start": "pnpm --filter @ide/ui build && node --import tsx packages/core/src/main.ts --project . --ui packages/ui/dist"
   },

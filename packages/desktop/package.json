@@ -7,11 +7,15 @@
   "main": "main.mjs",
   "scripts": {
     "start": "electron main.mjs",
-    "dist": "node build-app.mjs"
+    "dist": "node build-app.mjs",
+    "release": "node release.mjs"
   },
   "devDependencies": {
     "electron": "^44.5.1",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.2"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

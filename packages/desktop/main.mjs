@@ -1,11 +1,13 @@
 import { spawn, execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
-import { mkdirSync, openSync, writeSync } from 'node:fs';
+import { appendFileSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
+import electronUpdater from 'electron-updater';
 import { keepRoomForTrafficLights } from './chrome-insets.mjs';
+import { createUpdater } from './updater.mjs';
 
 // The OS hands out a free port; a fixed one would collide with a running dev:core / dev:ui.
 const freePort = () =>
@@ -139,13 +141,34 @@ app.whenReady().then(async () => {
     return;
   }
 
+  const updater = packaged ? createUpdater({
+    autoUpdater: electronUpdater.autoUpdater,
+    dialog,
+    getWindow: () => BrowserWindow.getAllWindows()[0],
+    version: app.getVersion(),
+    log: (line) => {
+      try {
+        appendFileSync(join(app.getPath('logs'), 'update.log'), `${new Date().toISOString()} ${line}\n`);
+      } catch {}
+    },
+    onChange: () => setMenu(),
+  }) : null;
   // The default menu binds Cmd+W to "Close Window"; CodeRay needs that key to close a project.
-  Menu.setApplicationMenu(Menu.buildFromTemplate([
-    ...(process.platform === 'darwin' ? [{ role: 'appMenu' }] : []),
+  const setMenu = () => Menu.setApplicationMenu(Menu.buildFromTemplate([
+    ...(process.platform === 'darwin' ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' },
+        ...(updater ? [{ type: 'separator' }, updater.menuItem()] : []),
+        { type: 'separator' }, { role: 'services' }, { type: 'separator' },
+        { role: 'hide' }, { role: 'hideOthers' }, { role: 'unhide' }, { type: 'separator' }, { role: 'quit' },
+      ],
+    }] : []),
     { role: 'editMenu' },
     { label: 'View', submenu: [{ role: 'reload' }, { role: 'forceReload' }, { role: 'toggleDevTools' }, { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' }, { type: 'separator' }, { role: 'togglefullscreen' }] },
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { label: 'Close Window', accelerator: 'Shift+CmdOrCtrl+W', role: 'close' }] },
   ]));
+  setMenu();
   const win = new BrowserWindow({
     width: 1440,
     height: 900,
@@ -174,6 +197,7 @@ app.whenReady().then(async () => {
     return { action: 'deny' };
   });
   win.loadURL(`${UI_ORIGIN}/#token=${token}`);
+  updater?.start();
   app.on('second-instance', () => {
     if (win.isMinimized()) win.restore();
     win.focus();
