@@ -22,6 +22,12 @@ export function PlanPanel({ plan, snapshot, open, working, followUps = [], onTog
 }) {
   const [changing, setChanging] = useState(false);
   const [feedback, setFeedback] = useState('');
+  const sendChanges = (): void => {
+    if (feedback.trim() === '') return;
+    onAnswer({ kind: 'changes', feedback });
+    setChanging(false);
+    setFeedback('');
+  };
   return (
     <div className={`plan-panel ${plan.status}`} data-testid="plan-panel">
       {onToggle ? (
@@ -67,22 +73,20 @@ export function PlanPanel({ plan, snapshot, open, working, followUps = [], onTog
                   className="plan-feedback"
                   rows={2}
                   autoFocus
-                  placeholder="What should change? The agent gets this as the answer to propose_plan."
+                  placeholder="What should change? Enter sends it to the agent, Shift+Enter starts a new line."
                   value={feedback}
                   onChange={(event) => setFeedback(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing || event.keyCode === 229) return;
+                    event.preventDefault();
+                    sendChanges();
+                  }}
                 />
               )}
               <div className="prompt-actions">
                 <button onClick={() => onAnswer({ kind: 'reject', feedback: changing ? feedback : '' })}>Reject</button>
                 {changing ? (
-                  <button
-                    disabled={feedback.trim() === ''}
-                    onClick={() => {
-                      onAnswer({ kind: 'changes', feedback });
-                      setChanging(false);
-                      setFeedback('');
-                    }}
-                  >
+                  <button disabled={feedback.trim() === ''} onClick={sendChanges}>
                     Send changes
                   </button>
                 ) : (
