@@ -1,0 +1,6 @@
+services:
+  web:
+    image: node:22
+    command: node src/main.js
+    volumes:
+      - ./src:/app/src

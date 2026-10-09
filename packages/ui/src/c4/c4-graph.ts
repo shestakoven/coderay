@@ -269,17 +269,18 @@ export function c4Graph(snapshot: MapSnapshot, model: C4Model, expanded: string 
 }
 
 const ROOT_COMPONENT = { width: 250, height: 74 };
-const CHANGE_LINE = 15;
-const sizeOf = (node: VisibleNode, taller: ReadonlySet<string> = new Set()) => {
+const EXTRA_LINE = 15;
+const sizeOf = (node: VisibleNode, extraLines: ReadonlyMap<string, number> = new Map()) => {
   const base = node.data.slim ? SLIM : node.kind === 'component' && node.data.detail ? ROOT_COMPONENT : SIZE[node.kind];
-  return taller.has(node.id) ? { ...base, height: base.height + CHANGE_LINE } : base;
+  const lines = extraLines.get(node.id) ?? 0;
+  return lines > 0 ? { ...base, height: base.height + EXTRA_LINE * lines } : base;
 };
 
 export async function layoutC4(
   graph: { nodes: VisibleNode[]; edges: VisibleEdge[] },
   elk: ELK,
   layout: C4Layout = DEFAULT_C4_LAYOUT,
-  taller: ReadonlySet<string> = new Set(),
+  taller: ReadonlyMap<string, number> = new Map(),
 ): Promise<{ nodes: C4FlowNode[]; edges: Edge<C4EdgeData>[] }> {
   const children = new Map<string, VisibleNode[]>();
   for (const n of graph.nodes) if (n.parentId) children.set(n.parentId, [...(children.get(n.parentId) ?? []), n]);
