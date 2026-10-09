@@ -39,12 +39,12 @@ const withRationales = (plan: PlanView, rationales: Record<string, string>): Pla
 });
 
 describe('flowOf', () => {
-  it.each<PlanStatus>(['proposed', 'approved', 'done'])('returns the flow while the plan is %s', (status) => {
+  it.each<PlanStatus>(['proposed', 'approved', 'done', 'changes-requested'])('returns the flow while the plan is %s', (status) => {
     const plan = userPlan({ status });
     expect(flowOf(plan)).toEqual(flowIn(plan));
   });
 
-  it.each<PlanStatus>(['rejected', 'withdrawn', 'superseded', 'changes-requested'])('returns null while the plan is %s', (status) => {
+  it.each<PlanStatus>(['rejected', 'withdrawn', 'superseded'])('returns null while the plan is %s', (status) => {
     expect(flowOf(userPlan({ status }))).toBeNull();
   });
 
