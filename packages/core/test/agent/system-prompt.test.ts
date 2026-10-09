@@ -11,7 +11,7 @@ describe('systemPrompt', () => {
   });
 
   it('tells the agent to send a flow with the plan, whichever optional tools are on', () => {
-    expect([systemPrompt([]), systemPrompt([], true, true), systemPrompt([], false, false)].map((prompt) => prompt.includes('send a "flow"')))
+    expect([systemPrompt([]), systemPrompt([], true, true), systemPrompt([], false, false)].map((prompt) => prompt.includes('Send a "flow" with every plan, also when it only modifies or removes code')))
       .toEqual([true, true, true]);
   });
 

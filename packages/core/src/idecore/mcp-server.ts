@@ -19,7 +19,7 @@ const MAX_BODY_BYTES = 4 * 1024 * 1024;
 const PROPOSE_DESCRIPTION = [
   'Show your plan to the user on CodeRay map before you change project files, and wait for the answer.',
   'Each step has a key, a title, a rationale and targets. A target is {"componentId": "<id from the system prompt>"} or {"path": "<project path>"}, with "op": "modify", "create" or "delete".',
-  'Also send "flow" when the change adds or rewires parts: nodes {id, title, sub, kind, state, steps, files} and edges {from, to, label, state, step} that draw what the plan builds, like client → POST /users → UserService → User → users table.',
+  'Also send "flow" with every plan, also when it only modifies or removes code: nodes {id, title, sub, kind, state, steps, files} and edges {from, to, label, state, step} that draw what the plan touches, like client → POST /users → UserService → User → users table.',
   'A node is "existing", "modify", "create" or "delete"; an edge is "existing", "new" or "removed"; "steps" and "step" are step keys. Use 5 to 12 nodes, one per responsibility, and label every new edge with what travels along it.',
   'Returns {"status": "approved" | "changes_requested" | "rejected", "feedback"?: "..."}.',
   'To change an approved plan, call it again with the whole plan and keep the active and done steps: a proposal that keeps the done steps extends the current plan, and the steps it adds are marked as added after approval.',

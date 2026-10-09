@@ -4,7 +4,8 @@ export type FlowView = 'now' | 'plan';
 export type StepPhase = 'proposed' | StepStatus;
 export type NodePhase = StepPhase | 'none';
 
-const DRAWN = new Set(['proposed', 'approved', 'done']);
+// A withdrawn plan is one the agent's process left unanswered (view switch, restart); its scheme stays so the user can still read it.
+const DRAWN = new Set(['proposed', 'approved', 'done', 'withdrawn']);
 
 // The map stays while the agent revises a plan the user sent changes on, so the answer does not make it vanish.
 export const flowOf = (plan: PlanView | null): PlanFlow | null => (plan !== null && (DRAWN.has(plan.status) || plan.status === 'changes-requested') ? plan.flow : null);
