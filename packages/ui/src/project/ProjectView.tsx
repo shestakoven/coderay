@@ -10,6 +10,7 @@ import { GitPanel, type GitSelection } from '../git/GitPanel';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
 import { canSend, chatReducer, initialChatState, toolSummary } from '../chat/chat-state';
+import { ImageStore } from '../chat/image-store';
 import { dialogEvent, eventFilePaths } from '../history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from '../history/history-state';
 import { WatchdogDialog } from '../history/WatchdogDialog';
@@ -91,6 +92,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [gitSelection, setGitSelection] = useState<GitSelection | null>(null);
   const git = useMemo(() => new GitClient((message) => sendRef.current(message)), []);
+  const images = useMemo(() => new ImageStore((message) => sendRef.current(message)), []);
+  useEffect(() => () => images.dispose(), [images]);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
   const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
   const [reviewMode, setReviewMode] = useState(false);
@@ -169,6 +172,10 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
         case 'models.snapshot':
           setChats((previous) => ({ ...previous, models: message.models }));
           break;
+        case 'image.data':
+        case 'image.failed':
+          images.handle(message);
+          break;
         case 'error':
           dispatchChat({ type: 'error', message: message.message });
           break;
@@ -177,11 +184,12 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       setConnection(next);
       if (next !== 'open') setTerminalsKnown(false);
       if (next !== 'open') git.dropAll();
+      images.setOnline(next === 'open');
       if (next === 'open') link.current?.send({ type: 'models.list' });
     }, url);
     link.current = current;
     return () => current.close();
-  }, [token, url, hub, git]);
+  }, [token, url, hub, git, images]);
 
   const send = (message: ClientMessage): boolean => {
     if (!fitsFrame(message)) {
@@ -490,6 +498,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   onFocusTargets={showPathsOnMap}
                   view={agentView}
                   onView={changeAgentView}
+                  images={images}
+                  imagesLive={active && showRight && panels.rightTab === 'agent'}
                   terminal={(
                     <AgentTerminal
                       hub={hub}

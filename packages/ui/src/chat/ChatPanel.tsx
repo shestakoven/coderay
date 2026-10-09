@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ToolStatus } from '@ide/protocol';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ImageRef, ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget, targetLabel } from '../plan/prompt-text';
@@ -15,17 +15,25 @@ import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
 import { matchSkills, skillCommand, slashQuery } from './skills';
 import { SkillMenu, SkillMenuEmpty } from './SkillMenu';
+import { ChatImagesContext, type ChatImages } from './chat-images';
+import { ChatImage } from './ChatImage';
+import { attachmentName, toolImageName, userMessageText } from './image-source';
+import type { ImageStore } from './image-store';
+import { ImageViewer } from './ImageViewer';
 
 const RECOVERED = "recovered from claude's transcript";
 
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
 const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
 const START_WAIT_MS = 15000;
+const PINNED_SLACK = 48;
 const BUSY = 'The agent is working: it reads your message at its next step. Enter sends.';
 
 export type AgentView = 'chat' | 'terminal';
 
-export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock, view, onView, terminal }: {
+const atBottom = (element: HTMLElement): boolean => element.scrollHeight - element.scrollTop - element.clientHeight < PINNED_SLACK;
+
+export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock, view, onView, terminal, images, imagesLive }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
@@ -41,6 +49,9 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   view: AgentView;
   onView: (view: AgentView) => void;
   terminal: ReactNode;
+  images: ImageStore;
+  // The chat is on screen: its images may load.
+  imagesLive: boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -51,6 +62,9 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   const [skillsDismissed, setSkillsDismissed] = useState(false);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const pinned = useRef({ at: true, top: 0 });
+  const [viewing, setViewing] = useState<HTMLElement | null>(null);
   const groups = turnGroups(chat);
   const itemCount = Object.keys(chat.items).length;
   const sendable = canSend(chat);
@@ -76,6 +90,25 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     const timer = setTimeout(() => setSentAt(null), START_WAIT_MS);
     return () => clearTimeout(timer);
   }, [sentAt]);
+  const settle = useCallback(() => {
+    const element = log.current;
+    if (!element) return;
+    // A scroll this frame has not reported yet (a jump to a flashed item) counts too.
+    if (element.scrollTop !== pinned.current.top) pinned.current = { at: atBottom(element), top: element.scrollTop };
+    if (!pinned.current.at) return;
+    element.scrollTop = element.scrollHeight;
+    pinned.current.top = element.scrollTop;
+  }, []);
+  const live = imagesLive && view === 'chat';
+  const chatImages = useMemo<ChatImages>(() => ({ store: images, live, open: setViewing, settle }), [images, live, settle]);
+  useEffect(() => {
+    if (!live) setViewing(null);
+  }, [live]);
+  const closeViewer = (thumbnail: HTMLElement): void => {
+    const opener = viewing;
+    setViewing(null);
+    (thumbnail.isConnected ? thumbnail : opener)?.focus();
+  };
   useEffect(() => {
     if (sentAt !== null && (chat.error !== null || Object.values(chat.turns).some((turn) => turn.closedAt === null))) setSentAt(null);
   }, [sentAt, chat.error, chat.turns]);
@@ -170,7 +203,15 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         </div>
       )}
       {view === 'terminal' && terminal}
-      <div className="chat-log" hidden={view === 'terminal'}>
+      <ChatImagesContext.Provider value={chatImages}>
+      <div
+        ref={log}
+        className="chat-log"
+        hidden={view === 'terminal'}
+        onScroll={(event) => {
+          pinned.current = { at: atBottom(event.currentTarget), top: event.currentTarget.scrollTop };
+        }}
+      >
         {groups.map((group) => ({ group, items: filterItems(group.items, chat.filter) })).filter(({ items }) => items.length > 0).map(({ group, items }) => (
           <div key={group.items[0]?.id} className={`turn ${group.turn?.kind ?? 'outside'}`}>
             {group.turn?.kind === 'agent-initiated' && <div className="turn-marker">↻ agent-initiated turn</div>}
@@ -189,6 +230,8 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         {working && <WorkingIndicator key={working.since} working={working} />}
         <div ref={end} />
       </div>
+      </ChatImagesContext.Provider>
+      {viewing && log.current && <ImageViewer log={log.current} from={viewing} store={images} onClose={closeViewer} />}
       {prompts.map((prompt, index) => (
         <details key={prompt.id} className="prompt gate" open={!(index === 0 && promptAnchored)} data-testid="gate-card">
           <summary>
@@ -281,9 +324,16 @@ function Item({ item, chat, send, onFocusTargets }: {
   onFocusTargets: (paths: string[]) => void;
 }) {
   if (item.kind === 'message') {
+    const images = item.images ?? [];
+    const text = item.role === 'user' ? userMessageText(item.text, images.length) : item.text;
     return (
       <div className={`msg ${item.role}${item.role === 'assistant' ? ' rich' : ''}`} title={item.recovered ? RECOVERED : undefined}>
-        {item.role === 'assistant' ? <MarkdownText text={item.text} /> : item.text}
+        {images.length > 0 && (
+          <div className={`msg-images${text !== '' ? ' with-text' : ''}`}>
+            {images.map((image, index) => <ItemImage key={`${image.id}:${index}`} image={image} name={attachmentName(index, images.length)} small />)}
+          </div>
+        )}
+        {item.role === 'assistant' ? <MarkdownText text={text} scope={item.id} /> : text}
         {item.recovered && <span className="muted"> · {RECOVERED}</span>}
       </div>
     );
@@ -305,6 +355,13 @@ function Item({ item, chat, send, onFocusTargets }: {
       {item.targets.length > 0
         ? <button className="tool-row link-row" title={item.summary} onClick={() => onFocusTargets(item.targets)}>{row}</button>
         : <div className="tool-row" title={item.summary}>{row}</div>}
+      {item.images && item.images.length > 0 && (
+        <div className="tool-images">
+          {item.images.map((image, index, all) => (
+            <ItemImage key={`${image.id}:${index}`} image={image} name={toolImageName(item.tool, item.targets, index, all.length)} small={all.length > 1} />
+          ))}
+        </div>
+      )}
       {children.length > 0 && (
         <div className="tool-children">
           {children.map((child) => <Item key={child.id} item={child} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
@@ -312,4 +369,8 @@ function Item({ item, chat, send, onFocusTargets }: {
       )}
     </div>
   );
+}
+
+function ItemImage({ image, name, small }: { image: ImageRef; name: string; small: boolean }) {
+  return <ChatImage source={{ id: image.id }} image={image} title={name} name={name} size={small ? 'small' : 'large'} />;
 }
