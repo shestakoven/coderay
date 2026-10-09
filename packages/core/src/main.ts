@@ -13,6 +13,8 @@ import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { startHub, type RunningHub } from './hub/hub';
 import { followParent } from './hub/parent';
+import { BlobStore } from './images/blob-store';
+import { ImageRequests } from './images/image-requests';
 import { Indexer } from './indexer/indexer';
 import { createCAdapter, createCppAdapter } from './lang/c-family';
 import { createCSharpAdapter } from './lang/csharp';
@@ -41,7 +43,7 @@ import { takeLaunchToken } from './project/token';
 import { projectBusy, successorArgs, validateProjectPath } from './project/switch';
 import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
-import { startServer, type RunningServer } from './server/server';
+import { startServer, type Reply, type RunningServer } from './server/server';
 import { openStore } from './store/store';
 import { TerminalService } from './terminal/terminal-service';
 
@@ -227,6 +229,7 @@ try {
   });
   session = agent;
   rt.attach(agent);
+  const images = new ImageRequests({ root, blobs: new BlobStore(projectDir(home, root)) });
   // A closed agent terminal ends its terminal mode once claude is gone, so the chat never runs a second claude beside it.
   terminals.onMessage((message) => {
     if (message.type === 'terminal.exit' && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
@@ -324,7 +327,7 @@ try {
     return modelList;
   };
 
-  const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
+  const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
         if (!watched) agent.notice('Checking the project files first; the agent starts when that is done.');
@@ -377,6 +380,9 @@ try {
         return;
       case 'prompt.answer':
         agent.answerPrompt(message.requestId, message.answer);
+        return;
+      case 'image.get':
+        await images.handle(message, reply);
         return;
       case 'plan.answer':
         rt.gate.plans.answer(message.planId, message.version, message.answer);

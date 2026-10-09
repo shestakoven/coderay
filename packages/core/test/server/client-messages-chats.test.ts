@@ -101,3 +101,38 @@ describe('parseClientMessage session.delete', () => {
     ]).toEqual([null, null, null, null]);
   });
 });
+
+describe('parseClientMessage image.get', () => {
+  const id = 'ab'.repeat(32);
+
+  it('accepts a key with exactly one of a blob id or a path, and drops extra fields', () => {
+    expect([
+      parse({ type: 'image.get', key: 'i:x#1', id, extra: true }),
+      parse({ type: 'image.get', key: 'p:x#2', path: '../docs/shot.png' }),
+      parse({ type: 'image.get', key: 'k'.repeat(4096), path: 'p'.repeat(4096) }),
+    ]).toEqual([
+      { type: 'image.get', key: 'i:x#1', id },
+      { type: 'image.get', key: 'p:x#2', path: '../docs/shot.png' },
+      { type: 'image.get', key: 'k'.repeat(4096), path: 'p'.repeat(4096) },
+    ]);
+  });
+
+  it('rejects a request that names both or neither, an id that is not 64 lowercase hex, and a missing, empty or oversized key or path', () => {
+    const malformed = {
+      both: { key: 'k', id, path: 'a.png' },
+      neither: { key: 'k' },
+      'short id': { key: 'k', id: id.slice(1) },
+      'uppercase id': { key: 'k', id: id.toUpperCase() },
+      'path-like id': { key: 'k', id: `../${id}` },
+      'numeric id': { key: 'k', id: 7 },
+      'no key': { id },
+      'empty key': { key: '', id },
+      'huge key': { key: 'k'.repeat(4097), id },
+      'empty path': { key: 'k', path: '' },
+      'huge path': { key: 'k', path: 'p'.repeat(4097) },
+      'path not a string': { key: 'k', path: ['a.png'] },
+    };
+    expect(Object.fromEntries(Object.entries(malformed).map(([name, fields]) => [name, parse({ type: 'image.get', ...fields })])))
+      .toEqual(Object.fromEntries(Object.keys(malformed).map((name) => [name, null])));
+  });
+});

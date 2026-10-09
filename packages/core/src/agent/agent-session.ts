@@ -2,20 +2,21 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  EFFORT_LEVELS, EMPTY_USAGE,
-  type ChatImage, type ChatItem, type ChatSummary, type EffortLevel, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
+  EFFORT_LEVELS, EMPTY_USAGE, MAX_CHAT_IMAGES,
+  type ChatImage, type ChatItem, type ChatSummary, type EffortLevel, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
 import type { TerminalLaunch } from '../terminal/terminal-service';
 import { defaultTranscriptsDir, largest, recoverTranscript, transcriptPath, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
+import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
-import { parseStreamLine, type StreamEvent } from './stream';
+import { parseStreamLine, type StreamEvent, type ToolResultBlock } from './stream';
 import { TranscriptTail } from './transcript-tail';
 import { parseUsage } from './usage';
 import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
@@ -114,9 +115,12 @@ const INTERRUPT_CONFIRM_MS = 5000;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
 const NEVER_ABORTED = new AbortController().signal;
+const MAX_RESULT_IMAGES = 8;
+const MAX_STORED_BASE64 = Math.ceil(MAX_STORED_IMAGE_BYTES / 3) * 4;
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
+  private readonly blobs: BlobStore;
   private readonly listeners = new Set<(message: SessionServerMessage) => void>();
   private readonly reportedUnknown = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
@@ -157,9 +161,11 @@ export class AgentSession {
   private nudgedTurn: string | null = null;
   private readonly nudged = new Set<string>();
   private interruptKeyAt = Number.NEGATIVE_INFINITY;
+  private sweepPending = false;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
+    this.blobs = new BlobStore(projectDir(options.home, options.root));
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
@@ -188,6 +194,8 @@ export class AgentSession {
     } finally {
       this.started = true;
     }
+    // A crash between deleting a chat and sweeping its images leaves them behind until here.
+    this.sweepBlobs();
   }
 
   private async loadLatest(): Promise<void> {
@@ -542,7 +550,10 @@ export class AgentSession {
       throw error;
     }
     const shown = images.length > 0 ? [text, `[${images.length} image${images.length > 1 ? 's' : ''} attached]`].filter((part) => part !== '').join('\n') : text;
-    this.apply(injected ? this.tracker.injectedMessage(shown) : this.tracker.userMessage(shown));
+    const changes = injected ? this.tracker.injectedMessage(shown) : this.tracker.userMessage(shown);
+    const refs = this.storeImages(images.map((image) => image.data), MAX_CHAT_IMAGES);
+    this.apply(refs.length === 0 ? changes : changes.map((change) =>
+      change.kind === 'message' && change.message.role === 'user' ? { ...change, message: { ...change.message, images: refs } } : change));
     for (const note of notes) this.apply(this.tracker.notice(note));
   }
 
@@ -629,6 +640,7 @@ export class AgentSession {
     if (!this.options.store.session(id)) throw new SessionError('no-chat');
     if (this.session?.id !== id) {
       this.options.store.deleteSession(id);
+      this.sweepBlobs();
       return;
     }
     await this.discardActive(() => this.options.store.deleteSession(id));
@@ -937,6 +949,7 @@ export class AgentSession {
   private handle(event: StreamEvent): Change[] {
     if (event.type === 'control_request') return this.controlRequest(event);
     const changes = this.tracker.event(event);
+    if (event.type === 'user') this.attachResultImages(event.toolResults, changes);
     if (event.type === 'init' && !this.versionChecked) {
       this.versionChecked = true;
       if (event.cliVersion !== null && isOlderVersion(event.cliVersion, MIN_CLAUDE_VERSION)) {
@@ -946,6 +959,34 @@ export class AgentSession {
       }
     }
     return changes;
+  }
+
+  // A call's images are kept once it ends; its item carries only their refs.
+  private attachResultImages(results: ToolResultBlock[], changes: Change[]): void {
+    for (const result of results) {
+      if (result.images.length === 0) continue;
+      const index = changes.findIndex((change) => change.kind === 'tool' && change.tool.toolUseId === result.toolUseId);
+      const change = changes[index];
+      if (change?.kind !== 'tool') continue;
+      const images = this.storeImages(result.images, MAX_RESULT_IMAGES);
+      if (images.length > 0) changes[index] = { kind: 'tool', tool: { ...change.tool, images } };
+    }
+  }
+
+  // Parts that are not a png, jpeg, gif or webp, or are too large to keep, are left out.
+  private storeImages(images: string[], limit: number): ImageRef[] {
+    const refs: ImageRef[] = [];
+    for (const data of images) {
+      if (refs.length >= limit) break;
+      if (data.length > MAX_STORED_BASE64) continue;
+      try {
+        const ref = this.blobs.put(Buffer.from(data, 'base64'));
+        if (ref) refs.push(ref);
+      } catch (error) {
+        console.error('agent: could not keep an image of the chat', error);
+      }
+    }
+    return refs;
   }
 
   private controlRequest(event: Extract<StreamEvent, { type: 'control_request' }>): Change[] {
@@ -985,11 +1026,26 @@ export class AgentSession {
     await this.terminate('close');
     this.clearRefusal();
     remove();
+    this.sweepBlobs();
     this.notes = [];
     notify(this.newSessionListeners);
     this.previous = this.session ?? this.previous;
     this.setActive('');
     this.reset(null);
+  }
+
+  // Chats share blobs, so one goes only when no remaining row refers to it. The sweep runs in one go, so no image stored meanwhile can lose its row.
+  private sweepBlobs(): void {
+    if (this.sweepPending) return;
+    this.sweepPending = true;
+    setImmediate(() => {
+      this.sweepPending = false;
+      try {
+        this.blobs.sweep(() => this.options.store.imageIds());
+      } catch (error) {
+        console.error('agent: could not remove the images of deleted chats', error);
+      }
+    });
   }
 
   private async terminate(reason: ExitReason): Promise<void> {
@@ -1147,7 +1203,7 @@ function sessionView(session: SessionRecord, permissionMode: string | null): Ses
 
 function messageItem(message: MessageRecord): ChatItem {
   const base = { id: message.id, seq: message.seq, turnId: message.turnId, parentToolUseId: message.parentToolUseId, text: message.text, ts: message.ts };
-  return message.role === 'notice' ? { kind: 'notice', ...base } : { kind: 'message', role: message.role, ...base };
+  return message.role === 'notice' ? { kind: 'notice', ...base } : { kind: 'message', role: message.role, ...base, ...(message.images ? { images: message.images } : {}) };
 }
 
 function toolItem(event: ToolEventRecord, root: string, decision?: ToolDecisionRecord): ChatItem {
@@ -1155,6 +1211,7 @@ function toolItem(event: ToolEventRecord, root: string, decision?: ToolDecisionR
     kind: 'tool', id: event.toolUseId, seq: event.seq, turnId: event.turnId, parentToolUseId: event.parentToolUseId,
     tool: event.tool, summary: summarizeToolInput(event.input, root), status: event.status, startedAt: event.toolUseAt, endedAt: event.endedAt,
     decision: decision?.decision ?? null, targets: decision?.targets ?? [],
+    ...(event.images ? { images: event.images } : {}),
   };
 }
 

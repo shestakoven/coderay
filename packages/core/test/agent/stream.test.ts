@@ -74,7 +74,28 @@ describe('parseStreamLine', () => {
     });
     expect(parseStreamLine(event)).toEqual({
       type: 'user', parentToolUseId: null,
-      toolResults: [{ toolUseId: 'a', isError: false, text: 'done' }, { toolUseId: 'b', isError: true, text: 'boom' }],
+      toolResults: [{ toolUseId: 'a', isError: false, text: 'done', images: [] }, { toolUseId: 'b', isError: true, text: 'boom', images: [] }],
+    });
+  });
+
+  it('keeps the base64 of a result\'s image parts in order beside its text, and drops parts that are not inline images', () => {
+    const image = (data: unknown, type = 'base64') => ({ type: 'image', source: { type, media_type: 'image/png', data } });
+    const blank = expect.stringMatching(/^\s*$/);
+    const event = line({
+      type: 'user', parent_tool_use_id: null,
+      message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'only', content: [image('AAA')] },
+        { type: 'tool_result', tool_use_id: 'both', content: [{ type: 'text', text: 'Took a screenshot.' }, image('BBB'), image('CCC')] },
+        { type: 'tool_result', tool_use_id: 'junk', content: [image('https://x.test/a.png', 'url'), image(''), image(7), { type: 'document', source: { type: 'base64', data: 'DDD' } }] },
+      ] },
+    });
+    expect(parseStreamLine(event)).toEqual({
+      type: 'user', parentToolUseId: null,
+      toolResults: [
+        { toolUseId: 'only', isError: false, text: blank, images: ['AAA'] },
+        { toolUseId: 'both', isError: false, text: expect.stringMatching(/^Took a screenshot\.\s*$/), images: ['BBB', 'CCC'] },
+        { toolUseId: 'junk', isError: false, text: blank, images: [] },
+      ],
     });
   });
 

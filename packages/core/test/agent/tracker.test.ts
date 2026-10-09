@@ -15,7 +15,7 @@ const text = (value: string, parentToolUseId: string | null = null): StreamEvent
 const toolUse = (id: string, name = 'Bash', parentToolUseId: string | null = null): StreamEvent =>
   ({ type: 'assistant', parentToolUseId, blocks: [{ kind: 'tool_use', id, name, input: {} }] });
 const toolResult = (toolUseId: string, body = '', isError = false): StreamEvent =>
-  ({ type: 'user', parentToolUseId: null, toolResults: [{ toolUseId, isError, text: body }] });
+  ({ type: 'user', parentToolUseId: null, toolResults: [{ toolUseId, isError, text: body, images: [] }] });
 const result = (subtype = 'success', origin: string | null = null): StreamEvent => ({ type: 'result', subtype, origin });
 const taskStarted = (taskId: string, toolUseId: string, backgrounded = true): StreamEvent =>
   ({ type: 'task_started', taskId, toolUseId, backgrounded, description: 'Create sub.txt' });

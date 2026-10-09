@@ -5,6 +5,7 @@ import {
 } from '@ide/protocol';
 import { isAccountId } from '../accounts/account-store';
 import { isModelChoice } from '../agent/tools';
+import { BLOB_ID } from '../images/blob-store';
 import { isRecord } from '../json';
 import { MAX_TERMINAL_INPUT, TERMINAL_ID } from '../terminal/terminal-service';
 
@@ -22,7 +23,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message,
+    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message, key,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -51,6 +52,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return (modelChoice === null || (typeof modelChoice === 'string' && isModelChoice(modelChoice))) && (effort === null || isEffort(effort))
         ? { type, modelChoice, effort }
         : null;
+    case 'image.get':
+      if (!isBoundedString(key, MAX_PATH_LENGTH)) return null;
+      if (id !== undefined) return path === undefined && typeof id === 'string' && BLOB_ID.test(id) ? { type, key, id } : null;
+      return isBoundedString(path, MAX_PATH_LENGTH) ? { type, key, path } : null;
     case 'prompt.answer': {
       const parsed = parseAnswer(answer);
       return typeof requestId === 'string' && parsed ? { type, requestId, answer: parsed } : null;

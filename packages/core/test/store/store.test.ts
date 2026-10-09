@@ -5,7 +5,7 @@ import { createInterface } from 'node:readline';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { openStore, SCHEMA_V1, SCHEMA_V2, type PromptRecord, type SessionRecord, type ToolEventRecord } from '../../src/store/store';
 import type { GateEventRecord, PlanRecord, ToolDecisionRecord } from '../../src/store/store';
-import type { ChangeView, PlanFlow, WatchdogEventView } from '@ide/protocol';
+import type { ChangeView, ImageRef, PlanFlow, WatchdogEventView } from '@ide/protocol';
 import { DatabaseSync } from '../../src/store/sqlite';
 import { tempDir } from '../helpers';
 
@@ -174,6 +174,7 @@ describe('openStore', () => {
     db.exec('DROP TABLE plans; DROP TABLE step_states; DROP TABLE tool_decisions; DROP TABLE gate_events; PRAGMA user_version = 1;');
     db.exec('DROP TABLE changes; DROP TABLE baselines; DROP TABLE checkpoints; DROP TABLE reverts; DROP TABLE summaries; DROP TABLE meta');
     db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE sessions DROP COLUMN account_id');
+    db.exec('ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images');
     db.close();
     const store = freshStore(dir);
     store.savePlan('s1', plan);
@@ -184,9 +185,9 @@ describe('openStore', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('PRAGMA user_version = 9');
+    db.exec('PRAGMA user_version = 10');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 9, newer than this CodeRay understands (8)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 10, newer than this CodeRay understands (9)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
@@ -333,6 +334,7 @@ describe('plan flow storage', () => {
       db.exec('ALTER TABLE plans DROP COLUMN flow');
       db.exec('ALTER TABLE sessions DROP COLUMN account_id');
       db.exec('ALTER TABLE baselines DROP COLUMN sig');
+      db.exec('ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images;');
       db.exec('PRAGMA user_version = 5');
       db.close();
       return dir;
@@ -361,7 +363,7 @@ describe('plan flow storage', () => {
       const check = new DatabaseSync(join(dir, 'history.sqlite'));
       const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
       check.close();
-      expect(version).toBe(8);
+      expect(version).toBe(9);
     });
   });
 });
@@ -403,7 +405,7 @@ describe('history tables (schema 3)', () => {
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     const step = check.prepare("SELECT status, cycle FROM step_states WHERE plan_id = 'p'").get();
     check.close();
-    expect(version).toBe(8);
+    expect(version).toBe(9);
     expect(step).toEqual({ status: 'done', cycle: 0 });
   });
 
@@ -510,7 +512,7 @@ describe('history tables (schema 3)', () => {
     first.saveBaselines([baseline('a.ts')], []);
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('ALTER TABLE baselines DROP COLUMN sig; PRAGMA user_version = 7');
+    db.exec('ALTER TABLE baselines DROP COLUMN sig; ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 7');
     db.close();
 
     const store = freshStore(dir);
@@ -578,5 +580,48 @@ describe('history tables (schema 3)', () => {
     store.saveWatchdogEvent('s1', { ...watchdogView('w1', 'watchdog'), phase: 'pending', resolution: 'pending', resolvedAt: null });
     store.saveWatchdogEvent('s1', watchdogView('w1', 'watchdog'));
     expect(store.watchdogEvents('s1')).toEqual([watchdogView('w1', 'watchdog')]);
+  });
+});
+
+describe('chat images', () => {
+  const image = (id: string): ImageRef => ({ id: id.repeat(64), mediaType: 'image/png', bytes: 10, width: 2, height: 3 });
+  const message = (id: string, images?: ImageRef[]) => ({ id, seq: 1, turnId: null, parentToolUseId: null, role: 'user' as const, text: id, ts: 1, ...(images ? { images } : {}) });
+
+  it('keeps the image refs of messages and tool events, through a later status update, and lists every id a chat refers to', () => {
+    const dir = tempDir('ide-store-');
+    const first = openStore(dir);
+    first.saveSession(session('s1', 1));
+    first.saveSession(session('s2', 2));
+    first.saveMessage('s1', message('with', [image('a')]));
+    first.saveMessage('s1', message('without'));
+    first.saveToolEvent('s1', { ...toolEvent, status: 'ok', endedAt: 4, images: [image('b'), image('c')] });
+    first.saveToolEvent('s1', { ...toolEvent, status: 'ok', endedAt: 5 });
+    first.saveToolEvent('s2', { ...toolEvent, toolUseId: 'toolu_2', images: [image('c'), image('d')] });
+    first.close();
+
+    const store = freshStore(dir);
+    const history = store.history('s1');
+    expect([history.messages, history.toolEvents.map((event) => event.images)]).toEqual([
+      [message('with', [image('a')]), message('without')],
+      [[image('b'), image('c')]],
+    ]);
+    expect([...store.imageIds()].sort()).toEqual(['a', 'b', 'c', 'd'].map((id) => id.repeat(64)));
+    store.deleteSession('s1');
+    expect([...store.imageIds()].sort()).toEqual(['c', 'd'].map((id) => id.repeat(64)));
+  });
+
+  it('moves a version 8 history to version 9, reading its rows as having no images', () => {
+    const dir = tempDir('ide-store-');
+    const old = openStore(dir);
+    old.saveSession(session('s1', 1));
+    old.saveMessage('s1', message('old'));
+    old.close();
+    const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec('ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 8');
+    db.close();
+
+    const store = freshStore(dir);
+    store.saveMessage('s1', message('new', [image('e')]));
+    expect(store.history('s1').messages).toEqual([message('old'), message('new', [image('e')])]);
   });
 });

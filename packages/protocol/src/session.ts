@@ -4,10 +4,25 @@ export const MAX_CLIENT_FRAME_BYTES = 32 * 1024 * 1024;
 export const MAX_CHAT_IMAGES = 20;
 export const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+// Largest image the core sends to the UI: the base64 frame must stay under the 8 MB per-client backlog.
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
 export interface ChatImage {
-  mediaType: (typeof IMAGE_MEDIA_TYPES)[number];
+  mediaType: ImageMediaType;
   data: string;
 }
+
+// An image the chat shows; its bytes live in the core's blob store and travel on request (`image.get`).
+export interface ImageRef {
+  id: string;
+  mediaType: ImageMediaType;
+  bytes: number;
+  width?: number;
+  height?: number;
+}
+
+export type ImageFailure = 'missing' | 'too-large' | 'not-image' | 'unreadable';
 
 export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended' | 'refused';
 
@@ -69,6 +84,7 @@ export interface MessageItem extends ItemBase {
   text: string;
   ts: number;
   recovered?: boolean;
+  images?: ImageRef[];
 }
 
 export interface NoticeItem extends ItemBase {
@@ -87,6 +103,7 @@ export interface ToolItem extends ItemBase {
   decision: ToolDecision | null;
   targets: string[];
   recovered?: boolean;
+  images?: ImageRef[];
 }
 
 export interface AskOption {
@@ -181,6 +198,8 @@ export type SessionServerMessage =
   | { type: 'session.delta'; text: string }
   | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[] }
   | { type: 'models.snapshot'; models: ModelInfo[] }
+  | { type: 'image.data'; key: string; image: ImageRef; data: string }
+  | { type: 'image.failed'; key: string; reason: ImageFailure }
   | { type: 'error'; message: string };
 
 export type ChatClientMessage =
@@ -196,4 +215,6 @@ export type ChatClientMessage =
   | { type: 'session.delete'; id: string }
   | { type: 'session.delete-all' }
   | { type: 'session.configure'; modelChoice: string | null; effort: EffortLevel | null }
-  | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer };
+  | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer }
+  // Exactly one of `id` (a blob the core stores) or `path` (a file as the agent wrote it, relative to the project root or absolute); `key` comes back on the answer.
+  | { type: 'image.get'; key: string; id?: string; path?: string };

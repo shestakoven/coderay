@@ -22,7 +22,7 @@ function schemaSixHistory(): string {
   first.saveSession(session('old', { startedAt: 7 }));
   first.close();
   const db = new DatabaseSync(join(dir, 'history.sqlite'));
-  db.exec('ALTER TABLE sessions DROP COLUMN account_id; ALTER TABLE baselines DROP COLUMN sig; PRAGMA user_version = 6');
+  db.exec('ALTER TABLE sessions DROP COLUMN account_id; ALTER TABLE baselines DROP COLUMN sig; ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 6');
   db.close();
   return dir;
 }
@@ -62,7 +62,7 @@ describe('schema 7 migration', () => {
   it('moves a version 6 history to the current version', () => {
     const dir = schemaSixHistory();
     freshStore(dir).close();
-    expect(userVersion(dir)).toBe(8);
+    expect(userVersion(dir)).toBe(9);
   });
 
   it('stores an account on a migrated history', () => {

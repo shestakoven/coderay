@@ -5,6 +5,8 @@ export interface ToolResultBlock {
   toolUseId: string;
   isError: boolean;
   text: string;
+  // The base64 data of the result's image parts, in order; their claimed media type is not kept, the bytes decide.
+  images: string[];
 }
 
 export type AssistantBlock =
@@ -127,8 +129,14 @@ function assistantBlock(block: Json): AssistantBlock[] {
 function toolResult(block: Json): ToolResultBlock[] {
   if (block.type !== 'tool_result') return [];
   const content = block.content;
-  const body = typeof content === 'string'
-    ? content
-    : Array.isArray(content) ? content.filter(isRecord).map((part) => text(part.text) ?? '').join('\n') : '';
-  return [{ toolUseId: text(block.tool_use_id) ?? '', isError: block.is_error === true, text: body }];
+  const parts = Array.isArray(content) ? content.filter(isRecord) : [];
+  const body = typeof content === 'string' ? content : parts.map((part) => text(part.text) ?? '').join('\n');
+  return [{ toolUseId: text(block.tool_use_id) ?? '', isError: block.is_error === true, text: body, images: parts.flatMap(imageData) }];
+}
+
+function imageData(part: Json): string[] {
+  const source = part.source;
+  if (part.type !== 'image' || !isRecord(source) || source.type !== 'base64') return [];
+  const data = text(source.data);
+  return data === null || data === '' ? [] : [data];
 }
