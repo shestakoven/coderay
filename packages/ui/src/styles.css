@@ -79,7 +79,6 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chat-header .spacer { flex: 1; }
 .chat-log { flex: 1; overflow: auto; overflow-x: hidden; padding: 8px 10px; display: flex; flex-direction: column; gap: 12px; }
 .turn { display: flex; flex-direction: column; gap: 6px; }
-.turn.agent-initiated { border-left: 2px solid var(--accent); padding-left: 8px; }
 .turn-marker, .turn-end { color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
 .msg { white-space: pre-wrap; word-break: break-word; }
 .msg.user { background: var(--selection); border-radius: 6px; padding: 6px 8px; }
