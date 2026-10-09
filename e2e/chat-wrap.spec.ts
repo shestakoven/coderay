@@ -29,11 +29,11 @@ test('a long unbreakable string in a notice or an agent question wraps instead o
   await expect(page.locator('.chat-log .prompt .option', { hasText: 'Array(turns.suffix' })).toBeVisible();
 
   // No notice with free text can be raised from the outside, so the CSS is exercised on a node of the same shape.
-  await page.evaluate((text) => {
-    const notice = document.createElement('div');
+  await page.locator('.chat-log').evaluate((log, text) => {
+    const notice = log.ownerDocument.createElement('div');
     notice.className = 'notice';
     notice.textContent = text;
-    document.querySelector('.chat-log')!.append(notice);
+    log.append(notice);
   }, UNBREAKABLE);
 
   // scrollWidth counts clipped overflow too, so this fails on a missing wrap even with overflow-x: hidden on the log.
