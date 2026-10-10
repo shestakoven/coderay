@@ -14,7 +14,7 @@ import { tempDir, waitFor, writeTree } from '../helpers';
 
 export const FILES = { 'src/app.ts': "export const greeting = 'helo';\n", 'src/other.ts': "export const other = 'helo';\n", 'notes.txt': 'notes\n' };
 export const COMPONENTS = [{ id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts'], globs: [] }];
-export const INIT = '{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}';
+export const INIT = '{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.296"}';
 export const AWAIT = '{"fake":"await-user"}';
 export const HOLD_OPEN = '{"fake":"sleep","ms":60000}';
 export const mcpWrite = (id: string, files: { path: string; content: string }[], extra: object = {}): string =>

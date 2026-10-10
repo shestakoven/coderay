@@ -165,7 +165,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(h.session.state().session).toMatchObject({
-      status: 'running', model: 'claude-haiku-4-5-20251001', cliVersion: '2.1.281', permissionMode: 'bypassPermissions',
+      status: 'running', model: 'claude-haiku-4-5-20251001', cliVersion: '2.1.296', permissionMode: 'bypassPermissions',
     });
     expect(h.session.state().mcpServers).toEqual([{ name: 'spike', status: 'connected' }]);
   });
@@ -555,7 +555,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(texts(h.session.state().items)).toContain(
-      'claude 2.1.100 is older than 2.1.281, the version CodeRay was verified with; tool names and stream events may differ.',
+      'claude 2.1.100 is older than 2.1.296, the version CodeRay was verified with; tool names and stream events may differ.',
     );
   });
 
@@ -912,7 +912,7 @@ describe('AgentSession feeds for the watchdog', () => {
     const file = join(tempDir('ide-scenario-'), 'background-shell.jsonl');
     writeFileSync(file, [
       line({ fake: 'await-user' }),
-      line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+      line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' }),
       line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: kind === 'monitor' ? 'Monitor' : 'Bash', input: { command: 'sleep 5', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
       line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 5', is_backgrounded: true, task_type: kind === 'monitor' ? 'monitor' : 'local_bash', session_id: S }),
       line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),

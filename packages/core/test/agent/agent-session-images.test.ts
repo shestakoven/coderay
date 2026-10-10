@@ -58,7 +58,7 @@ function resultScenario(content: object[]): string {
   const file = join(tempDir('ide-scenario-'), 'images.jsonl');
   writeFileSync(file, [
     line({ fake: 'await-user' }),
-    line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+    line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' }),
     line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_shots', name: 'mcp__browser__shots', input: {} }] }, parent_tool_use_id: null, session_id: S }),
     line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_shots', type: 'tool_result', content }] }, parent_tool_use_id: null, session_id: S }),
     line({ type: 'result', subtype: 'success', is_error: false, result: 'ok', session_id: S }),

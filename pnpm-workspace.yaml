@@ -8,3 +8,13 @@ ignoredBuiltDependencies:
   - tree-sitter-typescript
 onlyBuiltDependencies:
   - electron
+# Each platform package carries a 240 MB claude; CodeRay runs the user's installed claude instead.
+overrides:
+  '@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
+  '@anthropic-ai/claude-agent-sdk-linux-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk-linux-arm64-musl': '-'
+  '@anthropic-ai/claude-agent-sdk-linux-x64': '-'
+  '@anthropic-ai/claude-agent-sdk-linux-x64-musl': '-'
+  '@anthropic-ai/claude-agent-sdk-win32-arm64': '-'
+  '@anthropic-ai/claude-agent-sdk-win32-x64': '-'

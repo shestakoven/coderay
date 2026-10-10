@@ -1,5 +1,5 @@
 {"fake":"await-user"}
-{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}
+{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.296"}
 {"fake":"tool","id":"toolu_fx_ls","name":"Bash","input":{"command":"ls src"},"result":"app.ts other.ts","apply":true}
 {"fake":"tool","id":"toolu_fx_echo","name":"Bash","input":{"command":"echo hi > src/new.ts"},"result":"","apply":true}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Listed."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}

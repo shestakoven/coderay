@@ -68,7 +68,7 @@ function longBackgroundShell(): string {
   const file = join(tempDir('ide-scenario-'), 'long-background-shell.jsonl');
   writeFileSync(file, [
     line({ fake: 'await-user' }),
-    line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+    line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' }),
     line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: 'Bash', input: { command: 'sleep 500', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
     line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 500', is_backgrounded: true, task_type: 'local_bash', session_id: S }),
     line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),

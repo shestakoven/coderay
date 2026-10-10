@@ -14,7 +14,7 @@ import { openStore } from '../../src/store/store';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from './fake';
 import { tempDir, waitFor } from '../helpers';
 
-const INIT = { type: 'system', subtype: 'init', cwd: '$CWD', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.282' };
+const INIT = { type: 'system', subtype: 'init', cwd: '$CWD', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' };
 const text = (value: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: value }] }, parent_tool_use_id: null, session_id: '$SESSION' });
 const RESULT = { type: 'result', subtype: 'success', is_error: false, result: 'done', session_id: '$SESSION' };
 const AWAIT = { fake: 'await-user' };

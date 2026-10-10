@@ -8,6 +8,8 @@ Provenance of `../transcripts/crash-gap.jsonl`: curated from the transcript shap
 
 Trimming keeps a recording's field names and the order of the events it keeps. It never adds a field or an event the recording does not have. Dropped events are named in the provenance column. `init` keeps `cwd`, `session_id`, `model`, `claude_code_version`, `mcp_servers`, `permissionMode` and `skills`; its `tools` list is dropped because the IDE does not read it. Real ids are replaced by readable ones (`toolu_fx_…`, `task_fx_…`, `req_fx_…`), and the session id by `$SESSION`.
 
+Every fixture except `old-cli.jsonl` carries `claude_code_version` 2.1.296, the CLI version the agent SDK pins as its floor; the recorded events are otherwise unchanged.
+
 | Directive | Effect |
 |---|---|
 | `{"fake":"await-user"}` | Wait for the next user message on stdin. A turn is open from then until the next `await-user`. |

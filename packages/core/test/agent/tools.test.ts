@@ -1,5 +1,8 @@
+import { readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { isModelChoice, isOlderVersion, summarizeToolInput } from '../../src/agent/tools';
+import { isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from '../../src/agent/tools';
 
 describe('summarizeToolInput', () => {
   it('summarizes a shell call by the first line of its command and marks background runs', () => {
@@ -88,5 +91,13 @@ describe('isModelChoice', () => {
 
   it('accepts exactly 64 characters and rejects 65', () => {
     expect([isModelChoice('a'.repeat(64)), isModelChoice('a'.repeat(65))]).toEqual([true, false]);
+  });
+});
+
+describe('MIN_CLAUDE_VERSION', () => {
+  it('is the claude version the installed agent SDK was released with', () => {
+    const sdk = dirname(createRequire(import.meta.url).resolve('@anthropic-ai/claude-agent-sdk'));
+    const { claudeCodeVersion } = JSON.parse(readFileSync(join(sdk, 'package.json'), 'utf8')) as { claudeCodeVersion: string };
+    expect(MIN_CLAUDE_VERSION).toBe(claudeCodeVersion);
   });
 });

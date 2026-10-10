@@ -1,5 +1,5 @@
 {"fake":"await-user"}
-{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}
+{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.296"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Fixing the greeting."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
 {"fake":"mcp","id":"toolu_plan","tool":"propose_plan","input":{"goal":"Fix the greeting","steps":[{"key":"edit","title":"Fix the greeting","rationale":"Needed","targets":[{"path":"src/app.ts","op":"modify"}]}]}}
 {"fake":"mcp","id":"toolu_start","tool":"step","input":{"key":"edit","phase":"start"}}
@@ -7,12 +7,12 @@
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Built."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
 {"type":"result","subtype":"success","is_error":false,"result":"Built.","session_id":"$SESSION"}
 {"fake":"await-user"}
-{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}
+{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.296"}
 {"fake":"mcp-write","id":"toolu_env","server":"files","tool":"write","files":[{"path":".env","content":"TOKEN=1\n"}]}
 {"fake":"sleep","ms":60000}
 {"type":"result","subtype":"success","is_error":false,"result":"Done.","session_id":"$SESSION"}
 {"fake":"await-user"}
-{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.282"}
+{"type":"system","subtype":"init","cwd":"$CWD","session_id":"$SESSION","mcp_servers":[{"name":"idecore","status":"connected"},{"name":"files","status":"connected"}],"model":"claude-haiku-4-5-20251001","permissionMode":"bypassPermissions","claude_code_version":"2.1.296"}
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Continuing."}]},"parent_tool_use_id":null,"session_id":"$SESSION"}
 {"type":"result","subtype":"success","is_error":false,"result":"Continuing.","session_id":"$SESSION"}
 {"fake":"await-user"}
