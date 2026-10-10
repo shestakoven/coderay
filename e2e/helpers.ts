@@ -27,13 +27,17 @@ export const hookChecks = (record: string): number => recorded(record).filter((e
 
 // The conversation the chat's own headless claude was started on.
 export function chatConversation(record: string): string | undefined {
-  const chat = recorded(record).find((entry) => !entry.interactive && entry.argv?.includes('--session-id'));
+  const chat = recorded(record).find((entry) => !entry.interactive && entry.argv && hasFlag(entry.argv, '--session-id'));
   return chat?.argv ? flagOf(chat.argv, '--session-id') : undefined;
 }
 
+export const hasFlag = (argv: string[], name: string): boolean => argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
+
+// A flag's value in either form: `--name value` or `--name=value`.
 export function flagOf(argv: string[], name: string): string | undefined {
   const at = argv.indexOf(name);
-  return at === -1 ? undefined : argv[at + 1];
+  if (at !== -1) return argv[at + 1];
+  return argv.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 export function isAlive(pid: number): boolean {
