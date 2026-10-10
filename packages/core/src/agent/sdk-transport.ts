@@ -7,7 +7,7 @@ import type { AgentTransport, Launch, TransportSink } from './transport';
 
 restoreEnv(ENV_BEFORE_SDK);
 
-// How long claude's stdout gets to close after claude exits; a child holding it open must not stall the exit report.
+// How long the SDK gets to hand over claude's last messages once `claude.exited` (stdout closed, or 1 s after claude's exit) resolves; a child holding stdout open delays the exit report by up to 2 s, never stalls it.
 const DRAIN_AFTER_EXIT_MS = 1000;
 // The SDK runs a path with these endings through a JavaScript runtime and puts the path before claude's flags; CodeRay runs the command itself.
 const SCRIPT = /\.(?:js|mjs|tsx|ts|jsx)$/;
