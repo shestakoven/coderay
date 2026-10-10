@@ -67,8 +67,16 @@ function seedRunningSession(home: string, root: string, seed: Seed): void {
   store.close();
 }
 
-function spawnHanging(claudeSessionId: string, scenario = 'hang', recordFile = '', form: 'space' | 'equals' | 'glued' = 'space') {
-  const idArgs = { space: ['--session-id', claudeSessionId], equals: [`--session-id=${claudeSessionId}`], glued: [`--session-id-${claudeSessionId}`] }[form];
+type SpawnForm = 'space' | 'equals' | 'glued' | 'resume' | 'resume-equals';
+
+function spawnHanging(claudeSessionId: string, scenario = 'hang', recordFile = '', form: SpawnForm = 'space') {
+  const idArgs = {
+    space: ['--session-id', claudeSessionId],
+    equals: [`--session-id=${claudeSessionId}`],
+    glued: [`--session-id-${claudeSessionId}`],
+    resume: ['--resume', claudeSessionId],
+    'resume-equals': [`--resume=${claudeSessionId}`],
+  }[form];
   const child = spawn(process.execPath, [FAKE_CLAUDE, ...idArgs], {
     env: { ...process.env, FAKE_CLAUDE_SCENARIO: fixture(`stream/${scenario}.jsonl`), FAKE_CLAUDE_RECORD: recordFile },
     stdio: ['pipe', 'ignore', 'ignore'],
@@ -456,6 +464,19 @@ describe('AgentSession', () => {
     seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
     await harness('multi-turn', { home, root });
     expect(await staleExit).toBe('SIGTERM');
+  });
+
+  it('recognizes a stale claude relaunched with --resume <id> or --resume=<id>', async () => {
+    for (const form of ['resume', 'resume-equals'] as const) {
+      const home = tempDir('ide-home-');
+      const root = tempDir('ide-root-');
+      const claudeSessionId = randomUUID();
+      const stale = spawnHanging(claudeSessionId, 'hang', '', form);
+      const staleExit = exitSignal(stale);
+      seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+      await harness('multi-turn', { home, root });
+      expect(await staleExit).toBe('SIGTERM');
+    }
   });
 
   it('kills a stale claude that ignores SIGTERM, and its child processes, once the grace time is over', async () => {
