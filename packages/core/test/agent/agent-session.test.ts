@@ -114,7 +114,7 @@ describe('AgentSession', () => {
     const h = await harness('multi-turn');
     h.session.send('Remember the number 42. Reply with only: OK');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(h.stdin()).toEqual([{ type: 'user', message: { role: 'user', content: 'Remember the number 42. Reply with only: OK' } }]);
+    expect(h.stdin()).toEqual([{ type: 'user', message: { role: 'user', content: 'Remember the number 42. Reply with only: OK' }, parent_tool_use_id: null }]);
     expect(texts(h.session.state().items)).toEqual(['Remember the number 42. Reply with only: OK', 'OK']);
     expect(closedTurns(h)).toMatchObject([{ kind: 'user', resultSubtype: 'success' }]);
   });
@@ -133,6 +133,7 @@ describe('AgentSession', () => {
           { type: 'text', text: 'what is this?' },
         ],
       },
+      parent_tool_use_id: null,
     }]);
   });
 
@@ -143,6 +144,7 @@ describe('AgentSession', () => {
     expect(h.stdin()).toEqual([{
       type: 'user',
       message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAEC' } }] },
+      parent_tool_use_id: null,
     }]);
   });
 
@@ -1103,7 +1105,7 @@ describe('AgentSession notes from the watchdog', () => {
     h.session.queueNote('[CodeRay] The user kept a.ts.');
     h.session.send('continue please');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[CodeRay] The user kept a.ts.\n\ncontinue please' } }]);
+    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[CodeRay] The user kept a.ts.\n\ncontinue please' }, parent_tool_use_id: null }]);
     const items = h.session.state().items;
     expect(items.find((item) => item.kind === 'message' && item.role === 'user')).toMatchObject({ text: 'continue please' });
     expect(items.find((item) => item.kind === 'notice')).toMatchObject({ text: '[CodeRay] The user kept a.ts.' });
@@ -1117,11 +1119,11 @@ describe('AgentSession notes from the watchdog', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     h.session.queueNote('[CodeRay] note');
-    const child = (h.session as unknown as { process: { write: (m: object) => void } }).process;
-    const write = child.write.bind(child);
-    child.write = () => { throw new Error('pipe closed'); };
+    const transport = (h.session as unknown as { transport: { send: (m: object) => void } }).transport;
+    const send = transport.send.bind(transport);
+    transport.send = () => { throw new Error('pipe closed'); };
     expect(() => h.session.send('again')).toThrow('pipe closed');
-    child.write = write;
+    transport.send = send;
     h.session.send('again');
     await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
     expect(userWrites(h)[1]).toMatchObject({ message: { content: '[CodeRay] note\n\nagain' } });
@@ -1134,7 +1136,7 @@ describe('AgentSession notes from the watchdog', () => {
     const turnsBefore = h.session.state().turns.length;
     h.session.sendAbsorbed('[CodeRay] note');
     await waitFor(() => userWrites(h).length === 2, 'note delivered');
-    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[CodeRay] note' } });
+    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[CodeRay] note' }, parent_tool_use_id: null });
     const state = h.session.state();
     expect(state.turns).toHaveLength(turnsBefore);
     expect(state.items.filter((item) => item.kind === 'message' && item.role === 'user')).toHaveLength(1);

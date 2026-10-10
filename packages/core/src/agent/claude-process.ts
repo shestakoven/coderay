@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import type { Readable, Writable } from 'node:stream';
 import { forceKill, signal } from '../os-process';
 
 export interface ClaudeCommand {
@@ -26,18 +27,26 @@ export interface ClaudeProcess {
   kill(): Promise<ProcessExit>;
 }
 
+export interface SpawnedClaude {
+  readonly child: ChildProcessByStdio<Writable, Readable, Readable>;
+  readonly exited: Promise<ProcessExit>;
+  kill(): Promise<ProcessExit>;
+}
+
 const STDERR_TAIL_CHARS = 2000;
 export const KILL_GRACE_MS = 3000;
 const CLOSE_AFTER_EXIT_MS = 1000;
 
-export function startClaude(
-  command: ClaudeCommand, args: string[], cwd: string, onLine: (line: string) => void, options: ClaudeProcessOptions = {},
-): ClaudeProcess {
+export function claudeEnv(command: ClaudeCommand): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...command.env };
   // claude refuses to start inside another Claude Code session, which is where this core runs when an agent launches it.
   delete env.CLAUDECODE;
+  return env;
+}
+
+export function spawnClaude(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, options: ClaudeProcessOptions = {}): SpawnedClaude {
   // Detached so that Ctrl+C in the core's terminal reaches the core only; the core stops claude itself.
-  const child = spawn(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
   let stderr = '';
   let error: string | null = null;
   child.stderr.setEncoding('utf8');
@@ -46,7 +55,6 @@ export function startClaude(
   });
   // Writes after claude has exited fail with EPIPE; the exit itself is reported through `exited`.
   child.stdin.on('error', () => {});
-  createInterface({ input: child.stdout }).on('line', onLine);
   child.once('error', (spawnError) => {
     error = spawnError.message;
   });
@@ -69,13 +77,9 @@ export function startClaude(
       fallback = setTimeout(() => finish(code, exitSignal), CLOSE_AFTER_EXIT_MS);
     });
   });
-
   return {
-    pid: child.pid,
+    child,
     exited,
-    write(message) {
-      if (child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
-    },
     kill() {
       const pid = child.pid;
       if (child.exitCode === null && child.signalCode === null && pid !== undefined) {
@@ -85,5 +89,20 @@ export function startClaude(
       }
       return exited;
     },
+  };
+}
+
+export function startClaude(
+  command: ClaudeCommand, args: string[], cwd: string, onLine: (line: string) => void, options: ClaudeProcessOptions = {},
+): ClaudeProcess {
+  const claude = spawnClaude(command.command, [...command.args, ...args], cwd, claudeEnv(command), options);
+  createInterface({ input: claude.child.stdout }).on('line', onLine);
+  return {
+    pid: claude.child.pid,
+    exited: claude.exited,
+    write(message) {
+      if (claude.child.stdin.writable) claude.child.stdin.write(`${JSON.stringify(message)}\n`);
+    },
+    kill: () => claude.kill(),
   };
 }

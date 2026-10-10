@@ -13,12 +13,14 @@ import { projectDir, runDir } from '../home';
 import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
-import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
+import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
+import { startCliTransport } from './cli-transport';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
-import { parseStreamLine, type StreamEvent, type ToolResultBlock } from './stream';
+import { parseStreamMessage, type StreamEvent, type ToolResultBlock } from './stream';
 import { TranscriptTail } from './transcript-tail';
-import { parseUsage } from './usage';
+import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type StartTransport, type UserMessage } from './transport';
+import { usageOf } from './usage';
 import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
@@ -100,7 +102,7 @@ type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' |
 interface LaunchFiles {
   claude: ClaudeCommand;
   configPath: string;
-  gateArgs: string[];
+  gate: GateLaunch | null;
 }
 
 interface PendingPrompt {
@@ -145,14 +147,15 @@ export class AgentSession {
   private skills: string[] = [];
   private permissionMode: string | null = null;
   private usage: UsageView = EMPTY_USAGE;
-  private process: ClaudeProcess | null = null;
+  private transport: AgentTransport | null = null;
+  private readonly startTransport: StartTransport = startCliTransport;
   private exitReason: ExitReason | null = null;
   private terminating = false;
   private versionChecked = false;
   private idle = true;
   private hookReady = true;
   private refused = false;
-  private pendingSends: object[] = [];
+  private pendingSends: UserMessage[] = [];
   private notes: string[] = [];
   private crashed = false;
   private terminalOpen = false;
@@ -322,7 +325,7 @@ export class AgentSession {
   }
 
   processAlive(): boolean {
-    return this.process !== null || this.terminalOpen;
+    return this.transport !== null || this.terminalOpen;
   }
 
   // The chat's process takes a message after an interrupt; a terminal's input belongs to the user.
@@ -540,13 +543,13 @@ export class AgentSession {
     }
     const injected = this.tracker.hasOpenTurn();
     if (!this.session || this.session.status === 'ended') this.begin();
-    if (!this.process) this.spawn();
-    if (!this.process) throw new SessionError('no-gate');
+    if (!this.transport) this.spawn();
+    if (!this.transport) throw new SessionError('no-gate');
     if (options.fromUser !== false) notify(this.userMessageListeners);
     const notes = this.notes.splice(0);
     const message = userMessage([...notes, text].filter((part) => part !== '').join('\n\n'), images);
     try {
-      if (this.hookReady) this.process.write(message);
+      if (this.hookReady) this.transport.send(message);
       else this.pendingSends.push(message);
     } catch (error) {
       this.notes.unshift(...notes);
@@ -581,9 +584,9 @@ export class AgentSession {
       this.apply(this.tracker.notice('CodeRay note sent to the agent'));
       return;
     }
-    if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
+    if (!this.transport) throw new SessionError('no-gate', 'The agent is not running.');
     if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
-    if (this.hookReady) this.process.write(userMessage(text, []));
+    if (this.hookReady) this.transport.send(userMessage(text, []));
     else this.pendingSends.push(userMessage(text, []));
     this.apply(this.tracker.notice('CodeRay note sent to the agent'));
   }
@@ -595,15 +598,15 @@ export class AgentSession {
       this.options.terminalInput('\x1b');
       return true;
     }
-    if (!this.process || !this.tracker.canInterrupt()) return false;
-    this.process.write({ type: 'control_request', request_id: `interrupt-${randomUUID()}`, request: { subtype: 'interrupt' } });
+    if (!this.transport || !this.tracker.canInterrupt()) return false;
+    this.transport.interrupt();
     notify(this.interruptListeners);
     return true;
   }
 
   stopTask(taskId: string): boolean {
-    if (!this.process) return false;
-    this.process.write({ type: 'control_request', request_id: `stop-task-${randomUUID()}`, request: { subtype: 'stop_task', task_id: taskId } });
+    if (!this.transport) return false;
+    this.transport.stopTask(taskId);
     return true;
   }
 
@@ -613,14 +616,11 @@ export class AgentSession {
 
   answerPrompt(requestId: string, answer: PromptAnswer): void {
     const pending = this.pendingPrompts.get(requestId);
-    if (!pending || !this.process) throw new SessionError('prompt-gone');
+    if (!pending || !this.transport) throw new SessionError('prompt-gone');
     const problem = answerProblem(pending.body, answer);
     if (problem) throw new SessionError('bad-answer', problem);
     this.pendingPrompts.delete(requestId);
-    this.process.write({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: requestId, response: promptResponse(pending.input, answer) },
-    });
+    this.transport.respond({ subtype: 'success', request_id: requestId, response: promptResponse(pending.input, answer) });
     this.apply(this.tracker.promptAnswered(requestId, answer));
   }
 
@@ -685,7 +685,7 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     if (this.session?.modelChoice === modelChoice && this.session.effort === effort) return;
     this.update({ modelChoice, effort });
-    if (this.process) await this.restart();
+    if (this.transport) await this.restart();
   }
 
   // An idle claude still runs under the previous account, so it is stopped and the next message starts one under the new account.
@@ -693,7 +693,7 @@ export class AgentSession {
     if (this.terminating) throw new SessionError('restarting');
     if (!this.isIdle()) throw new SessionError('busy-account');
     await change();
-    if (this.process && this.isIdle() && this.session?.accountId !== this.activeAccount()) await this.restart();
+    if (this.transport && this.isIdle() && this.session?.accountId !== this.activeAccount()) await this.restart();
   }
 
   async close(): Promise<void> {
@@ -710,12 +710,12 @@ export class AgentSession {
     if (this.session?.status === 'refused') this.update({ status: 'stopped' });
   }
 
-  private async awaitCanary(child: ClaudeProcess, sessionId: string, canary: NonNullable<SessionGate['canary']>): Promise<void> {
+  private async awaitCanary(transport: AgentTransport, sessionId: string, canary: NonNullable<SessionGate['canary']>): Promise<void> {
     const reported = await canary.wait(sessionId, this.options.canaryMs ?? CANARY_MS);
-    if (this.process !== child) return;
+    if (this.transport !== transport) return;
     if (reported) {
       this.hookReady = true;
-      for (const message of this.pendingSends.splice(0)) child.write(message);
+      for (const message of this.pendingSends.splice(0)) transport.send(message);
       return;
     }
     this.pendingSends = [];
@@ -824,7 +824,7 @@ export class AgentSession {
     }
     return {
       kind: 'agent', title: 'claude', file: files.claude.command, cwd: session.cwd, env: files.claude.env ?? {},
-      args: [...files.claude.args, ...conversationArgs(session, this.resumable(session), files.configPath, files.gateArgs)],
+      args: [...files.claude.args, ...conversationArgs(session, this.resumable(session), files.configPath, gateArgs(files.gate))],
     };
   }
 
@@ -850,7 +850,7 @@ export class AgentSession {
     canary.expect(session.id);
     const probe = startClaude(
       files.claude,
-      ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--no-session-persistence', '--strict-mcp-config', ...files.gateArgs],
+      ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--no-session-persistence', '--strict-mcp-config', ...gateArgs(files.gate)],
       session.cwd, () => {}, { killGraceMs: this.options.killGraceMs },
     );
     try {
@@ -885,11 +885,11 @@ export class AgentSession {
 
   // Writes the MCP config and the gate's hook settings claude starts with; null when the hook settings could not be written.
   private launchFiles(session: SessionRecord, terminal = false): LaunchFiles | null {
-    let gateArgs: string[] = [];
+    let gate: GateLaunch | null = null;
     if (this.options.gate) {
       try {
         const { settingsPath } = this.options.gate.write(session.id, terminal);
-        gateArgs = ['--settings', settingsPath, '--append-system-prompt', this.options.gate.systemPrompt(), '--system-prompt-snapshot', 'off'];
+        gate = { settingsPath, appendSystemPrompt: this.options.gate.systemPrompt() };
       } catch (error) {
         console.error('agent: could not write the hook settings', error);
         this.apply(this.tracker.notice(`CodeRay could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));
@@ -904,7 +904,7 @@ export class AgentSession {
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
     const accountDir = this.options.accounts?.configDir(session.accountId) ?? null;
     const claude = accountDir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir } };
-    return { claude, configPath, gateArgs };
+    return { claude, configPath, gate };
   }
 
   private spawn(): void {
@@ -913,28 +913,33 @@ export class AgentSession {
     const session = this.session;
     const files = this.launchFiles(session);
     if (!files) return;
-    const child = startClaude(files.claude, claudeArgs(session, this.resumable(session), files.configPath, files.gateArgs), session.cwd, (line) => this.onLine(line), {
-      killGraceMs: this.options.killGraceMs,
-    });
-    this.process = child;
+    const launch: Launch = {
+      claude: files.claude, cwd: session.cwd, claudeSessionId: session.claudeSessionId, resume: this.resumable(session),
+      model: session.modelChoice !== null && isModelChoice(session.modelChoice) ? session.modelChoice : null,
+      effort: session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? session.effort : null,
+      mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate, killGraceMs: this.options.killGraceMs,
+    };
+    // A stopped claude's last messages may arrive while the next one starts; they no longer belong to the chat.
+    const sink = { message: (value: unknown) => { if (this.transport === transport) this.onStreamMessage(value); } };
+    const transport = this.startTransport(launch, sink);
+    this.transport = transport;
     this.exitReason = null;
     this.versionChecked = false;
-    this.update({ status: 'running', pid: child.pid ?? null, launchId: session.claudeSessionId });
+    this.update({ status: 'running', pid: transport.pid ?? null, launchId: session.claudeSessionId });
     const canary = this.options.gate?.canary;
     this.hookReady = canary === undefined;
     this.pendingSends = [];
     if (canary) {
       canary.expect(session.id);
-      void this.awaitCanary(child, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
+      void this.awaitCanary(transport, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
     }
-    void child.exited.then((exit) => this.onExit(child, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
+    void transport.exited.then((exit) => this.onExit(transport, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 
-  private onLine(line: string): void {
+  private onStreamMessage(value: unknown): void {
     try {
-      const event = parseStreamLine(line);
-      this.trackUsage(line);
-      if (!event) return;
+      const event = parseStreamMessage(value);
+      this.trackUsage(value);
       if (event.type === 'text_delta') {
         // Subagent text is shown only once it is complete.
         if (event.parentToolUseId === null) this.emit({ type: 'session.delta', text: event.text });
@@ -951,8 +956,8 @@ export class AgentSession {
     }
   }
 
-  private trackUsage(line: string): void {
-    const update = parseUsage(line, this.session?.model ?? null);
+  private trackUsage(value: unknown): void {
+    const update = usageOf(value, this.session?.model ?? null);
     if (!update) return;
     const usage = { ...this.usage, ...update };
     if (JSON.stringify(usage) === JSON.stringify(this.usage)) return;
@@ -1018,16 +1023,16 @@ export class AgentSession {
       ? `CodeRay does not answer permission prompts for ${event.toolName ?? 'this tool'}.`
       : `CodeRay does not handle "${event.subtype}" requests.`;
     console.warn(`agent: refused a ${event.subtype} request from claude: ${reason}`);
-    const response = event.subtype === 'can_use_tool'
+    const response: ControlResponse = event.subtype === 'can_use_tool'
       ? { subtype: 'success', request_id: event.requestId, response: { behavior: 'deny', message: reason } }
       : { subtype: 'error', request_id: event.requestId, error: reason };
-    this.process?.write({ type: 'control_response', response });
+    this.transport?.respond(response);
     return this.tracker.notice(`Refused a "${event.subtype}" request from claude: ${reason}`);
   }
 
-  private onExit(child: ClaudeProcess, exit: ProcessExit): void {
-    if (this.process !== child || !this.session) return;
-    this.process = null;
+  private onExit(transport: AgentTransport, exit: ProcessExit): void {
+    if (this.transport !== transport || !this.session) return;
+    this.transport = null;
     this.terminating = false;
     rmSync(this.configPath(this.session.id), { force: true });
     this.options.gate?.remove(this.session.id);
@@ -1067,11 +1072,11 @@ export class AgentSession {
   }
 
   private async terminate(reason: ExitReason): Promise<void> {
-    const child = this.process;
-    if (!child) return;
+    const transport = this.transport;
+    if (!transport) return;
     this.terminating = true;
     this.exitReason = reason;
-    await child.kill();
+    await transport.kill();
   }
 
   private update(changes: SessionUpdate): void {
@@ -1191,28 +1196,14 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
   }
 }
 
-function userMessage(text: string, images: ChatImage[]): object {
-  if (images.length === 0) return { type: 'user', message: { role: 'user', content: text } };
-  const blocks = images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }));
-  return { type: 'user', message: { role: 'user', content: text === '' ? blocks : [...blocks, { type: 'text', text }] } };
-}
-
-function claudeArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateArgs: string[]): string[] {
-  return [
-    '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-    ...conversationArgs(session, resume, mcpConfigPath, gateArgs),
-    '--permission-prompt-tool', 'stdio',
-  ];
-}
-
-function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateArgs: string[]): string[] {
+function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateFlags: string[]): string[] {
   return [
     resume ? '--resume' : '--session-id', session.claudeSessionId,
     ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
     ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
     '--mcp-config', mcpConfigPath,
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
-    ...gateArgs,
+    ...gateFlags,
     '--dangerously-skip-permissions',
   ];
 }

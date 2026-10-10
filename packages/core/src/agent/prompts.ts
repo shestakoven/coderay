@@ -35,7 +35,11 @@ export function answerProblem(body: PromptBody, answer: PromptAnswer): string | 
   return unanswered ? `Answer "${unanswered.question}" first.` : null;
 }
 
-export function promptResponse(input: unknown, answer: PromptAnswer): object {
+export type PermissionAnswer =
+  | { behavior: 'allow'; updatedInput: Record<string, unknown> }
+  | { behavior: 'deny'; message: string };
+
+export function promptResponse(input: unknown, answer: PromptAnswer): PermissionAnswer {
   if (answer.kind === 'deny') return { behavior: 'deny', message: answer.feedback.trim() || CLI_REJECTION };
   const original = isRecord(input) ? input : {};
   return { behavior: 'allow', updatedInput: answer.kind === 'answers' ? { ...original, answers: answer.answers } : original };
