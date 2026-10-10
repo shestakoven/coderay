@@ -1,5 +1,6 @@
-import { writeFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { startSdkTransport } from '../../src/agent/sdk-transport';
 import type { Launch } from '../../src/agent/transport';
@@ -42,6 +43,13 @@ function start(scenario: string, asScript = false) {
 const promptRequested = (messages: Record<string, unknown>[]) => waitFor(() => messages.some((m) => m.type === 'control_request'), 'prompt requested');
 
 describe('startSdkTransport', () => {
+  it('is the only module of the core that loads the agent SDK, which sdk-env must precede', () => {
+    const src = fileURLToPath(new URL('../../src', import.meta.url));
+    const loaders = readdirSync(src, { recursive: true, encoding: 'utf8' }).filter((file) =>
+      file.endsWith('.ts') && /^(?:import|export)(?!\s+type\b)[^;]*from '@anthropic-ai\/claude-agent-sdk'/m.test(readFileSync(join(src, file), 'utf8')));
+    expect(loaders).toEqual([join('agent', 'sdk-transport.ts')]);
+  });
+
   it("runs a claude given as a script with only claude's flags, the SDK's markers and the core's NODE_OPTIONS, and leaves the core's environment as it was", async () => {
     vi.stubEnv('NODE_OPTIONS', '--max-old-space-size=4096');
     vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
