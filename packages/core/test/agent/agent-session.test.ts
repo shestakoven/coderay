@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
+import { startSdkTransport } from '../../src/agent/sdk-transport';
 import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
@@ -17,6 +18,12 @@ import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, writePidRecord, type Launched } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
+
+// Unchanged behaviour; it only lets a test reach the sink of a transport the session no longer runs.
+vi.mock('../../src/agent/sdk-transport', async (original) => {
+  const actual = await original<typeof import('../../src/agent/sdk-transport')>();
+  return { ...actual, startSdkTransport: vi.fn(actual.startSdkTransport) };
+});
 
 interface Harness {
   session: AgentSession;
@@ -123,7 +130,7 @@ describe('AgentSession', () => {
       sessionId: session?.claudeSessionId, resume: undefined, model: 'sonnet', effort: 'medium',
       mcpConfig: join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
       disallowedTools: ['SendMessage', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger', 'Workflow', 'EnterWorktree', 'ExitWorktree', 'DesignSync', 'PushNotification'],
-      bypass: true, promptsOnStdio: true, partialMessages: true,
+      bypass: true, promptsOnStdio: true, partialMessages: true, appendSystemPrompt: null, systemPromptSnapshot: false,
     });
     const [argv] = h.argvs();
     expect([flag(argv, '--input-format'), flag(argv, '--output-format'), hasArg(argv, '--verbose')]).toEqual(['stream-json', 'stream-json', true]);
@@ -626,6 +633,26 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(h.session.state().items.find((item) => item.id === prompt.id)).toMatchObject({ status: 'dropped' });
     expect(() => h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'blue' } })).toThrow(SessionError);
+  });
+
+  it('drops a prompt pending at a restart and refuses its late answer as prompt-gone', async () => {
+    const h = await harness('ask-user-question');
+    h.session.send('ask me');
+    const prompt = await pendingPrompt(h);
+    await h.session.restart();
+    expect(h.session.state().items.find((item) => item.id === prompt.id)).toMatchObject({ status: 'dropped' });
+    expect(() => h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S' } }))
+      .toThrow(expect.objectContaining({ code: 'prompt-gone' }));
+  });
+
+  it('drops what a claude it no longer runs prints, as after a restart', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const [, stale] = vi.mocked(startSdkTransport).mock.calls.at(-1)!;
+    await h.session.restart();
+    stale.message({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'stale' }] }, parent_tool_use_id: null, session_id: 'gone' });
+    expect(texts(h.session.state().items)).toEqual(['hi', 'OK']);
   });
 
   it('denies a permission prompt for any other tool and says why in the chat', async () => {

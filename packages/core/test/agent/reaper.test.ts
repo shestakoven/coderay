@@ -79,7 +79,7 @@ describe('reapOrphans', () => {
     expect([isAlive(pid), existsSync(file)]).toEqual([true, false]);
   });
 
-  it('never signals the core itself, nor a claude that holds it, and keeps that claude recorded', async () => {
+  it("never trusts a recorded core's pid that is alive but runs another program, never signals the core itself nor a claude that holds it, and keeps that claude recorded", async () => {
     const dir = tempDir('ide-run-');
     const owner = await deadPid();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
