@@ -7,7 +7,7 @@ export interface GateLaunch {
   appendSystemPrompt: string;
 }
 
-// What a chat's claude starts with; each transport turns it into its own flags or options.
+// What a chat's claude starts with; the transport turns it into the SDK's options and claude's flags.
 export interface Launch {
   claude: ClaudeCommand;
   cwd: string;

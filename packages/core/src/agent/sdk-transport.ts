@@ -7,11 +7,11 @@ import type { AgentTransport, Launch, TransportSink } from './transport';
 
 restoreEnv(ENV_BEFORE_SDK);
 
-// As long as the CLI transport waits for claude's stdout to close after its exit.
+// How long claude's stdout gets to close after claude exits; a child holding it open must not stall the exit report.
 const DRAIN_AFTER_EXIT_MS = 1000;
 // The SDK runs a path with these endings through a JavaScript runtime and puts the path before claude's flags; CodeRay runs the command itself.
 const SCRIPT = /\.(?:js|mjs|tsx|ts|jsx)$/;
-// The SDK drops these from claude's environment; the CLI transport always passed them on to claude and its tools.
+// The SDK drops these from claude's environment, so the core passes them on to claude and its tools.
 const KEPT_FROM_CORE = ['NODE_OPTIONS', 'DEBUG'];
 const CANCELLED: PermissionResult = { behavior: 'deny', message: 'The request was cancelled.' };
 
@@ -133,7 +133,7 @@ export function startSdkTransport(launch: Launch, sink: TransportSink): AgentTra
     stopTask: (taskId) => void q.stopTask(taskId).catch(ignore),
     respond: (response) => pending.get(response.request_id)?.(response.subtype === 'success' ? response.response : { behavior: 'deny', message: response.error }),
     setModel: (model) => q.setModel(model ?? undefined),
-    // SIGTERM with the input left open, as the CLI transport does: a claude still at work on the signal is stopped by the SIGKILL that follows, not by stdin EOF.
+    // SIGTERM only, with stdin left open: a claude still writing is not told to stop by EOF, and the SIGKILL that follows ends one that ignores the signal.
     kill: () => {
       void claude.kill();
       return exited;
