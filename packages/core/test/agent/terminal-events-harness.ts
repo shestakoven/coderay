@@ -11,7 +11,7 @@ export const said = (text: string) => JSON.stringify({ type: 'assistant', messag
 // A claude whose turn stays open until it is stopped.
 export function turnThatStaysOpen(): string {
   const file = join(tempDir('ide-scenario-'), 'open-turn.jsonl');
-  const init = { type: 'system', subtype: 'init', cwd: '/fake/project', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' };
+  const init = { type: 'system', subtype: 'init', cwd: '/fake/project', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' };
   const steps = [{ fake: 'await-user' }, init, { fake: 'sleep', ms: 60_000 }, { fake: 'await-user' }];
   writeFileSync(file, steps.map((step) => JSON.stringify(step)).join('\n'));
   return file;
