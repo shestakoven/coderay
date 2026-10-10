@@ -686,9 +686,20 @@ export class AgentSession {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.isIdle()) throw new SessionError('busy-configure');
     if (!this.session || this.session.status === 'ended') this.begin();
-    if (this.session?.modelChoice === modelChoice && this.session.effort === effort) return;
+    const session = this.session;
+    if (!session || (session.modelChoice === modelChoice && session.effort === effort)) return;
+    const liveModel = session.effort === effort;
     this.update({ modelChoice, effort });
-    if (this.transport) await this.restart();
+    if (!this.transport) return;
+    if (liveModel) {
+      try {
+        await this.transport.setModel(modelChoice);
+        return;
+      } catch (error) {
+        console.error('agent: claude did not switch the model, so it restarts with it', error);
+      }
+    }
+    await this.restart();
   }
 
   // An idle claude still runs under the previous account, so it is stopped and the next message starts one under the new account.

@@ -86,6 +86,8 @@ createInterface({ input: process.stdin })
     } else if (subtype === 'stop_task') stopTask(message.request_id, message.request.task_id);
     else if (subtype === 'set_model') {
       record({ setModel: message.request.model ?? null });
+      // The real claude echoes a model switch as a replayed local command, outside any turn.
+      emit({ type: 'user', message: { role: 'user', content: `<local-command-stdout>Set model to \`${message.request.model ?? 'the default'}\`</local-command-stdout>` }, parent_tool_use_id: null, session_id: sessionId, isReplay: true });
       emit(success(message.request_id));
     } else if (message.type === 'control_request') {
       emit({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'unsupported' } });

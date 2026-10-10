@@ -132,6 +132,7 @@ export function startSdkTransport(launch: Launch, sink: TransportSink): AgentTra
     interrupt: () => void q.interrupt().catch(ignore),
     stopTask: (taskId) => void q.stopTask(taskId).catch(ignore),
     respond: (response) => pending.get(response.request_id)?.(response.subtype === 'success' ? response.response : { behavior: 'deny', message: response.error }),
+    setModel: (model) => q.setModel(model ?? undefined),
     // SIGTERM with the input left open, as the CLI transport does: a claude still at work on the signal is stopped by the SIGKILL that follows, not by stdin EOF.
     kill: () => {
       void claude.kill();

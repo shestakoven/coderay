@@ -18,6 +18,7 @@ interface Harness {
   broadcasts: SessionServerMessage[];
   argvs: () => string[][];
   pids: () => number[];
+  setModels: () => (string | null)[];
 }
 
 async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}, scenarioFile?: string): Promise<Harness> {
@@ -36,6 +37,7 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
     session, store, home, root, broadcasts,
     argvs: () => readRecords(recordFile).flatMap((r) => (r.argv ? [r.argv] : [])),
     pids: () => readRecords(recordFile).flatMap((r) => (r.pid ? [r.pid] : [])),
+    setModels: () => readRecords(recordFile).flatMap((r) => (r.setModel !== undefined ? [r.setModel] : [])),
   };
 }
 
@@ -204,7 +206,7 @@ describe('AgentSession.configure', () => {
     expect([current(h).status, h.argvs().length]).toEqual(['running', 1]);
   });
 
-  it('restarts when only the effort changes and when only the model changes', async () => {
+  it('restarts claude when the effort changes and switches the model inside the running claude', async () => {
     const h = await harness('multi-turn');
     await h.session.configure('opus', 'high');
     await ask(h, 'hi');
@@ -212,9 +214,21 @@ describe('AgentSession.configure', () => {
     expect(current(h).status).toBe('stopped');
     await ask(h, 'again', 2);
     await h.session.configure('haiku', 'low');
-    expect(current(h).status).toBe('stopped');
+    expect([current(h).status, current(h).modelChoice, h.setModels()]).toEqual(['running', 'haiku', ['haiku']]);
     await ask(h, 'third', 3);
-    expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['opus', 'low'], ['haiku', 'low']]);
+    expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['opus', 'low']]);
+  });
+
+  it('ignores the echo claude prints for a model switch: no turn, no prompt, no message', async () => {
+    const h = await harness('multi-turn');
+    await h.session.configure('opus', 'high');
+    await ask(h, 'hi');
+    await h.session.configure('haiku', 'high');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect([h.setModels(), h.session.state().turns.map((turn) => turn.kind), h.session.hasOpenTurn()]).toEqual([['haiku'], ['user'], false]);
+    await ask(h, 'again', 2);
+    const { items } = h.session.state();
+    expect([items.filter((item) => item.kind === 'prompt').length, texts(h).some((text) => text.includes('Set model'))]).toEqual([0, false]);
   });
 
   it('removes the flags again when the choice goes back to the default', async () => {
