@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseUsage } from '../../src/agent/usage';
+import { parseUsage, usageOf } from '../../src/agent/usage';
 
 const line = (event: object) => JSON.stringify(event);
 const assistant = (usage: object, parent: string | null = null) => line({ type: 'assistant', parent_tool_use_id: parent, message: { role: 'assistant', content: [], usage } });
@@ -21,6 +21,11 @@ describe('parseUsage', () => {
   it('takes the context window of the model that ran, not of another model in the same result', () => {
     const result = line({ type: 'result', modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } } });
     expect([parseUsage(result, 'claude-haiku-4-5'), parseUsage(result, null)]).toEqual([{ contextWindow: 200_000 }, { contextWindow: 1_000_000 }]);
+  });
+
+  it('reads the same update from a message object as from its line', () => {
+    const event = { type: 'result', modelUsage: { 'claude-haiku-4-5': { contextWindow: 200_000 } } };
+    expect(usageOf(event, null)).toEqual(parseUsage(JSON.stringify(event), null));
   });
 
   it('says nothing for a result without a usable window', () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseStreamLine } from '../../src/agent/stream';
+import { parseStreamLine, parseStreamMessage } from '../../src/agent/stream';
 
 const line = (event: object) => JSON.stringify(event);
 
@@ -60,7 +60,7 @@ describe('parseStreamLine', () => {
     });
     expect(parseStreamLine(event)).toEqual({
       type: 'assistant', parentToolUseId: 'toolu_agent',
-      blocks: [{ kind: 'text', text: 'hi' }, { kind: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } }],
+      blocks: [{ kind: 'thinking', text: '' }, { kind: 'text', text: 'hi' }, { kind: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } }],
     });
   });
 
@@ -136,14 +136,30 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine(line({ type: 'control_cancel_request', request_id: 'r1' }))).toEqual({ type: 'control_cancel', requestId: 'r1' });
   });
 
-  it('ignores hook, token, status, rate-limit, progress and control response events', () => {
+  it("ignores hook, token, status, rate-limit, progress, control response and the SDK's run bookkeeping events", () => {
     const noise = [
       { type: 'system', subtype: 'hook_started' }, { type: 'system', subtype: 'thinking_tokens' }, { type: 'system', subtype: 'status', status: 'compacting' },
       { type: 'rate_limit_event' }, { type: 'system', subtype: 'task_progress' }, { type: 'system', subtype: 'background_tasks_changed' },
       { type: 'system', subtype: 'commands_changed' },
+      { type: 'system', subtype: 'session_state_changed', state: 'idle' }, { type: 'system', subtype: 'post_turn_summary' },
+      { type: 'system', subtype: 'task_summary' }, { type: 'system', subtype: 'session_metadata' },
+      { type: 'active_goal' }, { type: 'autocompact_state' },
       { type: 'control_response', response: { subtype: 'success', request_id: 'i1', response: { still_queued: [] } } },
     ];
     expect(noise.map((event) => parseStreamLine(line(event)))).toEqual(noise.map(() => ({ type: 'ignored' })));
+  });
+
+  it.each([
+    ['a conversation reset', { type: 'conversation_reset', new_conversation_id: 'c2', session_id: 'c1', trigger: 'clear' }, { type: 'conversation_reset', trigger: 'clear' }],
+    ['a compaction boundary', { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 183505, post_tokens: 5764 } }, { type: 'compact_boundary', trigger: 'manual', preTokens: 183505, postTokens: 5764 }],
+    ['the output of a local command', { type: 'system', subtype: 'local_command_output', content: 'Total cost: $0.0123' }, { type: 'command_output', text: 'Total cost: $0.0123' }],
+  ])('reads %s', (_name, event, expected) => {
+    expect(parseStreamLine(line(event))).toEqual(expected);
+  });
+
+  it('reads a message the SDK hands over as an object the same as its line', () => {
+    const event = { type: 'result', subtype: 'success', origin: { kind: 'task-notification' } };
+    expect(parseStreamMessage(event)).toEqual(parseStreamLine(line(event)));
   });
 
   describe('streamed text', () => {

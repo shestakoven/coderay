@@ -93,6 +93,12 @@ describe('TurnTracker', () => {
     expect(turns.map((turn) => [turn.kind, turn.closedAt === null])).toEqual([['agent-initiated', false]]);
   });
 
+  it('shows no thinking block, neither as a message nor as a tool call', () => {
+    const thinking: StreamEvent = { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'thinking', text: 'why' }, { kind: 'text', text: 'ok' }] };
+    const { messages, tools } = run(tracker(), ['hi', init, thinking, result()]);
+    expect([messages.map((m) => m.text), tools]).toEqual([['hi', 'ok'], []]);
+  });
+
   it('reports the skills of an init in its init change', () => {
     const changes = tracker().event({ ...init, skills: ['wiki', 'superpowers:brainstorming'] });
     expect(changes.flatMap((change) => (change.kind === 'init' ? [change.skills] : []))).toEqual([['wiki', 'superpowers:brainstorming']]);

@@ -36,6 +36,11 @@ export function parseUsage(line: string, model: string | null): UsageUpdate | nu
   } catch {
     return null;
   }
+  return usageOf(event, model);
+}
+
+/** The same for one message object, as the agent SDK hands it over. */
+export function usageOf(event: unknown, model: string | null): UsageUpdate | null {
   if (!isRecord(event)) return null;
   if (event.type === 'rate_limit_event') {
     const update = isRecord(event.rate_limit_info) ? limits(event.rate_limit_info) : {};

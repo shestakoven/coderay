@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
@@ -10,7 +10,7 @@ import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
 import { aliveRoute, Canary } from '../../src/gate/canary';
-import { UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
+import { transcriptPath, UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
@@ -336,6 +336,46 @@ describe('AgentSession', () => {
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude respawned');
     expect(flag(argvs[1], '--resume')).toBe(flag(argvs[0], '--session-id'));
     expect(argvs[1]).not.toContain('--session-id');
+  });
+
+  // claude names the conversation /clear starts twice: in the reset and in the init after it; only the init's id has a transcript.
+  const CLEARED = '7c0de5e1-0000-4000-8000-00000000c1ea';
+  const clearChat = async (h: Harness) => {
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
+    h.session.send('/clear');
+    await waitFor(() => closedTurns(h).length === 2, 'clear turn closed');
+  };
+  const nextLaunch = async (h: Harness) => {
+    await h.session.restart();
+    h.session.send('after');
+    return waitFor(() => h.argvs()[1], 'claude restarted');
+  };
+
+  it('follows /clear to the conversation of the next init and starts it fresh when claude restarts before the next message', async () => {
+    const h = await harness('clear-then-resume');
+    await clearChat(h);
+    expect(h.session.state().session?.claudeSessionId).toBe(CLEARED);
+    const argv = await nextLaunch(h);
+    expect([flag(argv, '--session-id'), argv.includes('--resume')]).toEqual([CLEARED, false]);
+  });
+
+  it('resumes the cleared conversation once a message was sent in it', async () => {
+    const h = await harness('clear-then-resume');
+    await clearChat(h);
+    h.session.send('next');
+    await waitFor(() => closedTurns(h).length === 3, 'turn in the new conversation closed');
+    expect(flag(await nextLaunch(h), '--resume')).toBe(CLEARED);
+  });
+
+  it('resumes the cleared conversation when claude already wrote its transcript', async () => {
+    const transcripts = tempDir('ide-transcripts-');
+    const h = await harness('clear-then-resume', { transcriptsDir: transcripts });
+    await clearChat(h);
+    const transcript = transcriptPath(transcripts, h.root, CLEARED);
+    mkdirSync(dirname(transcript), { recursive: true });
+    writeFileSync(transcript, '');
+    expect(flag(await nextLaunch(h), '--resume')).toBe(CLEARED);
   });
 
   it('keeps the chat history and resumes the same claude session after a core restart', async () => {

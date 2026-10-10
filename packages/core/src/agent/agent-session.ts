@@ -162,6 +162,9 @@ export class AgentSession {
   private readonly nudged = new Set<string>();
   private interruptKeyAt = Number.NEGATIVE_INFINITY;
   private sweepPending = false;
+  // After /clear claude names the new conversation in its next init; it has no message of its own until one is sent.
+  private clearPending = false;
+  private clearedTo: string | null = null;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
@@ -549,6 +552,8 @@ export class AgentSession {
       this.notes.unshift(...notes);
       throw error;
     }
+    this.clearPending = false;
+    this.clearedTo = null;
     const shown = images.length > 0 ? [text, `[${images.length} image${images.length > 1 ? 's' : ''} attached]`].filter((part) => part !== '').join('\n') : text;
     const changes = injected ? this.tracker.injectedMessage(shown) : this.tracker.userMessage(shown);
     const refs = this.storeImages(images.map((image) => image.data), MAX_CHAT_IMAGES);
@@ -746,6 +751,8 @@ export class AgentSession {
     this.permissionMode = null;
     this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
+    this.clearPending = false;
+    this.clearedTo = null;
     this.decisions.clear();
     this.emit({ type: 'session.snapshot', state: this.state() });
   }
@@ -760,6 +767,8 @@ export class AgentSession {
     this.permissionMode = null;
     this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
+    this.clearPending = false;
+    this.clearedTo = null;
     this.decisions.clear();
     for (const decision of history.decisions) this.decisions.set(decision.toolUseId, decision);
     this.items = new Map([
@@ -815,7 +824,7 @@ export class AgentSession {
     }
     return {
       kind: 'agent', title: 'claude', file: files.claude.command, cwd: session.cwd, env: files.claude.env ?? {},
-      args: [...files.claude.args, ...conversationArgs(session, session.conversationStarted || existsSync(this.transcript(session)), files.configPath, files.gateArgs)],
+      args: [...files.claude.args, ...conversationArgs(session, this.resumable(session), files.configPath, files.gateArgs)],
     };
   }
 
@@ -860,6 +869,11 @@ export class AgentSession {
     return transcriptPath(this.transcriptsDir(session), session.cwd, session.claudeSessionId);
   }
 
+  // claude refuses to resume a conversation it has no transcript of, as after /clear until the next message.
+  private resumable(session: SessionRecord): boolean {
+    return session.conversationStarted || existsSync(this.transcript(session));
+  }
+
   private syncAccount(): void {
     if (!this.session) return;
     const accountId = this.activeAccount();
@@ -899,7 +913,7 @@ export class AgentSession {
     const session = this.session;
     const files = this.launchFiles(session);
     if (!files) return;
-    const child = startClaude(files.claude, claudeArgs(session, files.configPath, files.gateArgs), session.cwd, (line) => this.onLine(line), {
+    const child = startClaude(files.claude, claudeArgs(session, this.resumable(session), files.configPath, files.gateArgs), session.cwd, (line) => this.onLine(line), {
       killGraceMs: this.options.killGraceMs,
     });
     this.process = child;
@@ -947,6 +961,10 @@ export class AgentSession {
   }
 
   private handle(event: StreamEvent): Change[] {
+    if (event.type === 'conversation_reset') {
+      this.clearPending = true;
+      return [];
+    }
     if (event.type === 'control_request') return this.controlRequest(event);
     const changes = this.tracker.event(event);
     if (event.type === 'user') this.attachResultImages(event.toolResults, changes);
@@ -1105,12 +1123,17 @@ export class AgentSession {
         this.permissionMode = change.permissionMode;
         patch.session = sessionView(this.session ?? session, change.permissionMode);
       } else {
+        const claudeSessionId = change.claudeSessionId || session.claudeSessionId;
+        if (this.clearPending) {
+          this.clearPending = false;
+          this.clearedTo = claudeSessionId;
+        }
         const updated: SessionRecord = {
           ...(this.session ?? session),
-          claudeSessionId: change.claudeSessionId || session.claudeSessionId,
+          claudeSessionId,
           model: change.model,
           cliVersion: change.cliVersion,
-          conversationStarted: true,
+          conversationStarted: claudeSessionId !== this.clearedTo,
         };
         this.session = updated;
         this.persist(() => store.saveSession(updated));
@@ -1174,10 +1197,10 @@ function userMessage(text: string, images: ChatImage[]): object {
   return { type: 'user', message: { role: 'user', content: text === '' ? blocks : [...blocks, { type: 'text', text }] } };
 }
 
-function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {
+function claudeArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateArgs: string[]): string[] {
   return [
     '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-    ...conversationArgs(session, session.conversationStarted, mcpConfigPath, gateArgs),
+    ...conversationArgs(session, resume, mcpConfigPath, gateArgs),
     '--permission-prompt-tool', 'stdio',
   ];
 }

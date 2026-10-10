@@ -318,6 +318,7 @@ export class TurnTracker {
         if (block.text.trim() !== '') changes.push(this.message(turnId, parentToolUseId, 'assistant', block.text));
         continue;
       }
+      if (block.kind === 'thinking') continue;
       this.toolNames.set(block.id, block.name);
       const tool: ToolEventRecord = {
         toolUseId: block.id, seq: this.seq++, turnId, parentToolUseId, tool: block.name, input: block.input,
