@@ -13,7 +13,7 @@ import { projectDir, runDir } from '../../src/home';
 import { aliveRoute, Canary } from '../../src/gate/canary';
 import { transcriptPath, UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
-import { isAlive } from '../../src/os-process';
+import { commandLine, isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, writePidRecord, type Launched } from '../fake-claude/fake';
@@ -23,6 +23,12 @@ import { fixture, tempDir, waitFor } from '../helpers';
 vi.mock('../../src/agent/sdk-transport', async (original) => {
   const actual = await original<typeof import('../../src/agent/sdk-transport')>();
   return { ...actual, startSdkTransport: vi.fn(actual.startSdkTransport) };
+});
+
+// Unchanged behaviour; it only lets a test give an ancestor of the core a claude's command line.
+vi.mock('../../src/os-process', async (original) => {
+  const actual = await original<typeof import('../../src/os-process')>();
+  return { ...actual, commandLine: vi.fn(actual.commandLine) };
 });
 
 interface Harness {
@@ -522,6 +528,21 @@ describe('AgentSession', () => {
       await harness('multi-turn', { home, root });
       expect(isAlive(lookalike.pid ?? -1)).toBe(true);
     }
+  });
+
+  it('never signals a stale claude that the core itself runs under', async () => {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const claudeSessionId = randomUUID();
+    vi.mocked(commandLine).mockImplementation((pid) => (pid === process.ppid ? `claude --session-id ${claudeSessionId}` : null));
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    onTestFinished(() => {
+      kill.mockRestore();
+      vi.mocked(commandLine).mockReset();
+    });
+    seedRunningSession(home, root, { claudeSessionId, pid: process.ppid });
+    const h = await harness('multi-turn', { home, root, killGraceMs: 100 });
+    expect([kill.mock.calls.filter(([, name]) => name !== 0), h.session.state().session?.status]).toEqual([[], 'crashed']);
   });
 
   it("deletes a stale session's MCP config file at core start", async () => {

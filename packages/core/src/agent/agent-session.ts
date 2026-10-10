@@ -11,7 +11,7 @@ import type { TerminalLaunch } from '../terminal/terminal-service';
 import { defaultTranscriptsDir, largest, recoverTranscript, transcriptPath, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
 import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
-import { commandLine, forceKill, isAlive, signal } from '../os-process';
+import { commandLine, forceKill, isAlive, reaches, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
@@ -1264,7 +1264,8 @@ async function stopStale(session: SessionRecord, graceMs: number): Promise<void>
   const { pid, launchId } = session;
   if (pid === null || launchId === null) return;
   const launchedWith = new RegExp(`--(?:session-id|resume)[ =]${launchId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`);
-  const isStale = () => launchedWith.test(commandLine(pid) ?? '');
+  // A core started from that claude's Bash would stop itself with it.
+  const isStale = () => launchedWith.test(commandLine(pid) ?? '') && !reaches(pid, process.pid);
   if (!isStale()) return;
   signal(pid, 'SIGTERM');
   const deadline = Date.now() + graceMs;
