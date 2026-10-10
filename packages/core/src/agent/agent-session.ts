@@ -688,6 +688,7 @@ export class AgentSession {
     if (!this.session || this.session.status === 'ended') this.begin();
     const session = this.session;
     if (!session || (session.modelChoice === modelChoice && session.effort === effort)) return;
+    // An effort change restarts claude: its only live path, applyFlagSettings, writes the settings layer that also carries the gate's hooks.
     const liveModel = session.effort === effort;
     this.update({ modelChoice, effort });
     if (!this.transport) return;

@@ -217,6 +217,8 @@ describe('AgentSession.configure', () => {
     expect([current(h).status, current(h).modelChoice, h.setModels()]).toEqual(['running', 'haiku', ['haiku']]);
     await ask(h, 'third', 3);
     expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['opus', 'low']]);
+    await h.session.configure(null, 'low');
+    expect(h.setModels()).toEqual(['haiku', null]);
   });
 
   it('ignores the echo claude prints for a model switch: no turn, no prompt, no message', async () => {
