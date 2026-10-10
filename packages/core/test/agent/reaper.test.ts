@@ -73,7 +73,9 @@ describe('reapOrphans', () => {
     const pid = sleeper();
     recordClaude(dir, pid);
     expect(await reapOrphans(dir, 200)).toEqual([]);
-    onTestFinished(() => vi.mocked(commandLine).mockReset());
+    onTestFinished(() => {
+      vi.mocked(commandLine).mockReset();
+    });
     vi.mocked(commandLine).mockImplementationOnce(() => null);
     expect(await reapOrphans(dir, 200)).toEqual([]);
     expect([isAlive(pid), readdirSync(dir).length]).toEqual([true, 1]);
