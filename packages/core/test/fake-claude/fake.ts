@@ -10,6 +10,12 @@ export interface FakeRecord {
   claudecode?: string | null;
   configDir?: string | null;
   hookNames?: string[];
+  apiKey?: boolean;
+  entrypoint?: string | null;
+  sdkVersion?: string | null;
+  nodeOptions?: boolean;
+  initialize?: { appendSystemPrompt: string | null; systemPromptSnapshot: boolean | null; pid: number };
+  setModel?: string | null;
   sleeperPid?: number;
   ignoredSignal?: string;
   keepsRunning?: boolean;
@@ -33,4 +39,59 @@ export function fakeClaude(scenario: string, recordFile: string): ClaudeCommand 
 export function readRecords(recordFile: string): FakeRecord[] {
   if (!existsSync(recordFile)) return [];
   return readFileSync(recordFile, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as FakeRecord);
+}
+
+export function argValue(argv: string[] | undefined, name: string): string | undefined {
+  if (!argv) return undefined;
+  const at = argv.indexOf(name);
+  if (at !== -1) return argv[at + 1];
+  return argv.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
+}
+
+export const hasArg = (argv: string[] | undefined, name: string): boolean =>
+  argv !== undefined && (argv.includes(name) || argv.some((arg) => arg.startsWith(`${name}=`)));
+
+// One claude start as the session meant it, whichever transport wrote its flags (argv) or its handshake (initialize).
+export interface Launched {
+  pid: number;
+  sessionId: string | undefined;
+  resume: string | undefined;
+  model: string | undefined;
+  effort: string | undefined;
+  mcpConfig: string | undefined;
+  settings: string | undefined;
+  disallowedTools: string[];
+  bypass: boolean;
+  promptsOnStdio: boolean;
+  partialMessages: boolean;
+  appendSystemPrompt: string | null;
+  systemPromptSnapshot: boolean | null;
+  configDir: string | null;
+}
+
+export function launches(records: FakeRecord[]): Launched[] {
+  const handshakes = new Map(records.flatMap((r) => (r.initialize ? [[r.initialize.pid, r.initialize] as const] : [])));
+  return records.flatMap((r) => {
+    const argv = r.argv;
+    if (!argv) return [];
+    const handshake = handshakes.get(r.pid ?? -1);
+    const snapshot = argValue(argv, '--system-prompt-snapshot');
+    return [{
+      pid: r.pid ?? -1,
+      sessionId: argValue(argv, '--session-id'),
+      resume: argValue(argv, '--resume'),
+      model: argValue(argv, '--model'),
+      effort: argValue(argv, '--effort'),
+      mcpConfig: argValue(argv, '--mcp-config'),
+      settings: argValue(argv, '--settings'),
+      disallowedTools: argValue(argv, '--disallowedTools')?.split(',') ?? [],
+      bypass: argv.includes('--dangerously-skip-permissions')
+        || (argValue(argv, '--permission-mode') === 'bypassPermissions' && argv.includes('--allow-dangerously-skip-permissions')),
+      promptsOnStdio: argValue(argv, '--permission-prompt-tool') === 'stdio',
+      partialMessages: argv.includes('--include-partial-messages'),
+      appendSystemPrompt: argValue(argv, '--append-system-prompt') ?? handshake?.appendSystemPrompt ?? null,
+      systemPromptSnapshot: snapshot !== undefined ? snapshot !== 'off' : handshake?.systemPromptSnapshot ?? null,
+      configDir: r.configDir ?? null,
+    }];
+  });
 }

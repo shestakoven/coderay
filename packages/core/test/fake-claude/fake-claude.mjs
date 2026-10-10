@@ -10,12 +10,14 @@ const REJECTED = "The user doesn't want to proceed with this tool use. The tool 
 const INTERRUPTED = '[Request interrupted by user for tool use]';
 
 const argv = process.argv.slice(2);
+// The agent SDK passes most flags as --name=value; the CLI transport passes --name value.
 const flag = (name) => {
   const at = argv.indexOf(name);
-  return at === -1 ? undefined : argv[at + 1];
+  if (at !== -1) return argv[at + 1];
+  return argv.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
 };
 const sessionId = flag('--resume') ?? flag('--session-id') ?? 'fake-session';
-const readJson = (path) => (path ? JSON.parse(readFileSync(path, 'utf8')) : null);
+const readJson = (value) => (value ? JSON.parse(value.trimStart().startsWith('{') ? value : readFileSync(value, 'utf8')) : null);
 const settings = readJson(flag('--settings'));
 const mcpConfig = readJson(flag('--mcp-config'));
 const record = (entry) => {
@@ -23,6 +25,8 @@ const record = (entry) => {
 };
 const emit = (event) => process.stdout.write(`${JSON.stringify(event).replaceAll('$SESSION', sessionId)}\n`);
 const interruptAnswer = (requestId) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { still_queued: [] } } });
+const success = (requestId, response = {}) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
+const INITIALIZE_ANSWER = { commands: [], agents: [], output_style: 'default', available_output_styles: ['default'], models: [], account: {} };
 if (!argv.includes('-p') && process.stdin.isTTY) await import('./fake-claude-tui.mjs');
 const steps = readFileSync(process.env.FAKE_CLAUDE_SCENARIO, 'utf8')
   .replaceAll('$CWD', process.cwd())
@@ -46,15 +50,32 @@ let ignoringSigterm = false;
 let reapHooked = false;
 let wake = () => {};
 
-record({ argv, pid: process.pid, claudecode: process.env.CLAUDECODE ?? null, configDir: process.env.CLAUDE_CONFIG_DIR ?? null, hookNames: Object.keys(settings?.hooks ?? {}).sort() });
+record({
+  argv,
+  pid: process.pid,
+  claudecode: process.env.CLAUDECODE ?? null,
+  configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
+  hookNames: Object.keys(settings?.hooks ?? {}).sort(),
+  apiKey: process.env.ANTHROPIC_API_KEY !== undefined,
+  entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
+  sdkVersion: process.env.CLAUDE_AGENT_SDK_VERSION ?? null,
+  nodeOptions: process.env.NODE_OPTIONS !== undefined,
+});
 
 createInterface({ input: process.stdin })
   .on('line', (line) => {
     const message = JSON.parse(line);
+    const subtype = message.type === 'control_request' ? message.request?.subtype : undefined;
+    // The agent SDK opens every session with initialize: its handshake, not CodeRay's input.
+    if (subtype === 'initialize') {
+      record({ initialize: { appendSystemPrompt: message.request.appendSystemPrompt ?? null, systemPromptSnapshot: message.request.systemPromptSnapshot ?? null, pid: process.pid } });
+      emit(success(message.request_id, INITIALIZE_ANSWER));
+      return;
+    }
     record({ stdin: message });
     if (message.type === 'user') inbox.push(message);
     else if (message.type === 'control_response') answers.push(message);
-    else if (message.type === 'control_request' && message.request?.subtype === 'interrupt') {
+    else if (subtype === 'interrupt') {
       if (inTurn) {
         interrupt = message.request_id;
         running?.kill();
@@ -62,6 +83,10 @@ createInterface({ input: process.stdin })
         killAgents();
         emit(interruptAnswer(message.request_id));
       }
+    } else if (subtype === 'stop_task') stopTask(message.request_id, message.request.task_id);
+    else if (subtype === 'set_model') {
+      record({ setModel: message.request.model ?? null });
+      emit(success(message.request_id));
     } else if (message.type === 'control_request') {
       emit({ type: 'control_response', response: { subtype: 'error', request_id: message.request_id, error: 'unsupported' } });
     }
@@ -135,6 +160,25 @@ function killAgents() {
     emit({ type: 'system', subtype: 'task_notification', task_id: task.task_id, tool_use_id: task.tool_use_id, status: 'stopped', summary: task.description, session_id: sessionId });
   }
   backgroundAgents.clear();
+}
+
+// One background task ends the way the CLI reports a stop_task (spike E4): task_updated killed, then task_notification stopped.
+function stopTask(requestId, taskId) {
+  const agent = backgroundAgents.get(taskId);
+  const shell = [...backgroundShells.entries()].find(([, candidate]) => candidate.taskId === taskId && !candidate.exited);
+  if (!agent && !shell) {
+    emit({ type: 'control_response', response: { subtype: 'error', request_id: requestId, error: `No running task ${taskId}` } });
+    return;
+  }
+  if (agent) backgroundAgents.delete(taskId);
+  else {
+    try {
+      process.kill(-shell[1].pid, 'SIGTERM');
+    } catch {}
+  }
+  emit({ type: 'system', subtype: 'task_updated', task_id: taskId, patch: { status: 'killed' }, session_id: sessionId });
+  emit({ type: 'system', subtype: 'task_notification', task_id: taskId, tool_use_id: agent ? agent.tool_use_id : shell[0], status: 'stopped', output_file: '', summary: agent ? agent.description : '', session_id: sessionId });
+  emit(success(requestId));
 }
 
 function abortTurn(from) {
@@ -401,6 +445,11 @@ while (index < steps.length) {
     process.exit(step.code);
   } else if (step.fake === 'hang') {
     await new Promise(() => setInterval(() => {}, 60_000));
+  } else if (step.fake === 'late-writer') {
+    // A process that inherited claude's stdout and prints after claude itself has exited.
+    const late = `${JSON.stringify(step.event).replaceAll('$SESSION', sessionId)}\n`;
+    const writer = spawn(process.execPath, ['-e', `setTimeout(() => process.stdout.write(${JSON.stringify(late)}), ${Number(step.ms)})`], { stdio: ['ignore', 'inherit', 'ignore'], detached: true });
+    writer.unref();
   } else if (step.fake === 'tool') {
     await runTool(step);
   } else if (step.fake === 'mcp') {

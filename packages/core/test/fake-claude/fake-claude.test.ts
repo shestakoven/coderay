@@ -226,6 +226,52 @@ describe('the fake claude', { timeout: 20_000 }, () => {
     ]);
   });
 
+  function direct(lines: object[], args: string[] = []) {
+    const record = join(tempDir('ide-fake-'), 'record.jsonl');
+    const child = spawn(process.execPath, [FAKE_CLAUDE, ...args], {
+      cwd: tempDir('ide-cwd-'), env: { ...process.env, FAKE_CLAUDE_SCENARIO: scenarioFile(lines), FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_HOOKS: 'off' },
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    onTestFinished(() => {
+      child.kill('SIGKILL');
+    });
+    const seen: Record<string, unknown>[] = [];
+    createInterface({ input: child.stdout }).on('line', (line) => seen.push(JSON.parse(line)));
+    const send = (message: object) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    return { child, seen, send, records: () => readRecords(record) };
+  }
+  const go = { type: 'user', message: { role: 'user', content: 'go' }, parent_tool_use_id: null };
+
+  it('answers the SDK handshake and set_model, reads --name=value flags, and records the handshake apart from the input', async () => {
+    const f = direct([AWAIT, INIT, RESULT, AWAIT], ['--session-id=s-eq', '--model=haiku']);
+    f.send({ type: 'control_request', request_id: 'init-1', request: { subtype: 'initialize', appendSystemPrompt: 'APPEND', systemPromptSnapshot: false } });
+    f.send({ type: 'control_request', request_id: 'model-1', request: { subtype: 'set_model', model: 'opus' } });
+    f.send(go);
+    await waitFor(() => f.seen.some((event) => event.type === 'result'), 'turn answered');
+    const answers = f.seen.flatMap((event) => (event.type === 'control_response' ? [event.response] : []));
+    expect(answers).toMatchObject([{ subtype: 'success', request_id: 'init-1', response: { commands: [], models: [] } }, { subtype: 'success', request_id: 'model-1' }]);
+    expect(f.seen.find((event) => event.type === 'system')?.session_id).toBe('s-eq');
+    const records = f.records();
+    expect([records.find((r) => r.initialize)?.initialize, records.find((r) => r.setModel !== undefined)?.setModel, records.flatMap((r) => (r.stdin ? [r.stdin.type] : []))])
+      .toEqual([{ appendSystemPrompt: 'APPEND', systemPromptSnapshot: false, pid: f.child.pid }, 'opus', ['control_request', 'user']]);
+  });
+
+  it('stops only the background agent stop_task names, then answers', async () => {
+    const agent = (n: string) => [
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'Agent', input: { description: n } }] }, parent_tool_use_id: null, session_id: '$SESSION' },
+      { type: 'system', subtype: 'task_started', task_id: `task_${n}`, tool_use_id: `toolu_${n}`, description: n, is_backgrounded: true, task_type: 'local_agent', session_id: '$SESSION' },
+    ];
+    const f = direct([AWAIT, INIT, ...agent('a'), ...agent('b'), RESULT, { fake: 'sleep', ms: 30_000 }, AWAIT]);
+    f.send(go);
+    await waitFor(() => f.seen.some((event) => event.type === 'result'), 'turn answered');
+    const from = f.seen.length;
+    f.send({ type: 'control_request', request_id: 'stop-1', request: { subtype: 'stop_task', task_id: 'task_a' } });
+    await waitFor(() => f.seen.some((event) => event.type === 'control_response'), 'stop answered');
+    expect(f.seen.slice(from).map((event) => [event.type, event.subtype ?? null, event.task_id ?? (event.response as { subtype: string }).subtype])).toEqual([
+      ['system', 'task_updated', 'task_a'], ['system', 'task_notification', 'task_a'], ['control_response', null, 'success'],
+    ]);
+  });
+
   it('answers a denied prompt with a denial, not the approval', async () => {
     const ask = {
       type: 'control_request', request_id: 'req_a',
