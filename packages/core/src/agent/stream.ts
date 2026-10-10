@@ -45,17 +45,6 @@ type Json = Record<string, unknown>;
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
 const count = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
-export function parseStreamLine(line: string): StreamEvent | null {
-  if (line.trim() === '') return null;
-  let event: unknown;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return { type: 'unknown', label: 'invalid JSON' };
-  }
-  return parseStreamMessage(event);
-}
-
 /** One message as claude prints it on its stream-json output, which is also what the agent SDK hands over. */
 export function parseStreamMessage(event: unknown): StreamEvent {
   if (!isRecord(event)) return { type: 'unknown', label: 'not an object' };

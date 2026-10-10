@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseStreamLine, parseStreamMessage } from '../../src/agent/stream';
+import { parseStreamMessage } from '../../src/agent/stream';
 
 const line = (event: object) => JSON.stringify(event);
+const parseStreamLine = (text: string) => parseStreamMessage(JSON.parse(text));
 
-describe('parseStreamLine', () => {
+describe('parseStreamMessage', () => {
   it('reads the session id, model, CLI version, permission mode and MCP server statuses from init', () => {
     const event = line({
       type: 'system', subtype: 'init', session_id: 's1', model: 'claude-haiku-4-5-20251001', claude_code_version: '2.1.281',
@@ -157,11 +158,6 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine(line(event))).toEqual(expected);
   });
 
-  it('reads a message the SDK hands over as an object the same as its line', () => {
-    const event = { type: 'result', subtype: 'success', origin: { kind: 'task-notification' } };
-    expect(parseStreamMessage(event)).toEqual(parseStreamLine(line(event)));
-  });
-
   describe('streamed text', () => {
     const delta = (text: unknown, parent: string | null = null, deltaType = 'text_delta') =>
       line({ type: 'stream_event', parent_tool_use_id: parent, event: { type: 'content_block_delta', index: 0, delta: { type: deltaType, text } } });
@@ -203,13 +199,9 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine(JSON.stringify({ type: 'tool_progress', tool_use_id: 'toolu_1', heartbeat: true }))).toEqual({ type: 'ignored' });
   });
 
-  it('labels an unknown event or invalid JSON as unknown instead of throwing', () => {
+  it('labels an unknown event or a message that is not an object as unknown instead of throwing', () => {
     expect(parseStreamLine(line({ type: 'brand_new' }))).toEqual({ type: 'unknown', label: 'brand_new' });
     expect(parseStreamLine(line({ type: 'system', subtype: 'brand_new' }))).toEqual({ type: 'unknown', label: 'system/brand_new' });
-    expect(parseStreamLine('{not json')).toEqual({ type: 'unknown', label: 'invalid JSON' });
-  });
-
-  it('skips blank lines', () => {
-    expect(parseStreamLine('   ')).toBeNull();
+    expect(parseStreamMessage('{not json')).toEqual({ type: 'unknown', label: 'not an object' });
   });
 });

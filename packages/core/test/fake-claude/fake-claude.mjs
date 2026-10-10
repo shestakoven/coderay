@@ -10,7 +10,7 @@ const REJECTED = "The user doesn't want to proceed with this tool use. The tool 
 const INTERRUPTED = '[Request interrupted by user for tool use]';
 
 const argv = process.argv.slice(2);
-// The agent SDK passes most flags as --name=value; the CLI transport passes --name value.
+// The agent SDK passes most flags as --name=value; the terminal's hook probe passes --name value.
 const flag = (name) => {
   const at = argv.indexOf(name);
   if (at !== -1) return argv[at + 1];

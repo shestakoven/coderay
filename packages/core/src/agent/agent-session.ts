@@ -14,14 +14,13 @@ import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
 import { commandLine, forceKill, isAlive, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
-import { startCliTransport } from './cli-transport';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
 import { startSdkTransport } from './sdk-transport';
 import { reapOrphans } from './reaper';
 import { parseStreamMessage, type StreamEvent, type ToolResultBlock } from './stream';
 import { TranscriptTail } from './transcript-tail';
-import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type StartTransport, type UserMessage } from './transport';
+import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type UserMessage } from './transport';
 import { usageOf } from './usage';
 import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
@@ -152,7 +151,6 @@ export class AgentSession {
   private permissionMode: string | null = null;
   private usage: UsageView = EMPTY_USAGE;
   private transport: AgentTransport | null = null;
-  private readonly startTransport: StartTransport;
   private exitReason: ExitReason | null = null;
   private terminating = false;
   private versionChecked = false;
@@ -176,8 +174,6 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
-    // Until the CLI transport is deleted, IDE_AGENT_TRANSPORT=cli brings it back, so the whole suite runs on both.
-    this.startTransport = process.env.IDE_AGENT_TRANSPORT === 'cli' ? startCliTransport : startSdkTransport;
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
@@ -931,7 +927,7 @@ export class AgentSession {
     };
     // A stopped claude's last messages may arrive while the next one starts; they no longer belong to the chat.
     const sink = { message: (value: unknown) => { if (this.transport === transport) this.onStreamMessage(value); } };
-    const transport = this.startTransport(launch, sink);
+    const transport = startSdkTransport(launch, sink);
     this.transport = transport;
     this.exitReason = null;
     this.versionChecked = false;

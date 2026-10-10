@@ -49,8 +49,6 @@ export interface AgentTransport {
   kill(): Promise<ProcessExit>;
 }
 
-export type StartTransport = (launch: Launch, sink: TransportSink) => AgentTransport;
-
 export function gateArgs(gate: GateLaunch | null): string[] {
   return gate ? ['--settings', gate.settingsPath, '--append-system-prompt', gate.appendSystemPrompt, '--system-prompt-snapshot', 'off'] : [];
 }

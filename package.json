@@ -6,11 +6,10 @@
   "engines": { "node": ">=24" },
   "scripts": {
     "test": "vitest run --allowOnly=false",
-    "test:cli": "IDE_AGENT_TRANSPORT=cli vitest run --allowOnly=false packages/core/test/agent packages/core/test/execution packages/core/test/gate packages/core/test/fake-claude packages/core/test/main packages/core/test/hub",
     "typecheck": "tsc -p packages/core && tsc -p packages/ui && tsc -p e2e",
     "probe:sdk": "node --import tsx packages/core/scripts/sdk-probe.ts",
     "parity:agent": "node --import tsx packages/core/scripts/agent-parity.ts",
-    "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test && pnpm test:cli",
+    "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
     "e2e": "pnpm --filter @ide/ui build && playwright test",
     "dev:core": "node --watch --import tsx packages/core/src/main.ts --project . --allow-origin http://localhost:5173",
     "core": "node --import tsx packages/core/src/main.ts",

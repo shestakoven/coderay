@@ -52,7 +52,7 @@ export function argValue(argv: string[] | undefined, name: string): string | und
 export const hasArg = (argv: string[] | undefined, name: string): boolean =>
   argv !== undefined && (argv.includes(name) || argv.some((arg) => arg.startsWith(`${name}=`)));
 
-// One claude start as the session meant it, whichever transport wrote its flags (argv) or its handshake (initialize).
+// One claude start as the session meant it, from the flags the SDK wrote (argv) and its handshake (initialize).
 export interface Launched {
   pid: number;
   sessionId: string | undefined;
@@ -76,7 +76,6 @@ export function launches(records: FakeRecord[]): Launched[] {
     const argv = r.argv;
     if (!argv) return [];
     const handshake = handshakes.get(r.pid ?? -1);
-    const snapshot = argValue(argv, '--system-prompt-snapshot');
     return [{
       pid: r.pid ?? -1,
       sessionId: argValue(argv, '--session-id'),
@@ -86,12 +85,11 @@ export function launches(records: FakeRecord[]): Launched[] {
       mcpConfig: argValue(argv, '--mcp-config'),
       settings: argValue(argv, '--settings'),
       disallowedTools: argValue(argv, '--disallowedTools')?.split(',') ?? [],
-      bypass: argv.includes('--dangerously-skip-permissions')
-        || (argValue(argv, '--permission-mode') === 'bypassPermissions' && argv.includes('--allow-dangerously-skip-permissions')),
+      bypass: argValue(argv, '--permission-mode') === 'bypassPermissions' && argv.includes('--allow-dangerously-skip-permissions'),
       promptsOnStdio: argValue(argv, '--permission-prompt-tool') === 'stdio',
       partialMessages: argv.includes('--include-partial-messages'),
-      appendSystemPrompt: argValue(argv, '--append-system-prompt') ?? handshake?.appendSystemPrompt ?? null,
-      systemPromptSnapshot: snapshot !== undefined ? snapshot !== 'off' : handshake?.systemPromptSnapshot ?? null,
+      appendSystemPrompt: handshake?.appendSystemPrompt ?? null,
+      systemPromptSnapshot: handshake?.systemPromptSnapshot ?? null,
       configDir: r.configDir ?? null,
     }];
   });

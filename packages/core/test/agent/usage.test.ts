@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { parseUsage, usageOf } from '../../src/agent/usage';
+import { usageOf } from '../../src/agent/usage';
 
 const line = (event: object) => JSON.stringify(event);
+const parseUsage = (text: string, model: string | null) => usageOf(JSON.parse(text), model);
 const assistant = (usage: object, parent: string | null = null) => line({ type: 'assistant', parent_tool_use_id: parent, message: { role: 'assistant', content: [], usage } });
 
-describe('parseUsage', () => {
+describe('usageOf', () => {
   it('counts the input, cache read and cache creation tokens of a main-thread reply as the context, not the output', () => {
     expect(parseUsage(assistant({ input_tokens: 10, cache_read_input_tokens: 95_000, cache_creation_input_tokens: 1000, output_tokens: 400 }), null))
       .toEqual({ contextTokens: 96_010 });
@@ -21,11 +22,6 @@ describe('parseUsage', () => {
   it('takes the context window of the model that ran, not of another model in the same result', () => {
     const result = line({ type: 'result', modelUsage: { 'claude-opus-5-5': { contextWindow: 1_000_000 }, 'claude-haiku-4-5': { contextWindow: 200_000 } } });
     expect([parseUsage(result, 'claude-haiku-4-5'), parseUsage(result, null)]).toEqual([{ contextWindow: 200_000 }, { contextWindow: 1_000_000 }]);
-  });
-
-  it('reads the same update from a message object as from its line', () => {
-    const event = { type: 'result', modelUsage: { 'claude-haiku-4-5': { contextWindow: 200_000 } } };
-    expect(usageOf(event, null)).toEqual(parseUsage(JSON.stringify(event), null));
   });
 
   it('says nothing for a result without a usable window', () => {
@@ -46,11 +42,11 @@ describe('parseUsage', () => {
   });
 
   it.each([
-    ['a rate limit event with no windows', line({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } })],
-    ['a window without a reset time', line({ type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.1 } } } })],
-    ['a line that mentions usage but is not JSON', 'the "usage" of this tool'],
-    ['an unrelated event', line({ type: 'system', subtype: 'init' })],
-  ])('says nothing for %s', (_name, text) => {
-    expect(parseUsage(text, null)).toBeNull();
+    ['a rate limit event with no windows', { type: 'rate_limit_event', rate_limit_info: { status: 'allowed' } }],
+    ['a window without a reset time', { type: 'rate_limit_event', rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.1 } } } }],
+    ['a message that mentions usage but is not an object', 'the "usage" of this tool'],
+    ['an unrelated event', { type: 'system', subtype: 'init' }],
+  ])('says nothing for %s', (_name, message) => {
+    expect(usageOf(message, null)).toBeNull();
   });
 });

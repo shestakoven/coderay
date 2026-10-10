@@ -27,19 +27,7 @@ function windowOf(modelUsage: unknown, model: string | null): number | null {
   return isRecord(entry) && typeof entry.contextWindow === 'number' ? entry.contextWindow : null;
 }
 
-/** Reads what a stream line says about the context and the account limits; null when it says nothing. */
-export function parseUsage(line: string, model: string | null): UsageUpdate | null {
-  if (!line.includes('"usage"') && !line.includes('"modelUsage"') && !line.includes('rate_limit_event')) return null;
-  let event: unknown;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  return usageOf(event, model);
-}
-
-/** The same for one message object, as the agent SDK hands it over. */
+/** Reads what one stream message says about the context and the account limits; null when it says nothing. */
 export function usageOf(event: unknown, model: string | null): UsageUpdate | null {
   if (!isRecord(event)) return null;
   if (event.type === 'rate_limit_event') {
