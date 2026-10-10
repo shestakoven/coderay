@@ -1,5 +1,5 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { forceKill, isAlive, signal } from '../src/os-process';
+import { forceKill, isAlive, signal, signalGroup } from '../src/os-process';
 
 describe('process control', () => {
   it('never signals a pid that is not a whole number above 1', () => {
@@ -9,6 +9,7 @@ describe('process control', () => {
 
     for (const pid of invalid) {
       signal(pid, 'SIGKILL');
+      signalGroup(pid, 'SIGKILL');
       forceKill(pid);
     }
 

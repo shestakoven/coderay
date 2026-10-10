@@ -6,6 +6,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
+import { recordClaude } from '../../src/agent/reaper';
 import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
@@ -288,6 +289,16 @@ describe('AgentSession', () => {
     expect(h.store.latestSession()?.pid).toBe(pid);
   });
 
+  it('keeps a pid file in the shared run directory for the running claude, naming this core, and removes it when claude exits', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    const pid = await waitFor(() => h.store.latestSession()?.pid, 'claude started');
+    const file = join(runDir(h.home), `claude-${pid}.pid.json`);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid, owner: process.pid });
+    await h.session.close();
+    expect(existsSync(file)).toBe(false);
+  });
+
   it('answers the next message after a stop', async () => {
     const h = await harness('interrupt-bash');
     h.session.send('run it');
@@ -450,6 +461,18 @@ describe('AgentSession', () => {
 
     expect(await staleExit).toBe('SIGKILL');
     await waitFor(() => !isAlive(sleeper), 'sleeper stopped');
+  });
+
+  it('stops the orphaned claude of a dead core before it opens the chat', async () => {
+    const home = tempDir('ide-home-');
+    mkdirSync(runDir(home), { recursive: true });
+    const record = join(home, 'orphan-record.jsonl');
+    const orphan = spawnHanging(randomUUID(), 'orphan-mid-tool', record);
+    const orphanExit = exitSignal(orphan);
+    await waitFor(() => readRecords(record).some((r) => r.sleeperPid), 'orphan ignores SIGTERM');
+    recordClaude(runDir(home), orphan.pid ?? -1, await deadPid());
+    await harness('multi-turn', { home, killGraceMs: 200 });
+    expect(await orphanExit).toBe('SIGKILL');
   });
 
   it('leaves alone a live process whose command line does not name the recorded session', async () => {

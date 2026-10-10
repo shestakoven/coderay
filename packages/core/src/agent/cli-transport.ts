@@ -20,7 +20,7 @@ export function cliArgs(launch: Launch): string[] {
 export function startCliTransport(launch: Launch, sink: TransportSink): AgentTransport {
   const child = startClaude(launch.claude, cliArgs(launch), launch.cwd, (line) => {
     if (line.trim() !== '') sink.message(parseJson(line) ?? line);
-  }, { killGraceMs: launch.killGraceMs });
+  }, { killGraceMs: launch.killGraceMs, pidDir: launch.pidDir });
   return {
     pid: child.pid,
     exited: child.exited,

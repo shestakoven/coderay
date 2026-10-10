@@ -1,7 +1,9 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
+import { rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { forceKill, signal } from '../os-process';
+import { recordClaude } from './reaper';
 
 export interface ClaudeCommand {
   command: string;
@@ -18,6 +20,8 @@ export interface ProcessExit {
 
 export interface ClaudeProcessOptions {
   killGraceMs?: number;
+  // Where this claude's pid file goes, for the reaper of a core that dies without stopping it.
+  pidDir?: string;
 }
 
 export interface ClaudeProcess {
@@ -48,6 +52,7 @@ export function claudeEnv(command: ClaudeCommand): NodeJS.ProcessEnv {
 export function spawnClaude(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, options: ClaudeProcessOptions = {}): SpawnedClaude {
   // Detached so that Ctrl+C in the core's terminal reaches the core only; the core stops claude itself.
   const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  const pidFile = options.pidDir !== undefined && child.pid !== undefined ? recordClaude(options.pidDir, child.pid) : null;
   let stderr = '';
   let error: string | null = null;
   child.stderr.setEncoding('utf8');
@@ -74,6 +79,7 @@ export function spawnClaude(file: string, args: string[], cwd: string, env: Node
     child.once('close', finish);
     child.once('exit', (code, exitSignal) => {
       process.removeListener('exit', onCoreExit);
+      if (pidFile) rmSync(pidFile, { force: true });
       // A process that inherited stdout can hold 'close' back; 'exit' alone means claude itself is gone.
       fallback = setTimeout(() => finish(code, exitSignal), CLOSE_AFTER_EXIT_MS);
     });

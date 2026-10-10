@@ -101,7 +101,7 @@ export function startSdkTransport(launch: Launch, sink: TransportSink): AgentTra
         const flags = SCRIPT.test(launch.claude.command) ? options.args.slice(1) : options.args;
         const env = { ...options.env };
         for (const name of KEPT_FROM_CORE) if (core[name] !== undefined) env[name] = core[name];
-        started.claude = spawnClaude(launch.claude.command, [...launch.claude.args, ...flags], options.cwd ?? launch.cwd, env, { killGraceMs: launch.killGraceMs });
+        started.claude = spawnClaude(launch.claude.command, [...launch.claude.args, ...flags], options.cwd ?? launch.cwd, env, { killGraceMs: launch.killGraceMs, pidDir: launch.pidDir });
         return started.claude.child;
       },
     },

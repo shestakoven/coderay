@@ -19,6 +19,7 @@ export interface Launch {
   disallowedTools: string[];
   gate: GateLaunch | null;
   killGraceMs?: number;
+  pidDir?: string;
 }
 
 type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: ImageMediaType; data: string } };

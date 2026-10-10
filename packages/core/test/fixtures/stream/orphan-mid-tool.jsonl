@@ -1,0 +1,4 @@
+{"fake":"ignore-stdin-close"}
+{"fake":"ignore-sigterm"}
+{"fake":"spawn-sleeper"}
+{"fake":"hang"}

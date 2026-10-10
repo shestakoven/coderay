@@ -55,3 +55,13 @@ export function commandLine(pid: number): string | null {
     return null;
   }
 }
+
+// A detached process leads its own group, which outlives it while any member runs, so the group id cannot be reused meanwhile.
+export function signalGroup(pgid: number, name: NodeJS.Signals): void {
+  if (!isProcessId(pgid)) return;
+  try {
+    process.kill(-pgid, name);
+  } catch {
+    // ESRCH: no process of the group is left.
+  }
+}

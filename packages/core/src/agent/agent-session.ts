@@ -18,6 +18,7 @@ import { startCliTransport } from './cli-transport';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
 import { startSdkTransport } from './sdk-transport';
+import { reapOrphans } from './reaper';
 import { parseStreamMessage, type StreamEvent, type ToolResultBlock } from './stream';
 import { TranscriptTail } from './transcript-tail';
 import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type StartTransport, type UserMessage } from './transport';
@@ -199,6 +200,7 @@ export class AgentSession {
 
   async start(): Promise<void> {
     try {
+      await reapOrphans(runDir(this.options.home), this.options.killGraceMs ?? KILL_GRACE_MS);
       await this.loadLatest();
     } finally {
       this.started = true;
@@ -921,6 +923,7 @@ export class AgentSession {
       model: session.modelChoice !== null && isModelChoice(session.modelChoice) ? session.modelChoice : null,
       effort: session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? session.effort : null,
       mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate, killGraceMs: this.options.killGraceMs,
+      pidDir: runDir(this.options.home),
     };
     // A stopped claude's last messages may arrive while the next one starts; they no longer belong to the chat.
     const sink = { message: (value: unknown) => { if (this.transport === transport) this.onStreamMessage(value); } };
