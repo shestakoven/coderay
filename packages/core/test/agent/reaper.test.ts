@@ -8,6 +8,12 @@ import { commandLine, isAlive, signal } from '../../src/os-process';
 import { FAKE_CLAUDE, readRecords, writePidRecord } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
+// Unchanged behaviour; it only lets a test fail a read of a live process's command line.
+vi.mock('../../src/os-process', async (original) => {
+  const actual = await original<typeof import('../../src/os-process')>();
+  return { ...actual, commandLine: vi.fn(actual.commandLine) };
+});
+
 const CRASHING_HOST = fileURLToPath(new URL('../fake-claude/crashing-host.ts', import.meta.url));
 
 function sleeper(): number {
@@ -62,10 +68,13 @@ describe('reapOrphans', () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  it("leaves a claude whose core is alive, this core's or another project's", async () => {
+  it("leaves a claude whose core is alive, this core's or another project's, even when the core's command line cannot be read", async () => {
     const dir = tempDir('ide-run-');
     const pid = sleeper();
     recordClaude(dir, pid);
+    expect(await reapOrphans(dir, 200)).toEqual([]);
+    onTestFinished(() => vi.mocked(commandLine).mockReset());
+    vi.mocked(commandLine).mockImplementationOnce(() => null);
     expect(await reapOrphans(dir, 200)).toEqual([]);
     expect([isAlive(pid), readdirSync(dir).length]).toEqual([true, 1]);
   });
@@ -81,7 +90,7 @@ describe('reapOrphans', () => {
 
   it("never trusts a recorded core's pid that is alive but runs another program, never signals the core itself nor a claude that holds it, and keeps that claude recorded", async () => {
     const dir = tempDir('ide-run-');
-    const owner = await deadPid();
+    const owner = process.pid;
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     onTestFinished(() => kill.mockRestore());
     const own = writePidRecord(dir, process.pid, owner, 'node /gone/core/main.ts');

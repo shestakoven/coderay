@@ -61,7 +61,8 @@ export async function reapOrphans(dir: string, graceMs: number): Promise<number[
   for (const name of names) {
     const file = join(dir, name);
     const record = readRecord(file);
-    if (record && running(record.owner, record.ownerCommand)) continue;
+    // A live core whose command line cannot be read right now keeps its claude: a stop cannot be undone.
+    if (record && isAlive(record.owner) && (commandLine(record.owner)?.trim() ?? record.ownerCommand) === record.ownerCommand) continue;
     if (record && record.pid !== process.pid && running(record.pid, record.command)) {
       // A core that a claude's tool started cannot stop that claude without stopping itself; the file stays for a core outside it.
       if (!reaches(record.pid, process.pid)) orphans.push({ pid: record.pid, file });
