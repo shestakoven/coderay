@@ -176,8 +176,8 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
-    // Until the CLI transport is deleted, IDE_AGENT_TRANSPORT chooses the transport, so the whole suite runs on both.
-    this.startTransport = process.env.IDE_AGENT_TRANSPORT === 'sdk' ? startSdkTransport : startCliTransport;
+    // Until the CLI transport is deleted, IDE_AGENT_TRANSPORT=cli brings it back, so the whole suite runs on both.
+    this.startTransport = process.env.IDE_AGENT_TRANSPORT === 'cli' ? startCliTransport : startSdkTransport;
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
