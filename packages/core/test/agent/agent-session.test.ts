@@ -6,7 +6,6 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
-import { recordClaude } from '../../src/agent/reaper';
 import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
@@ -16,7 +15,7 @@ import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
-import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, type Launched } from '../fake-claude/fake';
+import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, writePidRecord, type Launched } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
 interface Harness {
@@ -470,7 +469,7 @@ describe('AgentSession', () => {
     const orphan = spawnHanging(randomUUID(), 'orphan-mid-tool', record);
     const orphanExit = exitSignal(orphan);
     await waitFor(() => readRecords(record).some((r) => r.sleeperPid), 'orphan ignores SIGTERM');
-    recordClaude(runDir(home), orphan.pid ?? -1, await deadPid());
+    writePidRecord(runDir(home), orphan.pid ?? -1, await deadPid(), 'node /gone/core/main.ts');
     await harness('multi-turn', { home, killGraceMs: 200 });
     expect(await orphanExit).toBe('SIGKILL');
   });

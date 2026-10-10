@@ -1,9 +1,8 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
-import { rmSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import { forceKill, signal } from '../os-process';
-import { recordClaude } from './reaper';
+import { recordClaude, removePidFile } from './reaper';
 
 export interface ClaudeCommand {
   command: string;
@@ -79,7 +78,7 @@ export function spawnClaude(file: string, args: string[], cwd: string, env: Node
     child.once('close', finish);
     child.once('exit', (code, exitSignal) => {
       process.removeListener('exit', onCoreExit);
-      if (pidFile) rmSync(pidFile, { force: true });
+      if (pidFile) removePidFile(pidFile);
       // A process that inherited stdout can hold 'close' back; 'exit' alone means claude itself is gone.
       fallback = setTimeout(() => finish(code, exitSignal), CLOSE_AFTER_EXIT_MS);
     });

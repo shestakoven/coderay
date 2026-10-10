@@ -1,7 +1,8 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { isAbsolute } from 'node:path';
+import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { isAbsolute, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ClaudeCommand } from '../../src/agent/claude-process';
+import { commandLine } from '../../src/os-process';
 import { fixture } from '../helpers';
 
 export interface FakeRecord {
@@ -94,4 +95,11 @@ export function launches(records: FakeRecord[]): Launched[] {
       configDir: r.configDir ?? null,
     }];
   });
+}
+
+// A pid file as a core that is gone left it: the owner and its command line are whatever the test says.
+export function writePidRecord(dir: string, pid: number, owner: number, ownerCommand: string, command = commandLine(pid)?.trim() ?? ''): string {
+  const file = join(dir, `claude-${pid}.pid.json`);
+  writeFileSync(file, JSON.stringify({ pid, command, owner, ownerCommand }));
+  return file;
 }

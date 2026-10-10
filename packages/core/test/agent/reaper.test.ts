@@ -1,11 +1,11 @@
 import { spawn } from 'node:child_process';
-import { existsSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { reapOrphans, recordClaude } from '../../src/agent/reaper';
 import { commandLine, isAlive, signal } from '../../src/os-process';
-import { FAKE_CLAUDE, readRecords } from '../fake-claude/fake';
+import { FAKE_CLAUDE, readRecords, writePidRecord } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
 const CRASHING_HOST = fileURLToPath(new URL('../fake-claude/crashing-host.ts', import.meta.url));
@@ -30,11 +30,16 @@ async function deadPid(): Promise<number> {
   return child.pid ?? -1;
 }
 
-const record = (dir: string, pid: number, owner: number, ownerCommand: string, command = commandLine(pid)?.trim() ?? '') => {
-  const file = join(dir, `claude-${pid}.pid.json`);
-  writeFileSync(file, JSON.stringify({ pid, command, owner, ownerCommand }));
-  return file;
-};
+describe('recordClaude', () => {
+  it("names the core by its own command line, and writes nothing when the owner's cannot be read", async () => {
+    const dir = tempDir('ide-run-');
+    const pid = sleeper();
+    expect(recordClaude(dir, pid, await deadPid())).toBeNull();
+    expect(readdirSync(dir)).toEqual([]);
+    const file = recordClaude(dir, pid) ?? '';
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid, owner: process.pid, ownerCommand: commandLine(process.pid)?.trim() });
+  });
+});
 
 describe('reapOrphans', () => {
   it('stops a claude whose core was killed mid-tool, and the tool, when the next core starts', async () => {
@@ -68,7 +73,7 @@ describe('reapOrphans', () => {
   it('takes a core whose pid now runs another program for dead', async () => {
     const dir = tempDir('ide-run-');
     const pid = sleeper();
-    record(dir, pid, sleeper(), 'node /gone/core/main.ts --project /gone');
+    writePidRecord(dir, pid, sleeper(), 'node /gone/core/main.ts --project /gone');
     expect(await reapOrphans(dir, 200)).toEqual([pid]);
     await waitFor(() => !isAlive(pid), 'orphan stopped');
   });
@@ -76,28 +81,34 @@ describe('reapOrphans', () => {
   it('never signals a process whose command line is not the recorded one, and forgets its file', async () => {
     const dir = tempDir('ide-run-');
     const pid = sleeper();
-    const file = record(dir, pid, await deadPid(), 'node /gone/core/main.ts', 'claude --session-id=gone');
+    mkdirSync(join(dir, 'claude-7.pid.json'));
+    const file = writePidRecord(dir, pid, await deadPid(), 'node /gone/core/main.ts', 'claude --session-id=gone');
     expect(await reapOrphans(dir, 200)).toEqual([]);
     expect([isAlive(pid), existsSync(file)]).toEqual([true, false]);
   });
 
-  it('never signals the core itself, even when a record names its pid', async () => {
+  it('never signals the core itself, nor a claude that holds it, and keeps that claude recorded', async () => {
     const dir = tempDir('ide-run-');
     const owner = await deadPid();
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     onTestFinished(() => kill.mockRestore());
-    const file = record(dir, process.pid, owner, 'node /gone/core/main.ts');
+    const own = writePidRecord(dir, process.pid, owner, 'node /gone/core/main.ts');
+    const holding = writePidRecord(dir, process.ppid, owner, 'node /gone/core/main.ts');
     expect(await reapOrphans(dir, 100)).toEqual([]);
-    expect([kill.mock.calls.filter(([, name]) => name !== 0), existsSync(file)]).toEqual([[], false]);
+    expect([kill.mock.calls.filter(([, name]) => name !== 0), existsSync(own), existsSync(holding)]).toEqual([[], false, true]);
   });
 
   it('gives all orphans the grace time together, not one after another', async () => {
     const dir = tempDir('ide-run-');
     const orphans = [await stubbornSleeper(), await stubbornSleeper()];
-    for (const pid of orphans) record(dir, pid, await deadPid(), 'node /gone/core/main.ts');
+    for (const pid of orphans) writePidRecord(dir, pid, await deadPid(), 'node /gone/core/main.ts');
     const started = Date.now();
-    expect((await reapOrphans(dir, 500)).sort()).toEqual([...orphans].sort());
+    const reaping = reapOrphans(dir, 500);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    expect(readdirSync(dir)).toHaveLength(2);
+    expect((await reaping).sort()).toEqual([...orphans].sort());
     expect(Date.now() - started).toBeLessThan(900);
+    expect(readdirSync(dir)).toEqual([]);
     await waitFor(() => orphans.every((pid) => !isAlive(pid)), 'orphans stopped');
   });
 });
