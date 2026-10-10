@@ -21,7 +21,7 @@ const WRAPPER = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 const log = (line) => appendFileSync(process.env.WRAPPER_LOG, line + '\\n');
-if (process.argv.includes('-p')) {
+if (process.argv.includes('--input-format')) {
   log((process.argv.includes('--no-session-persistence') ? 'probe ' : 'chat ') + process.pid);
 } else {
   log('start ' + process.pid);

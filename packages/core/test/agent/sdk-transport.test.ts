@@ -63,6 +63,7 @@ describe('sdkOptions', () => {
 describe('startSdkTransport', () => {
   it("runs claude with the SDK's markers and the core's NODE_OPTIONS, and leaves the core's environment as it was", async () => {
     vi.stubEnv('NODE_OPTIONS', '--max-old-space-size=4096');
+    vi.stubEnv('CLAUDE_CODE_ENTRYPOINT', 'cli');
     onTestFinished(() => {
       vi.unstubAllEnvs();
     });

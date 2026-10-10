@@ -9,7 +9,7 @@ import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
 import { accountsDir, fakeCli, seedAccounts, withEnv, type SeededAccount } from '../accounts/fake-cli';
-import { fakeClaude, readRecords } from '../fake-claude/fake';
+import { argValue, fakeClaude, hasArg, readRecords } from '../fake-claude/fake';
 import { tempDir, waitFor } from '../helpers';
 
 interface Harness {
@@ -56,7 +56,7 @@ async function harness(w: World, scenario = 'multi-turn'): Promise<Harness> {
   };
 }
 
-const flag = (argv: string[] | undefined, name: string) => (argv?.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
+const flag = argValue;
 const closedTurns = (h: Harness) => h.session.state().turns.filter((turn) => turn.closedAt !== null).length;
 const itemTexts = (items: ChatItem[]) => items.flatMap((item) => (item.kind === 'tool' || item.kind === 'prompt' ? [] : [item.text]));
 const switchNotices = (h: Harness) => itemTexts(h.session.state().items).filter((text) => text.includes('Switched to account'));
@@ -97,7 +97,7 @@ describe('AgentSession under a Claude account', () => {
     const first = await firstTurn(h);
     await h.session.restart();
     const second = await nextSpawn(h);
-    expect([flag(second.argv, '--resume'), second.argv.includes('--session-id'), second.configDir, switchNotices(h)]).toStrictEqual([
+    expect([flag(second.argv, '--resume'), hasArg(second.argv, '--session-id'), second.configDir, switchNotices(h)]).toStrictEqual([
       flag(first.argv, '--session-id'), false, w.dirOf(w.seeded[0]!), [],
     ]);
   });
@@ -110,7 +110,7 @@ describe('AgentSession under a Claude account', () => {
     w.accounts.setActive(w.seeded[1]!.id);
     const second = await nextSpawn(h);
     const fresh = flag(second.argv, '--session-id');
-    expect([second.argv.includes('--resume'), fresh === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), fresh === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
     expect(h.store.latestSession()).toMatchObject({ claudeSessionId: fresh, accountId: w.seeded[1]!.id });
@@ -134,7 +134,7 @@ describe('AgentSession under a Claude account', () => {
     await h.session.restart();
     w.accounts.setActive(w.seeded[0]!.id);
     const second = await nextSpawn(h);
-    expect([second.argv.includes('--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[0]!),
     ]);
     expect(switchNotices(h)[0]).toContain('Switched to account a@example.com');
@@ -147,7 +147,7 @@ describe('AgentSession under a Claude account', () => {
     await h.session.restart();
     w.accounts.setActive(null);
     const second = await nextSpawn(h);
-    expect([second.argv.includes('--resume'), second.configDir, h.store.latestSession()?.accountId]).toStrictEqual([false, null, null]);
+    expect([hasArg(second.argv, '--resume'), second.configDir, h.store.latestSession()?.accountId]).toStrictEqual([false, null, null]);
     expect(switchNotices(h)[0]).toContain('Switched to account System');
   });
 
@@ -159,7 +159,7 @@ describe('AgentSession under a Claude account', () => {
     w.accounts.setActive(w.seeded[1]!.id);
     const after = await harness(w);
     const second = await nextSpawn(after);
-    expect([second.argv.includes('--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
   });
@@ -216,7 +216,7 @@ describe('AgentSession.changeAccount', () => {
     const first = await firstTurn(h);
     await h.session.changeAccount(() => w.accounts.setActive(w.seeded[1]!.id));
     const second = await nextSpawn(h);
-    expect([second.argv.includes('--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
   });
@@ -227,6 +227,6 @@ describe('AgentSession.changeAccount', () => {
     await firstTurn(h);
     await h.session.changeAccount(() => w.accounts.remove(w.seeded[0]!.id));
     const second = await nextSpawn(h);
-    expect([w.accounts.activeId(), second.configDir, second.argv.includes('--resume')]).toStrictEqual([null, null, false]);
+    expect([w.accounts.activeId(), second.configDir, hasArg(second.argv, '--resume')]).toStrictEqual([null, null, false]);
   });
 });

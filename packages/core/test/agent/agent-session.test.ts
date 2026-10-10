@@ -15,7 +15,7 @@ import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
 import { isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
-import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
+import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, type Launched } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
 interface Harness {
@@ -25,6 +25,7 @@ interface Harness {
   root: string;
   broadcasts: SessionServerMessage[];
   argvs: () => string[][];
+  launches: () => Launched[];
   stdin: () => { type: string; [key: string]: unknown }[];
 }
 
@@ -46,6 +47,7 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
   return {
     session, store, home, root, broadcasts,
     argvs: () => records().flatMap((r) => (r.argv ? [r.argv] : [])),
+    launches: () => launches(records()),
     stdin: () => records().flatMap((r) => (r.stdin ? [r.stdin] : [])),
   };
 }
@@ -88,7 +90,7 @@ const exitSignal = (child: ReturnType<typeof spawn>) =>
 const closedTurns = (h: Harness) => h.session.state().turns.filter((turn) => turn.closedAt !== null);
 const texts = (items: ChatItem[]) =>
   items.map((item) => (item.kind === 'tool' ? `${item.tool}:${item.status}` : item.kind === 'prompt' ? `prompt:${item.status}` : item.text));
-const flag = (argv: string[] | undefined, name: string) => argv?.[argv.indexOf(name) + 1];
+const flag = argValue;
 const pendingPrompt = (h: Harness) =>
   waitFor(() => h.session.state().items.find((item) => item.kind === 'prompt' && item.status === 'pending'), 'prompt shown');
 const controlResponse = (h: Harness) => h.stdin().find((message) => message.type === 'control_response');
@@ -103,20 +105,19 @@ const promptAnswer = (h: Harness) => {
 };
 
 describe('AgentSession', () => {
-  it('spawns claude in stream-json mode with a per-session MCP config, the disallowed tools, bypass permissions and prompts on stdio', async () => {
+  it('starts claude for the chat with its session id, sonnet and medium, its MCP config, the disallowed tools, bypass, prompts on stdio and partial messages', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
-    const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
+    const [launch] = await waitFor(() => h.launches().length === 1 && h.launches(), 'claude spawned');
     const session = h.session.state().session;
-    expect(argv).toEqual([
-      '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-      '--session-id', session?.claudeSessionId,
-      '--model', 'sonnet', '--effort', 'medium',
-      '--mcp-config', join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
-      '--disallowedTools', 'SendMessage,CronCreate,CronDelete,CronList,ScheduleWakeup,RemoteTrigger,Workflow,EnterWorktree,ExitWorktree,DesignSync,PushNotification',
-      '--dangerously-skip-permissions',
-      '--permission-prompt-tool', 'stdio',
-    ]);
+    expect(launch).toMatchObject({
+      sessionId: session?.claudeSessionId, resume: undefined, model: 'sonnet', effort: 'medium',
+      mcpConfig: join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
+      disallowedTools: ['SendMessage', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger', 'Workflow', 'EnterWorktree', 'ExitWorktree', 'DesignSync', 'PushNotification'],
+      bypass: true, promptsOnStdio: true, partialMessages: true,
+    });
+    const [argv] = h.argvs();
+    expect([flag(argv, '--input-format'), flag(argv, '--output-format'), hasArg(argv, '--verbose')]).toEqual(['stream-json', 'stream-json', true]);
   });
 
   it("writes the user's message to claude and records the answer in a closed user turn", async () => {
@@ -324,7 +325,7 @@ describe('AgentSession', () => {
     h.session.send('run it');
     expect(h.session.stopTask('t1')).toBe(true);
     const request = await waitFor(() => h.stdin().find((message) => message.type === 'control_request'), 'stop_task written');
-    expect(request).toEqual({ type: 'control_request', request_id: expect.stringMatching(/^stop-task-/), request: { subtype: 'stop_task', task_id: 't1' } });
+    expect(request).toEqual({ type: 'control_request', request_id: expect.stringMatching(/^\S+$/), request: { subtype: 'stop_task', task_id: 't1' } });
   });
 
   it('an agent-initiated turn does not shift turn matching', async () => {
@@ -363,7 +364,7 @@ describe('AgentSession', () => {
     h.session.send('again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude respawned');
     expect(flag(argvs[1], '--resume')).toBe(flag(argvs[0], '--session-id'));
-    expect(argvs[1]).not.toContain('--session-id');
+    expect(hasArg(argvs[1], '--session-id')).toBe(false);
   });
 
   // claude names the conversation /clear starts twice: in the reset and in the init after it; only the init's id has a transcript.
@@ -385,7 +386,7 @@ describe('AgentSession', () => {
     await clearChat(h);
     expect(h.session.state().session?.claudeSessionId).toBe(CLEARED);
     const argv = await nextLaunch(h);
-    expect([flag(argv, '--session-id'), argv.includes('--resume')]).toEqual([CLEARED, false]);
+    expect([flag(argv, '--session-id'), hasArg(argv, '--resume')]).toEqual([CLEARED, false]);
   });
 
   it('resumes the cleared conversation once a message was sent in it', async () => {
@@ -727,20 +728,20 @@ const decision = (toolUseId: string) => ({
 });
 
 describe('AgentSession with the gate', () => {
-  it('passes the hook settings, CodeRay system prompt and a fresh system prompt before the permission flags, on the first spawn and on resume', async () => {
+  it("passes the gate's hook settings and adds CodeRay's system prompt, recorded fresh, on the first spawn and on resume", async () => {
     const h = await gatedHarness('multi-turn');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
     await h.session.restart();
     h.session.send('again');
-    const [first, resumed] = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude resumed');
+    const [first, resumed] = await waitFor(() => {
+      const all = h.launches();
+      return all.length === 2 && all.every((launch) => launch.appendSystemPrompt !== null) && all;
+    }, 'claude resumed');
     const files = gateFiles(h.home, h.root, h.session.sessionId());
-    const tail = (argv: string[] | undefined) => argv?.slice(argv.indexOf('--disallowedTools') + 2);
-    const expected = [
-      '--settings', files[0], '--append-system-prompt', systemPrompt(COMPONENTS), '--system-prompt-snapshot', 'off',
-      '--dangerously-skip-permissions', '--permission-prompt-tool', 'stdio',
-    ];
-    expect([flag(resumed, '--resume'), tail(first), tail(resumed)]).toEqual([flag(first, '--session-id'), expected, expected]);
+    const gated = (launch: Launched | undefined) => [launch?.settings, launch?.appendSystemPrompt, launch?.systemPromptSnapshot, launch?.bypass];
+    const expected = [files[0], systemPrompt(COMPONENTS), false, true];
+    expect([resumed?.resume, gated(first), gated(resumed)]).toEqual([first?.sessionId, expected, expected]);
     expect(files.map((file) => existsSync(file))).toEqual([true, true]);
   });
 
