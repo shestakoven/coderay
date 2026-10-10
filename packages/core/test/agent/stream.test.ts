@@ -54,14 +54,14 @@ describe('parseStreamMessage', () => {
     const event = line({
       type: 'assistant', parent_tool_use_id: 'toolu_agent',
       message: { role: 'assistant', content: [
-        { type: 'thinking', thinking: '', signature: 'x' },
+        { type: 'thinking', thinking: 'why', signature: 'x' },
         { type: 'text', text: 'hi' },
         { type: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } },
       ] },
     });
     expect(parseStreamLine(event)).toEqual({
       type: 'assistant', parentToolUseId: 'toolu_agent',
-      blocks: [{ kind: 'thinking', text: '' }, { kind: 'text', text: 'hi' }, { kind: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } }],
+      blocks: [{ kind: 'thinking', text: 'why' }, { kind: 'text', text: 'hi' }, { kind: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } }],
     });
   });
 

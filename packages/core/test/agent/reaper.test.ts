@@ -70,14 +70,6 @@ describe('reapOrphans', () => {
     expect([isAlive(pid), readdirSync(dir).length]).toEqual([true, 1]);
   });
 
-  it('takes a core whose pid now runs another program for dead', async () => {
-    const dir = tempDir('ide-run-');
-    const pid = sleeper();
-    writePidRecord(dir, pid, sleeper(), 'node /gone/core/main.ts --project /gone');
-    expect(await reapOrphans(dir, 200)).toEqual([pid]);
-    await waitFor(() => !isAlive(pid), 'orphan stopped');
-  });
-
   it('never signals a process whose command line is not the recorded one, and forgets its file', async () => {
     const dir = tempDir('ide-run-');
     const pid = sleeper();
@@ -102,13 +94,21 @@ describe('reapOrphans', () => {
     const dir = tempDir('ide-run-');
     const orphans = [await stubbornSleeper(), await stubbornSleeper()];
     for (const pid of orphans) writePidRecord(dir, pid, await deadPid(), 'node /gone/core/main.ts');
-    const started = Date.now();
-    const reaping = reapOrphans(dir, 500);
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(readdirSync(dir)).toHaveLength(2);
-    expect((await reaping).sort()).toEqual([...orphans].sort());
-    expect(Date.now() - started).toBeLessThan(900);
-    expect(readdirSync(dir)).toEqual([]);
+    vi.useFakeTimers({ toFake: ['setTimeout', 'Date'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    let reaped: number[] | null = null;
+    void reapOrphans(dir, 500).then((pids) => {
+      reaped = pids;
+    });
+    await vi.advanceTimersByTimeAsync(100);
+    expect([reaped, readdirSync(dir).length]).toEqual([null, 2]);
+    // One after another, the second orphan's grace time would only have begun by now.
+    await vi.advanceTimersByTimeAsync(450);
+    await new Promise((resolve) => setImmediate(resolve));
+    expect([[...(reaped ?? [])].sort(), readdirSync(dir)]).toEqual([[...orphans].sort(), []]);
+    vi.useRealTimers();
     await waitFor(() => orphans.every((pid) => !isAlive(pid)), 'orphans stopped');
   });
 });

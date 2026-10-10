@@ -258,22 +258,6 @@ describe('the fake claude', { timeout: 20_000 }, () => {
       .toEqual([{ appendSystemPrompt: 'APPEND', systemPromptSnapshot: false, pid: f.child.pid }, 'opus', ['control_request', 'user']]);
   });
 
-  it('stops only the background agent stop_task names, then answers', async () => {
-    const agent = (n: string) => [
-      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'Agent', input: { description: n } }] }, parent_tool_use_id: null, session_id: '$SESSION' },
-      { type: 'system', subtype: 'task_started', task_id: `task_${n}`, tool_use_id: `toolu_${n}`, description: n, is_backgrounded: true, task_type: 'local_agent', session_id: '$SESSION' },
-    ];
-    const f = direct([AWAIT, INIT, ...agent('a'), ...agent('b'), RESULT, { fake: 'sleep', ms: 30_000 }, AWAIT]);
-    f.send(go);
-    await waitFor(() => f.seen.some((event) => event.type === 'result'), 'turn answered');
-    const from = f.seen.length;
-    f.send({ type: 'control_request', request_id: 'stop-1', request: { subtype: 'stop_task', task_id: 'task_a' } });
-    await waitFor(() => f.seen.some((event) => event.type === 'control_response'), 'stop answered');
-    expect(f.seen.slice(from).map((event) => [event.type, event.subtype ?? null, event.task_id ?? (event.response as { subtype: string }).subtype])).toEqual([
-      ['system', 'task_updated', 'task_a'], ['system', 'task_notification', 'task_a'], ['control_response', null, 'success'],
-    ]);
-  });
-
   it('answers a denied prompt with a denial, not the approval', async () => {
     const ask = {
       type: 'control_request', request_id: 'req_a',

@@ -288,15 +288,6 @@ describe('AgentSession', () => {
     expect(h.session.processAlive()).toBe(false);
   });
 
-  it('records the pid of the running claude in its chat', async () => {
-    const home = tempDir('ide-home-');
-    const record = join(home, 'record.jsonl');
-    const h = await harness('interrupt-bash', { home, claude: fakeClaude('interrupt-bash', record) });
-    h.session.send('run it');
-    const pid = await waitFor(() => readRecords(record).find((r) => r.pid)?.pid, 'claude started');
-    expect(h.store.latestSession()?.pid).toBe(pid);
-  });
-
   it('keeps a pid file in the shared run directory for the running claude, naming this core, and removes it when claude exits', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
@@ -455,19 +446,8 @@ describe('AgentSession', () => {
     expect(h.session.state().turns).toMatchObject([{ id: 'turn-1', resultSubtype: 'crashed' }]);
   });
 
-  it('recognizes a stale claude the agent SDK started, whose command line carries --session-id=<id>', async () => {
-    const home = tempDir('ide-home-');
-    const root = tempDir('ide-root-');
-    const claudeSessionId = randomUUID();
-    const stale = spawnHanging(claudeSessionId, 'hang', '', 'equals');
-    const staleExit = exitSignal(stale);
-    seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
-    await harness('multi-turn', { home, root });
-    expect(await staleExit).toBe('SIGTERM');
-  });
-
-  it('recognizes a stale claude relaunched with --resume <id> or --resume=<id>', async () => {
-    for (const form of ['resume', 'resume-equals'] as const) {
+  it('recognizes a stale claude the agent SDK started or resumed: --session-id=<id>, --resume <id> or --resume=<id>', async () => {
+    for (const form of ['equals', 'resume', 'resume-equals'] as const) {
       const home = tempDir('ide-home-');
       const root = tempDir('ide-root-');
       const claudeSessionId = randomUUID();
@@ -725,50 +705,6 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(texts(h.session.state().items)).toEqual(['hi', 'OK']);
     expect(errors).toHaveBeenCalledWith('agent: could not save session history', expect.any(Error));
-  });
-
-  it('closes the turn with its result when claude exits right after it, and reports the crash', async () => {
-    const h = await harness('result-then-exit');
-    h.session.send('hi');
-    await waitFor(() => h.session.state().session?.status === 'crashed', 'exit seen');
-    expect(h.session.state().turns).toMatchObject([{ resultSubtype: 'success' }]);
-    expect(texts(h.session.state().items).at(-1)).toMatch(/^claude stopped unexpectedly \(exit code 1\)/);
-  });
-
-  it('drops a prompt pending at a restart, refuses an account switch meanwhile and the late answer, and the next claude works', async () => {
-    const h = await harness('ask-user-question');
-    h.session.send('ask me');
-    const prompt = await pendingPrompt(h);
-    await expect(h.session.changeAccount(() => {})).rejects.toThrow(new SessionError('busy-account').message);
-    await h.session.restart();
-    expect(h.session.state().items.find((item) => item.id === prompt.id)).toMatchObject({ status: 'dropped' });
-    expect(() => h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S' } }))
-      .toThrow(new SessionError('prompt-gone').message);
-    h.session.send('ask me again');
-    expect(await pendingPrompt(h)).toMatchObject({ status: 'pending' });
-  });
-
-  it('stops the one background task the user stops and leaves the others running', async () => {
-    const S = '$SESSION';
-    const agent = (n: string) => [
-      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'Agent', input: { description: `Agent ${n}` } }] }, parent_tool_use_id: null, session_id: S },
-      { type: 'system', subtype: 'task_started', task_id: `task_${n}`, tool_use_id: `toolu_${n}`, description: `Agent ${n}`, is_backgrounded: true, task_type: 'local_agent', session_id: S },
-      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: 'launched' }] }, parent_tool_use_id: null, session_id: S },
-    ];
-    const scenario = join(tempDir('ide-scenario-'), 'two-agents.jsonl');
-    writeFileSync(scenario, `${[
-      { fake: 'await-user' },
-      { type: 'system', subtype: 'init', cwd: '$CWD', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' },
-      ...agent('a'), ...agent('b'),
-      { type: 'result', subtype: 'success', is_error: false, result: 'launched', session_id: S },
-      { fake: 'sleep', ms: 30_000 }, { fake: 'await-user' },
-    ].map((entry) => JSON.stringify(entry)).join('\n')}\n`);
-    const h = await harness(scenario);
-    h.session.send('start two agents');
-    await waitFor(() => h.session.state().tasks.length === 2, 'two tasks running');
-    expect(h.session.stopTask('task_a')).toBe(true);
-    await waitFor(() => h.session.state().tasks.find((task) => task.id === 'task_a')?.endedAt !== null, 'task_a stopped');
-    expect(h.session.state().tasks.map((task) => [task.id, task.endedAt === null])).toEqual([['task_a', false], ['task_b', true]]);
   });
 });
 

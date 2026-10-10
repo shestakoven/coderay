@@ -210,13 +210,13 @@ describe('AgentSession.configure', () => {
     const h = await harness('multi-turn');
     await h.session.configure('opus', 'high');
     await ask(h, 'hi');
-    await h.session.configure('opus', 'low');
+    await h.session.configure('sonnet', 'low');
     expect(current(h).status).toBe('stopped');
     await ask(h, 'again', 2);
     await h.session.configure('haiku', 'low');
     expect([current(h).status, current(h).modelChoice, h.setModels()]).toEqual(['running', 'haiku', ['haiku']]);
     await ask(h, 'third', 3);
-    expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['opus', 'low']]);
+    expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['sonnet', 'low']]);
     await h.session.configure(null, 'low');
     expect(h.setModels()).toEqual(['haiku', null]);
   });
