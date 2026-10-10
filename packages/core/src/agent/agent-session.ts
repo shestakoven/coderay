@@ -884,7 +884,7 @@ export class AgentSession {
     return transcriptPath(this.transcriptsDir(session), session.cwd, session.claudeSessionId);
   }
 
-  // claude refuses to resume a conversation it has no transcript of, as after /clear until the next message.
+  // claude refuses to resume a conversation with no transcript yet, so a new one starts with --session-id; the id an init gives after /clear already has one.
   private resumable(session: SessionRecord): boolean {
     return session.conversationStarted || existsSync(this.transcript(session));
   }
