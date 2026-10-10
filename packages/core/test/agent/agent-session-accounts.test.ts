@@ -17,7 +17,7 @@ interface Harness {
   store: Store;
   accounts: AccountStore;
   close: () => Promise<void>;
-  spawns: () => { argv: string[]; configDir: string | null; pid: number }[];
+  spawns: () => { argv: string[]; configDir: string | null; pid: number; credentials: string[] | null }[];
 }
 
 interface World {
@@ -52,7 +52,7 @@ async function harness(w: World, scenario = 'multi-turn'): Promise<Harness> {
   await session.start();
   return {
     session, store, accounts: w.accounts, close,
-    spawns: () => readRecords(recordFile).flatMap((r) => (r.argv ? [{ argv: r.argv, configDir: r.configDir ?? null, pid: r.pid ?? -1 }] : [])),
+    spawns: () => readRecords(recordFile).flatMap((r) => (r.argv ? [{ argv: r.argv, configDir: r.configDir ?? null, pid: r.pid ?? -1, credentials: r.credentials ?? null }] : [])),
   };
 }
 
@@ -61,13 +61,13 @@ const closedTurns = (h: Harness) => h.session.state().turns.filter((turn) => tur
 const itemTexts = (items: ChatItem[]) => items.flatMap((item) => (item.kind === 'tool' || item.kind === 'prompt' ? [] : [item.text]));
 const switchNotices = (h: Harness) => itemTexts(h.session.state().items).filter((text) => text.includes('Switched to account'));
 
-async function firstTurn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number }> {
+async function firstTurn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number; credentials: string[] | null }> {
   h.session.send('Remember the number 42. Reply with only: OK');
   await waitFor(() => closedTurns(h) === 1, 'first turn closed');
   return h.spawns()[0]!;
 }
 
-async function nextSpawn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number }> {
+async function nextSpawn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number; credentials: string[] | null }> {
   const count = h.spawns().length;
   h.session.send('What number did I ask you to remember?');
   const spawns = await waitFor(() => h.spawns().length === count + 1 && h.spawns(), 'claude spawned again');
@@ -89,6 +89,21 @@ describe('AgentSession under a Claude account', () => {
     expect([first.configDir, h.store.latestSession()?.accountId, typeof flag(first.argv, '--session-id')]).toStrictEqual([
       w.dirOf(w.seeded[1]!), w.seeded[1]!.id, 'string',
     ]);
+  });
+
+  it("takes the core's Anthropic credentials away from claude under an account and leaves them to a System session", async () => {
+    const names = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
+    for (const name of names) vi.stubEnv(name, 'not-a-real-credential');
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const w = world(0);
+    const h = await harness(w);
+    const first = await firstTurn(h);
+    await h.session.restart();
+    w.accounts.setActive(null);
+    const second = await nextSpawn(h);
+    expect([first.credentials, second.credentials]).toEqual([[], names]);
   });
 
   it('resumes the same claude session under the same account after a restart', async () => {

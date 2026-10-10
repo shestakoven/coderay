@@ -11,7 +11,7 @@ export interface FakeRecord {
   claudecode?: string | null;
   configDir?: string | null;
   hookNames?: string[];
-  apiKey?: boolean;
+  credentials?: string[];
   entrypoint?: string | null;
   sdkVersion?: string | null;
   nodeOptions?: boolean;

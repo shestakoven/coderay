@@ -8,6 +8,7 @@ export interface ClaudeCommand {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  unset?: string[];
 }
 
 export interface ProcessExit {
@@ -45,6 +46,7 @@ export function claudeEnv(command: ClaudeCommand): NodeJS.ProcessEnv {
   // Marks of the Claude Code session the core may run in: claude refuses to start inside one, and would report that session's entry point as its own.
   delete env.CLAUDECODE;
   delete env.CLAUDE_CODE_ENTRYPOINT;
+  for (const name of command.unset ?? []) delete env[name];
   return env;
 }
 

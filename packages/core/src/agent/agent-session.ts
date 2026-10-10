@@ -112,6 +112,8 @@ interface PendingPrompt {
   body: PromptBody;
 }
 
+// An IDE account signs claude in through its own config directory; credentials from the core's environment would win over that login.
+const ACCOUNT_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
 const RUN_DIR_MODE = 0o700;
 const DENIED = new Set(['deny', 'ask-denied']);
 const INTERRUPT_KEYS = new Set(['\x1b', '\x03']);
@@ -908,7 +910,9 @@ export class AgentSession {
     rmSync(configPath, { force: true });
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
     const accountDir = this.options.accounts?.configDir(session.accountId) ?? null;
-    const claude = accountDir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir } };
+    const claude = accountDir === null
+      ? this.options.claude
+      : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir }, unset: [...(this.options.claude.unset ?? []), ...ACCOUNT_KEYS] };
     return { claude, configPath, gate };
   }
 

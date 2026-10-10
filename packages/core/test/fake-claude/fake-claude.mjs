@@ -56,7 +56,7 @@ record({
   claudecode: process.env.CLAUDECODE ?? null,
   configDir: process.env.CLAUDE_CONFIG_DIR ?? null,
   hookNames: Object.keys(settings?.hooks ?? {}).sort(),
-  apiKey: process.env.ANTHROPIC_API_KEY !== undefined,
+  credentials: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'].filter((name) => process.env[name] !== undefined),
   entrypoint: process.env.CLAUDE_CODE_ENTRYPOINT ?? null,
   sdkVersion: process.env.CLAUDE_AGENT_SDK_VERSION ?? null,
   nodeOptions: process.env.NODE_OPTIONS !== undefined,
