@@ -39,8 +39,9 @@ const CLOSE_AFTER_EXIT_MS = 1000;
 
 export function claudeEnv(command: ClaudeCommand): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...command.env };
-  // claude refuses to start inside another Claude Code session, which is where this core runs when an agent launches it.
+  // Marks of the Claude Code session the core may run in: claude refuses to start inside one, and would report that session's entry point as its own.
   delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
   return env;
 }
 

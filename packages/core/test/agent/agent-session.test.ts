@@ -92,6 +92,15 @@ const flag = (argv: string[] | undefined, name: string) => argv?.[argv.indexOf(n
 const pendingPrompt = (h: Harness) =>
   waitFor(() => h.session.state().items.find((item) => item.kind === 'prompt' && item.status === 'pending'), 'prompt shown');
 const controlResponse = (h: Harness) => h.stdin().find((message) => message.type === 'control_response');
+// The SDK adds the call's toolUseID to an answer; CodeRay's decision is the rest.
+const promptAnswer = (h: Harness) => {
+  const written = h.stdin().find((message) => message.type === 'control_response') as
+    { response: { subtype: string; request_id: string; response?: Record<string, unknown> } } | undefined;
+  if (!written) return undefined;
+  const decision = { ...written.response.response };
+  delete decision.toolUseID;
+  return { subtype: written.response.subtype, requestId: written.response.request_id, decision };
+};
 
 describe('AgentSession', () => {
   it('spawns claude in stream-json mode with a per-session MCP config, the disallowed tools, bypass permissions and prompts on stdio', async () => {
@@ -503,23 +512,20 @@ describe('AgentSession', () => {
     h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S, M' } });
 
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: 'req_fx_ask',
-        response: {
-          behavior: 'allow',
-          updatedInput: {
-            questions: [
-              { question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'Red color' }, { label: 'Blue', description: 'Blue color' }], multiSelect: false },
-              {
-                question: 'Which sizes?', header: 'Sizes', multiSelect: true,
-                options: [{ label: 'S', description: 'Small' }, { label: 'M', description: 'Medium' }, { label: 'L', description: 'Large' }],
-              },
-            ],
-            answers: { 'Which color?': 'Blue', 'Which sizes?': 'S, M' },
-          },
+    expect(promptAnswer(h)).toEqual({
+      subtype: 'success',
+      requestId: 'req_fx_ask',
+      decision: {
+        behavior: 'allow',
+        updatedInput: {
+          questions: [
+            { question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'Red color' }, { label: 'Blue', description: 'Blue color' }], multiSelect: false },
+            {
+              question: 'Which sizes?', header: 'Sizes', multiSelect: true,
+              options: [{ label: 'S', description: 'Small' }, { label: 'M', description: 'Medium' }, { label: 'L', description: 'Large' }],
+            },
+          ],
+          answers: { 'Which color?': 'Blue', 'Which sizes?': 'S, M' },
         },
       },
     });
@@ -539,12 +545,9 @@ describe('AgentSession', () => {
     expect(h.session.state().session?.permissionMode).toBe('plan');
     h.session.answerPrompt(prompt.id, { kind: 'allow' });
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: {
-        subtype: 'success', request_id: 'req_fx_plan',
-        response: { behavior: 'allow', updatedInput: { plan: '1. Create plan.txt containing hello.\n', planFilePath: '/fake/home/.claude/plans/fx-plan.md' } },
-      },
+    expect(promptAnswer(h)).toEqual({
+      subtype: 'success', requestId: 'req_fx_plan',
+      decision: { behavior: 'allow', updatedInput: { plan: '1. Create plan.txt containing hello.\n', planFilePath: '/fake/home/.claude/plans/fx-plan.md' } },
     });
     expect(h.session.state().session?.permissionMode).toBe('bypassPermissions');
     expect(texts(h.session.state().items)).toEqual([
@@ -559,11 +562,8 @@ describe('AgentSession', () => {
     h.session.send('plan it');
     const prompt = await pendingPrompt(h);
     h.session.answerPrompt(prompt.id, { kind: 'deny', feedback: '' });
-    await waitFor(() => controlResponse(h), 'answer written');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: 'req_fx_plan', response: { behavior: 'deny', message: CLI_REJECTION } },
-    });
+    await waitFor(() => promptAnswer(h), 'answer written');
+    expect(promptAnswer(h)).toEqual({ subtype: 'success', requestId: 'req_fx_plan', decision: { behavior: 'deny', message: CLI_REJECTION } });
   });
 
   it('drops a pending prompt when Stop ends its turn and refuses a late answer', async () => {
@@ -582,9 +582,8 @@ describe('AgentSession', () => {
     const h = await harness('unexpected-prompt');
     h.session.send('write the settings');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: 'req_fx_settings', response: { behavior: 'deny', message: 'CodeRay does not answer permission prompts for Write.' } },
+    expect(promptAnswer(h)).toEqual({
+      subtype: 'success', requestId: 'req_fx_settings', decision: { behavior: 'deny', message: 'CodeRay does not answer permission prompts for Write.' },
     });
     expect(texts(h.session.state().items)).toContain('Refused a "can_use_tool" request from claude: CodeRay does not answer permission prompts for Write.');
   });
@@ -653,6 +652,50 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(texts(h.session.state().items)).toEqual(['hi', 'OK']);
     expect(errors).toHaveBeenCalledWith('agent: could not save session history', expect.any(Error));
+  });
+
+  it('closes the turn with its result when claude exits right after it, and reports the crash', async () => {
+    const h = await harness('result-then-exit');
+    h.session.send('hi');
+    await waitFor(() => h.session.state().session?.status === 'crashed', 'exit seen');
+    expect(h.session.state().turns).toMatchObject([{ resultSubtype: 'success' }]);
+    expect(texts(h.session.state().items).at(-1)).toMatch(/^claude stopped unexpectedly \(exit code 1\)/);
+  });
+
+  it('drops a prompt pending at a restart, refuses an account switch meanwhile and the late answer, and the next claude works', async () => {
+    const h = await harness('ask-user-question');
+    h.session.send('ask me');
+    const prompt = await pendingPrompt(h);
+    await expect(h.session.changeAccount(() => {})).rejects.toThrow(new SessionError('busy-account').message);
+    await h.session.restart();
+    expect(h.session.state().items.find((item) => item.id === prompt.id)).toMatchObject({ status: 'dropped' });
+    expect(() => h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S' } }))
+      .toThrow(new SessionError('prompt-gone').message);
+    h.session.send('ask me again');
+    expect(await pendingPrompt(h)).toMatchObject({ status: 'pending' });
+  });
+
+  it('stops the one background task the user stops and leaves the others running', async () => {
+    const S = '$SESSION';
+    const agent = (n: string) => [
+      { type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: `toolu_${n}`, name: 'Agent', input: { description: `Agent ${n}` } }] }, parent_tool_use_id: null, session_id: S },
+      { type: 'system', subtype: 'task_started', task_id: `task_${n}`, tool_use_id: `toolu_${n}`, description: `Agent ${n}`, is_backgrounded: true, task_type: 'local_agent', session_id: S },
+      { type: 'user', message: { role: 'user', content: [{ type: 'tool_result', tool_use_id: `toolu_${n}`, content: 'launched' }] }, parent_tool_use_id: null, session_id: S },
+    ];
+    const scenario = join(tempDir('ide-scenario-'), 'two-agents.jsonl');
+    writeFileSync(scenario, `${[
+      { fake: 'await-user' },
+      { type: 'system', subtype: 'init', cwd: '$CWD', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' },
+      ...agent('a'), ...agent('b'),
+      { type: 'result', subtype: 'success', is_error: false, result: 'launched', session_id: S },
+      { fake: 'sleep', ms: 30_000 }, { fake: 'await-user' },
+    ].map((entry) => JSON.stringify(entry)).join('\n')}\n`);
+    const h = await harness(scenario);
+    h.session.send('start two agents');
+    await waitFor(() => h.session.state().tasks.length === 2, 'two tasks running');
+    expect(h.session.stopTask('task_a')).toBe(true);
+    await waitFor(() => h.session.state().tasks.find((task) => task.id === 'task_a')?.endedAt !== null, 'task_a stopped');
+    expect(h.session.state().tasks.map((task) => [task.id, task.endedAt === null])).toEqual([['task_a', false], ['task_b', true]]);
   });
 });
 

@@ -17,6 +17,7 @@ import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from
 import { startCliTransport } from './cli-transport';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
+import { startSdkTransport } from './sdk-transport';
 import { parseStreamMessage, type StreamEvent, type ToolResultBlock } from './stream';
 import { TranscriptTail } from './transcript-tail';
 import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type StartTransport, type UserMessage } from './transport';
@@ -148,7 +149,7 @@ export class AgentSession {
   private permissionMode: string | null = null;
   private usage: UsageView = EMPTY_USAGE;
   private transport: AgentTransport | null = null;
-  private readonly startTransport: StartTransport = startCliTransport;
+  private readonly startTransport: StartTransport;
   private exitReason: ExitReason | null = null;
   private terminating = false;
   private versionChecked = false;
@@ -172,6 +173,8 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
+    // Until the CLI transport is deleted, IDE_AGENT_TRANSPORT chooses the transport, so the whole suite runs on both.
+    this.startTransport = process.env.IDE_AGENT_TRANSPORT === 'sdk' ? startSdkTransport : startCliTransport;
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
