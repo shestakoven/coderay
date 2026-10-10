@@ -269,6 +269,15 @@ describe('AgentSession', () => {
     expect(h.session.processAlive()).toBe(false);
   });
 
+  it('records the pid of the running claude in its chat', async () => {
+    const home = tempDir('ide-home-');
+    const record = join(home, 'record.jsonl');
+    const h = await harness('interrupt-bash', { home, claude: fakeClaude('interrupt-bash', record) });
+    h.session.send('run it');
+    const pid = await waitFor(() => readRecords(record).find((r) => r.pid)?.pid, 'claude started');
+    expect(h.store.latestSession()?.pid).toBe(pid);
+  });
+
   it('answers the next message after a stop', async () => {
     const h = await harness('interrupt-bash');
     h.session.send('run it');
@@ -299,6 +308,14 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(h.session.stop()).toBe(false);
     expect(h.stdin().filter((message) => message.type === 'control_request')).toEqual([]);
+  });
+
+  it('writes a stop_task request for the task to claude', async () => {
+    const h = await harness('interrupt-bash');
+    h.session.send('run it');
+    expect(h.session.stopTask('t1')).toBe(true);
+    const request = await waitFor(() => h.stdin().find((message) => message.type === 'control_request'), 'stop_task written');
+    expect(request).toEqual({ type: 'control_request', request_id: expect.stringMatching(/^stop-task-/), request: { subtype: 'stop_task', task_id: 't1' } });
   });
 
   it('an agent-initiated turn does not shift turn matching', async () => {
