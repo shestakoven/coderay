@@ -598,6 +598,7 @@ describe('AgentSession', () => {
     h.session.send('hello again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'second claude spawned');
     expect(flag(argvs[1], '--session-id')).not.toBe(flag(argvs[0], '--session-id'));
+    expect(hasArg(argvs[1], '--resume')).toBe(false);
   });
 
   it('refuses a message while the session is restarting', async () => {
