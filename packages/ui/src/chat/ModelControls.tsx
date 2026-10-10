@@ -16,7 +16,7 @@ export function ModelControls({ current, models, enabled, send }: { current: Pic
     if (send(configureMessage(current, change))) setSentAt(Date.now());
   };
   const disabled = !enabled || sentAt !== null;
-  const title = disabled ? 'Wait for the agent to finish, or press Stop, before changing the model.' : 'Applies to this chat. The agent restarts and resumes the conversation.';
+  const title = disabled ? 'Wait for the agent to finish, or press Stop, before changing the model.' : 'Applies to this chat. The model switches in the running agent; an effort change restarts it and resumes the conversation.';
   return (
     <span className="model-controls">
       <select
