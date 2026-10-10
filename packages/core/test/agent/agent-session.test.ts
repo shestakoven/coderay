@@ -67,8 +67,9 @@ function seedRunningSession(home: string, root: string, seed: Seed): void {
   store.close();
 }
 
-function spawnHanging(claudeSessionId: string, scenario = 'hang', recordFile = '') {
-  const child = spawn(process.execPath, [FAKE_CLAUDE, '--session-id', claudeSessionId], {
+function spawnHanging(claudeSessionId: string, scenario = 'hang', recordFile = '', form: 'space' | 'equals' | 'glued' = 'space') {
+  const idArgs = { space: ['--session-id', claudeSessionId], equals: [`--session-id=${claudeSessionId}`], glued: [`--session-id-${claudeSessionId}`] }[form];
+  const child = spawn(process.execPath, [FAKE_CLAUDE, ...idArgs], {
     env: { ...process.env, FAKE_CLAUDE_SCENARIO: fixture(`stream/${scenario}.jsonl`), FAKE_CLAUDE_RECORD: recordFile },
     stdio: ['pipe', 'ignore', 'ignore'],
     detached: true,
@@ -446,6 +447,17 @@ describe('AgentSession', () => {
     expect(h.session.state().turns).toMatchObject([{ id: 'turn-1', resultSubtype: 'crashed' }]);
   });
 
+  it('recognizes a stale claude the agent SDK started, whose command line carries --session-id=<id>', async () => {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const claudeSessionId = randomUUID();
+    const stale = spawnHanging(claudeSessionId, 'hang', '', 'equals');
+    const staleExit = exitSignal(stale);
+    seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+    await harness('multi-turn', { home, root });
+    expect(await staleExit).toBe('SIGTERM');
+  });
+
   it('kills a stale claude that ignores SIGTERM, and its child processes, once the grace time is over', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
@@ -486,6 +498,22 @@ describe('AgentSession', () => {
     unrelated.kill('SIGTERM');
 
     expect(await unrelatedExit).toBe('SIGTERM');
+  });
+
+  it('leaves alone a live process whose command line only resembles the recorded id', async () => {
+    const claudeSessionId = randomUUID();
+    const lookalikes = [
+      spawnHanging(`${claudeSessionId}0`, 'hang', '', 'space'),
+      spawnHanging(`${claudeSessionId}0`, 'hang', '', 'equals'),
+      spawnHanging(claudeSessionId, 'hang', '', 'glued'),
+    ];
+    for (const lookalike of lookalikes) {
+      const home = tempDir('ide-home-');
+      const root = tempDir('ide-root-');
+      seedRunningSession(home, root, { claudeSessionId, pid: lookalike.pid ?? -1 });
+      await harness('multi-turn', { home, root });
+      expect(isAlive(lookalike.pid ?? -1)).toBe(true);
+    }
   });
 
   it("deletes a stale session's MCP config file at core start", async () => {

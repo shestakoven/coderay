@@ -1251,7 +1251,7 @@ function crashNotice(exit: ProcessExit): string {
 async function stopStale(session: SessionRecord, graceMs: number): Promise<void> {
   const { pid, launchId } = session;
   if (pid === null || launchId === null) return;
-  const launchedWith = new RegExp(`--(?:session-id|resume) ${launchId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`);
+  const launchedWith = new RegExp(`--(?:session-id|resume)[ =]${launchId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`);
   const isStale = () => launchedWith.test(commandLine(pid) ?? '');
   if (!isStale()) return;
   signal(pid, 'SIGTERM');
