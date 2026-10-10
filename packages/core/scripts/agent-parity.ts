@@ -1,15 +1,14 @@
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, realpathSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, realpathSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { parseArgs } from 'node:util';
-import { startCliTransport } from '../src/agent/cli-transport';
-import type { ClaudeCommand } from '../src/agent/claude-process';
+import { startClaude, type ClaudeCommand, type ProcessExit } from '../src/agent/claude-process';
 import { startSdkTransport } from '../src/agent/sdk-transport';
 import { DISALLOWED_TOOLS, isModelChoice } from '../src/agent/tools';
-import { userMessage, type Launch, type StartTransport, type TransportSink } from '../src/agent/transport';
-import { isRecord } from '../src/json';
+import { userMessage, type Launch, type TransportSink, type UserMessage } from '../src/agent/transport';
+import { isRecord, parseJson } from '../src/json';
 import { defaultTranscriptsDir, transcriptPath } from '../src/watchdog/recovery';
 
 // Fields of claude's init that say what the agent can do; ids, paths and timings are left out, and no environment value is ever printed.
@@ -18,6 +17,8 @@ const PROMPT = 'Reply with exactly: OK';
 const ANSWER_TIMEOUT_MS = 120_000;
 
 type Init = Record<string, unknown>;
+interface Started { send(message: UserMessage): void; exited: Promise<ProcessExit>; kill(): Promise<ProcessExit> }
+type Start = (launch: Launch, sink: TransportSink) => Started;
 interface Run { init: Init; initMs: number; textMs: number; resultMs: number }
 type Timing = 'initMs' | 'textMs' | 'resultMs';
 
@@ -44,8 +45,29 @@ export function compareInits(raw: Init, sdk: Init): string[] {
 const isTextDelta = (message: Init): boolean =>
   message.type === 'stream_event' && isRecord(message.event) && message.event.type === 'content_block_delta' && isRecord(message.event.delta) && message.event.delta.type === 'text_delta';
 
+// The argv the chat's claude was started with before the agent SDK, frozen here as the baseline the SDK is measured against.
+function printArgs(launch: Launch): string[] {
+  return [
+    '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
+    launch.resume ? '--resume' : '--session-id', launch.claudeSessionId,
+    ...(launch.model !== null ? ['--model', launch.model] : []),
+    ...(launch.effort !== null ? ['--effort', launch.effort] : []),
+    '--mcp-config', launch.mcpConfigPath,
+    '--disallowedTools', launch.disallowedTools.join(','),
+    '--dangerously-skip-permissions',
+    '--permission-prompt-tool', 'stdio',
+  ];
+}
+
+const startClaudeP: Start = (launch, sink) => {
+  const child = startClaude(launch.claude, printArgs(launch), launch.cwd, (line) => {
+    if (line.trim() !== '') sink.message(parseJson(line) ?? line);
+  });
+  return { send: (message) => child.write(message), exited: child.exited, kill: () => child.kill() };
+};
+
 // One chat's start as the product makes it: the same Launch goes through the given transport, the first message is sent at once, and the clock runs from the spawn.
-async function measure(start: StartTransport, launch: Launch, interrupted: Promise<never>): Promise<Run> {
+async function measure(start: Start, launch: Launch, interrupted: Promise<never>): Promise<Run> {
   const t0 = performance.now();
   const elapsed = (): number => performance.now() - t0;
   let init: Init | null = null;
@@ -67,7 +89,8 @@ async function measure(start: StartTransport, launch: Launch, interrupted: Promi
       if (textMs === null && isTextDelta(value)) textMs = elapsed();
       if (value.type !== 'result') return;
       if (value.is_error === true) fail(new Error(`claude answered with an error (${String(value.subtype)})`));
-      else answer({ init: init ?? {}, initMs, textMs: textMs ?? elapsed(), resultMs: elapsed() });
+      else if (init === null) fail(new Error('claude answered without ever printing an init'));
+      else answer({ init, initMs, textMs: textMs ?? elapsed(), resultMs: elapsed() });
     },
   };
   const transport = start(launch, sink);
@@ -145,7 +168,7 @@ async function main(): Promise<number> {
     const sdk: Run[] = [];
     // Alternating which side goes first keeps a warm disk cache from favouring one of them.
     for (let run = 0; run < runs; run += 1) {
-      const order = run % 2 === 0 ? [[startCliTransport, cli], [startSdkTransport, sdk]] as const : [[startSdkTransport, sdk], [startCliTransport, cli]] as const;
+      const order = run % 2 === 0 ? [[startClaudeP, cli], [startSdkTransport, sdk]] as const : [[startSdkTransport, sdk], [startClaudeP, cli]] as const;
       for (const [start, into] of order) into.push(await measure(start, launch(), interrupted));
     }
     const first = { cli: cli[0]?.init ?? {}, sdk: sdk[0]?.init ?? {} };
@@ -165,7 +188,8 @@ async function main(): Promise<number> {
       console.log(`${label.padEnd(10)} claude -p ${String(entry?.cliMedian)} ms [${entry?.cli.join(' ')}]  agent SDK ${String(entry?.sdkMedian)} ms [${entry?.sdk.join(' ')}]  difference ${(entry?.sdkMedian ?? 0) - (entry?.cliMedian ?? 0)} ms (claude -p spread ${spread(key)} ms)`);
     }
     if (values.out !== undefined) {
-      writeFileSync(values.out, `${JSON.stringify({ claude_code_version: first.cli.claude_code_version, model: values.model, runs, claudeP: summary.cli, agentSdk: summary.sdk, differences, unstable: shaky, latencyMs: latency }, null, 2)}\n`);
+      writeFileSync(values.out, `${JSON.stringify({ claude_code_version: first.cli.claude_code_version, model: values.model, runs, claudeP: summary.cli, agentSdk: summary.sdk, differences, unstable: shaky, latencyMs: latency }, null, 2)}\n`, { mode: 0o600 });
+      chmodSync(values.out, 0o600);
       console.log(`wrote ${values.out}`);
     }
     return differences.length === 0 ? 0 : 1;
