@@ -36,6 +36,10 @@ export function SkillMenu({ skills, active, onPick, onHover }: {
   );
 }
 
-export function SkillMenuEmpty() {
-  return <div className="skill-menu skill-menu-empty muted" data-testid="skill-menu-empty">Skills appear once the agent has started.</div>;
+export function SkillMenuEmpty({ loading }: { loading: boolean }) {
+  return (
+    <div className="skill-menu skill-menu-empty muted" data-testid="skill-menu-empty" aria-busy={loading}>
+      {loading ? 'Loading skills…' : 'Skills appear once the agent has started.'}
+    </div>
+  );
 }
