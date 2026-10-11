@@ -34,6 +34,20 @@ test('chats keep their own model and effort, and switching restores the first ch
   await expect(page.locator('.msg.user')).toContainText('first chat about greetings');
 });
 
+test('a new chat lists its skills before the first message, and says it is loading them meanwhile', async ({ page }) => {
+  core = await startCore('skills-init', { FAKE_CLAUDE_INITIALIZE_MS: '2000' });
+  await page.goto(core.url);
+  await expect(page.getByText('core connected')).toBeVisible();
+  const composer = page.getByPlaceholder(/Message the agent/);
+  await composer.fill('/');
+  await expect(page.getByTestId('skill-menu-empty')).toHaveText('Skills appear once the agent has started.');
+  await page.locator('.chat-new').click();
+  await composer.fill('/');
+  await expect(page.getByTestId('skill-menu-empty')).toHaveText('Loading skills…');
+  await expect(page.getByTestId('skill-menu-empty')).toHaveAttribute('aria-busy', 'true');
+  await expect(page.getByTestId('skill-menu').getByRole('option')).toHaveText(['/repo-probe', '/omc-plan', /^\/brainstorming\s*superpowers$/]);
+});
+
 test('the chat shows the agent at work until the turn ends', async ({ page }) => {
   core = await startCore('gate-big-plan');
   await page.goto(core.url);
