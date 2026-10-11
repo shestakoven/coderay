@@ -57,7 +57,7 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     const b = await build({ scenario: OUT_OF_PLAN });
     await b.send();
     const event = await pendingEvent(b);
-    await b.session.close();
+    await b.session.restart();
     b.rt.hold.release();
     b.session.send('again');
     await waitFor(() => b.rt.hold.waiting() > 0, 'the new process held');

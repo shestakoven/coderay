@@ -153,6 +153,8 @@ export class AgentSession {
   private transport: AgentTransport | null = null;
   private exitReason: ExitReason | null = null;
   private terminating = false;
+  // Set by close(): no claude starts after the core began to shut down.
+  private closed = false;
   private versionChecked = false;
   private idle = true;
   private hookReady = true;
@@ -664,7 +666,7 @@ export class AgentSession {
 
   // A new chat's claude starts before its first message, so its skills are listed by the time the user types "/".
   private warm(): void {
-    if (this.terminalOpen || this.terminating || this.transport || this.refused) return;
+    if (this.closed || this.terminalOpen || this.terminating || this.transport || this.refused) return;
     try {
       if (!this.session || this.session.status === 'ended') this.begin();
       this.spawn();
@@ -754,6 +756,7 @@ export class AgentSession {
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     await this.terminate('close');
   }
 
@@ -967,7 +970,7 @@ export class AgentSession {
   }
 
   private spawn(): void {
-    if (!this.session) return;
+    if (!this.session || this.closed) return;
     this.syncAccount();
     const session = this.session;
     const files = this.launchFiles(session);
@@ -1114,6 +1117,8 @@ export class AgentSession {
 
   private async discardActive(remove: () => void): Promise<void> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
+    // New chat or a restart waiting for the old claude would start the next one into the chat this drops.
+    if (this.terminating) throw new SessionError('restarting');
     await this.terminate('close');
     this.clearRefusal();
     remove();
