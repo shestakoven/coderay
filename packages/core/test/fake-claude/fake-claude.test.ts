@@ -249,7 +249,9 @@ describe('the fake claude', { timeout: 20_000 }, () => {
     f.send(go);
     await waitFor(() => f.seen.some((event) => event.type === 'result'), 'turn answered');
     const answers = f.seen.flatMap((event) => (event.type === 'control_response' ? [event.response] : []));
-    expect(answers).toMatchObject([{ subtype: 'success', request_id: 'init-1', response: { commands: [], models: [] } }, { subtype: 'success', request_id: 'model-1' }]);
+    expect(answers).toMatchObject([{ subtype: 'success', request_id: 'init-1', response: {
+      commands: expect.arrayContaining([expect.objectContaining({ builtin: true }), expect.not.objectContaining({ builtin: true })]), models: [],
+    } }, { subtype: 'success', request_id: 'model-1' }]);
     expect(f.seen.filter((event) => event.type === 'user' || event.type === 'control_response').map((event) => event.type)).toEqual(['control_response', 'user', 'control_response']);
     expect(f.seen.find((event) => event.type === 'user')).toMatchObject({ isReplay: true, message: { content: '<local-command-stdout>Set model to `opus`</local-command-stdout>' } });
     expect(f.seen.find((event) => event.type === 'system')?.session_id).toBe('s-eq');
