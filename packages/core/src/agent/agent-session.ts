@@ -215,12 +215,20 @@ export class AgentSession {
       this.previous = latest ?? store.latestSession();
       return;
     }
-    if (latest.status === 'running') this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
-    this.crashed = this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
+    // A new chat's claude starts before its first message: a chat left without one is dropped, so it neither looks crashed nor gets resumed.
+    const discard = (latest.status === 'running' || latest.status === 'stopped') && this.unused(latest);
+    if (latest.status === 'running' && !discard) this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    this.crashed = !discard && this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
     if (latest.status === 'running') {
       await stopStale(latest, this.options.killGraceMs ?? KILL_GRACE_MS);
       rmSync(this.configPath(latest.id), { force: true });
       this.options.gate?.remove(latest.id);
+    }
+    if (discard) {
+      this.persist(() => store.deleteSession(latest.id));
+      this.setActive('');
+      this.previous = store.latestSession();
+      return;
     }
     const gap = latest.status === 'running' ? await this.recoverChat(latest) : null;
     this.load(latest);
@@ -701,6 +709,9 @@ export class AgentSession {
     await this.terminate('close');
     this.clearRefusal();
     this.notes = [];
+    // A chat opened and left without a word would only clutter the list.
+    const left = this.session;
+    if (left && left.id !== target.id && this.unused(left)) this.persist(() => this.options.store.deleteSession(left.id));
     notify(this.newSessionListeners);
     this.load(target);
     this.apply(this.tracker.processExited());
