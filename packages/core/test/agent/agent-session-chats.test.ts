@@ -198,6 +198,15 @@ describe('AgentSession.configure', () => {
     expect(h.argvs()).toHaveLength(1);
   });
 
+  it('starts the claude of a chat nobody wrote to again at once, with the new effort', async () => {
+    const h = await harness('multi-turn');
+    await h.session.newSession();
+    await waitFor(() => h.argvs().length === 1, "the new chat's claude started");
+    await h.session.configure('sonnet', 'low');
+    const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude started again');
+    expect([current(h).status, flag(argvs[1], '--effort'), h.pids().filter(isAlive).length]).toEqual(['running', 'low', 1]);
+  });
+
   it('does not restart claude when nothing changes', async () => {
     const h = await harness('multi-turn');
     await h.session.configure('opus', 'high');
@@ -317,6 +326,32 @@ describe('a new chat inherits the model and effort', () => {
   });
 });
 
+describe('AgentSession.newSession', () => {
+  it('keeps a chat nobody wrote to: starts its claude when it has none, and starts no second one', async () => {
+    const h = await harness('multi-turn');
+    await h.session.configure('opus', 'high');
+    const chat = current(h).id;
+    await h.session.newSession();
+    const status = current(h).status;
+    await h.session.newSession();
+    await ask(h, 'hi');
+    expect([status, current(h).id, h.store.listSessions().map((summary) => summary.id), h.argvs().map((argv) => flag(argv, '--effort'))]).toEqual([
+      'running', chat, [chat], ['high'],
+    ]);
+  });
+
+  it('opens one new chat when New session comes again while the old claude is still stopping', async () => {
+    const h = await harness('multi-turn');
+    await ask(h, 'hi');
+    const old = current(h).id;
+    await Promise.all([h.session.newSession(), h.session.newSession()]);
+    const pids = await waitFor(() => h.pids().length === 2 && h.pids(), "the new chat's claude started");
+    expect([h.session.listChats().sessions.map((chat) => [chat.id === old, chat.status]), current(h).status, pids.map(isAlive)]).toEqual([
+      [[false, 'running'], [true, 'ended']], 'running', [false, true],
+    ]);
+  });
+});
+
 describe('AgentSession.listChats', () => {
   it('lists the stored chats with the open one marked, newest activity first', async () => {
     const h = await harness('multi-turn');
@@ -359,6 +394,17 @@ describe('AgentSession.switchSession', () => {
     await h.session.switchSession((h.store.listSessions().find((chat) => chat.id !== b.id) ?? { id: '' }).id);
     expect(isAlive(secondPid ?? -1)).toBe(false);
     expect(h.store.session(b.id)).toMatchObject({ status: 'stopped', pid: null });
+  });
+
+  it('deletes a chat nobody wrote to when it leaves it, and stops its claude', async () => {
+    const h = await harness('multi-turn');
+    await ask(h, 'hi');
+    const kept = current(h).id;
+    await h.session.newSession();
+    const left = current(h).id;
+    const [, pid] = await waitFor(() => h.pids().length === 2 && h.pids(), "the new chat's claude started");
+    await h.session.switchSession(kept);
+    expect([h.store.session(left), h.store.listSessions().map((chat) => chat.id), isAlive(pid ?? -1)]).toEqual([null, [kept], false]);
   });
 
   it('starts the next message of the opened chat with --resume of its own claude session', async () => {
