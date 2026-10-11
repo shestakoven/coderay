@@ -130,6 +130,7 @@ export interface Store {
   listSessions(limit?: number): ChatSummary[];
   saveSession(session: SessionRecord): void;
   setSessionTitle(id: string, title: string, manual: boolean): boolean;
+  manualTitle(id: string): boolean;
   deleteSession(id: string): void;
   deleteAllSessions(): void;
   // The ids of the images every remaining chat refers to.
@@ -699,6 +700,9 @@ export function openStore(dir: string): Store {
           status: session.status, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
         };
       });
+    },
+    manualTitle(id) {
+      return Number(db.prepare('SELECT title_manual FROM sessions WHERE id = ?').get(id)?.title_manual ?? 0) === 1;
     },
     setSessionTitle(id, title, manual) {
       const clean = cleanTitle(title);

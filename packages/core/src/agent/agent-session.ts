@@ -680,9 +680,11 @@ export class AgentSession {
     if (session.conversationStarted || existsSync(this.transcript(session))) return false;
     if (session.id === this.session?.id && [...this.items.values()].some((item) => item.kind !== 'notice')) return false;
     const { store } = this.options;
+    if (store.manualTitle(session.id)) return false;
     const history = store.history(session.id);
+    // The file watcher records the user's own edits into the open chat, and a revert the user makes lands there too.
     return history.messages.every((message) => message.role === 'notice') && history.toolEvents.length === 0 && history.prompts.length === 0
-      && store.watchdogEvents(session.id).length === 0;
+      && store.watchdogEvents(session.id).length === 0 && store.changes(session.id, 1).length === 0 && store.reverts(session.id).length === 0;
   }
 
   async deleteSession(id: string): Promise<void> {
