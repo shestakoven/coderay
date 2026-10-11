@@ -1382,6 +1382,64 @@ describe('AgentSession after a core crash', () => {
     expect(fresh.session.startedFromCrash()).toBe(false);
   });
 
+  it('drops a chat nobody wrote to instead of recovering it, and recovers one that holds any trace of the conversation', async () => {
+    type Trace = (store: Store, s: { claudeSessionId: string; root: string; transcriptsDir: string }) => void;
+    const at = (seq: number) => ({ seq, turnId: null, parentToolUseId: null });
+    const traces: Record<string, [status: 'running' | 'stopped', trace: Trace]> = {
+      'running, a notice only': ['running', () => {}],
+      'stopped, a notice only': ['stopped', () => {}],
+      'a notice only, an earlier crash still unrecovered': ['running', (store) => store.setMeta(UNCLEAN_STOP_KEY, '1')],
+      'a user message': ['running', (store) => store.saveMessage('session-1', { id: 'm2', ...at(2), role: 'user', text: 'hi', ts: 2 })],
+      'a tool call': ['running', (store) => store.saveToolEvent('session-1', {
+        toolUseId: 'toolu_1', ...at(2), tool: 'Read', input: {}, status: 'ok', toolUseAt: 2, endedAt: 3,
+      })],
+      'a prompt': ['running', (store) => store.savePrompt('session-1', {
+        requestId: 'req_1', ...at(2), body: { tool: 'ExitPlanMode', plan: 'p' }, status: 'pending', answer: null, ts: 2,
+      })],
+      'a watchdog event': ['running', (store) => store.saveWatchdogEvent('session-1', {
+        id: 'ev-1', kind: 'watchdog', mode: 'B', phase: 'resolved', resolution: 'kept', changes: [], toolCalls: [], interrupted: false, paused: false,
+        runningSubagents: 0, backgroundShell: false, unknownOrigin: false, snapshotSha: null, canExpand: false, defaultAction: 'revert', reason: '', ts: 2, resolvedAt: 3,
+      })],
+      "claude's transcript": ['running', (_store, s) => {
+        const file = transcriptPath(s.transcriptsDir, s.root, s.claudeSessionId);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, '');
+      }],
+      'a started conversation': ['running', (store) => store.saveSession({ ...store.session('session-1')!, conversationStarted: true })],
+    };
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, [status, trace]] of Object.entries(traces)) {
+      const home = tempDir('ide-home-');
+      const root = tempDir('ide-root-');
+      const transcriptsDir = tempDir('ide-transcripts-');
+      const claudeSessionId = randomUUID();
+      const store = openStore(projectDir(home, root));
+      store.saveSession({
+        id: 'session-1', claudeSessionId, cwd: root, status, model: null, modelChoice: null, effort: null, cliVersion: null,
+        pid: null, launchId: null, conversationStarted: false, startedAt: 1, accountId: null,
+      });
+      store.saveMessage('session-1', { id: 'm1', ...at(1), role: 'notice', text: 'CodeRay hook did not start', ts: 1 });
+      trace(store, { claudeSessionId, root, transcriptsDir });
+      store.close();
+      const h = await harness('multi-turn', { home, root, transcriptsDir });
+      outcomes[label] = [
+        h.store.session('session-1') ? 'kept' : 'dropped', h.session.startedFromCrash(), h.store.meta(UNCLEAN_STOP_KEY), h.session.state().session?.status ?? null,
+      ];
+    }
+    const kept = ['kept', true, '1', 'crashed'];
+    expect(outcomes).toEqual({
+      'running, a notice only': ['dropped', false, null, null],
+      'stopped, a notice only': ['dropped', false, null, null],
+      'a notice only, an earlier crash still unrecovered': ['dropped', false, '1', null],
+      'a user message': kept,
+      'a tool call': kept,
+      'a prompt': kept,
+      'a watchdog event': kept,
+      "claude's transcript": kept,
+      'a started conversation': kept,
+    });
+  });
+
   it('adds the calls made in the gap after the last stored row, marked recovered, without duplicating a stored call', async () => {
     const c = crashedSession();
     const h = await harness('multi-turn', { home: c.home, root: c.root, transcriptsDir: c.transcriptsDir });
