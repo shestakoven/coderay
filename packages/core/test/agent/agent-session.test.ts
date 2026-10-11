@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
+import { EMPTY_USAGE, type ChangeView, type ChatItem, type RevertRecordView, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
 import { startSdkTransport } from '../../src/agent/sdk-transport';
@@ -126,6 +126,11 @@ const promptAnswer = (h: Harness) => {
   return { subtype: written.response.subtype, requestId: written.response.request_id, decision };
 };
 const settled = () => new Promise((resolve) => setImmediate(resolve));
+const humanEdit: ChangeView = {
+  id: 'c1', path: 'notes.md', beforeHash: null, afterHash: 'a'.repeat(40), at: 2, origin: 'human', enforcement: 'recorded', outOfPlan: false,
+  toolUseIds: [], planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: 1, removed: null, stored: true, unreadable: false, beforeMode: null,
+};
+const revert: RevertRecordView = { id: 'r1', kind: 'review', eventId: null, planId: null, stepKey: null, changeIds: ['c0'], files: [], ts: 2, undoneAt: null };
 
 // Each claude started from here on answers the skills list only when the test resolves its entry.
 function heldSkills(): ((skills: string[]) => void)[] {
@@ -1475,6 +1480,9 @@ describe('AgentSession after a core crash', () => {
         writeFileSync(file, '');
       }],
       'a started conversation': ['running', (store) => store.saveSession({ ...store.session('session-1')!, conversationStarted: true })],
+      "the user's own edit": ['running', (store) => store.saveChange('session-1', humanEdit)],
+      'a revert': ['running', (store) => store.saveRevert('session-1', revert)],
+      'a name the user gave it': ['running', (store) => store.setSessionTitle('session-1', 'Release notes', true)],
     };
     const outcomes: Record<string, unknown> = {};
     for (const [label, [status, trace]] of Object.entries(traces)) {
@@ -1506,6 +1514,9 @@ describe('AgentSession after a core crash', () => {
       'a watchdog event': kept,
       "claude's transcript": kept,
       'a started conversation': kept,
+      "the user's own edit": kept,
+      'a revert': kept,
+      'a name the user gave it': kept,
     });
   });
 

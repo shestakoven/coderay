@@ -396,15 +396,34 @@ describe('AgentSession.switchSession', () => {
     expect(h.store.session(b.id)).toMatchObject({ status: 'stopped', pid: null });
   });
 
-  it('deletes a chat nobody wrote to when it leaves it, and stops its claude', async () => {
-    const h = await harness('multi-turn');
-    await ask(h, 'hi');
-    const kept = current(h).id;
-    await h.session.newSession();
-    const left = current(h).id;
-    const [, pid] = await waitFor(() => h.pids().length === 2 && h.pids(), "the new chat's claude started");
-    await h.session.switchSession(kept);
-    expect([h.store.session(left), h.store.listSessions().map((chat) => chat.id), isAlive(pid ?? -1)]).toEqual([null, [kept], false]);
+  it("deletes a chat nobody wrote to when it leaves it, and stops its claude, but keeps one holding the user's edit, a revert or a name", async () => {
+    const traces: Record<string, (h: Harness, id: string) => void> = {
+      nothing: () => {},
+      "the user's own edit": (h, id) => h.store.saveChange(id, {
+        id: 'c1', path: 'notes.md', beforeHash: null, afterHash: 'a'.repeat(40), at: 2, origin: 'human', enforcement: 'recorded', outOfPlan: false,
+        toolUseIds: [], planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: 1, removed: null, stored: true, unreadable: false, beforeMode: null,
+      }),
+      'a revert': (h, id) => h.store.saveRevert(id, { id: 'r1', kind: 'review', eventId: null, planId: null, stepKey: null, changeIds: ['c0'], files: [], ts: 2, undoneAt: null }),
+      'a name the user gave it': (h, id) => h.session.renameSession(id, 'Release notes'),
+    };
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, trace] of Object.entries(traces)) {
+      const h = await harness('multi-turn');
+      await ask(h, 'hi');
+      const first = current(h).id;
+      await h.session.newSession();
+      const left = current(h).id;
+      const [, pid] = await waitFor(() => h.pids().length === 2 && h.pids(), "the new chat's claude started");
+      trace(h, left);
+      await h.session.switchSession(first);
+      outcomes[label] = [h.store.listSessions().map((chat) => (chat.id === first ? 'first' : chat.id === left ? 'left' : chat.id)).sort(), isAlive(pid ?? -1)];
+    }
+    expect(outcomes).toEqual({
+      nothing: [['first'], false],
+      "the user's own edit": [['first', 'left'], false],
+      'a revert': [['first', 'left'], false],
+      'a name the user gave it': [['first', 'left'], false],
+    });
   });
 
   it('starts the next message of the opened chat with --resume of its own claude session', async () => {
