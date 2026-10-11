@@ -148,7 +148,7 @@ describe('AgentSession', () => {
   it('starts claude for the chat with its session id, sonnet and medium, its MCP config, the disallowed tools, bypass, prompts on stdio and partial messages', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
-    const [launch] = await waitFor(() => h.launches().length === 1 && h.launches(), 'claude spawned');
+    const [launch] = await waitFor(() => h.launches().length === 1 && h.launches()[0]?.systemPromptSnapshot !== null && h.launches(), "claude spawned and got the SDK's handshake");
     const session = h.session.state().session;
     expect(launch).toMatchObject({
       sessionId: session?.claudeSessionId, resume: undefined, model: 'sonnet', effort: 'medium',
