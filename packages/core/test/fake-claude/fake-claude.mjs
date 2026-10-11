@@ -77,7 +77,10 @@ createInterface({ input: process.stdin })
     // The agent SDK opens every session with initialize: its handshake, not CodeRay's input.
     if (subtype === 'initialize') {
       record({ initialize: { appendSystemPrompt: message.request.appendSystemPrompt ?? null, systemPromptSnapshot: message.request.systemPromptSnapshot ?? null, pid: process.pid } });
-      emit(success(message.request_id, INITIALIZE_ANSWER));
+      // A slow answer keeps the chat waiting for its skills list.
+      const answer = () => emit(success(message.request_id, INITIALIZE_ANSWER));
+      if (process.env.FAKE_CLAUDE_INITIALIZE_MS) setTimeout(answer, Number(process.env.FAKE_CLAUDE_INITIALIZE_MS));
+      else answer();
       return;
     }
     record({ stdin: message });
