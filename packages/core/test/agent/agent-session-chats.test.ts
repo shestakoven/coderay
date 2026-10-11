@@ -274,9 +274,9 @@ describe('AgentSession.configure', () => {
     await h.session.newSession();
     await h.session.configure('haiku', null);
     const fresh = current(h);
-    expect([fresh.status, fresh.modelChoice, fresh.effort, h.store.listSessions()]).toMatchObject(['stopped', 'haiku', null, [{ id: fresh.id }, {}]]);
-    h.session.send('hello');
-    const argv = await waitFor(() => h.argvs()[1], 'second claude spawned');
+    expect([fresh.status, fresh.modelChoice, fresh.effort, h.store.listSessions()]).toMatchObject(['running', 'haiku', null, [{ id: fresh.id }, {}]]);
+    await ask(h, 'hello');
+    const argv = h.argvs().at(-1);
     expect([flag(argv, '--session-id'), flag(argv, '--model'), hasArg(argv, '--effort')]).toEqual([fresh.claudeSessionId, 'haiku', false]);
   });
 });
@@ -326,13 +326,14 @@ describe('AgentSession.listChats', () => {
     expect(sessions.map((chat) => [chat.id, chat.title, chat.messages])).toEqual([[b.id, 'second question', 2], [a.id, 'first question', 2]]);
   });
 
-  it('has no open chat after New session but still lists the ended chat', async () => {
+  it('opens a fresh chat on New session and still lists the ended chat', async () => {
     const h = await harness('multi-turn');
     await ask(h, 'hi');
     const { id } = current(h);
     await h.session.newSession();
+    const fresh = current(h).id;
     const { activeId, sessions } = h.session.listChats();
-    expect([activeId, sessions.map((chat) => [chat.id, chat.status])]).toEqual([null, [[id, 'ended']]]);
+    expect([activeId, sessions.map((chat) => [chat.id, chat.status])]).toEqual([fresh, [[fresh, 'running'], [id, 'ended']]]);
   });
 
   it('has nothing for a project without chats', async () => {
@@ -400,6 +401,7 @@ describe('AgentSession.switchSession', () => {
     await ask(h, 'hi');
     const { id } = current(h);
     await h.session.newSession();
+    await h.session.deleteSession(current(h).id);
     expect(h.session.state().session).toBeNull();
     await h.session.switchSession(id);
     expect([current(h).id, texts(h), h.store.meta('activeSessionId')]).toEqual([id, ['hi', 'OK'], id]);
@@ -552,12 +554,13 @@ describe('AgentSession.start with several chats', () => {
     expect(h.session.state().session).toBeNull();
   });
 
-  it('remembers the chat created by the first message as the active chat, and clears it on New session', async () => {
+  it('remembers the chat created by the first message as the active chat, and the chat New session opens after it', async () => {
     const h = await harness('multi-turn');
     await ask(h, 'hi');
-    expect(h.store.meta('activeSessionId')).toBe(current(h).id);
+    const first = current(h).id;
+    expect(h.store.meta('activeSessionId')).toBe(first);
     await h.session.newSession();
-    expect(h.store.meta('activeSessionId')).toBe('');
+    expect([h.store.meta('activeSessionId'), current(h).id === first]).toEqual([current(h).id, false]);
   });
 
   it('keeps a new chat as the active one after a core restart', async () => {

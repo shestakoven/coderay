@@ -630,11 +630,20 @@ export class AgentSession {
   async restart(): Promise<void> {
     await this.terminate('restart');
     this.clearRefusal();
+    if (this.session && this.unused(this.session)) this.warm();
   }
 
   async newSession(): Promise<void> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
+    const current = this.session;
+    if (current && this.unused(current)) {
+      this.clearRefusal();
+      this.warm();
+      return;
+    }
     await this.terminate('new');
+    // A second New chat while the first one waited: the first already opened the new chat.
+    if (this.session?.id !== current?.id) return;
     this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
     this.notes = [];
@@ -642,6 +651,28 @@ export class AgentSession {
     this.previous = this.session ?? this.previous;
     this.setActive('');
     this.reset(null);
+    this.warm();
+  }
+
+  // A new chat's claude starts before its first message, so its skills are listed by the time the user types "/".
+  private warm(): void {
+    if (this.terminalOpen || this.terminating || this.transport || this.refused) return;
+    try {
+      if (!this.session || this.session.status === 'ended') this.begin();
+      this.spawn();
+    } catch (error) {
+      console.error('agent: could not start the agent of a new chat', error);
+    }
+  }
+
+  // Neither the user nor the agent has written to the chat yet, so dropping it loses nothing.
+  private unused(session: SessionRecord): boolean {
+    if (session.conversationStarted || existsSync(this.transcript(session))) return false;
+    if (session.id === this.session?.id && [...this.items.values()].some((item) => item.kind !== 'notice')) return false;
+    const { store } = this.options;
+    const history = store.history(session.id);
+    return history.messages.every((message) => message.role === 'notice') && history.toolEvents.length === 0 && history.prompts.length === 0
+      && store.watchdogEvents(session.id).length === 0;
   }
 
   async deleteSession(id: string): Promise<void> {

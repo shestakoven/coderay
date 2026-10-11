@@ -688,12 +688,14 @@ describe('AgentSession', () => {
     expect(texts(h.session.state().items)).toContain('Refused a "can_use_tool" request from claude: CodeRay does not answer permission prompts for Write.');
   });
 
-  it('ends the session on New session and starts a fresh claude conversation with the next message', async () => {
+  it('ends the session on New session and starts a fresh claude conversation at once', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const ended = h.session.sessionId();
     await h.session.newSession();
-    expect(h.session.state()).toEqual({ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE });
+    expect(h.session.state()).toMatchObject({ session: { status: 'running' }, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE });
+    expect(h.session.sessionId()).not.toBe(ended);
     h.session.send('hello again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'second claude spawned');
     expect(flag(argvs[1], '--session-id')).not.toBe(flag(argvs[0], '--session-id'));
