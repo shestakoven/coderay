@@ -179,6 +179,8 @@ export interface SessionState {
   tasks: TaskView[];
   mcpServers: McpServerState[];
   skills: string[];
+  /** The chat's agent has said which skills it has (the list may be empty); false until it has, and in a chat whose agent has not run. */
+  skillsKnown?: boolean;
   usage: UsageView;
 }
 
@@ -189,6 +191,7 @@ export interface SessionPatch {
   tasks?: TaskView[];
   mcpServers?: McpServerState[];
   skills?: string[];
+  skillsKnown?: boolean;
   usage?: UsageView;
 }
 

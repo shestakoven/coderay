@@ -9,6 +9,7 @@ export interface ChatState {
   tasks: Record<string, TaskView>;
   mcpServers: McpServerState[];
   skills: string[];
+  skillsKnown: boolean;
   usage: UsageView;
   draft: string;
   error: string | null;
@@ -28,7 +29,7 @@ export interface TurnGroup {
   items: ChatItem[];
 }
 
-export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], skills: [], usage: EMPTY_USAGE, draft: '', error: null, filter: null };
+export const initialChatState: ChatState = { session: null, turns: {}, items: {}, tasks: {}, mcpServers: [], skills: [], skillsKnown: false, usage: EMPTY_USAGE, draft: '', error: null, filter: null };
 
 const byId = <T extends { id: string }>(values: T[]): Record<string, T> => Object.fromEntries(values.map((value) => [value.id, value]));
 const merge = <T extends { id: string }>(current: Record<string, T>, updates: T[] | undefined): Record<string, T> =>
@@ -52,6 +53,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         mcpServers: action.state.mcpServers,
         // A core started before skills existed sends none, and a dev window can outlive it.
         skills: action.state.skills ?? [],
+        skillsKnown: action.state.skillsKnown ?? false,
         usage: action.state.usage,
         draft: '',
         error: state.error,
@@ -66,6 +68,7 @@ export function chatReducer(state: ChatState, action: ChatAction): ChatState {
         tasks: merge(state.tasks, action.patch.tasks),
         mcpServers: action.patch.mcpServers ?? state.mcpServers,
         skills: action.patch.skills ?? state.skills,
+        skillsKnown: action.patch.skillsKnown ?? state.skillsKnown,
         usage: action.patch.usage ?? state.usage,
         draft: draftEnded(action.patch) ? '' : state.draft,
       };

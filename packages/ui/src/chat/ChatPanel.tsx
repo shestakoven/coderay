@@ -265,7 +265,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         {attachProblem && <div className="attach-problem">{attachProblem}</div>}
         {skillMenu && (skillMatches.length > 0
           ? <SkillMenu skills={skillMatches} active={skillActive} onPick={pickSkill} onHover={setSkillIndex} />
-          : <SkillMenuEmpty loading={chat.session?.status === 'running'} />)}
+          : <SkillMenuEmpty state={chat.skillsKnown ? 'none' : chat.session?.status === 'running' ? 'loading' : 'not-started'} />)}
         <div className="composer-box">
         <textarea
           ref={composer}

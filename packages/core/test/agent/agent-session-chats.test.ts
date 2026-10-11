@@ -589,7 +589,7 @@ describe('AgentSession.start with several chats', () => {
     const { home, root, store } = seededStore();
     store.setMeta('activeSessionId', '');
     const h = await harness('multi-turn', { home, root, store });
-    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE }, null]);
+    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], skillsKnown: false, usage: EMPTY_USAGE }, null]);
   });
 
   it('opens no chat when the active chat was ended', async () => {

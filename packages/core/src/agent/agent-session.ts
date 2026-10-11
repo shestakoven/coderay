@@ -148,6 +148,7 @@ export class AgentSession {
   private tasks = new Map<string, TaskView>();
   private mcpServers: McpServerState[] = [];
   private skills: string[] = [];
+  private skillsKnown = false;
   private permissionMode: string | null = null;
   private usage: UsageView = EMPTY_USAGE;
   private transport: AgentTransport | null = null;
@@ -297,6 +298,7 @@ export class AgentSession {
       tasks: [...this.tasks.values()],
       mcpServers: this.mcpServers,
       skills: this.skills,
+      skillsKnown: this.skillsKnown,
       usage: this.usage,
     };
   }
@@ -810,6 +812,7 @@ export class AgentSession {
     this.tasks = new Map();
     this.mcpServers = [];
     this.skills = [];
+    this.skillsKnown = false;
     this.permissionMode = null;
     this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
@@ -826,6 +829,7 @@ export class AgentSession {
     this.turns = new Map(history.turns.map((turn) => [turn.id, turn]));
     this.mcpServers = [];
     this.skills = [];
+    this.skillsKnown = false;
     this.permissionMode = null;
     this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
     this.pendingPrompts.clear();
@@ -1000,11 +1004,17 @@ export class AgentSession {
     }
     // Claude lists its skills in init only after the first message; until then the chat shows this list, and init's replaces it.
     void transport.skills().then((skills) => {
-      if (this.transport !== transport || this.skills.length > 0) return;
+      if (this.transport !== transport || this.skillsKnown) return;
       this.skills = skills;
-      this.emit({ type: 'session.patch', patch: { skills } });
+      this.skillsKnown = true;
+      this.emit({ type: 'session.patch', patch: { skills, skillsKnown: true } });
     }, (error: unknown) => {
-      if (this.transport === transport) console.error('agent: could not list the skills before claude\'s init', error);
+      if (this.transport !== transport) return;
+      console.error('agent: could not list the skills before claude\'s init', error);
+      if (this.skillsKnown) return;
+      // The chat stops saying it is loading them; init still lists them after the first message.
+      this.skillsKnown = true;
+      this.emit({ type: 'session.patch', patch: { skillsKnown: true } });
     });
     void transport.exited.then((exit) => this.onExit(transport, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
@@ -1219,9 +1229,11 @@ export class AgentSession {
         this.persist(() => store.saveSession(updated));
         this.mcpServers = change.mcpServers;
         this.skills = change.skills;
+        this.skillsKnown = true;
         patch.session = sessionView(updated, this.permissionMode);
         patch.mcpServers = change.mcpServers;
         patch.skills = change.skills;
+        patch.skillsKnown = true;
       }
     }
     this.emit({ type: 'session.patch', patch });
