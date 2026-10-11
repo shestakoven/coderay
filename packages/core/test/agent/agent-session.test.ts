@@ -144,6 +144,32 @@ function heldSkills(): ((skills: string[]) => void)[] {
   return answers;
 }
 
+// Each claude asked to stop from here on stops only once the test releases it; call it after harness(), so its cleanup runs before the session closes.
+function heldStops(): { release: () => void } {
+  const start = vi.mocked(startSdkTransport);
+  const real = start.getMockImplementation()!;
+  const waiting: (() => void)[] = [];
+  let finished = false;
+  const release = () => {
+    for (const stop of waiting.splice(0)) stop();
+  };
+  start.mockImplementation((launch, sink) => {
+    const transport = real(launch, sink);
+    const kill = transport.kill;
+    transport.kill = async () => {
+      if (!finished) await new Promise<void>((resolve) => waiting.push(resolve));
+      return kill();
+    };
+    return transport;
+  });
+  onTestFinished(() => {
+    finished = true;
+    release();
+    start.mockImplementation(real);
+  });
+  return { release };
+}
+
 describe('AgentSession', () => {
   it('starts claude for the chat with its session id, sonnet and medium, its MCP config, the disallowed tools, bypass, prompts on stdio and partial messages', async () => {
     const h = await harness('multi-turn');
@@ -742,6 +768,49 @@ describe('AgentSession', () => {
     const restarting = h.session.restart();
     expect(() => h.session.send('again')).toThrow('The session is restarting.');
     await restarting;
+  });
+
+  it('refuses to delete the open chat or every chat while New session or a restart waits for the old claude to stop', async () => {
+    const h = await harness('multi-turn');
+    const stops = heldStops();
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const outcome = (attempt: Promise<void>) => Promise.race([attempt.then(() => 'deleted', (error: SessionError) => error.code), settled().then(() => 'waiting')]);
+    const deletes = async () => [await outcome(h.session.deleteSession(h.session.sessionId()!)), await outcome(h.session.deleteAllSessions())];
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, waits] of [['New session', () => h.session.newSession()], ['restart', () => h.session.restart()]] as const) {
+      const waiting = waits();
+      outcomes[label] = await deletes();
+      stops.release();
+      await waiting;
+    }
+    expect([outcomes, h.store.listSessions().map((chat) => chat.status), h.session.processAlive()]).toEqual([
+      { 'New session': ['restarting', 'restarting'], restart: ['restarting', 'restarting'] }, ['running', 'ended'], true,
+    ]);
+  });
+
+  it('starts no claude once closed: neither for a New session that waited for the old claude nor for a restart, New session or message after', async () => {
+    const h = await harness('multi-turn');
+    const stops = heldStops();
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const started = vi.mocked(startSdkTransport).mock.calls.length;
+    const fresh = h.session.newSession();
+    const closing = h.session.close();
+    stops.release();
+    await Promise.all([fresh, closing]);
+    await h.session.restart();
+    await h.session.newSession();
+    const chats = h.store.listSessions().length;
+    const sent = (() => {
+      try {
+        h.session.send('again');
+        return 'sent';
+      } catch (error) {
+        return (error as SessionError).code;
+      }
+    })();
+    expect([vi.mocked(startSdkTransport).mock.calls.length - started, chats, sent, h.session.processAlive()]).toEqual([0, 1, 'no-gate', false]);
   });
 
   it('notes in the chat when claude is older than the minimum version', async () => {
