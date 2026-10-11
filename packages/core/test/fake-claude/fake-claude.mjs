@@ -26,7 +26,15 @@ const record = (entry) => {
 const emit = (event) => process.stdout.write(`${JSON.stringify(event).replaceAll('$SESSION', sessionId)}\n`);
 const interruptAnswer = (requestId) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { still_queued: [] } } });
 const success = (requestId, response = {}) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
-const INITIALIZE_ANSWER = { commands: [], agents: [], output_style: 'default', available_output_styles: ['default'], models: [], account: {} };
+// Real claude lists its own commands with builtin: true and leaves the marker out for user, project, plugin and MCP ones.
+const COMMANDS = [
+  { name: 'compact', description: 'Clear conversation history but keep a summary in context', argumentHint: '<optional custom summarization instructions>', builtin: true },
+  { name: 'review', description: 'Review a pull request', argumentHint: '', builtin: true },
+  { name: 'repo-probe', description: 'Probe the repository', argumentHint: '' },
+  { name: 'superpowers:brainstorming', description: 'Explore intent before creative work', argumentHint: '' },
+  { name: 'omc-plan', description: 'Strategic planning', argumentHint: '<task>' },
+];
+const INITIALIZE_ANSWER = { commands: COMMANDS, agents: [], output_style: 'default', available_output_styles: ['default'], models: [], account: {} };
 if (!argv.includes('-p') && process.stdin.isTTY) await import('./fake-claude-tui.mjs');
 const steps = readFileSync(process.env.FAKE_CLAUDE_SCENARIO, 'utf8')
   .replaceAll('$CWD', process.cwd())

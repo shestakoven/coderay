@@ -47,6 +47,7 @@ export interface AgentTransport {
   stopTask(taskId: string): void;
   respond(response: ControlResponse): void;
   setModel(model: string | null): Promise<void>;
+  skills(): Promise<string[]>;
   kill(): Promise<ProcessExit>;
 }
 

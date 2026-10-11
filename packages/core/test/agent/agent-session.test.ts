@@ -223,7 +223,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     const patched = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.skills ? [message.patch.skills] : []));
-    expect(patched).toEqual([['repo-probe', 'superpowers:brainstorming']]);
+    expect(patched.at(-1)).toEqual(['repo-probe', 'superpowers:brainstorming']);
   });
 
   it('forgets the skills on New session and sends the empty list in the snapshot', async () => {

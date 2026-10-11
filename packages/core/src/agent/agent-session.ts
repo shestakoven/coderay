@@ -951,6 +951,14 @@ export class AgentSession {
       canary.expect(session.id);
       void this.awaitCanary(transport, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
     }
+    // Claude lists its skills in init only after the first message; until then the chat shows this list, and init's replaces it.
+    void transport.skills().then((skills) => {
+      if (this.transport !== transport || this.skills.length > 0) return;
+      this.skills = skills;
+      this.emit({ type: 'session.patch', patch: { skills } });
+    }, (error: unknown) => {
+      if (this.transport === transport) console.error('agent: could not list the skills before claude\'s init', error);
+    });
     void transport.exited.then((exit) => this.onExit(transport, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 

@@ -133,6 +133,8 @@ export function startSdkTransport(launch: Launch, sink: TransportSink): AgentTra
     stopTask: (taskId) => void q.stopTask(taskId).catch(ignore),
     respond: (response) => pending.get(response.request_id)?.(response.subtype === 'success' ? response.response : { behavior: 'deny', message: response.error }),
     setModel: (model) => q.setModel(model ?? undefined),
+    // Answered before any message, unlike init; claude's own commands are not skills.
+    skills: async () => (await q.supportedCommands()).filter((command) => command.builtin !== true).map((command) => command.name),
     // SIGTERM only, with stdin left open: a claude still writing is not told to stop by EOF, and the SIGKILL that follows ends one that ignores the signal.
     kill: () => {
       void claude.kill();
