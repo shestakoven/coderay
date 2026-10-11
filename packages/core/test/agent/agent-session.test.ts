@@ -125,6 +125,24 @@ const promptAnswer = (h: Harness) => {
   delete decision.toolUseID;
   return { subtype: written.response.subtype, requestId: written.response.request_id, decision };
 };
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+// Each claude started from here on answers the skills list only when the test resolves its entry.
+function heldSkills(): ((skills: string[]) => void)[] {
+  const start = vi.mocked(startSdkTransport);
+  const real = start.getMockImplementation()!;
+  const answers: ((skills: string[]) => void)[] = [];
+  start.mockImplementation((launch, sink) => {
+    const transport = real(launch, sink);
+    const answer = new Promise<string[]>((resolve) => answers.push(resolve));
+    transport.skills = () => answer;
+    return transport;
+  });
+  onTestFinished(() => {
+    start.mockImplementation(real);
+  });
+  return answers;
+}
 
 describe('AgentSession', () => {
   it('starts claude for the chat with its session id, sonnet and medium, its MCP config, the disallowed tools, bypass, prompts on stdio and partial messages', async () => {
@@ -245,6 +263,21 @@ describe('AgentSession', () => {
     h.session.send('hello again');
     await waitFor(() => closedTurns(h).length === 1 && h.session.state().skills.length === 2, 'skills reported by the second claude');
     expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
+  });
+
+  it('ignores a skills list that comes late: from a claude the chat no longer runs, or after init listed the skills', async () => {
+    const answers = heldSkills();
+    const h = await harness('skills-init');
+    await h.session.newSession();
+    await h.session.restart();
+    answers[0]?.(['stale']);
+    await settled();
+    const afterStale = h.session.state().skills;
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    answers[1]?.(['late']);
+    await settled();
+    expect([answers.length, afterStale, h.session.state().skills]).toEqual([2, [], ['repo-probe', 'superpowers:brainstorming']]);
   });
 
   it('sends clients a snapshot for a new session and then the chat items as patches', async () => {
@@ -1035,6 +1068,20 @@ describe('AgentSession waiting for the session-start hook', () => {
       message: { content: [{ type: 'image', source: { type: 'base64', media_type: 'image/gif', data: 'R0lG' } }, { type: 'text', text: 'look' }] },
     });
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+  });
+
+  it("starts a new chat's claude before its first message: its skills are listed, the message waits for the hook and goes once, and init's skills replace the list", async () => {
+    const h = await canaryHarness('skills-init', 'off', 5000);
+    await h.session.newSession();
+    const listed = await waitFor(() => h.session.state().skills.length > 0 && h.session.state().skills, 'skills listed');
+    h.session.send('hi');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const held = userMessages(h).length;
+    await h.ping();
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect([listed, held, userMessages(h).map((message) => (message.message as { content: unknown }).content), h.session.state().skills]).toEqual([
+      ['repo-probe', 'superpowers:brainstorming', 'omc-plan'], 0, ['hi'], ['repo-probe', 'superpowers:brainstorming'],
+    ]);
   });
 
   it('delivers the message at once when the real hook of the fake claude reports', async () => {
