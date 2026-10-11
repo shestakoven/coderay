@@ -132,14 +132,19 @@ const humanEdit: ChangeView = {
 };
 const revert: RevertRecordView = { id: 'r1', kind: 'review', eventId: null, planId: null, stepKey: null, changeIds: ['c0'], files: [], ts: 2, undoneAt: null };
 
-// Each claude started from here on answers the skills list only when the test resolves its entry.
-function heldSkills(): ((skills: string[]) => void)[] {
+interface HeldSkills {
+  resolve: (skills: string[]) => void;
+  reject: (error: Error) => void;
+}
+
+// Each claude started from here on answers the skills list only when the test settles its entry.
+function heldSkills(): HeldSkills[] {
   const start = vi.mocked(startSdkTransport);
   const real = start.getMockImplementation()!;
-  const answers: ((skills: string[]) => void)[] = [];
+  const answers: HeldSkills[] = [];
   start.mockImplementation((launch, sink) => {
     const transport = real(launch, sink);
-    const answer = new Promise<string[]>((resolve) => answers.push(resolve));
+    const answer = new Promise<string[]>((resolve, reject) => answers.push({ resolve, reject }));
     transport.skills = () => answer;
     return transport;
   });
@@ -275,7 +280,7 @@ describe('AgentSession', () => {
     expect(patched.at(-1)).toEqual(['repo-probe', 'superpowers:brainstorming']);
   });
 
-  it('forgets the skills on New session and sends the empty list in the snapshot', async () => {
+  it('forgets the skills on New session and sends the empty list, not yet known, in the snapshot', async () => {
     const h = await harness('skills-init');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
@@ -283,7 +288,7 @@ describe('AgentSession', () => {
     h.broadcasts.length = 0;
     await h.session.newSession();
     const snapshot = h.broadcasts.find((message) => message.type === 'session.snapshot');
-    expect([h.session.state().skills, snapshot?.type === 'session.snapshot' ? snapshot.state.skills : null]).toEqual([[], []]);
+    expect([h.session.state().skills, snapshot?.type === 'session.snapshot' ? [snapshot.state.skills, snapshot.state.skillsKnown] : null]).toEqual([[], [[], false]]);
   });
 
   it('lists the skills again once the next claude after New session reports them', async () => {
@@ -296,19 +301,52 @@ describe('AgentSession', () => {
     expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
   });
 
-  it('ignores a skills list that comes late: from a claude the chat no longer runs, or after init listed the skills', async () => {
+  it('ignores a skills list that comes late: from a claude the chat no longer runs, listed or failed, or after an init that listed none', async () => {
+    const errors = vi.spyOn(console, 'error');
+    onTestFinished(() => errors.mockRestore());
     const answers = heldSkills();
-    const h = await harness('skills-init');
+    const h = await harness('multi-turn');
     await h.session.newSession();
     await h.session.restart();
-    answers[0]?.(['stale']);
+    await h.session.restart();
+    answers[0]?.resolve(['stale']);
+    answers[1]?.reject(new Error('stopped'));
     await settled();
-    const afterStale = h.session.state().skills;
+    const afterStale = [h.session.state().skills, h.session.state().skillsKnown, errors.mock.calls.length];
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    answers[1]?.(['late']);
+    answers[2]?.resolve(['late']);
     await settled();
-    expect([answers.length, afterStale, h.session.state().skills]).toEqual([2, [], ['repo-probe', 'superpowers:brainstorming']]);
+    expect([answers.length, afterStale, h.session.state().skills]).toEqual([3, [[], false, 0], []]);
+  });
+
+  it('knows which skills the chat has once its claude said so: by the early list, even an empty one, by that list failing, or by init', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => errors.mockRestore());
+    const ways: Record<string, [scenario: string, said: (h: Harness, answer: HeldSkills | undefined) => Promise<void>]> = {
+      'an empty early list': ['multi-turn', async (_h, answer) => answer?.resolve([])],
+      'the early list failing': ['multi-turn', async (_h, answer) => answer?.reject(new Error('no commands'))],
+      init: ['skills-init', async (h) => {
+        h.session.send('hi');
+        await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+      }],
+    };
+    const answers = heldSkills();
+    const outcomes: Record<string, unknown> = {};
+    for (const [way, [scenario, said]] of Object.entries(ways)) {
+      const h = await harness(scenario);
+      await h.session.newSession();
+      const before = h.session.state().skillsKnown;
+      await said(h, answers.at(-1));
+      await settled();
+      const told = h.broadcasts.some((message) => message.type === 'session.patch' && message.patch.skillsKnown === true);
+      outcomes[way] = [before, h.session.state().skills, h.session.state().skillsKnown, told];
+    }
+    expect(outcomes).toEqual({
+      'an empty early list': [false, [], true, true],
+      'the early list failing': [false, [], true, true],
+      init: [false, ['repo-probe', 'superpowers:brainstorming'], true, true],
+    });
   });
 
   it('sends clients a snapshot for a new session and then the chat items as patches', async () => {

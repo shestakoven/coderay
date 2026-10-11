@@ -505,7 +505,7 @@ describe('AgentSession.switchSession', () => {
     const { a } = await twoChats(h);
     expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
     await h.session.switchSession(a.id);
-    expect(h.session.state().skills).toEqual([]);
+    expect([h.session.state().skills, h.session.state().skillsKnown]).toEqual([[], false]);
   });
 
   it('sends clients an empty skills list in the snapshot of the chat it switches to', async () => {

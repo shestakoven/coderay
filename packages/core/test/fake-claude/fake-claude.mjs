@@ -27,7 +27,7 @@ const emit = (event) => process.stdout.write(`${JSON.stringify(event).replaceAll
 const interruptAnswer = (requestId) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { still_queued: [] } } });
 const success = (requestId, response = {}) => ({ type: 'control_response', response: { subtype: 'success', request_id: requestId, response } });
 // Real claude lists its own commands with builtin: true and leaves the marker out for user, project, plugin and MCP ones.
-const COMMANDS = [
+const COMMANDS = process.env.FAKE_CLAUDE_COMMANDS ? JSON.parse(process.env.FAKE_CLAUDE_COMMANDS) : [
   { name: 'compact', description: 'Clear conversation history but keep a summary in context', argumentHint: '<optional custom summarization instructions>', builtin: true },
   { name: 'review', description: 'Review a pull request', argumentHint: '', builtin: true },
   { name: 'repo-probe', description: 'Probe the repository', argumentHint: '' },

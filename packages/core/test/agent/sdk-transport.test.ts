@@ -24,12 +24,13 @@ function launch(scenario: string, record: string): Launch {
   };
 }
 
-function start(scenario: string, asScript = false) {
+function start(scenario: string, asScript = false, env: Record<string, string> = {}) {
   const record = join(tempDir('ide-fake-'), 'record.jsonl');
   const messages: Record<string, unknown>[] = [];
   const base = launch(scenario, record);
+  const withEnv = { ...base, claude: { ...base.claude, env: { ...base.claude.env, ...env } } };
   // As `--claude <path>.mjs` runs it: the script itself is the command.
-  const run = asScript ? { ...base, claude: { ...base.claude, command: FAKE_CLAUDE, args: [] } } : base;
+  const run = asScript ? { ...withEnv, claude: { ...withEnv.claude, command: FAKE_CLAUDE, args: [] } } : withEnv;
   const transport = startSdkTransport(run, { message: (value) => messages.push(value as Record<string, unknown>) });
   // The session's sink refers to the transport the start returns, so nothing may reach it before.
   expect(messages).toEqual([]);
@@ -62,6 +63,12 @@ describe('startSdkTransport', () => {
     expect([first.argv?.includes(FAKE_CLAUDE), first.entrypoint, typeof first.sdkVersion, first.nodeOptions, process.env.CLAUDE_AGENT_SDK_VERSION])
       .toEqual([false, 'sdk-ts', 'string', true, before]);
     expect(process.env.NoDefaultCurrentDirectoryInExePath).toBeUndefined();
+  });
+
+  it("lists the skills claude names before any message: its own commands left out, each name once, in claude's order", async () => {
+    const commands = [{ name: 'repo-probe' }, { name: 'review', builtin: true }, { name: 'omc-plan' }, { name: 'repo-probe' }, { name: 'review' }];
+    const t = start('multi-turn', false, { FAKE_CLAUDE_COMMANDS: JSON.stringify(commands) });
+    expect(await t.transport.skills()).toEqual(['repo-probe', 'omc-plan', 'review']);
   });
 
   it('reports a request claude cancels, as when the turn is interrupted, as control_cancel_request', async () => {
