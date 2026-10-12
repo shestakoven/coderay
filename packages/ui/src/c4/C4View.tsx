@@ -495,7 +495,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
     return (
       <DetailsAside>
         <h2>{external.name}</h2>
-        <p className="muted">{external.kind} · classified from names only</p>
+        <p className="muted">{external.kind}</p>
         <h3>Identifiers</h3>
         <ul>
           {external.identifiers.map((i) => (

@@ -25,6 +25,7 @@ import { acquireCoreLock } from './lock';
 import { takeNodeLauncher } from './node-exec';
 import { descendants, isAlive, signal as sendSignal } from './os-process';
 import { MapService } from './map/map-service';
+import { OverviewService } from './map/overview';
 import { buildSnapshot } from './map/snapshot';
 import { IdentifierClassifier } from './c4/classify';
 import { watchDeploy } from './c4/deploy';
@@ -315,6 +316,7 @@ try {
   let afterClose: (() => Promise<void>) | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
+  let overviews: OverviewService | undefined;
   let deployWatch: { close(): Promise<void> } | undefined;
   const progress = new ProgressReporter((current) => server?.broadcast({ type: 'map.progress', progress: current }));
 
@@ -346,6 +348,9 @@ try {
         return;
       case 'map.regroup':
         void mapService?.regroup();
+        return;
+      case 'map.overview':
+        overviews?.rebuild();
         return;
       case 'session.new':
         await watching;
@@ -546,6 +551,7 @@ try {
     await git.close();
     progress.stop();
     classifier?.stop();
+    overviews?.stop();
     step = 'the deploy watch';
     await deployWatch?.close();
     const stopping = mapService?.stop();
@@ -619,6 +625,15 @@ try {
       },
     });
     classifier = names;
+    const overview = new OverviewService({
+      model: models.fast,
+      stateDir: projectDir(home, root),
+      projectName,
+      onChange: () => {
+        if (snapshot) publish();
+      },
+    });
+    overviews = overview;
     const service = new MapService({
       root,
       projectName,
@@ -638,9 +653,9 @@ try {
       const c4 = buildC4(root, files, edges, view.components, unresolved, names.lookup);
       names.request(c4.pending);
       const status = names.status();
-      if (status.waiting > 0) c4.model.warnings.push(`Classifying ${status.waiting} package, image and host names with Haiku (names only)`);
+      if (status.waiting > 0) c4.model.warnings.push(`Classifying ${status.waiting} package, image and host names`);
       if (status.failure) c4.model.warnings.push(`Could not classify names: ${status.failure}`);
-      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: c4.model };
+      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: c4.model, overview: overview.build(view.components, files, edges, view.status.layer === 'ai' && view.status.grouping !== 'running') };
       running.broadcast({ type: 'map.snapshot', snapshot });
       return snapshot;
     }

@@ -75,18 +75,18 @@ describe('mapActivities', () => {
     expect(mapActivities(idle, status({ embeddings: 'unavailable' }))).toEqual([]);
   });
 
-  it('names the paths, symbols and dependency counts a running grouping sent and says file contents are never sent', () => {
+  it('names the paths, symbols and dependency counts a running grouping sent', () => {
     const item = only(idle, status({ grouping: 'running', sending: { paths: 92, symbols: 240, links: 31 } }));
     expect(item).toEqual({
       key: 'grouping',
-      label: 'Grouping files into components with Haiku',
-      detail: 'Sent 92 paths, 240 symbol names, 31 dependency counts. File contents are never sent.',
+      label: 'Grouping files into components',
+      detail: 'Sent 92 paths, 240 symbol names, 31 dependency counts',
       fraction: null,
     });
   });
 
   it('says it waits for embeddings when a running grouping has sent nothing yet', () => {
-    expect(only(idle, status({ grouping: 'running', sending: null })).detail).toBe('Waiting for embeddings before asking Haiku');
+    expect(only(idle, status({ grouping: 'running', sending: null })).detail).toBe('Waiting for embeddings');
   });
 
   it.each(['failed', 'idle', 'too-large'] as const)('shows no grouping item when grouping is %s', (grouping) => {

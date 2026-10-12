@@ -32,6 +32,7 @@ import { PlanDock } from '../plan/PlanDock';
 import { chimeKey, finishedWorking, playChime, playDone, type Activity } from '../plan/chime';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, waitsForUser } from '../plan/plan-state';
 import { C4View } from '../c4/C4View';
+import { OverviewPending, OverviewView } from '../overview/OverviewView';
 import { PlanFlowView } from '../plan-flow/PlanFlowView';
 import { flowOf } from '../plan-flow/flow-model';
 import { availableModes, resolveMode, type MapMode } from '../plan-flow/map-mode';
@@ -334,7 +335,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, changes, highlight, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
   const flowPlan = flowOf(shown) === null ? null : shown;
-  const modeInput = { hasC4: c4 !== null, hasFlow: flowPlan !== null };
+  const modeInput = { hasC4: c4 !== null, hasFlow: flowPlan !== null, hasOverview: snapshot?.overview !== undefined };
   const [preferredMode, setPreferredMode] = useState<MapMode | null>(null);
   const modes = availableModes(modeInput);
   const mode = resolveMode(preferredMode, modeInput);
@@ -434,7 +435,15 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
               <button type="button" onClick={() => send({ type: 'map.regroup' })}>Regroup</button>
             </div>
             <PlanOverlayContext.Provider value={overlay}>
-              {showC4 && snapshot && c4 ? (
+              {mode === 'overview' && snapshot ? (
+                <ReactFlowProvider>
+                  {snapshot.overview && snapshot.overview.groups.length > 0 ? (
+                    <OverviewView snapshot={snapshot} overview={snapshot.overview} onRebuild={() => send({ type: 'map.overview' })} />
+                  ) : (
+                    <OverviewPending overview={snapshot.overview} onRebuild={() => send({ type: 'map.overview' })} />
+                  )}
+                </ReactFlowProvider>
+              ) : showC4 && snapshot && c4 ? (
                 <ReactFlowProvider>
                   <C4View snapshot={snapshot} model={c4} />
                 </ReactFlowProvider>
