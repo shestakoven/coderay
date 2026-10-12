@@ -397,6 +397,12 @@ describe('c4RootGraph', () => {
     ]);
   });
 
+  it('starts no component at an entry script that no component holds', () => {
+    const jobs = container('jobs', 'worker', { entryFiles: ['jobs/docker/start.sh'], components: [part('Engine', 1), part('unassigned', 1)] });
+    const graph = c4RootGraph(snapshot(files), model({ containers: [jobs] }), jobs.id, null);
+    expect(graph.edges.filter((e) => e.protocols.includes('starts'))).toEqual([]);
+  });
+
   it('returns an empty map for a root that is not a container', () => {
     expect(c4RootGraph(snapshot(files), base, 'container:missing', null)).toEqual({ nodes: [], edges: [] });
   });

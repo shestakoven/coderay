@@ -3,7 +3,8 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { onTestFinished } from 'vitest';
+import { onTestFinished, type TestContext } from 'vitest';
+import { stringify } from 'yaml';
 import type { Lang, MapStatus } from '@ide/protocol';
 import type { IndexedFile } from '../src/model';
 import type { SessionRecord } from '../src/store/store';
@@ -21,9 +22,17 @@ export function indexed(path: string, lang: Lang, imports: string[], overrides: 
   return { path, lang, contentHash: path, imports, symbols: [], parseError: false, ...overrides };
 }
 
-export function tempDir(prefix: string): string {
+// A Kubernetes workload manifest whose pod runs the given containers.
+export function k8sWorkload(kind: 'Deployment' | 'StatefulSet' | 'CronJob', containers: Record<string, unknown>[]): string {
+  const pod = { spec: { containers } };
+  const spec = kind === 'CronJob' ? { schedule: '0 3 * * *', jobTemplate: { spec: { template: pod } } } : { replicas: 1, template: pod };
+  return stringify({ apiVersion: kind === 'CronJob' ? 'batch/v1' : 'apps/v1', kind, metadata: { name: 'app' }, spec });
+}
+
+// A concurrent test passes its context: the global onTestFinished may bind the removal to another test running alongside.
+export function tempDir(prefix: string, context?: Pick<TestContext, 'onTestFinished'>): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  onTestFinished(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  (context?.onTestFinished ?? onTestFinished)(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

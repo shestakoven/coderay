@@ -365,7 +365,8 @@ export function c4RootGraph(snapshot: MapSnapshot, model: C4Model, rootId: strin
   if (!root) return { nodes: [], edges: [] };
   const component = new Map(snapshot.components.map((c) => [c.id, c]));
   const componentOf = new Map(snapshot.files.map((f) => [f.path, f.componentId ?? 'unassigned']));
-  const entryComponents = new Set(root.entryFiles.map((p) => componentOf.get(p) ?? 'unassigned'));
+  // A start script is an entry file of no component: it is not indexed.
+  const entryComponents = new Set(root.entryFiles.flatMap((p) => componentOf.get(p) ?? []));
   const nodes: VisibleNode[] = [];
   const edges = new Map<string, VisibleEdge>();
   const add = (from: string, to: string, protocol: string, strength: number, linkId: string, kind: EdgeKind = 'plain') => {
