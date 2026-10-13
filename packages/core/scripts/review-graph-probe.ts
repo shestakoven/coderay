@@ -1,6 +1,9 @@
-// Usage: node --import tsx packages/core/scripts/review-graph-probe.ts <project> <git-range>
+// Usage: node --import tsx packages/core/scripts/review-graph-probe.ts <project> <base>..<head>
 // Example: review-graph-probe /Users/me/code/KVARK HEAD~40..HEAD
-// Builds the review graph of the files a git range changed, as the core would, and prints its shape.
+// Builds the review graph of the files a git range changed, from the components saved in the project's .ide/map.json
+// (its `files` plus `assignments`, or folder components when there is no saved map) and prints its shape.
+// The live file assignment of the core is not run, so files the saved map has not seen show up in "Unassigned files".
+// The "after" side is the working tree, so <head> must be HEAD of the project.
 import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
@@ -12,11 +15,29 @@ import { folderComponents } from '../src/map/folder-components';
 import { readMapFile } from '../src/map/map-file';
 import { buildReviewGraph } from '../src/review/review-graph';
 
-const [root, range] = process.argv.slice(2) as [string, string];
-const base = range.split('..')[0]!;
+const [root, range] = process.argv.slice(2);
+const [base, head, ...extra] = range?.split('..') ?? [];
+if (root === undefined || range === undefined || base === undefined || head === undefined || extra.length > 0 || !/^[^.-][^ ]*\.\.[^ ]+$/.test(range) || /^[-.]/.test(head)) {
+  console.error('Usage: review-graph-probe <project> <base>..<head>   (<head> must be HEAD of the project)');
+  process.exit(1);
+}
 const git = (...args: string[]): string => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
+const fail = (message: string): never => {
+  console.error(message);
+  process.exit(1);
+};
+const commitOf = (rev: string): string => {
+  try {
+    return git('rev-parse', '--verify', `${rev}^{commit}`).trim();
+  } catch {
+    return fail(`cannot resolve "${rev}" in ${root}`);
+  }
+};
+const baseCommit = commitOf(base);
+if (commitOf(head) !== commitOf('HEAD')) fail(`${range}: the right side is not HEAD of ${root}; the probe reads the after side from the working tree, so the range must end at HEAD`);
+if (git('--no-optional-locks', 'status', '--porcelain', '--untracked-files=no') !== '') console.error('warning: the working tree has uncommitted changes; the after side is the working tree');
 
-const changed: ReviewGraphFile[] = git('diff', '--name-status', '-M', range)
+const changed: ReviewGraphFile[] = git('-c', 'core.quotePath=false', 'diff', '--name-status', '-M', range)
   .split('\n')
   .filter(Boolean)
   .flatMap((line): ReviewGraphFile[] => {
@@ -40,11 +61,11 @@ for (const [path, id] of map.assignments) byId.get(id)?.files.push(path);
 const components = byId.size > 0
   ? [...byId.values()]
   : folderComponents(current.map((f) => f.path)).map((c) => ({ id: c.id, name: c.name, files: c.files }));
-console.log(`${current.length} files, ${components.length} components (${byId.size > 0 ? 'saved map' : 'folders'}), ${changed.length} changed in ${range}`);
+console.log(`${current.length} files, ${changed.length} changed in ${range}; components: ${byId.size > 0 ? 'saved map, no live file assignment' : 'folders'} (${components.length})`);
 
 const graph = await buildReviewGraph({
   changed, current, components, adapters, plan: null,
-  readBefore: async (path) => { try { return git('show', `${base}:${path}`); } catch { return null; } },
+  readBefore: async (path) => { try { return git('show', `${baseCommit}:${path}`); } catch { return null; } },
   readNow: async (path) => readFile(join(root, path), 'utf8').catch(() => null),
 });
 
