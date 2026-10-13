@@ -41,6 +41,10 @@ describe('focusOf', () => {
     expect([...focus.parts].sort()).toEqual(['db', 'log']);
     expect([...focus.links]).toEqual([2]);
   });
+
+  it('is nothing for a part the view does not show', () => {
+    expect(focusOf(visibleMap(graph, false), { t: 'part', id: 'db' })).toBeNull();
+  });
 });
 
 describe('graphFilesOf', () => {
@@ -56,6 +60,11 @@ describe('graphFilesOf', () => {
     const files = graphFilesOf([section([{ path: 'c.ts', reverted: false }], null, 'external')]);
     expect(files[0]).toMatchObject({ step: null, external: true });
   });
+
+  it('gives a follow-up file a step of its own, since the request refuses an empty one', () => {
+    const files = graphFilesOf([section([{ path: 'd.ts', reverted: false }], '', 'p1/')]);
+    expect(files[0]).toMatchObject({ step: '(follow-up)', external: false });
+  });
 });
 
 describe('graphKey', () => {
@@ -65,6 +74,8 @@ describe('graphKey', () => {
     expect(graphKey([file, other], 'p')).toBe(graphKey([other, file], 'p'));
     expect(graphKey([file], 'p')).not.toBe(graphKey([{ ...file, after: 'a2' }], 'p'));
     expect(graphKey([file], 'p')).not.toBe(graphKey([file], 'q'));
+    expect(graphKey([file], 'p')).not.toBe(graphKey([{ ...file, added: 2 }], 'p'));
+    expect(graphKey([file], 'p')).not.toBe(graphKey([{ ...file, removed: 3 }], 'p'));
   });
 });
 

@@ -13,19 +13,22 @@ export const FLAGGED_LINKS: ReadonlySet<ReviewLinkState> = new Set(['unplanned',
 
 export const targetKey = (target: Target): string => (target.t === 'part' ? `p:${target.id}` : `l:${target.from}>${target.to}`);
 
+const FOLLOW_UP_STEP = '(follow-up)';
+
 // Reverted files are back to how they were: they would draw links that no longer exist.
+// A follow-up section has an empty step key, which the request refuses; any non-null step marks a file as in-plan.
 export function graphFilesOf(sections: ReviewSection[]): ReviewGraphFile[] {
   return sections
     .flatMap((section) => section.files
       .filter((file) => !file.reverted)
       .map((file): ReviewGraphFile => ({
-        path: file.path, before: file.before, after: file.after, step: section.stepKey, external: section.key === 'external', added: file.added, removed: file.removed,
+        path: file.path, before: file.before, after: file.after, step: section.stepKey === '' ? FOLLOW_UP_STEP : section.stepKey, external: section.key === 'external', added: file.added, removed: file.removed,
       })))
     .slice(0, MAX_REVIEW_GRAPH_FILES);
 }
 
 export function graphKey(files: ReviewGraphFile[], planId: string | null): string {
-  return JSON.stringify([planId, [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((file) => [file.path, file.before, file.after, file.step, file.external])]);
+  return JSON.stringify([planId, [...files].sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0)).map((file) => [file.path, file.before, file.after, file.step, file.external, file.added, file.removed])]);
 }
 
 export function visibleMap(graph: ReviewGraph, context: boolean): MapView {
@@ -42,6 +45,7 @@ export function focusOf(view: MapView, target: Target | null): Focus | null {
     const at = view.links.find(({ link }) => link.from === target.from && link.to === target.to);
     return at === undefined ? null : { parts: new Set([target.from, target.to]), links: new Set([at.index]) };
   }
+  if (!view.parts.some((part) => part.id === target.id)) return null;
   const around = view.links.filter(({ link }) => link.from === target.id || link.to === target.id);
   return { parts: new Set([target.id, ...around.flatMap(({ link }) => [link.from, link.to])]), links: new Set(around.map(({ index }) => index)) };
 }
