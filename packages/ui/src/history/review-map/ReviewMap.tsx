@@ -40,9 +40,9 @@ function storage(): Storage | undefined {
 
 function loadContext(): boolean {
   try {
-    return storage()?.getItem(CONTEXT_KEY) !== 'false';
+    return storage()?.getItem(CONTEXT_KEY) === 'true';
   } catch {
-    return true;
+    return false;
   }
 }
 

@@ -76,6 +76,8 @@
 .rm-done-body { display: flex; flex-direction: column; min-width: 0; }
 .rm-done-body .pf-note { grid-column: auto; }
 .rm-done-body i { font-style: normal; font-family: var(--font-mono); }
+.rm-file-outside { color: var(--warn); }
+.rm-done-body i + .rm-file-outside { margin-left: 6px; }
 .rm-check { width: 16px; height: 16px; padding: 0; display: inline-flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: #10331d; cursor: pointer; transition: background 0.1s, border-color 0.1s; }
 .rm-check:hover:not(:disabled) { border-color: var(--accent-hover); }
 .rm-check.on { background: var(--ok); border-color: var(--ok); }

@@ -1,5 +1,5 @@
 import { MAX_REVIEW_GRAPH_FILES } from '@ide/protocol';
-import type { PlanView, ReviewGraph, ReviewGraphFile, ReviewLink, ReviewLinkState, ReviewPart } from '@ide/protocol';
+import type { PlanView, ReviewGraph, ReviewGraphFile, ReviewLink, ReviewLinkState, ReviewPart, ReviewPartFile } from '@ide/protocol';
 import type { ReviewSection } from '../review-model';
 
 export type StepOutcome = 'done' | 'partial' | 'skipped';
@@ -25,6 +25,10 @@ export function graphFilesOf(sections: ReviewSection[]): ReviewGraphFile[] {
         path: file.path, before: file.before, after: file.after, step: section.stepKey === '' ? FOLLOW_UP_STEP : section.stepKey, external: section.key === 'external', added: file.added, removed: file.removed,
       })))
     .slice(0, MAX_REVIEW_GRAPH_FILES);
+}
+
+export function fileOutsidePlan(file: Pick<ReviewPartFile, 'step' | 'external'>, hasPlan: boolean): boolean {
+  return hasPlan && file.step === null && !file.external;
 }
 
 export function graphKey(files: ReviewGraphFile[], planId: string | null): string {

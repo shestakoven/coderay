@@ -24,10 +24,10 @@ const props: ReviewMapProps = {
 const html = (extra: Partial<ReviewMapProps>) => renderToStaticMarkup(<ReviewMap {...props} {...extra} />);
 
 describe('ReviewMap', () => {
-  it('draws the graph with context and shows the note that says it is partial', () => {
+  it('draws the changed parts by default and shows the note that says it is partial', () => {
     const out = html({});
     expect(out).toContain('no components yet');
-    expect(out).toContain('>api,db<');
+    expect(out).toContain('>api<');
   });
 
   it('says it is building while there is no graph yet, and shows the error when the request failed', () => {

@@ -143,7 +143,7 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
     // The user panned or zoomed since: the camera is theirs.
     if (chosen !== null && (Math.abs(x - chosen.x) > 0.5 || Math.abs(y - chosen.y) > 0.5 || Math.abs(zoom - chosen.zoom) > 0.001)) return;
     fitTo(destination, 0);
-  }, [width, height, padding]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [width, height, padding]); // eslint-disable-line react-hooks/exhaustive-deps -- a new layout is fitted by the effect above; this one reacts to the canvas size alone
 
   useEffect(() => () => {
     window.clearTimeout(leavePart.current);

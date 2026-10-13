@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanView, ReviewGraph, ReviewPart } from '@ide/protocol';
-import { focusOf, graphFilesOf, graphKey, importedName, partOfPath, stepOutcomes, targetKey, totalsOf, visibleMap } from '../src/history/review-map/review-map-model';
+import { fileOutsidePlan, focusOf, graphFilesOf, graphKey, importedName, partOfPath, stepOutcomes, targetKey, totalsOf, visibleMap } from '../src/history/review-map/review-map-model';
 
 const part = (id: string, status: ReviewPart['status'], extra: Partial<ReviewPart> = {}): ReviewPart =>
   ({ id, title: id, status, steps: [], outside: false, files: [], broken: [], ...extra });
@@ -132,5 +132,14 @@ describe('importedName', () => {
     ['db.query(sql)', null],
   ])('reads %j as %j', (line, name) => {
     expect(importedName(line)).toBe(name);
+  });
+});
+
+describe('fileOutsidePlan', () => {
+  it('flags a file no step lists only when a plan exists and the file is not external', () => {
+    expect(fileOutsidePlan({ step: null, external: false }, true)).toBe(true);
+    expect(fileOutsidePlan({ step: null, external: false }, false)).toBe(false);
+    expect(fileOutsidePlan({ step: null, external: true }, true)).toBe(false);
+    expect(fileOutsidePlan({ step: 's1', external: false }, true)).toBe(false);
   });
 });

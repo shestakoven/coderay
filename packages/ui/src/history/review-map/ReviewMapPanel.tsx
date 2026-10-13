@@ -2,7 +2,7 @@ import type { PlanView, ReviewEvidence, ReviewGraph, ReviewLink, ReviewLinkState
 import { Icon } from '../../layout/Icon';
 import { KindIcon } from '../../plan-flow/FlowCard';
 import { KIND_ACCENT, OP_CLASS } from '../../plan-flow/flow-style';
-import type { Target } from './review-map-model';
+import { fileOutsidePlan, type Target } from './review-map-model';
 import type { MapQuestion } from './review-map-questions';
 import { linkLabel } from './ReviewMapLink';
 
@@ -123,6 +123,7 @@ function PartDetails({ graph, plan, part, question, reviewed, selectedPath, onAc
                     </button>
                     <span className="pf-note">
                       {file.added > 0 && <i className="op-add">+{file.added}</i>} {file.removed > 0 && <i className="op-del">−{file.removed}</i>}
+                      {fileOutsidePlan(file, plan !== null) && <span className="rm-file-outside">outside the plan</span>}
                     </span>
                   </span>
                 </li>
