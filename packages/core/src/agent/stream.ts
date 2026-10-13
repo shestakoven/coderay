@@ -1,5 +1,6 @@
 import type { McpServerState } from '@ide/protocol';
 import { isRecord } from '../json';
+import type { UsageUpdate } from './usage';
 
 export interface ToolResultBlock {
   toolUseId: string;
@@ -27,6 +28,7 @@ export type StreamEvent =
   | { type: 'conversation_reset'; trigger: string | null }
   | { type: 'compact_boundary'; trigger: string | null; preTokens: number | null; postTokens: number | null }
   | { type: 'command_output'; text: string }
+  | { type: 'usage'; update: UsageUpdate }
   | { type: 'control_request'; requestId: string; subtype: string; toolName: string | null; input: unknown }
   | { type: 'control_cancel'; requestId: string }
   | { type: 'ignored' }

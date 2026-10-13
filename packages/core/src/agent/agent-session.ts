@@ -18,10 +18,10 @@ import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
 import { startSdkTransport } from './sdk-transport';
 import { reapOrphans } from './reaper';
-import { parseStreamMessage, type StreamEvent, type ToolResultBlock } from './stream';
+import { type StreamEvent, type ToolResultBlock } from './stream';
 import { TranscriptTail } from './transcript-tail';
-import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type UserMessage } from './transport';
-import { usageOf } from './usage';
+import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type TransportSink, type UserMessage } from './transport';
+import type { UsageUpdate } from './usage';
 import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
@@ -988,8 +988,8 @@ export class AgentSession {
       mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate, killGraceMs: this.options.killGraceMs,
       pidDir: runDir(this.options.home),
     };
-    // A stopped claude's last messages may arrive while the next one starts; they no longer belong to the chat.
-    const sink = { message: (value: unknown) => { if (this.transport === transport) this.onStreamMessage(value); } };
+    // A stopped claude's last events may arrive while the next one starts; they no longer belong to the chat.
+    const sink: TransportSink = { event: (event) => { if (this.transport === transport) this.onStreamEvent(event); } };
     const transport = startSdkTransport(launch, sink);
     this.transport = transport;
     this.exitReason = null;
@@ -1019,10 +1019,12 @@ export class AgentSession {
     void transport.exited.then((exit) => this.onExit(transport, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 
-  private onStreamMessage(value: unknown): void {
+  private onStreamEvent(event: StreamEvent): void {
     try {
-      const event = parseStreamMessage(value);
-      this.trackUsage(value);
+      if (event.type === 'usage') {
+        this.trackUsage(event.update);
+        return;
+      }
       if (event.type === 'text_delta') {
         // Subagent text is shown only once it is complete.
         if (event.parentToolUseId === null) this.emit({ type: 'session.delta', text: event.text });
@@ -1039,9 +1041,7 @@ export class AgentSession {
     }
   }
 
-  private trackUsage(value: unknown): void {
-    const update = usageOf(value, this.session?.model ?? null);
-    if (!update) return;
+  private trackUsage(update: UsageUpdate): void {
     const usage = { ...this.usage, ...update };
     if (JSON.stringify(usage) === JSON.stringify(this.usage)) return;
     this.usage = usage;

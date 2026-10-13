@@ -774,7 +774,7 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     const [, stale] = vi.mocked(startSdkTransport).mock.calls.at(-1)!;
     await h.session.restart();
-    stale.message({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'stale' }] }, parent_tool_use_id: null, session_id: 'gone' });
+    stale.event({ type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'text', text: 'stale' }] });
     expect(texts(h.session.state().items)).toEqual(['hi', 'OK']);
   });
 

@@ -3,6 +3,8 @@ import { ENV_BEFORE_SDK, keepingEnv, restoreEnv } from './sdk-env';
 import { setTimeout as delay } from 'node:timers/promises';
 import { query, type CanUseTool, type Options, type PermissionResult, type SDKUserMessage, type SpawnOptions } from '@anthropic-ai/claude-agent-sdk';
 import { claudeEnv, spawnClaude, type SpawnedClaude } from './claude-process';
+import { parseStreamMessage } from './stream';
+import { usageOf } from './usage';
 import type { AgentTransport, Launch, TransportSink } from './transport';
 
 restoreEnv(ENV_BEFORE_SDK);
@@ -66,13 +68,22 @@ class InputQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
-export function startSdkTransport(launch: Launch, sink: TransportSink): AgentTransport {
+export function startSdkTransport(launch: Launch, sink: TransportSink, tap?: (message: unknown) => void): AgentTransport {
   const core = claudeEnv(launch.claude);
   const input = new InputQueue();
   const pending = new Map<string, (result: PermissionResult) => void>();
+  // A turn's context window is the one of the model claude's init names.
+  let model: string | null = null;
+  const deliver = (message: unknown): void => {
+    const event = parseStreamMessage(message);
+    if (event.type === 'init') model = event.model;
+    const update = usageOf(message, model);
+    if (update) sink.event({ type: 'usage', update });
+    sink.event(event);
+  };
   // The SDK reads claude's control requests apart from its messages: delivering a request after the messages already read keeps a prompt behind its tool call.
   const later = (value: object): void => {
-    setImmediate(() => sink.message(value));
+    setImmediate(() => deliver(value));
   };
   const canUseTool: CanUseTool = (toolName, toolInput, { signal, requestId }) => new Promise<PermissionResult>((resolve) => {
     if (signal.aborted) {
@@ -111,7 +122,10 @@ export function startSdkTransport(launch: Launch, sink: TransportSink): AgentTra
   if (!claude) throw new Error('The agent SDK did not start claude.');
   const drained = (async () => {
     try {
-      for await (const message of q) sink.message(message);
+      for await (const message of q) {
+        tap?.(message);
+        deliver(message);
+      }
     } catch {
       // The stream stops when claude exits; `exited` reports how.
     }

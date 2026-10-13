@@ -7,7 +7,7 @@ import { parseArgs } from 'node:util';
 import { startClaude, type ClaudeCommand, type ProcessExit } from '../src/agent/claude-process';
 import { startSdkTransport } from '../src/agent/sdk-transport';
 import { DISALLOWED_TOOLS, isModelChoice } from '../src/agent/tools';
-import { userMessage, type Launch, type TransportSink, type UserMessage } from '../src/agent/transport';
+import { userMessage, type Launch, type UserMessage } from '../src/agent/transport';
 import { isRecord, parseJson } from '../src/json';
 import { defaultTranscriptsDir, transcriptPath } from '../src/watchdog/recovery';
 
@@ -18,7 +18,8 @@ const ANSWER_TIMEOUT_MS = 120_000;
 
 type Init = Record<string, unknown>;
 interface Started { send(message: UserMessage): void; exited: Promise<ProcessExit>; kill(): Promise<ProcessExit> }
-type Start = (launch: Launch, sink: TransportSink) => Started;
+interface RawSink { message(value: unknown): void }
+type Start = (launch: Launch, sink: RawSink) => Started;
 interface Run { init: Init; initMs: number; textMs: number; resultMs: number }
 type Timing = 'initMs' | 'textMs' | 'resultMs';
 
@@ -66,6 +67,9 @@ const startClaudeP: Start = (launch, sink) => {
   return { send: (message) => child.write(message), exited: child.exited, kill: () => child.kill() };
 };
 
+// The product's transport, read through its tap: claude's messages before the transport turns them into events.
+const startAgentSdk: Start = (launch, sink) => startSdkTransport(launch, { event: () => {} }, (message) => sink.message(message));
+
 // One chat's start as the product makes it: the same Launch goes through the given transport, the first message is sent at once, and the clock runs from the spawn.
 async function measure(start: Start, launch: Launch, interrupted: Promise<never>): Promise<Run> {
   const t0 = performance.now();
@@ -79,7 +83,7 @@ async function measure(start: Start, launch: Launch, interrupted: Promise<never>
     answer = resolve;
     fail = reject;
   });
-  const sink: TransportSink = {
+  const sink: RawSink = {
     message(value) {
       if (!isRecord(value)) return;
       if (value.type === 'system' && value.subtype === 'init' && init === null) {
@@ -168,7 +172,7 @@ async function main(): Promise<number> {
     const sdk: Run[] = [];
     // Alternating which side goes first keeps a warm disk cache from favouring one of them.
     for (let run = 0; run < runs; run += 1) {
-      const order = run % 2 === 0 ? [[startClaudeP, cli], [startSdkTransport, sdk]] as const : [[startSdkTransport, sdk], [startClaudeP, cli]] as const;
+      const order = run % 2 === 0 ? [[startClaudeP, cli], [startAgentSdk, sdk]] as const : [[startAgentSdk, sdk], [startClaudeP, cli]] as const;
       for (const [start, into] of order) into.push(await measure(start, launch(), interrupted));
     }
     const first = { cli: cli[0]?.init ?? {}, sdk: sdk[0]?.init ?? {} };

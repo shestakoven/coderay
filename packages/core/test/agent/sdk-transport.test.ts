@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { startSdkTransport } from '../../src/agent/sdk-transport';
+import type { StreamEvent } from '../../src/agent/stream';
 import type { Launch } from '../../src/agent/transport';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
 import { tempDir, waitFor } from '../helpers';
@@ -26,22 +27,22 @@ function launch(scenario: string, record: string): Launch {
 
 function start(scenario: string, asScript = false, env: Record<string, string> = {}) {
   const record = join(tempDir('ide-fake-'), 'record.jsonl');
-  const messages: Record<string, unknown>[] = [];
+  const events: StreamEvent[] = [];
+  const raw: unknown[] = [];
   const base = launch(scenario, record);
   const withEnv = { ...base, claude: { ...base.claude, env: { ...base.claude.env, ...env } } };
   // As `--claude <path>.mjs` runs it: the script itself is the command.
   const run = asScript ? { ...withEnv, claude: { ...withEnv.claude, command: FAKE_CLAUDE, args: [] } } : withEnv;
-  const transport = startSdkTransport(run, { message: (value) => messages.push(value as Record<string, unknown>) });
+  const transport = startSdkTransport(run, { event: (event) => events.push(event) }, (message) => raw.push(message));
   // The session's sink refers to the transport the start returns, so nothing may reach it before.
-  expect(messages).toEqual([]);
+  expect(events).toEqual([]);
   onTestFinished(async () => {
     await transport.kill();
   });
-  const kinds = () => messages.map((m) => (m.type === 'system' ? `system/${String(m.subtype)}` : String(m.type)));
-  return { transport, messages, kinds, records: () => readRecords(record) };
+  return { transport, events, raw, records: () => readRecords(record) };
 }
 
-const promptRequested = (messages: Record<string, unknown>[]) => waitFor(() => messages.some((m) => m.type === 'control_request'), 'prompt requested');
+const promptRequested = (events: StreamEvent[]) => waitFor(() => events.some((e) => e.type === 'control_request'), 'prompt requested');
 
 describe('startSdkTransport', () => {
   it('is the only module of the core that loads the agent SDK, which sdk-env must precede', () => {
@@ -71,19 +72,19 @@ describe('startSdkTransport', () => {
     expect(await t.transport.skills()).toEqual(['repo-probe', 'omc-plan', 'review']);
   });
 
-  it('reports a request claude cancels, as when the turn is interrupted, as control_cancel_request', async () => {
+  it('reports a request claude cancels, as when the turn is interrupted, as control_cancel', async () => {
     const t = start('ask-user-question');
     t.transport.send(HI);
-    await promptRequested(t.messages);
+    await promptRequested(t.events);
     t.transport.interrupt();
-    await waitFor(() => t.messages.some((m) => m.type === 'control_cancel_request'), 'cancel reported');
-    expect(t.messages.find((m) => m.type === 'control_cancel_request')).toEqual({ type: 'control_cancel_request', request_id: 'req_fx_ask' });
+    await waitFor(() => t.events.some((e) => e.type === 'control_cancel'), 'cancel reported');
+    expect(t.events.find((e) => e.type === 'control_cancel')).toEqual({ type: 'control_cancel', requestId: 'req_fx_ask' });
   });
 
   it('stops claude with a prompt still waiting: kill resolves with SIGTERM and a late answer is ignored', async () => {
     const t = start('ask-user-question');
     t.transport.send(HI);
-    await promptRequested(t.messages);
+    await promptRequested(t.events);
     expect((await t.transport.kill()).signal).toBe('SIGTERM');
     expect(() => t.transport.respond({ subtype: 'success', request_id: 'req_fx_ask', response: { behavior: 'deny', message: 'late' } })).not.toThrow();
   });
@@ -92,6 +93,19 @@ describe('startSdkTransport', () => {
     const t = start('result-after-exit');
     t.transport.send(HI);
     const exit = await t.transport.exited;
-    expect([exit.code, t.kinds().at(-1)]).toEqual([1, 'result']);
+    expect([exit.code, t.events.at(-1)?.type]).toEqual([1, 'result']);
+  });
+
+  it("hands the session claude's messages as events, a reply's usage ahead of the reply, and every message to the tap", async () => {
+    const t = start('usage');
+    t.transport.send(HI);
+    await waitFor(() => t.events.some((e) => e.type === 'result'), 'the turn ended');
+    const usages = t.events.flatMap((e) => (e.type === 'usage' ? [e.update] : []));
+    const order = t.events.map((e) => e.type).filter((type) => type === 'usage' || type === 'assistant' || type === 'result');
+    expect([usages, order, t.raw.some((m) => (m as { type?: unknown }).type === 'rate_limit_event')]).toEqual([
+      [{ contextTokens: 96_010 }, { fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 } }, { contextWindow: 200_000 }],
+      ['usage', 'assistant', 'assistant', 'usage', 'usage', 'result'],
+      true,
+    ]);
   });
 });

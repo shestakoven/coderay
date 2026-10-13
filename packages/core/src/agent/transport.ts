@@ -1,6 +1,7 @@
 import type { ChatImage, EffortLevel, ImageMediaType } from '@ide/protocol';
 import type { ClaudeCommand, ProcessExit } from './claude-process';
 import type { PermissionAnswer } from './prompts';
+import type { StreamEvent } from './stream';
 
 export interface GateLaunch {
   settingsPath: string;
@@ -36,7 +37,7 @@ export type ControlResponse =
   | { subtype: 'error'; request_id: string; error: string };
 
 export interface TransportSink {
-  message(value: unknown): void;
+  event(event: StreamEvent): void;
 }
 
 export interface AgentTransport {
