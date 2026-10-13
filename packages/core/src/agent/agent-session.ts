@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  EFFORT_LEVELS, EMPTY_USAGE, MAX_CHAT_IMAGES,
+  EFFORT_LEVELS, EMPTY_USAGE, ENGINE_CAPABILITIES, isClaudeEffort, MAX_CHAT_IMAGES, parseModelId,
   type ChatImage, type ChatItem, type ChatSummary, type EffortLevel, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
@@ -14,9 +14,10 @@ import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
 import { commandLine, forceKill, isAlive, reaches, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
+import { claudeEngine } from './engines/claude';
+import { EngineRegistry } from './engines/registry';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
-import { startSdkTransport } from './sdk-transport';
 import { reapOrphans } from './reaper';
 import { type StreamEvent, type ToolResultBlock } from './stream';
 import { CLAUDE_PROMPT_NAMES, type PromptNames } from './system-prompt';
@@ -60,6 +61,8 @@ export interface AgentSessionOptions {
   activeStep?: () => { planId: string; key: string; title: string } | null;
   transcriptsDir?: string;
   canLeave?: () => string | null;
+  // The engines a chat can run on; Claude only, by default.
+  engines?: EngineRegistry;
 }
 
 const ACTIVE_SESSION_KEY = 'activeSessionId';
@@ -68,6 +71,7 @@ const HOOK_OFF_NOTICE =
   "CodeRay's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
 
 const GAP_NOTICE = "Calls made while the core was down may be missing; claude's transcript could not be read.";
+const NO_TRANSCRIPT_GAP_NOTICE = 'Calls made while the core was down may be missing.';
 
 const SESSION_ERRORS = {
   empty: 'Type a message first.',
@@ -85,6 +89,8 @@ const SESSION_ERRORS = {
   'no-chat': 'That chat does not exist.',
   'busy-terminal': 'Wait for the agent to finish or press Stop before opening the terminal.',
   'in-terminal': 'The agent runs in the terminal view. Switch back to the chat to do this.',
+  'no-engine': 'That model needs an engine CodeRay does not have.',
+  'no-terminal': 'This engine has no terminal view.',
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -127,6 +133,7 @@ const MAX_STORED_BASE64 = Math.ceil(MAX_STORED_IMAGE_BYTES / 3) * 4;
 export class AgentSession {
   private readonly options: AgentSessionOptions;
   private readonly blobs: BlobStore;
+  private readonly engines: EngineRegistry;
   private readonly listeners = new Set<(message: SessionServerMessage) => void>();
   private readonly reportedUnknown = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
@@ -178,6 +185,7 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
+    this.engines = options.engines ?? new EngineRegistry([claudeEngine({ command: () => options.claude, cwd: options.root })]);
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
@@ -234,7 +242,8 @@ export class AgentSession {
       this.previous = store.latestSession();
       return;
     }
-    const gap = latest.status === 'running' ? await this.recoverChat(latest) : null;
+    const recovers = latest.foreignEngine === undefined && ENGINE_CAPABILITIES[latest.engine].transcriptRecovery;
+    const gap = latest.status === 'running' && recovers ? await this.recoverChat(latest) : null;
     this.load(latest);
     this.apply(this.tracker.processExited());
     for (const id of gap?.ids ?? []) {
@@ -242,6 +251,7 @@ export class AgentSession {
       if (item?.kind === 'message' || item?.kind === 'tool') this.items.set(id, { ...item, recovered: true });
     }
     if (gap?.unreadable) this.apply(this.tracker.notice(GAP_NOTICE));
+    if (latest.status === 'running' && !recovers) this.apply(this.tracker.notice(NO_TRANSCRIPT_GAP_NOTICE));
     if (latest.status === 'running') this.update({ status: 'crashed', pid: null, launchId: null });
   }
 
@@ -769,6 +779,11 @@ export class AgentSession {
     return this.options.accounts?.activeId() ?? null;
   }
 
+  // A chat of an engine this CodeRay does not know is kept, never run: claude would resume that engine's conversation id.
+  private refuseForeign(session: SessionRecord | null): void {
+    if (session?.foreignEngine !== undefined) throw new SessionError('no-engine', `This chat runs on ${session.foreignEngine}, which this CodeRay does not have.`);
+  }
+
   private clearRefusal(): void {
     if (!this.refused) return;
     this.refused = false;
@@ -861,6 +876,8 @@ export class AgentSession {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
     if (!this.isIdle()) throw new SessionError('busy-terminal');
+    this.refuseForeign(this.session && this.session.status !== 'ended' ? this.session : null);
+    if (!ENGINE_CAPABILITIES[(this.session ?? this.previous)?.engine ?? 'claude'].terminalView) throw new SessionError('no-terminal');
     await this.terminate('close');
     this.clearRefusal();
     if (!this.session || this.session.status === 'ended') this.begin();
@@ -976,22 +993,31 @@ export class AgentSession {
     return { claude, configPath, gate };
   }
 
+  // Claude's part of a launch: the MCP config and the gate's settings it starts with; null when the settings could not be written.
+  private prepareClaude(session: SessionRecord): Launch | null {
+    const files = this.launchFiles(session);
+    if (!files) return null;
+    return {
+      engine: session.engine, cwd: session.cwd, engineSessionId: session.engineSessionId, resume: this.resumable(session),
+      model: claudeModel(session.modelChoice),
+      effort: session.effort !== null && isClaudeEffort(session.effort) ? session.effort : null,
+      claude: files.claude, mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate,
+      killGraceMs: this.options.killGraceMs, pidDir: runDir(this.options.home),
+    };
+  }
+
   private spawn(): void {
     if (!this.session || this.closed) return;
+    this.refuseForeign(this.session);
+    const engine = this.engines.get(this.session.engine);
+    if (!engine) throw new SessionError('no-engine');
     this.syncAccount();
     const session = this.session;
-    const files = this.launchFiles(session);
-    if (!files) return;
-    const launch: Launch = {
-      claude: files.claude, cwd: session.cwd, engineSessionId: session.engineSessionId, resume: this.resumable(session),
-      model: session.modelChoice !== null && isModelChoice(session.modelChoice) ? session.modelChoice : null,
-      effort: session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? session.effort : null,
-      mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate, killGraceMs: this.options.killGraceMs,
-      pidDir: runDir(this.options.home),
-    };
+    const launch = this.prepareClaude(session);
+    if (!launch) return;
     // A stopped claude's last events may arrive while the next one starts; they no longer belong to the chat.
     const sink: TransportSink = { event: (event) => { if (this.transport === transport) this.onStreamEvent(event); } };
-    const transport = startSdkTransport(launch, sink);
+    const transport = engine.start(launch, sink);
     this.transport = transport;
     this.exitReason = null;
     this.versionChecked = false;
@@ -1284,11 +1310,18 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
   }
 }
 
+// The model as claude's --model takes it; null for no model, or for one of another engine.
+function claudeModel(modelChoice: string | null): string | null {
+  const ref = modelChoice === null ? null : parseModelId(modelChoice);
+  return ref?.engine === 'claude' ? ref.model : null;
+}
+
 function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateFlags: string[]): string[] {
+  const model = claudeModel(session.modelChoice);
   return [
     resume ? '--resume' : '--session-id', session.engineSessionId,
-    ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
-    ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
+    ...(model !== null ? ['--model', model] : []),
+    ...(session.effort !== null && isClaudeEffort(session.effort) ? ['--effort', session.effort] : []),
     '--mcp-config', mcpConfigPath,
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
     ...gateFlags,

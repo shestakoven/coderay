@@ -166,7 +166,7 @@ async function main(): Promise<number> {
     const launch = (): Launch => {
       const engineSessionId = randomUUID();
       sessionIds.push(engineSessionId);
-      return { claude, cwd, engineSessionId, resume: false, model: values.model, effort: null, mcpConfigPath, disallowedTools: DISALLOWED_TOOLS, gate: null };
+      return { engine: 'claude', claude, cwd, engineSessionId, resume: false, model: values.model, effort: null, mcpConfigPath, disallowedTools: DISALLOWED_TOOLS, gate: null };
     };
     const cli: Run[] = [];
     const sdk: Run[] = [];

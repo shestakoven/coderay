@@ -1,4 +1,4 @@
-import type { ChatImage, EffortLevel, ImageMediaType } from '@ide/protocol';
+import type { ChatImage, EffortLevel, EngineId, ImageMediaType } from '@ide/protocol';
 import type { ClaudeCommand, ProcessExit } from './claude-process';
 import type { PermissionAnswer } from './prompts';
 import type { StreamEvent } from './stream';
@@ -8,20 +8,28 @@ export interface GateLaunch {
   appendSystemPrompt: string;
 }
 
-// What a chat's claude starts with; the transport turns it into the SDK's options and claude's flags.
-export interface Launch {
-  claude: ClaudeCommand;
+/** What every engine starts a chat's agent with. */
+export interface LaunchBase {
+  engine: EngineId;
   cwd: string;
   engineSessionId: string;
   resume: boolean;
   model: string | null;
-  effort: EffortLevel | null;
-  mcpConfigPath: string;
-  disallowedTools: string[];
-  gate: GateLaunch | null;
+  effort: string | null;
   killGraceMs?: number;
   pidDir?: string;
 }
+
+/** Claude's launch: the MCP config and the gate's settings AgentSession writes for it, and claude's own flags. */
+export interface ClaudeLaunch extends LaunchBase {
+  effort: EffortLevel | null;
+  claude: ClaudeCommand;
+  mcpConfigPath: string;
+  disallowedTools: string[];
+  gate: GateLaunch | null;
+}
+
+export type Launch = ClaudeLaunch;
 
 type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: ImageMediaType; data: string } };
 type TextBlock = { type: 'text'; text: string };
