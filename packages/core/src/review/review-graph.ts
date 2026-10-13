@@ -12,6 +12,7 @@ const MAX_EVIDENCE = 3;
 const EVIDENCE_TEXT = 160;
 const STATUS_ORDER: Record<ReviewPartStatus, number> = { created: 0, modified: 1, deleted: 2, missing: 3, untouched: 4 };
 const FLAGGED = new Set<ReviewLinkState>(['unplanned', 'missing', 'broken', 'removed']);
+const UNREAD_SOURCE = /\.(go|rs|java|kt|kts|rb|php|scala|lua|dart|ex|exs)$/i;
 
 export interface PlanRef {
   targets: { step: string; componentId?: string; path?: string }[];
@@ -36,15 +37,31 @@ function statusOf(files: ReviewPartFile[]): ReviewPartStatus {
   return 'modified';
 }
 
-// A deleted file is no longer in the map: it goes to the part that holds files of the deepest directory it shares.
+// A deleted file is no longer in the map: it goes to the part that alone holds files of the deepest directory it shares.
 function nearest(path: string, owner: ReadonlyMap<string, string>): string {
   const dir = posix.dirname(path);
   const segments = dir === '.' ? [] : dir.split('/');
   for (let depth = segments.length; depth > 0; depth -= 1) {
     const prefix = `${segments.slice(0, depth).join('/')}/`;
-    for (const [file, id] of owner) if (file.startsWith(prefix)) return id;
+    const owners = new Set<string>();
+    for (const [file, id] of owner) if (file.startsWith(prefix)) owners.add(id);
+    if (owners.size > 0) return owners.size === 1 ? [...owners][0]! : UNASSIGNED;
   }
   return UNASSIGNED;
+}
+
+// `from pkg import module` never spells the specifier `pkg.module`: fall back to the parent and the last name as a word.
+function lineOf(lines: string[], specifier: string): number {
+  const direct = lines.findIndex((line) => line.includes(specifier));
+  if (direct >= 0) return direct;
+  const dots = specifier.length - specifier.replace(/^\.+/, '').length;
+  const rest = specifier.slice(dots);
+  const cut = rest.lastIndexOf('.');
+  const parent = cut < 0 ? specifier.slice(0, dots) : specifier.slice(0, dots + cut);
+  const name = cut < 0 ? rest : rest.slice(cut + 1);
+  if (parent === '' || name === '') return -1;
+  const word = new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+  return lines.findIndex((line) => line.includes(parent) && word.test(line));
 }
 
 const under = (file: string, target: string): boolean => file === target || file.startsWith(target.endsWith('/') ? target : `${target}/`);
@@ -80,7 +97,6 @@ export async function buildReviewGraph(input: ReviewGraphInput): Promise<ReviewG
     }
     const parsed = adapter.parse(path, source);
     if (parsed.parseError) unparsed.add(path);
-    if (base !== null && (parsed.parseError || base.parseError)) return base;
     return { path, lang: adapter.lang, contentHash: base?.contentHash ?? path, imports: parsed.imports, symbols: parsed.symbols, parseError: parsed.parseError, provides: parsed.provides };
   }
 
@@ -98,8 +114,10 @@ export async function buildReviewGraph(input: ReviewGraphInput): Promise<ReviewG
     if (restored !== null) before.push(restored);
   }
 
-  const nowEdges = computeFileEdges(current, adapters, gone);
-  const beforeEdges = computeFileEdges(before, adapters);
+  for (const file of current) if (byPath.has(file.path) && file.parseError) unparsed.add(file.path);
+  const drawn = (edge: FileEdge): boolean => !unparsed.has(edge.from);
+  const nowEdges = computeFileEdges(current, adapters, gone).filter(drawn);
+  const beforeEdges = computeFileEdges(before, adapters).filter(drawn);
   const owner = new Map(components.flatMap((component) => component.files.map((path) => [path, component.id] as const)));
   const partOf = (path: string): string => owner.get(path) ?? (goneSet.has(path) ? nearest(path, owner) : UNASSIGNED);
   const nowLinks = lift(nowEdges, partOf);
@@ -163,7 +181,7 @@ export async function buildReviewGraph(input: ReviewGraphInput): Promise<ReviewG
     const source = side === 'before' && byPath.has(edge.from) ? await input.readBefore(edge.from) : await input.readNow(edge.from);
     if (source === null) return null;
     const lines = source.split('\n');
-    const at = lines.findIndex((line) => line.includes(specifier));
+    const at = lineOf(lines, specifier);
     return at < 0 ? null : { path: edge.from, line: at + 1, text: lines[at]!.trim().slice(0, EVIDENCE_TEXT) };
   }
   const evidenceFor = async (edges: FileEdge[], side: 'now' | 'before'): Promise<ReviewEvidence[]> =>
@@ -218,9 +236,15 @@ export async function buildReviewGraph(input: ReviewGraphInput): Promise<ReviewG
   const notes: string[] = [];
   if (components.length === 0) notes.push('The project map has no components yet, so every change is one part.');
   if (unread > 0) notes.push(`${unread} ${unread === 1 ? 'file' : 'files'} could not be read as ${unread === 1 ? 'it' : 'they'} were before the change, so links through ${unread === 1 ? 'it' : 'them'} may be missing.`);
-  for (const file of changed) if (nowByPath.get(file.path)?.parseError === true) unparsed.add(file.path);
   if (unparsed.size > 0) {
-    notes.push(`${unparsed.size} changed ${unparsed.size === 1 ? 'file' : 'files'} could not be parsed; links through ${unparsed.size === 1 ? 'it' : 'them'} may be missing.`);
+    notes.push(`${unparsed.size} changed ${unparsed.size === 1 ? 'file' : 'files'} could not be parsed, so no links are drawn from ${unparsed.size === 1 ? 'it' : 'them'}.`);
+  }
+  if (changed.some((file) => adapterOf(file.path)?.resolveAll !== undefined)) {
+    notes.push('Links through C# and Swift namespace imports point at every file that declares the namespace and carry no line.');
+  }
+  const unsupported = changed.filter((file) => UNREAD_SOURCE.test(file.path) && adapterOf(file.path) === undefined).length;
+  if (unsupported > 0) {
+    notes.push(`${unsupported} changed ${unsupported === 1 ? 'file is' : 'files are'} in a language the map does not read, so ${unsupported === 1 ? 'its' : 'their'} links are not drawn.`);
   }
 
   let kept = [...parts.values()];

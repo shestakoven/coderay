@@ -148,4 +148,53 @@ describe('buildReviewGraph', () => {
     expect(graph.partial).toMatch(/could not be read/);
     expect(graph.parts.map((part) => part.id)).toContain('api');
   });
+
+  it('draws no link from a changed file that does not parse, on either side, and says so', async () => {
+    const graph = await run({
+      changed: [file('app/api/users.py', 'b1', 'a1'), file('app/api/routes.py', 'b2', 'a2')],
+      current: [
+        indexed('app/api/users.py', 'python', ['app.services.user_service'], { parseError: true }),
+        indexed('app/api/routes.py', 'python', []),
+        indexed('app/services/user_service.py', 'python', []),
+      ],
+      readBefore: reader({ 'app/api/users.py': 'import os\n', 'app/api/routes.py': 'from app.services.user_service import X\nclass (\n' }),
+    });
+    expect(graph.links).toEqual([]);
+    expect(graph.partial).toMatch(/2 changed files could not be parsed/);
+  });
+
+  it('finds the line of a from-package-import-module import that never spells the full specifier', async () => {
+    const graph = await run({
+      changed: [file('app/api/users.py', null, 'h1'), file('app/services/user_service.py', null, 'h2')],
+      current: [indexed('app/api/users.py', 'python', ['app.services', 'app.services.user_service']), indexed('app/services/user_service.py', 'python', [])],
+      readNow: reader({ 'app/api/users.py': 'import os\nfrom app.services import user_service\n' }),
+    });
+    expect(graph.links).toEqual([
+      { from: 'api', to: 'services', state: 'new', count: 1, evidence: [{ path: 'app/api/users.py', line: 2, text: 'from app.services import user_service' }] },
+    ]);
+  });
+
+  it('puts a deleted file whose directory is gone in unassigned when the directories above hold several parts', async () => {
+    const graph = await run({
+      changed: [file('app/legacy/old.py', 'b1', null)],
+      current: [indexed('app/api/routes.py', 'python', ['app.legacy.old']), indexed('app/services/user_service.py', 'python', [])],
+      readBefore: reader({ 'app/legacy/old.py': 'X = 1\n' }),
+      readNow: reader({ 'app/api/routes.py': 'from app.legacy.old import X\n' }),
+    });
+    expect(graph.parts.find((part) => part.id === 'unassigned')?.files.map((item) => item.path)).toEqual(['app/legacy/old.py']);
+    expect(graph.parts.filter((part) => part.id !== 'unassigned').flatMap((part) => part.files)).toEqual([]);
+    expect(graph.links.map((link) => [link.from, link.to, link.state])).toEqual([['api', 'unassigned', 'broken']]);
+  });
+
+  it('says so when a changed file is in a language the map does not read, and draws no link for it', async () => {
+    const graph = await run({ changed: [file('cmd/main.go', null, 'h1')], current: [] });
+    expect(graph.links).toEqual([]);
+    expect(graph.partial).toMatch(/1 changed file is in a language the map does not read/);
+  });
+
+  it('says that namespace imports carry no line when a changed file belongs to an adapter that imports by name', async () => {
+    const byName: LanguageAdapter = { lang: 'csharp', handles: (path) => path.endsWith('.cs'), parse: () => ({ imports: [], symbols: [], parseError: false }), resolve: () => null, resolveAll: () => [] };
+    const graph = await run({ adapters: [byName], changed: [file('Api/Users.cs', null, 'h1')], current: [indexed('Api/Users.cs', 'csharp', [])] });
+    expect(graph.partial).toMatch(/namespace imports/);
+  });
 });
