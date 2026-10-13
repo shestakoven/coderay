@@ -7,10 +7,10 @@ import { openStore, SCHEMA_V1, SCHEMA_V2, type PromptRecord, type SessionRecord,
 import type { GateEventRecord, PlanRecord, ToolDecisionRecord } from '../../src/store/store';
 import type { ChangeView, ImageRef, PlanFlow, WatchdogEventView } from '@ide/protocol';
 import { DatabaseSync } from '../../src/store/sqlite';
-import { tempDir } from '../helpers';
+import { BEFORE_ENGINES, tempDir } from '../helpers';
 
 const session = (id: string, startedAt: number): SessionRecord => ({
-  id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+  id, engine: 'claude', engineSessionId: `claude-${id}`, cwd: '/project', status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
   pid: 42, launchId: `claude-${id}`, conversationStarted: false, startedAt, accountId: null,
 });
 
@@ -171,6 +171,7 @@ describe('openStore', () => {
     first.saveSession(session('s1', 1));
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec(BEFORE_ENGINES);
     db.exec('DROP TABLE plans; DROP TABLE step_states; DROP TABLE tool_decisions; DROP TABLE gate_events; PRAGMA user_version = 1;');
     db.exec('DROP TABLE changes; DROP TABLE baselines; DROP TABLE checkpoints; DROP TABLE reverts; DROP TABLE summaries; DROP TABLE meta');
     db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE sessions DROP COLUMN account_id');
@@ -185,9 +186,9 @@ describe('openStore', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('PRAGMA user_version = 10');
+    db.exec('PRAGMA user_version = 11');
     db.close();
-    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 10, newer than this CodeRay understands (9)');
+    expect(() => openStore(dir)).toThrow('history.sqlite has schema version 11, newer than this CodeRay understands (10)');
   });
 
   it('refuses a migration that fails partway, leaving the schema and version unchanged', () => {
@@ -331,6 +332,7 @@ describe('plan flow storage', () => {
       first.savePlan('s1', plan);
       first.close();
       const db = new DatabaseSync(join(dir, 'history.sqlite'));
+      db.exec(BEFORE_ENGINES);
       db.exec('ALTER TABLE plans DROP COLUMN flow');
       db.exec('ALTER TABLE sessions DROP COLUMN account_id');
       db.exec('ALTER TABLE baselines DROP COLUMN sig');
@@ -363,7 +365,7 @@ describe('plan flow storage', () => {
       const check = new DatabaseSync(join(dir, 'history.sqlite'));
       const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
       check.close();
-      expect(version).toBe(9);
+      expect(version).toBe(10);
     });
   });
 });
@@ -405,7 +407,7 @@ describe('history tables (schema 3)', () => {
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     const step = check.prepare("SELECT status, cycle FROM step_states WHERE plan_id = 'p'").get();
     check.close();
-    expect(version).toBe(9);
+    expect(version).toBe(10);
     expect(step).toEqual({ status: 'done', cycle: 0 });
   });
 
@@ -512,6 +514,7 @@ describe('history tables (schema 3)', () => {
     first.saveBaselines([baseline('a.ts')], []);
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec(BEFORE_ENGINES);
     db.exec('ALTER TABLE baselines DROP COLUMN sig; ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 7');
     db.close();
 
@@ -617,6 +620,7 @@ describe('chat images', () => {
     old.saveMessage('s1', message('old'));
     old.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec(BEFORE_ENGINES);
     db.exec('ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 8');
     db.close();
 

@@ -59,7 +59,7 @@ describe('canConfirmRollback', () => {
   });
 });
 
-const session = { id: 's1', claudeSessionId: 'c', status: 'running' as const, model: 'm', modelChoice: null, effort: null, cliVersion: '1', permissionMode: 'default', startedAt: 1 };
+const session = { id: 's1', engine: 'claude' as const, engineSessionId: 'c', status: 'running' as const, model: 'm', modelChoice: null, effort: null, cliVersion: '1', permissionMode: 'default', startedAt: 1 };
 const turn = (closedAt: number | null): TurnView => ({ id: 't', kind: 'user', openedAt: 1, startedAt: 2, closedAt, resultSubtype: closedAt ? 'success' : null });
 const task = (endedAt: number | null): TaskView => ({ id: 'k', toolUseId: null, kind: 'subagent', description: 'd', status: 'running', startedAt: 1, endedAt });
 const chatWith = (turns: TurnView[], tasks: TaskView[]): ChatState =>

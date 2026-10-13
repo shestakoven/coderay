@@ -20,7 +20,7 @@ export function sdkOptions(launch: Launch): Options {
     pathToClaudeCodeExecutable: launch.claude.command,
     cwd: launch.cwd,
     env: claudeEnv(launch.claude),
-    ...(launch.resume ? { resume: launch.claudeSessionId } : { sessionId: launch.claudeSessionId }),
+    ...(launch.resume ? { resume: launch.engineSessionId } : { sessionId: launch.engineSessionId }),
     ...(launch.model !== null ? { model: launch.model } : {}),
     ...(launch.effort !== null ? { effort: launch.effort } : {}),
     permissionMode: 'bypassPermissions',

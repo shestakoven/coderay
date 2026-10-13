@@ -128,7 +128,7 @@ describe('AgentSession under a Claude account', () => {
     expect([hasArg(second.argv, '--resume'), fresh === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
-    expect(h.store.latestSession()).toMatchObject({ claudeSessionId: fresh, accountId: w.seeded[1]!.id });
+    expect(h.store.latestSession()).toMatchObject({ engineSessionId: fresh, accountId: w.seeded[1]!.id });
   });
 
   it('tells the user it switched to the new account', async () => {

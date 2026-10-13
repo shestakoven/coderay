@@ -25,7 +25,7 @@ describe('the recorded Codex session', () => {
 
 describe('parseHookEvent on Codex hooks', () => {
   const expected: [number, string, AgentEvent | null][] = [
-    [AT.sessionStart, 'the start of the session', { type: 'conversation', claudeSessionId: CODEX_SESSION, source: 'startup' }],
+    [AT.sessionStart, 'the start of the session', { type: 'conversation', engineSessionId: CODEX_SESSION, source: 'startup' }],
     [AT.prompt, 'the prompt of the user', { type: 'prompt', text: prompt(AT.prompt), task: null }],
     [AT.bashStart, 'the start of a shell call', { type: 'tool-start', toolUseId: CALL.bash, tool: 'Bash', input: { command: 'echo hi' }, agentId: null }],
     [AT.bashEnd, 'the end of a shell call, whose output is a plain string', { type: 'tool-end', toolUseId: CALL.bash, status: 'ok', agentId: null, launched: null }],

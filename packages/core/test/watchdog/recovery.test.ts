@@ -447,7 +447,7 @@ describe('recoverTranscript at scale', () => {
     const total = 200_000;
     appendFileSync(file, `${line(total + 1)}\n${line(total + 2)}\n`);
     const started = process.cpuUsage();
-    const { items, unreadable } = await recoverTranscript({ claudeSessionId: 'sess', cwd, since: Date.parse('2026-01-01T00:00:00Z') + total * 1000, dir });
+    const { items, unreadable } = await recoverTranscript({ engineSessionId: 'sess', cwd, since: Date.parse('2026-01-01T00:00:00Z') + total * 1000, dir });
     const cpu = process.cpuUsage(started);
     expect((cpu.user + cpu.system) / 1000).toBeLessThan(2000);
     expect(unreadable).toBe(false);

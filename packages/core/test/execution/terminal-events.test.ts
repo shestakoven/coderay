@@ -53,7 +53,7 @@ describe('the execution runtime and the agent in the terminal', { timeout: 30_00
       const launch = await b.session.terminalLaunch();
       if (launch === null) throw new Error('the terminal did not open');
       const settings = readSettings(flag(launch.args, '--settings'));
-      const claudeId = b.session.state().session?.claudeSessionId as string;
+      const claudeId = b.session.state().session?.engineSessionId as string;
       const payload = (name: string, fields: object = {}) => ({
         hook_event_name: name, session_id: claudeId, transcript_path: '/nonexistent/claude.jsonl', cwd: b.root, permission_mode: 'default', ...fields,
       });

@@ -19,7 +19,7 @@ function launch(scenario: string, record: string): Launch {
   const mcpConfigPath = join(tempDir('ide-mcp-'), 'mcp.json');
   writeFileSync(mcpConfigPath, '{"mcpServers":{}}');
   return {
-    claude: fakeClaude(scenario, record), cwd: tempDir('ide-cwd-'), claudeSessionId: SESSION, resume: false,
+    claude: fakeClaude(scenario, record), cwd: tempDir('ide-cwd-'), engineSessionId: SESSION, resume: false,
     model: null, effort: null, mcpConfigPath, disallowedTools: ['WebSearch'], gate: null, killGraceMs: 500,
   };
 }

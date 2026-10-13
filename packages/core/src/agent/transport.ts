@@ -11,7 +11,7 @@ export interface GateLaunch {
 export interface Launch {
   claude: ClaudeCommand;
   cwd: string;
-  claudeSessionId: string;
+  engineSessionId: string;
   resume: boolean;
   model: string | null;
   effort: EffortLevel | null;

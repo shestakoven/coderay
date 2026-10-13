@@ -66,15 +66,15 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
 }
 
 interface Seed {
-  claudeSessionId: string;
+  engineSessionId: string;
   pid: number;
 }
 
 function seedRunningSession(home: string, root: string, seed: Seed): void {
   const store = openStore(projectDir(home, root));
   store.saveSession({
-    id: 'session-1', claudeSessionId: seed.claudeSessionId, cwd: root, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
-    pid: seed.pid, launchId: seed.claudeSessionId, conversationStarted: true, startedAt: 1, accountId: null,
+    id: 'session-1', engine: 'claude', engineSessionId: seed.engineSessionId, cwd: root, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+    pid: seed.pid, launchId: seed.engineSessionId, conversationStarted: true, startedAt: 1, accountId: null,
   });
   store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
   store.close();
@@ -82,13 +82,13 @@ function seedRunningSession(home: string, root: string, seed: Seed): void {
 
 type SpawnForm = 'space' | 'equals' | 'glued' | 'resume' | 'resume-equals';
 
-function spawnHanging(claudeSessionId: string, scenario = 'hang', recordFile = '', form: SpawnForm = 'space') {
+function spawnHanging(engineSessionId: string, scenario = 'hang', recordFile = '', form: SpawnForm = 'space') {
   const idArgs = {
-    space: ['--session-id', claudeSessionId],
-    equals: [`--session-id=${claudeSessionId}`],
-    glued: [`--session-id-${claudeSessionId}`],
-    resume: ['--resume', claudeSessionId],
-    'resume-equals': [`--resume=${claudeSessionId}`],
+    space: ['--session-id', engineSessionId],
+    equals: [`--session-id=${engineSessionId}`],
+    glued: [`--session-id-${engineSessionId}`],
+    resume: ['--resume', engineSessionId],
+    'resume-equals': [`--resume=${engineSessionId}`],
   }[form];
   const child = spawn(process.execPath, [FAKE_CLAUDE, ...idArgs], {
     env: { ...process.env, FAKE_CLAUDE_SCENARIO: fixture(`stream/${scenario}.jsonl`), FAKE_CLAUDE_RECORD: recordFile },
@@ -187,7 +187,7 @@ describe('AgentSession', () => {
     const [launch] = await waitFor(() => h.launches().length === 1 && h.launches()[0]?.systemPromptSnapshot !== null && h.launches(), "claude spawned and got the SDK's handshake");
     const session = h.session.state().session;
     expect(launch).toMatchObject({
-      sessionId: session?.claudeSessionId, resume: undefined, model: 'sonnet', effort: 'medium',
+      sessionId: session?.engineSessionId, resume: undefined, model: 'sonnet', effort: 'medium',
       mcpConfig: join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
       disallowedTools: ['SendMessage', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger', 'Workflow', 'EnterWorktree', 'ExitWorktree', 'DesignSync', 'PushNotification'],
       bypass: true, promptsOnStdio: true, partialMessages: true, appendSystemPrompt: null, systemPromptSnapshot: false,
@@ -509,7 +509,7 @@ describe('AgentSession', () => {
   it('follows /clear to the conversation of the next init and starts it fresh when claude restarts before the next message', async () => {
     const h = await harness('clear-then-resume');
     await clearChat(h);
-    expect(h.session.state().session?.claudeSessionId).toBe(CLEARED);
+    expect(h.session.state().session?.engineSessionId).toBe(CLEARED);
     const argv = await nextLaunch(h);
     expect([flag(argv, '--session-id'), hasArg(argv, '--resume')]).toEqual([CLEARED, false]);
   });
@@ -549,10 +549,10 @@ describe('AgentSession', () => {
   it('stops the stale claude of a session that was running when the core died and closes its turn as crashed', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    const claudeSessionId = randomUUID();
-    const stale = spawnHanging(claudeSessionId);
+    const engineSessionId = randomUUID();
+    const stale = spawnHanging(engineSessionId);
     const staleExit = exitSignal(stale);
-    seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+    seedRunningSession(home, root, { engineSessionId, pid: stale.pid ?? -1 });
 
     const h = await harness('multi-turn', { home, root });
 
@@ -565,10 +565,10 @@ describe('AgentSession', () => {
     for (const form of ['equals', 'resume', 'resume-equals'] as const) {
       const home = tempDir('ide-home-');
       const root = tempDir('ide-root-');
-      const claudeSessionId = randomUUID();
-      const stale = spawnHanging(claudeSessionId, 'hang', '', form);
+      const engineSessionId = randomUUID();
+      const stale = spawnHanging(engineSessionId, 'hang', '', form);
       const staleExit = exitSignal(stale);
-      seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+      seedRunningSession(home, root, { engineSessionId, pid: stale.pid ?? -1 });
       await harness('multi-turn', { home, root });
       expect(await staleExit).toBe('SIGTERM');
     }
@@ -577,12 +577,12 @@ describe('AgentSession', () => {
   it('kills a stale claude that ignores SIGTERM, and its child processes, once the grace time is over', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    const claudeSessionId = randomUUID();
+    const engineSessionId = randomUUID();
     const record = join(home, 'stale-record.jsonl');
-    const stale = spawnHanging(claudeSessionId, 'stubborn', record);
+    const stale = spawnHanging(engineSessionId, 'stubborn', record);
     const staleExit = exitSignal(stale);
     const sleeper = await waitFor(() => readRecords(record).find((r) => r.sleeperPid)?.sleeperPid, 'sleeper started');
-    seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+    seedRunningSession(home, root, { engineSessionId, pid: stale.pid ?? -1 });
 
     await harness('multi-turn', { home, root, killGraceMs: 200 });
 
@@ -607,7 +607,7 @@ describe('AgentSession', () => {
     const root = tempDir('ide-root-');
     const unrelated = spawnHanging(randomUUID());
     const unrelatedExit = exitSignal(unrelated);
-    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: unrelated.pid ?? -1 });
+    seedRunningSession(home, root, { engineSessionId: randomUUID(), pid: unrelated.pid ?? -1 });
 
     await harness('multi-turn', { home, root });
     expect(isAlive(unrelated.pid ?? -1)).toBe(true);
@@ -617,16 +617,16 @@ describe('AgentSession', () => {
   });
 
   it('leaves alone a live process whose command line only resembles the recorded id', async () => {
-    const claudeSessionId = randomUUID();
+    const engineSessionId = randomUUID();
     const lookalikes = [
-      spawnHanging(`${claudeSessionId}0`, 'hang', '', 'space'),
-      spawnHanging(`${claudeSessionId}0`, 'hang', '', 'equals'),
-      spawnHanging(claudeSessionId, 'hang', '', 'glued'),
+      spawnHanging(`${engineSessionId}0`, 'hang', '', 'space'),
+      spawnHanging(`${engineSessionId}0`, 'hang', '', 'equals'),
+      spawnHanging(engineSessionId, 'hang', '', 'glued'),
     ];
     for (const lookalike of lookalikes) {
       const home = tempDir('ide-home-');
       const root = tempDir('ide-root-');
-      seedRunningSession(home, root, { claudeSessionId, pid: lookalike.pid ?? -1 });
+      seedRunningSession(home, root, { engineSessionId, pid: lookalike.pid ?? -1 });
       await harness('multi-turn', { home, root });
       expect(isAlive(lookalike.pid ?? -1)).toBe(true);
     }
@@ -635,14 +635,14 @@ describe('AgentSession', () => {
   it('never signals a stale claude that the core itself runs under', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    const claudeSessionId = randomUUID();
-    vi.mocked(commandLine).mockImplementation((pid) => (pid === process.ppid ? `claude --session-id ${claudeSessionId}` : null));
+    const engineSessionId = randomUUID();
+    vi.mocked(commandLine).mockImplementation((pid) => (pid === process.ppid ? `claude --session-id ${engineSessionId}` : null));
     const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
     onTestFinished(() => {
       kill.mockRestore();
       vi.mocked(commandLine).mockReset();
     });
-    seedRunningSession(home, root, { claudeSessionId, pid: process.ppid });
+    seedRunningSession(home, root, { engineSessionId, pid: process.ppid });
     const h = await harness('multi-turn', { home, root, killGraceMs: 100 });
     expect([kill.mock.calls.filter(([, name]) => name !== 0), h.session.state().session?.status]).toEqual([[], 'crashed']);
   });
@@ -650,7 +650,7 @@ describe('AgentSession', () => {
   it("deletes a stale session's MCP config file at core start", async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: await deadPid() });
+    seedRunningSession(home, root, { engineSessionId: randomUUID(), pid: await deadPid() });
     const stalePath = join(runDir(home), `${basename(projectDir(home, root))}-session-1.mcp.json`);
     mkdirSync(runDir(home), { recursive: true });
     writeFileSync(stalePath, '{"mcpServers":{}}');
@@ -983,7 +983,7 @@ describe('AgentSession with the gate', () => {
   it("deletes a stale session's gate files at core start", async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: await deadPid() });
+    seedRunningSession(home, root, { engineSessionId: randomUUID(), pid: await deadPid() });
     realGate(home, root).write('session-1');
     const files = gateFiles(home, root, 'session-1');
 
@@ -1449,10 +1449,10 @@ describe('AgentSession after a core crash', () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
     const transcriptsDir = tempDir('ide-transcripts-');
-    const claudeSessionId = randomUUID();
+    const engineSessionId = randomUUID();
     const store = openStore(projectDir(home, root));
     store.saveSession({
-      id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+      id: 'session-1', engine: 'claude', engineSessionId, cwd: root, status: o.status ?? 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
       pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null,
     });
     store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
@@ -1470,13 +1470,13 @@ describe('AgentSession after a core crash', () => {
     if (o.transcript !== null) {
       const dir = join(transcriptsDir, realpathSync(root).replace(/[^A-Za-z0-9]/g, '-'));
       mkdirSync(dir, { recursive: true });
-      const body = o.body ? o.body(claudeSessionId, root) : o.unparsable
+      const body = o.body ? o.body(engineSessionId, root) : o.unparsable
         ? 'torn\nalso torn\n'
-        : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', claudeSessionId).replaceAll('$CWD', root);
-      writeFileSync(join(dir, `${claudeSessionId}.jsonl`), body);
+        : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', engineSessionId).replaceAll('$CWD', root);
+      writeFileSync(join(dir, `${engineSessionId}.jsonl`), body);
     }
     store.close();
-    return { home, root, transcriptsDir, claudeSessionId };
+    return { home, root, transcriptsDir, engineSessionId };
   }
 
   const GAP = [
@@ -1495,7 +1495,7 @@ describe('AgentSession after a core crash', () => {
   });
 
   it('drops a chat nobody wrote to instead of recovering it, and recovers one that holds any trace of the conversation', async () => {
-    type Trace = (store: Store, s: { claudeSessionId: string; root: string; transcriptsDir: string }) => void;
+    type Trace = (store: Store, s: { engineSessionId: string; root: string; transcriptsDir: string }) => void;
     const at = (seq: number) => ({ seq, turnId: null, parentToolUseId: null });
     const traces: Record<string, [status: 'running' | 'stopped', trace: Trace]> = {
       'running, a notice only': ['running', () => {}],
@@ -1513,7 +1513,7 @@ describe('AgentSession after a core crash', () => {
         runningSubagents: 0, backgroundShell: false, unknownOrigin: false, snapshotSha: null, canExpand: false, defaultAction: 'revert', reason: '', ts: 2, resolvedAt: 3,
       })],
       "claude's transcript": ['running', (_store, s) => {
-        const file = transcriptPath(s.transcriptsDir, s.root, s.claudeSessionId);
+        const file = transcriptPath(s.transcriptsDir, s.root, s.engineSessionId);
         mkdirSync(dirname(file), { recursive: true });
         writeFileSync(file, '');
       }],
@@ -1527,14 +1527,14 @@ describe('AgentSession after a core crash', () => {
       const home = tempDir('ide-home-');
       const root = tempDir('ide-root-');
       const transcriptsDir = tempDir('ide-transcripts-');
-      const claudeSessionId = randomUUID();
+      const engineSessionId = randomUUID();
       const store = openStore(projectDir(home, root));
       store.saveSession({
-        id: 'session-1', claudeSessionId, cwd: root, status, model: null, modelChoice: null, effort: null, cliVersion: null,
+        id: 'session-1', engine: 'claude', engineSessionId, cwd: root, status, model: null, modelChoice: null, effort: null, cliVersion: null,
         pid: null, launchId: null, conversationStarted: false, startedAt: 1, accountId: null,
       });
       store.saveMessage('session-1', { id: 'm1', ...at(1), role: 'notice', text: 'CodeRay hook did not start', ts: 1 });
-      trace(store, { claudeSessionId, root, transcriptsDir });
+      trace(store, { engineSessionId, root, transcriptsDir });
       store.close();
       const h = await harness('multi-turn', { home, root, transcriptsDir });
       outcomes[label] = [

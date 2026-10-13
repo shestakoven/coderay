@@ -26,7 +26,7 @@ export async function openTerminal(scenario?: string) {
   const launch = await h.session.terminalLaunch();
   if (launch === null) throw new Error('the terminal did not open');
   const ideId = h.session.sessionId() as string;
-  const claudeId = h.session.state().session?.claudeSessionId as string;
+  const claudeId = h.session.state().session?.engineSessionId as string;
   const transcript = join(h.transcriptsDir, 'followed.jsonl');
   writeFileSync(transcript, '');
 

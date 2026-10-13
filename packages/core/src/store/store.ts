@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  EFFORT_LEVELS,
-  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type FrozenScope, type GatePromptView, type ImageRef, type PlanFlow,
+  EFFORT_LEVELS, isEngineId,
+  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type EngineId, type FrozenScope, type GatePromptView, type ImageRef, type PlanFlow,
   type PlanReview, type PlanStatus, type PlanStep, type PromptAnswer, type PromptBody, type PromptStatus, type RevertRecordView, type SessionStatus, type StepStatus,
   type TaskKind, type TaskView, type ToolDecision, type ToolStatus, type TurnKind, type TurnView, type WatchdogEventView,
 } from '@ide/protocol';
@@ -10,7 +10,10 @@ import { DatabaseSync } from './sqlite';
 
 export interface SessionRecord {
   id: string;
-  claudeSessionId: string;
+  engine: EngineId;
+  /** An engine this CodeRay does not know, as the history names it: such a chat is kept and written back, never run. */
+  foreignEngine?: string;
+  engineSessionId: string;
   cwd: string;
   status: SessionStatus;
   model: string | null;
@@ -340,8 +343,13 @@ ALTER TABLE messages ADD COLUMN images TEXT;
 ALTER TABLE tool_events ADD COLUMN images TEXT;
 `;
 
+const SCHEMA_V10 = `
+ALTER TABLE sessions RENAME COLUMN claude_session_id TO engine_session_id;
+ALTER TABLE sessions ADD COLUMN engine TEXT NOT NULL DEFAULT 'claude';
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10];
 
 const CHAT_TITLE_LENGTH = 60;
 const NEW_CHAT_TITLE = 'New chat';
@@ -382,7 +390,9 @@ const imagesColumn = (images: ImageRef[] | undefined): string | null => (images 
 
 const toSession = (row: Row): SessionRecord => ({
   id: String(row.id),
-  claudeSessionId: String(row.claude_session_id),
+  // Read as Claude's, another engine's conversation id would reach claude's --resume.
+  ...(isEngineId(row.engine) ? { engine: row.engine } : { engine: 'claude' as const, foreignEngine: String(row.engine) }),
+  engineSessionId: String(row.engine_session_id),
   cwd: String(row.cwd),
   status: String(row.status) as SessionStatus,
   model: optText(row.model),
@@ -580,9 +590,9 @@ export function openStore(dir: string): Store {
   let open = true;
 
   const upsertSession = db.prepare(`
-    INSERT INTO sessions (id, claude_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at, account_id)
-    VALUES (:id, :claudeSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt, :accountId)
-    ON CONFLICT (id) DO UPDATE SET claude_session_id = excluded.claude_session_id, status = excluded.status,
+    INSERT INTO sessions (id, engine, engine_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at, account_id)
+    VALUES (:id, :engine, :engineSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt, :accountId)
+    ON CONFLICT (id) DO UPDATE SET engine = excluded.engine, engine_session_id = excluded.engine_session_id, status = excluded.status,
       model = excluded.model, model_choice = excluded.model_choice, effort = excluded.effort, cli_version = excluded.cli_version, pid = excluded.pid,
       launch_id = excluded.launch_id, conversation_started = excluded.conversation_started, account_id = excluded.account_id`);
   const listSessions = db.prepare(`
@@ -697,7 +707,7 @@ export function openStore(dir: string): Store {
         const session = toSession(row);
         return {
           id: session.id, title: optText(row.title) ?? chatTitle(optText(row.first_text)), startedAt: session.startedAt, lastActivityAt: Number(row.last_activity_at),
-          status: session.status, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
+          status: session.status, engine: session.engine, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
         };
       });
     },
@@ -725,7 +735,7 @@ export function openStore(dir: string): Store {
     },
     saveSession(session) {
       upsertSession.run({
-        id: session.id, claudeSessionId: session.claudeSessionId, cwd: session.cwd, status: session.status,
+        id: session.id, engine: session.foreignEngine ?? session.engine, engineSessionId: session.engineSessionId, cwd: session.cwd, status: session.status,
         model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, pid: session.pid,
         launchId: session.launchId, conversationStarted: session.conversationStarted ? 1 : 0, startedAt: session.startedAt, accountId: session.accountId,
       });

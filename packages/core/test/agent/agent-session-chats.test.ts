@@ -81,7 +81,7 @@ function longBackgroundShell(): string {
 }
 
 const record = (id: string, startedAt: number, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
-  id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
+  id, engine: 'claude', engineSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
   pid: null, launchId: null, conversationStarted: true, startedAt, accountId: null, ...overrides,
 });
 
@@ -111,7 +111,7 @@ describe('claude flags for the model and effort', () => {
     expect(h.argvs()).toEqual([]);
     h.session.send('hi');
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
-    expect([flag(argv, '--model'), flag(argv, '--effort'), flag(argv, '--session-id')]).toEqual(['opus', 'high', current(h).claudeSessionId]);
+    expect([flag(argv, '--model'), flag(argv, '--effort'), flag(argv, '--session-id')]).toEqual(['opus', 'high', current(h).engineSessionId]);
   });
 
   it('passes only --model when no effort is chosen and only --effort when no model is chosen', async () => {
@@ -186,7 +186,7 @@ describe('AgentSession.configure', () => {
     const argvs = h.argvs();
     expect(argvs).toHaveLength(2);
     expect([flag(argvs[1], '--resume'), hasArg(argvs[1], '--session-id'), flag(argvs[1], '--model'), flag(argvs[1], '--effort')]).toEqual([
-      before.claudeSessionId, false, 'sonnet', 'low',
+      before.engineSessionId, false, 'sonnet', 'low',
     ]);
   });
 
@@ -286,7 +286,7 @@ describe('AgentSession.configure', () => {
     expect([fresh.status, fresh.modelChoice, fresh.effort, h.store.listSessions()]).toMatchObject(['running', 'haiku', null, [{ id: fresh.id }, {}]]);
     await ask(h, 'hello');
     const argv = h.argvs().at(-1);
-    expect([flag(argv, '--session-id'), flag(argv, '--model'), hasArg(argv, '--effort')]).toEqual([fresh.claudeSessionId, 'haiku', false]);
+    expect([flag(argv, '--session-id'), flag(argv, '--model'), hasArg(argv, '--effort')]).toEqual([fresh.engineSessionId, 'haiku', false]);
   });
 });
 
@@ -433,7 +433,7 @@ describe('AgentSession.switchSession', () => {
     expect(h.argvs()).toHaveLength(2);
     await ask(h, 'back again', 2);
     const argv = h.argvs()[2];
-    expect([flag(argv, '--resume'), hasArg(argv, '--session-id'), flag(argv, '--resume') === b.claudeSessionId]).toEqual([a.claudeSessionId, false, false]);
+    expect([flag(argv, '--resume'), hasArg(argv, '--session-id'), flag(argv, '--resume') === b.engineSessionId]).toEqual([a.engineSessionId, false, false]);
     expect(texts(h)).toEqual(['first question', 'OK', 'back again', 'OK']);
   });
 
@@ -444,7 +444,7 @@ describe('AgentSession.switchSession', () => {
     await ask(h, 'in a', 2);
     await h.session.switchSession(b.id);
     await ask(h, 'in b', 2);
-    expect(h.argvs().slice(2).map((argv) => flag(argv, '--resume'))).toEqual([a.claudeSessionId, b.claudeSessionId]);
+    expect(h.argvs().slice(2).map((argv) => flag(argv, '--resume'))).toEqual([a.engineSessionId, b.engineSessionId]);
     expect(texts(h)).toEqual(['second question', 'OK', 'in b', 'OK']);
   });
 
@@ -458,7 +458,7 @@ describe('AgentSession.switchSession', () => {
     expect([current(h).status, h.store.session(old.id)?.status]).toEqual(['stopped', 'stopped']);
     await ask(h, 'more', 2);
     const argv = h.argvs()[1];
-    expect([flag(argv, '--resume'), hasArg(argv, '--session-id')]).toEqual([old.claudeSessionId, false]);
+    expect([flag(argv, '--resume'), hasArg(argv, '--session-id')]).toEqual([old.engineSessionId, false]);
   });
 
   it('opens a chat when no chat is open', async () => {

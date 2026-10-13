@@ -568,7 +568,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
       typed(t);
       t.h.session.terminalClosed();
       expect(await t.h.session.terminalLaunch()).not.toBeNull();
-      const claudeId = t.state().session?.claudeSessionId as string;
+      const claudeId = t.state().session?.engineSessionId as string;
       t.h.session.hookEvent(t.ideId, { ...t.raw('UserPromptSubmit', { prompt: 'again' }), session_id: claudeId });
       await appendMarker(t, 'read up to here');
       expect([t.h.session.hasOpenTurn(), t.heard.interrupts]).toEqual([true, 0]);
@@ -600,8 +600,8 @@ describe('an agent in the terminal, followed through its hooks', () => {
       it.each(SOURCES)('moves the chat to the conversation a SessionStart after %s names', async (source) => {
         const t = await openTerminal();
         t.send('SessionStart', { source, session_id: 'other-conversation' });
-        expect(t.state().session?.claudeSessionId).toBe('other-conversation');
-        expect(t.h.store.session(t.ideId)?.claudeSessionId).toBe('other-conversation');
+        expect(t.state().session?.engineSessionId).toBe('other-conversation');
+        expect(t.h.store.session(t.ideId)?.engineSessionId).toBe('other-conversation');
       });
 
       it.each(SOURCES)('counts the new conversation as not started after %s, though the old one had a transcript', async (source) => {
@@ -613,8 +613,8 @@ describe('an agent in the terminal, followed through its hooks', () => {
         expect(t.h.store.session(t.ideId)?.conversationStarted).toBe(true);
         expect(await t.h.session.terminalLaunch()).not.toBeNull();
         t.h.session.hookEvent(t.ideId, { ...t.raw('SessionStart', { source }), session_id: 'moved-conversation' });
-        expect(t.state().session?.claudeSessionId).toBe('moved-conversation');
-        expect(t.h.store.session(t.ideId)).toMatchObject({ claudeSessionId: 'moved-conversation', conversationStarted: false });
+        expect(t.state().session?.engineSessionId).toBe('moved-conversation');
+        expect(t.h.store.session(t.ideId)).toMatchObject({ engineSessionId: 'moved-conversation', conversationStarted: false });
       });
 
       it.each([['clear', 'The conversation was cleared in the terminal'], ['resume', 'The terminal switched to another conversation']])(
@@ -637,7 +637,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
         const t = await openTerminal();
         const before = snapshot(t);
         expect(t.send('SessionStart', { source })).toBeNull();
-        expect([snapshot(t), t.notices(), t.state().session?.claudeSessionId]).toEqual([before, [], t.claudeId]);
+        expect([snapshot(t), t.notices(), t.state().session?.engineSessionId]).toEqual([before, [], t.claudeId]);
       });
 
       it.each(SOURCES)('counts the events of the new conversation after %s and not those of the old one', async (source) => {
@@ -674,13 +674,13 @@ describe('an agent in the terminal, followed through its hooks', () => {
         const t = await openTerminal();
         t.h.session.terminalClosed();
         t.send('SessionStart', { source: 'clear', session_id: 'other-conversation' });
-        expect([t.state().session?.claudeSessionId, t.notices()]).toEqual([t.claudeId, []]);
+        expect([t.state().session?.engineSessionId, t.notices()]).toEqual([t.claudeId, []]);
       });
 
       it('ignores a SessionStart that names another CodeRay session', async () => {
         const t = await openTerminal();
         t.h.session.hookEvent('another-ide-session', t.raw('SessionStart', { source: 'clear', session_id: 'other-conversation' }));
-        expect([t.state().session?.claudeSessionId, t.notices()]).toEqual([t.claudeId, []]);
+        expect([t.state().session?.engineSessionId, t.notices()]).toEqual([t.claudeId, []]);
       });
 
       it('follows the transcript the new conversation names, and no longer the old one', async () => {
@@ -1074,7 +1074,7 @@ describe('an agent in the terminal, followed through its hooks', () => {
       const t = await openTerminal();
       t.h.session.terminalClosed();
       expect(await t.h.session.terminalLaunch()).not.toBeNull();
-      const claudeId = t.state().session?.claudeSessionId as string;
+      const claudeId = t.state().session?.engineSessionId as string;
       t.h.session.hookEvent(t.ideId, { ...t.raw('UserPromptSubmit', { prompt: 'again' }), session_id: claudeId });
       expect(t.messages().map((m) => m.text)).toEqual(['again']);
     });

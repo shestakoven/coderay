@@ -4,7 +4,7 @@ import { canSend, canStop, chatReducer, childItems, decisionLabel, initialChatSt
 import { matchSkills } from '../src/chat/skills';
 
 const session = {
-  id: 's1', claudeSessionId: 'c1', status: 'running' as const, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.281', permissionMode: 'bypassPermissions', startedAt: 1,
+  id: 's1', engine: 'claude' as const, engineSessionId: 'c1', status: 'running' as const, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.281', permissionMode: 'bypassPermissions', startedAt: 1,
 };
 const turn = (id: string, kind: TurnView['kind'], state: 'waiting' | 'running' | 'closed' = 'closed'): TurnView => ({
   id, kind, openedAt: 1, startedAt: state === 'waiting' ? null : 2, closedAt: state === 'closed' ? 3 : null, resultSubtype: state === 'closed' ? 'success' : null,

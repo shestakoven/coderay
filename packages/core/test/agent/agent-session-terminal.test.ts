@@ -36,7 +36,7 @@ describe('AgentSession terminal launch', () => {
     it('continues the conversation of the active chat', async () => {
       const h = await terminalHarness({ hooks: 'on', canaryMs: 5000 });
       const launch = await h.session.terminalLaunch();
-      expect(launch?.args).toContain(h.session.state().session?.claudeSessionId);
+      expect(launch?.args).toContain(h.session.state().session?.engineSessionId);
     });
 
     it('probes with a headless claude on the same gate settings', async () => {
@@ -125,7 +125,7 @@ describe('AgentSession terminal launch', () => {
   });
 
   describe('the conversation the terminal goes on with', () => {
-    const transcriptOf = (h: Harness) => transcriptPath(h.transcriptsDir, h.root, h.session.state().session?.claudeSessionId as string);
+    const transcriptOf = (h: Harness) => transcriptPath(h.transcriptsDir, h.root, h.session.state().session?.engineSessionId as string);
     const writeTranscript = (h: Harness) => {
       mkdirSync(dirname(transcriptOf(h)), { recursive: true });
       writeFileSync(transcriptOf(h), '{"type":"user"}\n');
@@ -134,7 +134,7 @@ describe('AgentSession terminal launch', () => {
     it('starts a conversation that never ran under its id', async () => {
       const h = await terminalHarness({ hooks: 'on', canaryMs: 5000 });
       const launch = await h.session.terminalLaunch();
-      const id = h.session.state().session?.claudeSessionId;
+      const id = h.session.state().session?.engineSessionId;
       expect([flag(launch?.args, '--session-id'), launch?.args.includes('--resume')]).toEqual([id, false]);
     });
 
@@ -144,7 +144,7 @@ describe('AgentSession terminal launch', () => {
       writeTranscript(h);
       h.session.terminalClosed();
       const launch = await h.session.terminalLaunch();
-      expect([flag(launch?.args, '--resume'), launch?.args.includes('--session-id')]).toEqual([h.session.state().session?.claudeSessionId, false]);
+      expect([flag(launch?.args, '--resume'), launch?.args.includes('--session-id')]).toEqual([h.session.state().session?.engineSessionId, false]);
     });
 
     it('resumes a started conversation although its transcript is not where the core looks', async () => {
@@ -155,14 +155,14 @@ describe('AgentSession terminal launch', () => {
       expect(h.store.session(h.session.sessionId() as string)?.conversationStarted).toBe(true);
       rmSync(transcriptOf(h));
       const launch = await h.session.terminalLaunch();
-      expect([flag(launch?.args, '--resume'), launch?.args.includes('--session-id')]).toEqual([h.session.state().session?.claudeSessionId, false]);
+      expect([flag(launch?.args, '--resume'), launch?.args.includes('--session-id')]).toEqual([h.session.state().session?.engineSessionId, false]);
     });
 
     it('resumes a conversation that has a transcript although it was never marked started, as after a crash of the core', async () => {
       const h = await terminalHarness({
         hooks: 'on', canaryMs: 5000,
         seed: ({ store, root, transcriptsDir }) => {
-          store.saveSession({ ...sessionRecord('earlier', root), claudeSessionId: 'earlier-claude', status: 'stopped', conversationStarted: false });
+          store.saveSession({ ...sessionRecord('earlier', root), engineSessionId: 'earlier-claude', status: 'stopped', conversationStarted: false });
           const file = transcriptPath(transcriptsDir, root, 'earlier-claude');
           mkdirSync(dirname(file), { recursive: true });
           writeFileSync(file, '{"type":"user"}\n');
@@ -177,7 +177,7 @@ describe('AgentSession terminal launch', () => {
       await h.session.terminalLaunch();
       h.session.terminalClosed();
       const launch = await h.session.terminalLaunch();
-      expect([launch?.args.includes('--resume'), flag(launch?.args, '--session-id')]).toEqual([false, h.session.state().session?.claudeSessionId]);
+      expect([launch?.args.includes('--resume'), flag(launch?.args, '--session-id')]).toEqual([false, h.session.state().session?.engineSessionId]);
     });
   });
 

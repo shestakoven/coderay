@@ -49,7 +49,7 @@ const isTextDelta = (message: Init): boolean =>
 function printArgs(launch: Launch): string[] {
   return [
     '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-    launch.resume ? '--resume' : '--session-id', launch.claudeSessionId,
+    launch.resume ? '--resume' : '--session-id', launch.engineSessionId,
     ...(launch.model !== null ? ['--model', launch.model] : []),
     ...(launch.effort !== null ? ['--effort', launch.effort] : []),
     '--mcp-config', launch.mcpConfigPath,
@@ -160,9 +160,9 @@ async function main(): Promise<number> {
     writeFileSync(mcpConfigPath, JSON.stringify({ mcpServers: {} }), { mode: 0o600 });
     const claude: ClaudeCommand = { command: values.claude, args: [] };
     const launch = (): Launch => {
-      const claudeSessionId = randomUUID();
-      sessionIds.push(claudeSessionId);
-      return { claude, cwd, claudeSessionId, resume: false, model: values.model, effort: null, mcpConfigPath, disallowedTools: DISALLOWED_TOOLS, gate: null };
+      const engineSessionId = randomUUID();
+      sessionIds.push(engineSessionId);
+      return { claude, cwd, engineSessionId, resume: false, model: values.model, effort: null, mcpConfigPath, disallowedTools: DISALLOWED_TOOLS, gate: null };
     };
     const cli: Run[] = [];
     const sdk: Run[] = [];

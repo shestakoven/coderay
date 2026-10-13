@@ -11,9 +11,12 @@ import type { SessionRecord } from '../src/store/store';
 
 export const fixture = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
+// Turns a current history back into one written before chat engines (schema 9).
+export const BEFORE_ENGINES = 'ALTER TABLE sessions RENAME COLUMN engine_session_id TO claude_session_id; ALTER TABLE sessions DROP COLUMN engine;';
+
 export function sessionRecord(id: string, cwd: string): SessionRecord {
   return {
-    id, claudeSessionId: `claude-${id}`, cwd, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+    id, engine: 'claude', engineSessionId: `claude-${id}`, cwd, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
     pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null,
   };
 }

@@ -74,7 +74,7 @@ export interface RecoveredMessage { kind: 'message'; id: string; text: string; t
 export interface RecoveredTool { kind: 'tool'; toolUseId: string; tool: string; input: unknown; status: ToolStatus; toolUseAt: number; endedAt: number | null }
 export type RecoveredItem = RecoveredMessage | RecoveredTool;
 
-export interface RecoverTranscriptOptions { claudeSessionId: string; cwd: string; since: number; dir: string }
+export interface RecoverTranscriptOptions { engineSessionId: string; cwd: string; since: number; dir: string }
 
 export const defaultTranscriptsDir = (): string => join(process.env.CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects');
 
@@ -86,10 +86,10 @@ const slug = (cwd: string): string => {
 
 const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
 
-export const transcriptPath = (dir: string, cwd: string, claudeSessionId: string): string => join(dir, slug(cwd), `${claudeSessionId}.jsonl`);
+export const transcriptPath = (dir: string, cwd: string, engineSessionId: string): string => join(dir, slug(cwd), `${engineSessionId}.jsonl`);
 
 export async function recoverTranscript(o: RecoverTranscriptOptions): Promise<{ items: RecoveredItem[]; unreadable: boolean }> {
-  const file = transcriptPath(o.dir, o.cwd, o.claudeSessionId);
+  const file = transcriptPath(o.dir, o.cwd, o.engineSessionId);
   const entries: RecoveredItem[] = [];
   const tools = new Map<string, RecoveredTool>();
   let parsed = 0;

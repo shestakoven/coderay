@@ -163,7 +163,7 @@ describe('parseHookEvent', () => {
 
   describe('SessionStart', () => {
     it.each(['startup', 'resume', 'clear', 'compact'])('reads the conversation claude starts on after %s', (source) => {
-      expect(parseHookEvent(hook('SessionStart', { session_id: 'claude-2', source }))).toEqual({ type: 'conversation', claudeSessionId: 'claude-2', source });
+      expect(parseHookEvent(hook('SessionStart', { session_id: 'claude-2', source }))).toEqual({ type: 'conversation', engineSessionId: 'claude-2', source });
     });
   });
 

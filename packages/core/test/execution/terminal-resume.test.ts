@@ -23,7 +23,7 @@ async function terminal(options: Pick<BuildOptions, 'mode' | 'runtime'> = {}) {
   if (launch === null) throw new Error('the terminal did not open');
   const settingsPath = launch.args[launch.args.indexOf('--settings') + 1] as string;
   const settings = JSON.parse(readFileSync(settingsPath, 'utf8')) as Settings;
-  const claudeId = b.session.state().session?.claudeSessionId as string;
+  const claudeId = b.session.state().session?.engineSessionId as string;
   const run = (script: string, name: string, fields: object = {}) => {
     const command = settings.hooks[name]?.flatMap((entry) => entry.hooks).find((hook) => hook.args[0] === script);
     if (!command) throw new Error(`no ${name} hook runs ${script}`);

@@ -1,3 +1,4 @@
+import type { EngineId } from './engines';
 import type { ToolDecision } from './plans';
 
 export const MAX_CLIENT_FRAME_BYTES = 32 * 1024 * 1024;
@@ -41,6 +42,7 @@ export interface ChatSummary {
   startedAt: number;
   lastActivityAt: number;
   status: SessionStatus;
+  engine: EngineId;
   modelChoice: string | null;
   effort: EffortLevel | null;
   messages: number;
@@ -48,7 +50,8 @@ export interface ChatSummary {
 
 export interface SessionView {
   id: string;
-  claudeSessionId: string;
+  engine: EngineId;
+  engineSessionId: string;
   status: SessionStatus;
   model: string | null;
   modelChoice: string | null;

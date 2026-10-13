@@ -8,7 +8,7 @@ import { planTitle } from '../src/plan/plan-state';
 import { deriveStatus, noticeFor, type ProjectStatus, type StatusInput, type StatusKind } from '../src/project/project-status';
 
 const session = (status: SessionStatus = 'running'): SessionView => ({
-  id: 's1', claudeSessionId: 'c1', status, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.0', permissionMode: 'default', startedAt: 1,
+  id: 's1', engine: 'claude' as const, engineSessionId: 'c1', status, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.0', permissionMode: 'default', startedAt: 1,
 });
 const turn = (id: string, open: boolean): TurnView =>
   ({ id, kind: 'user', openedAt: 1, startedAt: 2, closedAt: open ? null : 3, resultSubtype: open ? null : 'success' });

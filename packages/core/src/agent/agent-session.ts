@@ -98,7 +98,7 @@ export class SessionError extends Error {
 }
 
 type ExitReason = 'restart' | 'new' | 'close';
-type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort' | 'accountId' | 'claudeSessionId' | 'conversationStarted'>>;
+type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort' | 'accountId' | 'engineSessionId' | 'conversationStarted'>>;
 
 interface LaunchFiles {
   claude: ClaudeCommand;
@@ -256,7 +256,7 @@ export class AgentSession {
         ...history.messages.map((m) => m.ts),
         ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
       ]);
-      const recovered = await recoverTranscript({ claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.transcriptsDir(session) });
+      const recovered = await recoverTranscript({ engineSessionId: session.engineSessionId, cwd: session.cwd, since, dir: this.transcriptsDir(session) });
       if (recovered.unreadable) return { ids: [], unreadable: true };
       const messageIds = new Set(history.messages.map((m) => m.id));
       const storedTools = new Map(history.toolEvents.map((t) => [t.toolUseId, t]));
@@ -431,8 +431,8 @@ export class AgentSession {
     // The chat's stream closes its turns; only the answer to the end of one is the hook's.
     if (!this.terminalOpen) return event?.type === 'turn-end' && !event.failed && this.fromAgent(raw) ? this.turnEndBlock() : null;
     // Only the terminal's claude runs the event hooks, so its SessionStart names the conversation it is in: after /clear or /resume a new one.
-    if (event?.type === 'conversation' && event.claudeSessionId !== session.claudeSessionId) {
-      this.update({ claudeSessionId: event.claudeSessionId, conversationStarted: false });
+    if (event?.type === 'conversation' && event.engineSessionId !== session.engineSessionId) {
+      this.update({ engineSessionId: event.engineSessionId, conversationStarted: false });
       const moved = event.source === 'clear' ? 'The conversation was cleared in the terminal' : event.source === 'resume' ? 'The terminal switched to another conversation' : null;
       if (moved) this.apply(this.tracker.notice(`${moved}; the chat goes on with that one.`));
     }
@@ -451,8 +451,8 @@ export class AgentSession {
   }
 
   private fromAgent(raw: unknown): boolean {
-    const claudeSessionId = (raw as { session_id?: unknown } | null)?.session_id;
-    return claudeSessionId === this.session?.claudeSessionId;
+    const engineSessionId = (raw as { session_id?: unknown } | null)?.session_id;
+    return engineSessionId === this.session?.engineSessionId;
   }
 
   private answerHook(event: AgentEvent, hookName: string, signal: AbortSignal = NEVER_ABORTED, waited = false): object | null | Promise<object | null> {
@@ -791,7 +791,7 @@ export class AgentSession {
   private begin(): void {
     const from = this.session ?? this.previous;
     const session: SessionRecord = {
-      id: randomUUID(), claudeSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
+      id: randomUUID(), engine: from?.engine ?? 'claude', engineSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
       modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium', cliVersion: null,
       pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(),
     };
@@ -932,7 +932,7 @@ export class AgentSession {
   }
 
   private transcript(session: SessionRecord): string {
-    return transcriptPath(this.transcriptsDir(session), session.cwd, session.claudeSessionId);
+    return transcriptPath(this.transcriptsDir(session), session.cwd, session.engineSessionId);
   }
 
   // claude refuses to resume a conversation with no transcript yet, so a new one starts with --session-id; the id an init gives after /clear already has one.
@@ -945,7 +945,7 @@ export class AgentSession {
     const accountId = this.activeAccount();
     if (this.session.accountId === accountId) return;
     const resumable = this.session.conversationStarted;
-    this.update({ accountId, claudeSessionId: randomUUID(), conversationStarted: false });
+    this.update({ accountId, engineSessionId: randomUUID(), conversationStarted: false });
     if (resumable) this.apply(this.tracker.notice(`Switched to account ${this.options.accounts?.label(accountId) ?? 'System'}; Claude starts a fresh conversation.`));
   }
 
@@ -982,7 +982,7 @@ export class AgentSession {
     const files = this.launchFiles(session);
     if (!files) return;
     const launch: Launch = {
-      claude: files.claude, cwd: session.cwd, claudeSessionId: session.claudeSessionId, resume: this.resumable(session),
+      claude: files.claude, cwd: session.cwd, engineSessionId: session.engineSessionId, resume: this.resumable(session),
       model: session.modelChoice !== null && isModelChoice(session.modelChoice) ? session.modelChoice : null,
       effort: session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? session.effort : null,
       mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate, killGraceMs: this.options.killGraceMs,
@@ -994,7 +994,7 @@ export class AgentSession {
     this.transport = transport;
     this.exitReason = null;
     this.versionChecked = false;
-    this.update({ status: 'running', pid: transport.pid ?? null, launchId: session.claudeSessionId });
+    this.update({ status: 'running', pid: transport.pid ?? null, launchId: session.engineSessionId });
     const canary = this.options.gate?.canary;
     this.hookReady = canary === undefined;
     this.pendingSends = [];
@@ -1213,17 +1213,17 @@ export class AgentSession {
         this.permissionMode = change.permissionMode;
         patch.session = sessionView(this.session ?? session, change.permissionMode);
       } else {
-        const claudeSessionId = change.claudeSessionId || session.claudeSessionId;
+        const engineSessionId = change.engineSessionId || session.engineSessionId;
         if (this.clearPending) {
           this.clearPending = false;
-          this.clearedTo = claudeSessionId;
+          this.clearedTo = engineSessionId;
         }
         const updated: SessionRecord = {
           ...(this.session ?? session),
-          claudeSessionId,
+          engineSessionId,
           model: change.model,
           cliVersion: change.cliVersion,
-          conversationStarted: claudeSessionId !== this.clearedTo,
+          conversationStarted: engineSessionId !== this.clearedTo,
         };
         this.session = updated;
         this.persist(() => store.saveSession(updated));
@@ -1285,7 +1285,7 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
 
 function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateFlags: string[]): string[] {
   return [
-    resume ? '--resume' : '--session-id', session.claudeSessionId,
+    resume ? '--resume' : '--session-id', session.engineSessionId,
     ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
     ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
     '--mcp-config', mcpConfigPath,
@@ -1297,7 +1297,7 @@ function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath
 
 function sessionView(session: SessionRecord, permissionMode: string | null): SessionView {
   return {
-    id: session.id, claudeSessionId: session.claudeSessionId, status: session.status,
+    id: session.id, engine: session.engine, engineSessionId: session.engineSessionId, status: session.status,
     model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, permissionMode, startedAt: session.startedAt,
   };
 }
