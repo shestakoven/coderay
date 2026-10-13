@@ -10,6 +10,11 @@ const REJECTED = "The user doesn't want to proceed with this tool use. The tool 
 const INTERRUPTED = '[Request interrupted by user for tool use]';
 
 const argv = process.argv.slice(2);
+// The core asks for the version to tell whether this claude can run a chat; that run records nothing.
+if (argv.length === 1 && argv[0] === '--version') {
+  process.stdout.write(`${process.env.FAKE_CLAUDE_VERSION ?? '2.1.296'} (Claude Code)\n`);
+  process.exit(0);
+}
 // The agent SDK passes most flags as --name=value; the terminal's hook probe passes --name value.
 const flag = (name) => {
   const at = argv.indexOf(name);

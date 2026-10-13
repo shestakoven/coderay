@@ -70,4 +70,15 @@ describe('main.ts', { timeout: 90_000 }, () => {
     socket.send(JSON.stringify({ type: 'chat.send', text: 'hello' }));
     expect(await waitFor(() => (existsSync(seen) ? readFileSync(seen, 'utf8').trim() : ''), 'the claude to start')).toBe('unset unset');
   });
+
+  it('answers a request for the models with the state of each engine first, then the models', async () => {
+    const { messages, socket } = await startMain();
+    socket.send(JSON.stringify({ type: 'models.list' }));
+    await waitFor(() => messages.some((m) => m.type === 'models.snapshot'), 'the models');
+    const answers = messages.filter((m) => m.type === 'engines.snapshot' || m.type === 'models.snapshot');
+    expect([answers.map((m) => m.type), answers[0]]).toEqual([
+      ['engines.snapshot', 'models.snapshot'],
+      { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }] },
+    ]);
+  });
 });

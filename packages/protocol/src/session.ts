@@ -1,4 +1,4 @@
-import type { EngineId } from './engines';
+import type { EngineId, EngineStatus } from './engines';
 import type { ToolDecision } from './plans';
 
 export const MAX_CLIENT_FRAME_BYTES = 32 * 1024 * 1024;
@@ -214,6 +214,7 @@ export type SessionServerMessage =
   | { type: 'session.delta'; text: string }
   | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[] }
   | { type: 'models.snapshot'; models: ModelInfo[] }
+  | { type: 'engines.snapshot'; engines: EngineStatus[] }
   | { type: 'image.data'; key: string; image: ImageRef; data: string }
   | { type: 'image.failed'; key: string; reason: ImageFailure }
   | { type: 'error'; message: string };

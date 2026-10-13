@@ -3,10 +3,12 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { AGENT_TERMINAL_ID, type ClientMessage, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
 import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
+import { claudeEngine } from './agent/engines/claude';
+import { EngineRegistry } from './agent/engines/registry';
 import { createExecutionRuntime } from './execution/runtime';
 import { GitService } from './git/git-service';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
@@ -32,7 +34,6 @@ import { watchDeploy } from './c4/deploy';
 import { buildC4 } from './c4/model';
 import { claudeJsonPath } from './mcp/claude-code';
 import { McpRegistry } from './mcp/registry';
-import { fetchModels } from './models/catalog';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
@@ -219,10 +220,12 @@ try {
     expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
     claudeJsonPath: () => claudeJsonPath(accounts.configDir(accounts.activeId())),
   });
+  const engines = new EngineRegistry([claudeEngine({ command: () => ({ command: values.claude, args: [], env: accounts.claudeEnv() }), cwd: root })]);
   const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
     accounts,
+    engines,
     mcpServers: () => registry.sessionServers(),
     ...rt.sessionOptions,
     canLeave: () => rt.canLeave(),
@@ -322,12 +325,14 @@ try {
 
   let modelList: Promise<ModelInfo[]> | undefined;
   const modelCatalog = (): Promise<ModelInfo[]> => {
-    modelList ??= fetchModels({ command: values.claude, args: [], env: accounts.claudeEnv() }, root).then((list) => {
+    modelList ??= Promise.all(engines.all().map((engine) => engine.listModels())).then((lists) => {
+      const list = lists.flat();
       if (list.length === 0) modelList = undefined;
       return list;
     });
     return modelList;
   };
+  const engineStates = (): Promise<EngineStatus[]> => Promise.all(engines.all().map((engine) => engine.status()));
 
   const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {
@@ -359,9 +364,12 @@ try {
       case 'session.list':
         reply(sessionsSnapshot());
         return;
-      case 'models.list':
-        reply({ type: 'models.snapshot', models: await modelCatalog() });
+      case 'models.list': {
+        const models = modelCatalog();
+        reply({ type: 'engines.snapshot', engines: await engineStates() });
+        reply({ type: 'models.snapshot', models: await models });
         return;
+      }
       case 'session.switch':
         await watching;
         await agent.switchSession(message.id);
