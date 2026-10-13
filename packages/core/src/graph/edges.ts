@@ -2,8 +2,8 @@ import type { FileEdge } from '@ide/protocol';
 import type { LanguageAdapter } from '../lang/types';
 import type { IndexedFile } from '../model';
 
-export function computeFileEdges(files: IndexedFile[], adapters: LanguageAdapter[]): FileEdge[] {
-  const targetsOf = resolver(files);
+export function computeFileEdges(files: IndexedFile[], adapters: LanguageAdapter[], ghosts: readonly string[] = []): FileEdge[] {
+  const targetsOf = resolver(files, ghosts);
   const edges = new Map<string, FileEdge>();
   for (const file of files) {
     const adapter = adapters.find((a) => a.lang === file.lang);
@@ -29,8 +29,8 @@ export function unresolvedImports(files: IndexedFile[], adapters: LanguageAdapte
   return result;
 }
 
-function resolver(files: IndexedFile[]): (adapter: LanguageAdapter, file: IndexedFile, specifier: string) => string[] {
-  const known = new Set(files.map((f) => f.path));
+function resolver(files: IndexedFile[], ghosts: readonly string[] = []): (adapter: LanguageAdapter, file: IndexedFile, specifier: string) => string[] {
+  const known = new Set([...files.map((f) => f.path), ...ghosts]);
   const exists = (path: string) => known.has(path);
   const providers = new Map<string, string[]>();
   for (const file of files) {

@@ -47,6 +47,12 @@ describe('computeFileEdges', () => {
     const files = [indexed('src/a.ts', 'typescript', ['./a', './missing'])];
     expect(computeFileEdges(files, adapters)).toEqual([]);
   });
+
+  it('resolves an import of a deleted file when its path is named as a ghost', () => {
+    const files = [indexed('app/api/routes.py', 'python', ['app.utils.throttle'])];
+    expect(pairs(computeFileEdges(files, adapters))).toEqual([]);
+    expect(pairs(computeFileEdges(files, adapters, ['app/utils/throttle.py']))).toEqual(['app/api/routes.py -> app/utils/throttle.py']);
+  });
 });
 
 describe('unresolvedImports', () => {
