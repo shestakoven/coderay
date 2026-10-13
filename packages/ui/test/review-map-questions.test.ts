@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ReviewGraph } from '@ide/protocol';
-import { formatQuestions, loadQuestions, markAsked, outdated, persistQuestions, questionFor, saveQuestion, unsentQuestions } from '../src/history/review-map/review-map-questions';
+import { MAX_QUESTION, formatQuestions, loadQuestions, markAsked, outdated, persistQuestions, questionFor, saveQuestion, unsentQuestions } from '../src/history/review-map/review-map-questions';
 
 const part = { t: 'part', id: 'svc' } as const;
 const link = { t: 'link', from: 'api', to: 'svc' } as const;
@@ -20,6 +20,13 @@ describe('saveQuestion', () => {
     expect(list.map((q) => [q.id, q.sentAt])).toEqual([['q1', 5], ['q2', null]]);
     expect(questionFor(list, part)?.id).toBe('q2');
     expect(unsentQuestions(list).map((q) => q.id)).toEqual(['q2']);
+  });
+
+  it('cuts a long text to the limit without leaving half of a surrogate pair', () => {
+    const cut = saveQuestion([], { target: part, title: 't', where: '', text: 'a'.repeat(MAX_QUESTION + 1) }, 'q1', 1);
+    expect(cut[0]?.text).toHaveLength(MAX_QUESTION);
+    const pair = saveQuestion([], { target: part, title: 't', where: '', text: `${'a'.repeat(MAX_QUESTION - 1)}😀` }, 'q2', 2);
+    expect(pair[0]?.text).toBe('a'.repeat(MAX_QUESTION - 1));
   });
 });
 
@@ -43,15 +50,25 @@ describe('formatQuestions', () => {
     const list = saveQuestion([], { target: part, title: 'UserService', where: '', text: 'Why?' }, 'q1', 1);
     expect(formatQuestions(list)).toBe('I am reviewing your changes and have a question about them. Answer only: do not change any code.\n\n1. UserService\n   Why?');
   });
+
+  it('keeps the title and the place on the numbered line when they hold a newline', () => {
+    const list = saveQuestion([], { target: part, title: 'User\n  Service', where: 'app/s.py\n:6', text: 'Why?' }, 'q1', 1);
+    expect(formatQuestions(list)).toBe('I am reviewing your changes and have a question about them. Answer only: do not change any code.\n\n1. User Service (app/s.py :6)\n   Why?');
+  });
 });
 
 describe('outdated', () => {
   it('lists the questions whose part or link is no longer in the graph', () => {
-    const graph: ReviewGraph = { parts: [{ id: 'svc', title: 's', status: 'modified', steps: [], outside: false, files: [], broken: [] }], links: [], partial: null };
+    const graph: ReviewGraph = {
+      parts: [{ id: 'svc', title: 's', status: 'modified', steps: [], outside: false, files: [], broken: [] }],
+      links: [{ from: 'api', to: 'svc', state: 'new', count: 1, evidence: [] }],
+      partial: null,
+    };
     let list = saveQuestion([], { target: part, title: 's', where: '', text: 'a' }, 'q1', 1);
     list = saveQuestion(list, { target: { t: 'part', id: 'gone' }, title: 'g', where: '', text: 'b' }, 'q2', 2);
     list = saveQuestion(list, { target: link, title: 'l', where: '', text: 'c' }, 'q3', 3);
-    expect(outdated(list, graph).map((q) => q.id)).toEqual(['q2', 'q3']);
+    list = saveQuestion(list, { target: { t: 'link', from: 'svc', to: 'api' }, title: 'r', where: '', text: 'd' }, 'q4', 4);
+    expect(outdated(list, graph).map((q) => q.id)).toEqual(['q2', 'q4']);
   });
 });
 
