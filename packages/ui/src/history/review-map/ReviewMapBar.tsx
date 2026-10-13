@@ -15,11 +15,12 @@ export interface ReviewMapBarProps {
   onOpen: (open: boolean) => void;
   onRemove: (id: string) => void;
   onReset: () => void;
+  onClearAsked: () => void;
   onSend: () => void;
   onOpenChat: () => void;
 }
 
-export function ReviewMapBar({ reviewed, files, unsent, outdated, asked, text, open, onOpen, onRemove, onReset, onSend, onOpenChat }: ReviewMapBarProps) {
+export function ReviewMapBar({ reviewed, files, unsent, outdated, asked, text, open, onOpen, onRemove, onReset, onClearAsked, onSend, onOpenChat }: ReviewMapBarProps) {
   const [raw, setRaw] = useState(false);
   const box = useRef<HTMLDivElement>(null);
 
@@ -39,6 +40,7 @@ export function ReviewMapBar({ reviewed, files, unsent, outdated, asked, text, o
           <span className="rm-bar-asked"><Icon name="check" size={12} /></span>
           <span className="pf-bar-text"><b>{plural(asked, 'question')} sent</b> · answers are in the chat</span>
           <button type="button" className="pf-btn ghost" onClick={onOpenChat}>Open chat</button>
+          <button type="button" className="pf-btn ghost" onClick={onClearAsked} title="Take the Asked marks off the map">Clear</button>
           <span className="pf-bar-sep" />
           <span className="pf-bar-hint">{reviewed} of {files} files reviewed</span>
         </div>

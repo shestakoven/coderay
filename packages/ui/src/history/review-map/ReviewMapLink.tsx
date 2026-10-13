@@ -72,7 +72,7 @@ function labelAt(sx: number, sy: number, tx: number, ty: number, sp: Position, t
 const CLASS: Record<ReviewLinkState, string> = {
   existing: 'ed-existing', new: 'ed-new run-done', removed: 'ed-removed', unplanned: 'ed-unplanned', missing: 'ed-missing', broken: 'ed-broken',
 };
-const FLAGGED: ReadonlySet<ReviewLinkState> = new Set(['unplanned', 'broken', 'missing']);
+const WARNED: ReadonlySet<ReviewLinkState> = new Set(['unplanned', 'broken', 'missing']);
 
 export function ReviewMapLink({ id, sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, markerEnd, data }: EdgeProps<ReviewMapLinkEdge>) {
   const [path, midX, midY] = getBezierPath({ sourceX, sourceY, targetX, targetY, sourcePosition, targetPosition, curvature: CURVATURE });
@@ -99,7 +99,7 @@ export function ReviewMapLink({ id, sourceX, sourceY, targetX, targetY, sourcePo
             }}
             data-testid={`review-map-link-${index}`}
           >
-            {FLAGGED.has(link.state) && <Icon name="alert" size={10} />}
+            {WARNED.has(link.state) && <Icon name="alert" size={10} />}
             <span className="pf-elabel-text">{label}</span>
             {question !== undefined && !live && <span className="rm-ask-mark"><Icon name={asked ? 'check' : 'help'} size={10} /></span>}
             {live && (

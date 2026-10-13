@@ -76,3 +76,12 @@ export function totalsOf(graph: ReviewGraph): Totals {
 
 export const partOfPath = (graph: ReviewGraph, path: string): string | null =>
   graph.parts.find((part) => part.files.some((file) => file.path === path))?.id ?? null;
+
+export type FitStep = 'wait' | 'done' | 'first' | 'fit';
+
+// A layout belongs to the shape it was computed from: the viewport fits only that one, and only once.
+export function fitStep(layoutFor: string | null, shape: string, fitted: string): FitStep {
+  if (layoutFor !== shape) return 'wait';
+  if (fitted === shape) return 'done';
+  return fitted === '' ? 'first' : 'fit';
+}

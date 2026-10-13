@@ -93,6 +93,10 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
     [questions, stale],
   );
   const message = useMemo(() => (unsent.length === 0 ? '' : formatQuestions(unsent)), [unsent]);
+  const draftShown = draftOpen && unsent.length > 0;
+  useEffect(() => {
+    if (unsent.length === 0) setDraftOpen(false);
+  }, [unsent.length]);
   const files = useMemo(() => (graph === null ? [] : graph.parts.flatMap((part) => part.files)), [graph]);
   const reviewedCount = useMemo(() => files.filter((file) => reviewed.has(file.path)).length, [files, reviewed]);
 
@@ -156,6 +160,8 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
     setDraftOpen(false);
   }, []);
 
+  const clearAsked = useCallback(() => setQuestions(unsentQuestions), []);
+
   useEffect(() => {
     if (!active) return;
     // Capture phase: a key the map uses must not also exit the review behind it.
@@ -171,7 +177,7 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
       }
       if (event.key === 'Escape') {
         if (editing !== null) setEditing(null);
-        else if (draftOpen) setDraftOpen(false);
+        else if (draftShown) setDraftOpen(false);
         else if (selection !== null) select(null);
         else return;
         event.preventDefault();
@@ -184,7 +190,7 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
     };
     window.addEventListener('keydown', onKey, true);
     return () => window.removeEventListener('keydown', onKey, true);
-  }, [active, unsent, sendQuestions, editing, draftOpen, selection, select]);
+  }, [active, unsent, sendQuestions, editing, draftShown, selection, select]);
 
   const changeContext = (next: boolean): void => {
     setContext(next);
@@ -296,10 +302,11 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
         outdated={stale}
         asked={askedCount}
         text={message}
-        open={draftOpen && unsent.length > 0}
+        open={draftShown}
         onOpen={setDraftOpen}
         onRemove={(id) => setQuestions((existing) => removeQuestion(existing, id))}
         onReset={reset}
+        onClearAsked={clearAsked}
         onSend={sendQuestions}
         onOpenChat={onOpenChat}
       />

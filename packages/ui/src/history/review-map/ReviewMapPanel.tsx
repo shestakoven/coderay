@@ -114,7 +114,7 @@ function PartDetails({ graph, plan, part, question, reviewed, selectedPath, onAc
               const on = reviewed.has(file.path);
               return (
                 <li key={file.path}>
-                  <button type="button" className={`rm-check${on ? ' on' : ''}`} aria-pressed={on} aria-label={on ? 'Accepted' : 'Accept the file'} title={on ? 'Accepted' : 'Accept the file'} disabled={on} onClick={() => onAccept([file.path])}>
+                  <button type="button" className={`rm-check${on ? ' on' : ''}`} aria-pressed={on} aria-label={on ? `Mark ${file.path} as not reviewed` : `Mark ${file.path} as reviewed`} title={on ? 'Accepted' : 'Accept the file'} disabled={on} onClick={() => onAccept([file.path])}>
                     {on && <Icon name="check" size={11} />}
                   </button>
                   <span className="rm-done-body">

@@ -100,3 +100,7 @@
 /* Bar */
 .rm-bar-asked { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; background: var(--ask); color: #1c1233; }
 .rm-outdated { margin-left: 6px; padding: 0 6px; border-radius: 4px; vertical-align: 1px; color: var(--warn); background: rgba(242, 197, 92, 0.14); font-size: calc(9px * var(--fs-scale, 1)); font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+
+@media (prefers-reduced-motion: reduce) {
+  .rm-check { transition: none; }
+}

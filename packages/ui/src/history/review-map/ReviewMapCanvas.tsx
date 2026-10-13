@@ -3,12 +3,13 @@ import type { ReviewLinkState } from '@ide/protocol';
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Icon } from '../../layout/Icon';
 import { MapBackground, MapControls } from '../../map/canvas';
 import type { Bounds } from '../../map/layout';
 import type { Direction } from '../../map/layout-settings';
 import { boundsOf, FLOW_NODE_SIZE, type Positions } from '../../plan-flow/flow-layout';
 import { useTweened } from '../../plan-flow/use-tweened';
-import { focusOf, targetKey, type Focus, type MapStep, type MapView, type Target } from './review-map-model';
+import { fitStep, focusOf, targetKey, type Focus, type MapStep, type MapView, type Target } from './review-map-model';
 import { questionFor, type MapQuestion } from './review-map-questions';
 import { ReviewMapCard, type ReviewMapCardData, type ReviewMapCardNode } from './ReviewMapCard';
 import { linkLabel, ReviewMapLink, type ReviewMapLinkData, type ReviewMapLinkEdge } from './ReviewMapLink';
@@ -22,6 +23,13 @@ const COLOR: Record<ReviewLinkState, string> = {
 };
 
 const padding = { top: '84px', right: '56px', bottom: '104px', left: '56px' } as const;
+
+const reducedMotion = (): boolean => typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+
+interface Layout {
+  shape: string;
+  positions: Positions;
+}
 
 async function layoutOf(ids: string[], edges: { id: string; from: string; to: string }[], direction: Direction): Promise<Positions> {
   const vertical = direction === 'DOWN' || direction === 'UP';
@@ -57,7 +65,8 @@ export interface ReviewMapCanvasProps {
 }
 
 function Canvas({ view, focus: selectedFocus, selection, direction, steps, reviewed, questions, editing, onSelect, onAsk, onSave, onCancel, onOpenChat }: ReviewMapCanvasProps) {
-  const [layout, setLayout] = useState<Positions | null>(null);
+  const [layout, setLayout] = useState<Layout | null>(null);
+  const [failed, setFailed] = useState(false);
   const [hoverPart, setHoverPart] = useState<string | null>(null);
   const [hoverLink, setHoverLink] = useState<number | null>(null);
   const leavePart = useRef<number | undefined>(undefined);
@@ -75,19 +84,34 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
   useEffect(() => {
     let live = true;
     const edges = view.links.map(({ link, index }) => ({ id: `e${index}`, from: link.from, to: link.to }));
-    layoutOf(ids, edges, direction).then((next) => live && setLayout(next), (error: unknown) => console.error('review map layout failed', error));
+    layoutOf(ids, edges, direction).then(
+      (positions) => {
+        if (!live) return;
+        setLayout({ shape: signature, positions });
+        setFailed(false);
+      },
+      (error: unknown) => {
+        console.error('review map layout failed', error);
+        if (!live) return;
+        setLayout(null);
+        setFailed(true);
+      },
+    );
     return () => { live = false; };
   }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const positions = useTweened(layout);
-  const destination = useMemo(() => (layout === null ? null : boundsOf(layout, ids)), [layout, ids]);
+  const reduced = reducedMotion();
+  const laidOut = layout === null ? null : layout.positions;
+  const tweened = useTweened(reduced ? null : laidOut);
+  const positions = reduced ? laidOut : tweened;
+  const destination = useMemo(() => (layout === null || layout.shape !== signature ? null : boundsOf(layout.positions, ids)), [layout, signature, ids]);
   const fitted = useRef('');
   useEffect(() => {
-    if (destination === null || fitted.current === signature) return;
-    const first = fitted.current === '';
+    const step = fitStep(layout?.shape ?? null, signature, fitted.current);
+    if (step === 'wait' || step === 'done') return;
     fitted.current = signature;
-    if (!first) fitTo(destination, 420);
-  }, [destination, signature, fitTo]);
+    if (step === 'fit' && destination !== null) fitTo(destination, reduced ? 0 : 420);
+  }, [layout, signature, destination, fitTo, reduced]);
 
   useEffect(() => () => {
     window.clearTimeout(leavePart.current);
@@ -189,7 +213,14 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
     [view, placedIds, titles, focus, hoverLink, selectedLink, questions, editing, hoverLinkIn, onSelect, onAsk, onSave, onCancel],
   );
 
-  if (positions === null) return null;
+  if (positions === null) {
+    return failed ? (
+      <div className="rm-empty" role="alert">
+        <Icon name="alert" size={20} />
+        <p>The map could not be laid out.</p>
+      </div>
+    ) : null;
+  }
   return (
     <ReactFlow
       fitView
