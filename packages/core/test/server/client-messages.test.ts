@@ -253,7 +253,8 @@ describe('parseClientMessage', () => {
     it('accepts a request with files and a plan id or none', () => {
       const raw = JSON.stringify({ type: 'review.graph', requestId: 'r1', planId: 'p1', files: [file] });
       expect(parseClientMessage(raw)).toEqual({ type: 'review.graph', requestId: 'r1', planId: 'p1', files: [file] });
-      expect(parseClientMessage(JSON.stringify({ type: 'review.graph', requestId: 'r1', planId: null, files: [] }))).not.toBeNull();
+      const unplanned = { type: 'review.graph', requestId: 'r1', planId: null, files: [] };
+      expect(parseClientMessage(JSON.stringify(unplanned))).toEqual(unplanned);
     });
 
     it.each([

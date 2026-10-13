@@ -24,9 +24,11 @@ describe('saveQuestion', () => {
     expect(unsentQuestions(list).map((q) => q.id)).toEqual(['q2']);
   });
 
-  it('cuts a long text to the limit', () => {
+  it('cuts a long text to the limit without leaving half of a surrogate pair', () => {
     const cut = saveQuestion([], { target: part, title: 't', where: '', text: 'a'.repeat(MAX_QUESTION + 1) }, 'q1', 1);
     expect(cut[0]?.text).toHaveLength(MAX_QUESTION);
+    const pair = saveQuestion([], { target: part, title: 't', where: '', text: `${'a'.repeat(MAX_QUESTION - 1)}😀` }, 'q2', 2);
+    expect(pair[0]?.text).toBe('a'.repeat(MAX_QUESTION - 1));
   });
 });
 

@@ -43,6 +43,7 @@ describe('ReviewGraphService', () => {
     const service = new ReviewGraphService(options([], async () => { throw new Error('no recorded version'); }));
     const graph = await service.graph({ planId: null, files: [{ path: 'app/a.py', before: 'x', after: 'y', step: null, external: false, added: 1, removed: 1 }] });
     expect(graph.partial).toMatch(/could not be read/);
+    expect(graph.parts.map((p) => p.id)).toEqual(['a']);
   });
 
   it('reads the version the request names as before, and draws the import that version had and the file lost', async () => {

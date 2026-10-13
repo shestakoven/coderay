@@ -60,7 +60,7 @@ describe('graphKey', () => {
     const other = { ...file, path: 'z.ts' };
     const key = graphKey([file], 'p');
     expect(graphKey([file, other], 'p')).toBe(graphKey([other, file], 'p'));
-    const variants = [{ before: 'b2' }, { after: 'a2' }, { step: 's2' }, { external: true }, { added: 2 }, { removed: 3 }];
+    const variants = [{ path: 'b.ts' }, { before: 'b2' }, { after: 'a2' }, { step: 's2' }, { external: true }, { added: 2 }, { removed: 3 }];
     expect([...variants.map((change) => graphKey([{ ...file, ...change }], 'p')), graphKey([file], 'q')]).not.toContain(key);
   });
 });
@@ -109,13 +109,19 @@ describe('importedName', () => {
       'from app.services.user_service import EmailTakenError, UserService',
       'from app.api import (',
       "import React, { useState, type FC as Component } from 'react';",
+      "export { store } from './store';",
       "import * as path from 'node:path';",
+      "import layout from './views/layout';",
       "const { join: joinPath } = require('node:path');",
+      "const fs = require('node:fs');",
+      'import app.core.security as security',
       'using Accounts.Services;',
       '#include "net/socket.h"',
       "import './polyfills';",
     ];
-    expect(lines.map(importedName)).toEqual(['EmailTakenError +1', null, 'useState +1', 'path', 'join', 'Services', 'socket.h', null]);
+    expect(lines.map(importedName)).toEqual([
+      'EmailTakenError +1', null, 'useState +1', 'store', 'path', 'layout', 'join', 'fs', 'security', 'Services', 'socket.h', null,
+    ]);
   });
 });
 
