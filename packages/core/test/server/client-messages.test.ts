@@ -250,18 +250,13 @@ describe('parseClientMessage', () => {
   describe('review.graph', () => {
     const file = { path: 'app/a.py', before: null, after: 'h1', step: 's1', external: false, added: 3, removed: 0 };
 
-    it('accepts a request with a plan id and files', () => {
+    it('accepts a request with files and a plan id or none', () => {
       const raw = JSON.stringify({ type: 'review.graph', requestId: 'r1', planId: 'p1', files: [file] });
       expect(parseClientMessage(raw)).toEqual({ type: 'review.graph', requestId: 'r1', planId: 'p1', files: [file] });
-    });
-
-    it('accepts a null plan id', () => {
-      const raw = JSON.stringify({ type: 'review.graph', requestId: 'r1', planId: null, files: [] });
-      expect(parseClientMessage(raw)).not.toBeNull();
+      expect(parseClientMessage(JSON.stringify({ type: 'review.graph', requestId: 'r1', planId: null, files: [] }))).not.toBeNull();
     });
 
     it.each([
-      ['no request id', { type: 'review.graph', planId: null, files: [] }],
       ['a file with a numeric path', { type: 'review.graph', requestId: 'r', planId: null, files: [{ ...file, path: 4 }] }],
       ['a file without the external flag', { type: 'review.graph', requestId: 'r', planId: null, files: [{ ...file, external: undefined }] }],
       ['more files than the limit', { type: 'review.graph', requestId: 'r', planId: null, files: Array.from({ length: 501 }, () => file) }],

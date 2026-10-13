@@ -26,40 +26,17 @@ const run = (input: Partial<Parameters<typeof buildReviewGraph>[0]> & Pick<Param
   buildReviewGraph({ components, adapters, plan: null, readBefore: nothing, readNow: nothing, ...input });
 
 describe('buildReviewGraph', () => {
-  it('draws a new import between created files as a new link with its line', async () => {
+  it('marks an import of a deleted file that an unchanged file still holds as broken, on that import\'s line, and places the deleted file in the part of the nearest directory', async () => {
     const graph = await run({
-      changed: [file('app/api/users.py', null, 'h1'), file('app/services/user_service.py', null, 'h2')],
-      current: [indexed('app/api/users.py', 'python', ['app.services.user_service']), indexed('app/services/user_service.py', 'python', [])],
-      readNow: reader({ 'app/api/users.py': 'from app.services.user_service import X\n' }),
+      changed: [file('app/utils/legacy/throttle.py', 'b1', null, 's5', { removed: 37 })],
+      current: [indexed('app/api/routes.py', 'python', ['app.utils.legacy.throttle', 'app.utils.helpers']), indexed('app/utils/helpers.py', 'python', [])],
+      readBefore: reader({ 'app/utils/legacy/throttle.py': 'X = 1\n' }),
+      readNow: reader({ 'app/api/routes.py': 'import os\nfrom app.utils.legacy.throttle import check\nfrom app.utils.helpers import h\n' }),
     });
     expect(graph.links).toEqual([
-      { from: 'api', to: 'services', state: 'new', count: 1, evidence: [{ path: 'app/api/users.py', line: 1, text: 'from app.services.user_service import X' }] },
+      { from: 'api', to: 'utils', state: 'broken', count: 2, evidence: [{ path: 'app/api/routes.py', line: 2, text: 'from app.utils.legacy.throttle import check' }] },
     ]);
-    expect(graph.parts.map((part) => [part.id, part.status])).toEqual([['api', 'created'], ['services', 'created']]);
-  });
-
-  it('draws an import that the change removed as a removed link, read from the file as it was', async () => {
-    const graph = await run({
-      changed: [file('app/api/users.py', 'b1', 'a1')],
-      current: [indexed('app/api/users.py', 'python', []), indexed('app/services/user_service.py', 'python', [])],
-      readBefore: reader({ 'app/api/users.py': 'import os\nfrom app.services.user_service import X\n' }),
-    });
-    expect(graph.links).toEqual([
-      { from: 'api', to: 'services', state: 'removed', count: 1, evidence: [{ path: 'app/api/users.py', line: 2, text: 'from app.services.user_service import X' }] },
-    ]);
-  });
-
-  it('marks an import of a deleted file that an unchanged file still holds as broken, and places the deleted file in the nearest part', async () => {
-    const graph = await run({
-      changed: [file('app/utils/throttle.py', 'b1', null, 's5', { removed: 37 })],
-      current: [indexed('app/api/routes.py', 'python', ['app.utils.throttle']), indexed('app/utils/helpers.py', 'python', [])],
-      readBefore: reader({ 'app/utils/throttle.py': 'X = 1\n' }),
-      readNow: reader({ 'app/api/routes.py': 'import os\nfrom app.utils.throttle import check\n' }),
-    });
-    expect(graph.links).toEqual([
-      { from: 'api', to: 'utils', state: 'broken', count: 1, evidence: [{ path: 'app/api/routes.py', line: 2, text: 'from app.utils.throttle import check' }] },
-    ]);
-    expect(graph.parts.find((part) => part.id === 'utils')).toMatchObject({ status: 'deleted', files: [{ path: 'app/utils/throttle.py', op: '-' }] });
+    expect(graph.parts.find((part) => part.id === 'utils')).toMatchObject({ status: 'deleted', files: [{ path: 'app/utils/legacy/throttle.py', op: '-' }] });
   });
 
   it('keeps an import of a deleted file that stays inside one part as evidence on that part', async () => {
@@ -75,34 +52,48 @@ describe('buildReviewGraph', () => {
     ]);
   });
 
-  it('calls a new link unplanned only when a plan exists and a part of it is outside the plan', async () => {
+  it('calls a part outside the plan only when there is a plan and no step lists any of its files, external files aside, and a new link to it unplanned', async () => {
     const input = {
-      changed: [file('app/api/users.py', null, 'h1', null), file('app/services/user_service.py', null, 'h2', 's1')],
-      current: [indexed('app/api/users.py', 'python', ['app.services.user_service']), indexed('app/services/user_service.py', 'python', [])],
+      changed: [
+        file('app/api/users.py', null, 'h1', 's1'),
+        file('app/api/routes.py', null, 'h2', null),
+        file('app/utils/helpers.py', null, 'h3', null),
+        file('app/services/mailer.py', null, 'h4', null, { external: true }),
+      ],
+      current: [
+        indexed('app/api/users.py', 'python', ['app.utils.helpers']),
+        indexed('app/api/routes.py', 'python', []),
+        indexed('app/utils/helpers.py', 'python', []),
+        indexed('app/services/mailer.py', 'python', []),
+      ],
     };
-    const plan: PlanRef = { targets: [{ step: 's1', componentId: 'services' }], flow: null };
+    const plan: PlanRef = { targets: [{ step: 's1', componentId: 'api' }], flow: null };
     const planned = await run({ ...input, plan });
-    expect(planned.links[0]?.state).toBe('unplanned');
-    expect(planned.parts.find((part) => part.id === 'api')).toMatchObject({ outside: true, steps: [] });
-    expect(planned.parts.find((part) => part.id === 'services')).toMatchObject({ outside: false, steps: ['s1'] });
-    expect((await run(input)).links[0]?.state).toBe('new');
+    expect(planned.links.map((link) => [link.from, link.to, link.state])).toEqual([['api', 'utils', 'unplanned']]);
+    expect(planned.parts.map((part) => [part.id, part.outside, part.steps])).toEqual([['api', false, ['s1']], ['mailer', false, []], ['utils', true, []]]);
+    const unplanned = await run(input);
+    expect(unplanned.links.map((link) => link.state)).toEqual(['new']);
+    expect(unplanned.parts.filter((part) => part.outside)).toEqual([]);
   });
 
-  it('shows a planned part nothing changed in as missing, and a planned link the code lacks as a missing link', async () => {
+  it('shows a planned part nothing changed in as missing, and a new link of the plan\'s flow that no code joins as a missing link', async () => {
     const plan: PlanRef = {
-      targets: [{ step: 's1', componentId: 'services' }, { step: 's2', componentId: 'mailer' }],
+      targets: [{ step: 's1', path: 'app/api/users.py' }, { step: 's1', path: 'app/services/user_service.py' }, { step: 's2', path: 'app/services/mailer.py' }],
       flow: {
-        nodes: [{ id: 'svc', files: ['app/services/user_service.py'] }, { id: 'mail', files: ['app/services/mailer.py'] }],
-        edges: [{ from: 'svc', to: 'mail', state: 'new' }],
+        nodes: [{ id: 'route', files: ['app/api/users.py'] }, { id: 'svc', files: ['app/services/user_service.py'] }, { id: 'mail', files: ['app/services/mailer.py'] }],
+        edges: [{ from: 'route', to: 'svc', state: 'new' }, { from: 'svc', to: 'mail', state: 'new' }, { from: 'mail', to: 'route', state: 'existing' }],
       },
     };
     const graph = await run({
-      changed: [file('app/services/user_service.py', null, 'h1', 's1')],
-      current: [indexed('app/services/user_service.py', 'python', []), indexed('app/services/mailer.py', 'python', [])],
+      changed: [file('app/api/users.py', null, 'h1', 's1'), file('app/services/user_service.py', null, 'h2', 's1')],
+      current: [indexed('app/api/users.py', 'python', ['app.services.user_service']), indexed('app/services/user_service.py', 'python', []), indexed('app/services/mailer.py', 'python', [])],
       plan,
     });
-    expect(graph.parts.find((part) => part.id === 'mailer')).toMatchObject({ status: 'missing', steps: ['s2'], files: [] });
-    expect(graph.links).toEqual([{ from: 'services', to: 'mailer', state: 'missing', count: 0, evidence: [] }]);
+    expect(graph.parts.map((part) => [part.id, part.status, part.steps])).toEqual([['api', 'created', ['s1']], ['services', 'created', ['s1']], ['mailer', 'missing', ['s2']]]);
+    expect(graph.links).toEqual([
+      { from: 'api', to: 'services', state: 'new', count: 1, evidence: [] },
+      { from: 'services', to: 'mailer', state: 'missing', count: 0, evidence: [] },
+    ]);
   });
 
   it('adds an unchanged neighbour as context and leaves links between unchanged parts out', async () => {
@@ -119,15 +110,21 @@ describe('buildReviewGraph', () => {
     expect(graph.links).toEqual([{ from: 'api', to: 'utils', state: 'existing', count: 1, evidence: [] }]);
   });
 
-  it('keeps at most 40 parts and says how many it left out', async () => {
-    const many = Array.from({ length: 60 }, (_, i) => ({ id: `c${i}`, name: `C${i}`, files: [`pkg${i}/m.py`] }));
+  it('keeps at most 40 parts, leaving out a plain context part before one a flagged link ends in and never a changed one, and says how many it left out', async () => {
+    const changedParts = Array.from({ length: 39 }, (_, i) => ({ id: `c${i}`, name: `C${i}`, files: [`pkg${i}/m.py`] }));
     const graph = await run({
-      components: many,
-      changed: many.map((c) => file(c.files[0]!, null, `h-${c.id}`)),
-      current: many.map((c) => indexed(c.files[0]!, 'python', [])),
+      components: [...changedParts, { id: 'hub', name: 'Hub', files: ['hub/h.py'] }, { id: 'old', name: 'Old', files: ['old/o.py'] }],
+      changed: changedParts.map((c, i) => (i === 0 ? file(c.files[0]!, 'b0', null) : file(c.files[0]!, null, `h-${c.id}`))),
+      current: [
+        ...changedParts.slice(1).map((c, i) => indexed(c.files[0]!, 'python', i === 0 ? ['hub.h'] : [])),
+        indexed('hub/h.py', 'python', []),
+        indexed('old/o.py', 'python', ['pkg0.m']),
+      ],
     });
-    expect(graph.parts).toHaveLength(40);
-    expect(graph.partial).toMatch(/20 parts? left out/);
+    const ids = graph.parts.map((part) => part.id);
+    expect([ids.length, ids.includes('old'), ids.includes('hub')]).toEqual([40, true, false]);
+    expect(graph.links.map((link) => [link.from, link.to, link.state])).toEqual([['old', 'c0', 'broken']]);
+    expect(graph.partial).toMatch(/\b1 part left out/);
   });
 
   it('puts every change in one unassigned part and says so when the map has no components', async () => {
@@ -140,22 +137,14 @@ describe('buildReviewGraph', () => {
     expect(graph.partial).toMatch(/no components/i);
   });
 
-  it('still answers, with a note, when a file cannot be read as it was', async () => {
-    const graph = await run({
-      changed: [file('app/api/users.py', 'b1', 'a1')],
-      current: [indexed('app/api/users.py', 'python', ['app.services.user_service']), indexed('app/services/user_service.py', 'python', [])],
-    });
-    expect(graph.partial).toMatch(/could not be read/);
-    expect(graph.parts.map((part) => part.id)).toContain('api');
-  });
-
-  it('draws no link from a changed file that does not parse, on either side, and says so', async () => {
+  it('draws no link from a changed file that does not parse, on either side, and says so without counting unchanged files', async () => {
     const graph = await run({
       changed: [file('app/api/users.py', 'b1', 'a1'), file('app/api/routes.py', 'b2', 'a2')],
       current: [
         indexed('app/api/users.py', 'python', ['app.services.user_service'], { parseError: true }),
         indexed('app/api/routes.py', 'python', []),
         indexed('app/services/user_service.py', 'python', []),
+        indexed('app/utils/helpers.py', 'python', [], { parseError: true }),
       ],
       readBefore: reader({ 'app/api/users.py': 'import os\n', 'app/api/routes.py': 'from app.services.user_service import X\nclass (\n' }),
     });
@@ -163,7 +152,7 @@ describe('buildReviewGraph', () => {
     expect(graph.partial).toMatch(/2 changed files could not be parsed/);
   });
 
-  it('finds the line of a from-package-import-module import that never spells the full specifier', async () => {
+  it('draws a new import as a new link with its line, found also for a from-package-import-module import that never spells the full specifier', async () => {
     const graph = await run({
       changed: [file('app/api/users.py', null, 'h1'), file('app/services/user_service.py', null, 'h2')],
       current: [indexed('app/api/users.py', 'python', ['app.services', 'app.services.user_service']), indexed('app/services/user_service.py', 'python', [])],

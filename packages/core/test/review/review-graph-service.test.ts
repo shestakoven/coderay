@@ -10,15 +10,17 @@ beforeAll(async () => {
   adapters = [await createPythonAdapter()];
 });
 
-const plan = (version: number, componentId: string, id = 'p1'): PlanView => ({
+const plan = (version: number, targets: PlanView['steps'][number]['targets'], id = 'p1', flow: PlanView['flow'] = null): PlanView => ({
   id, version, goal: 'g', status: 'approved', approvedBy: 'user-card',
-  steps: [{ key: 's1', order: 1, title: 't', rationale: 'r', targets: [{ componentId, op: 'create' }], status: 'done' }],
-  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, flow: null, proposedAt: 0, decidedAt: 0,
+  steps: [{ key: 's1', order: 1, title: 't', rationale: 'r', targets, status: 'done' }],
+  scope: { paths: [], globs: [] }, owners: {}, review: { auto: false, notes: [] }, feedback: null, flow, proposedAt: 0, decidedAt: 0,
 });
+
+const node = (id: string, path: string) => ({ id, title: id, sub: '', kind: 'module' as const, state: 'existing' as const, steps: [], files: [{ op: '~' as const, path }] });
 
 const options = (plans: PlanView[], content: (path: string, hash: string) => Promise<string | null>) => ({
   files: () => [indexed('app/a.py', 'python', [])],
-  components: () => [{ id: 'a', name: 'A', files: ['app/a.py'] }, { id: 'b', name: 'B', files: ['app/b.py'] }, { id: 'c', name: 'C', files: ['app/c.py'] }],
+  components: () => ['a', 'b', 'c', 'd'].map((id) => ({ id, name: id.toUpperCase(), files: [`app/${id}.py`] })),
   adapters: () => adapters,
   plans: () => plans,
   content,
@@ -26,12 +28,15 @@ const options = (plans: PlanView[], content: (path: string, hash: string) => Pro
 });
 
 describe('ReviewGraphService', () => {
-  it('compares against the latest version of the plan the request names', async () => {
-    const service = new ReviewGraphService(options([plan(1, 'a'), plan(2, 'b'), plan(3, 'c', 'p2')], async () => null));
+  it('compares against the latest version of the plan the request names: its component and path targets and its flow', async () => {
+    const latest = plan(2, [{ componentId: 'b', op: 'create' }, { path: 'app/d.py', op: 'modify' }], 'p1', {
+      nodes: [node('na', 'app/a.py'), node('nb', 'app/b.py')],
+      edges: [{ from: 'na', to: 'nb', label: '', state: 'new' }],
+    });
+    const service = new ReviewGraphService(options([plan(1, [{ componentId: 'a', op: 'create' }]), latest, plan(3, [{ componentId: 'c', op: 'create' }], 'p2')], async () => null));
     const graph = await service.graph({ planId: 'p1', files: [{ path: 'app/a.py', before: null, after: 'h', step: 's1', external: false, added: 1, removed: 0 }] });
-    expect(graph.parts.find((part) => part.id === 'b')).toMatchObject({ status: 'missing', steps: ['s1'] });
-    expect(graph.parts.find((part) => part.id === 'a')).toMatchObject({ steps: [] });
-    expect(graph.parts.find((part) => part.id === 'c')).toBeUndefined();
+    expect(graph.parts.map((part) => [part.id, part.status, part.steps])).toEqual([['a', 'created', []], ['b', 'missing', ['s1']], ['d', 'missing', ['s1']]]);
+    expect(graph.links).toEqual([{ from: 'a', to: 'b', state: 'missing', count: 0, evidence: [] }]);
   });
 
   it('treats a version it may not read as unreadable instead of failing the graph', async () => {

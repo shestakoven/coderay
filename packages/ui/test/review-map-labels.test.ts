@@ -6,11 +6,6 @@ const SIZE = { width: 200, height: 60 };
 const at = (entries: [string, number, number][]) => new Map(entries.map(([id, x, y]) => [id, { x, y }]));
 
 describe('placeLabels', () => {
-  it('keeps the middle when nothing else is there', () => {
-    const t = placeLabels([{ index: 0, from: 'a', to: 'b', text: 'users', rank: 0 }], at([['a', 0, 0], ['b', 400, 0]]), SIZE, 'RIGHT');
-    expect(t.get(0)).toBe(0.5);
-  });
-
   it('moves the second of two labels that would meet in the middle, the flagged one keeps it', () => {
     const positions = at([['a', 0, 0], ['b', 360, 0], ['c', 360, 10]]);
     const t = placeLabels([

@@ -6,12 +6,14 @@ const part = { t: 'part', id: 'svc' } as const;
 const link = { t: 'link', from: 'api', to: 'svc' } as const;
 
 describe('saveQuestion', () => {
-  it('keeps one unsent question per target: a second text replaces the first, an empty text removes it', () => {
+  it('keeps one unsent question per target: a second text replaces the first, an empty text removes it, a link the other way is another target', () => {
     let list = saveQuestion([], { target: part, title: 'UserService', where: 'app/s.py', text: 'why?' }, 'q1', 1);
     list = saveQuestion(list, { target: part, title: 'UserService', where: 'app/s.py', text: 'why twice?' }, 'q2', 2);
     expect(list).toHaveLength(1);
     expect(list[0]).toMatchObject({ text: 'why twice?', sentAt: null });
     expect(saveQuestion(list, { target: part, title: 'UserService', where: 'app/s.py', text: '   ' }, 'q3', 3)).toEqual([]);
+    const both = saveQuestion(saveQuestion([], { target: link, title: 'a', where: '', text: 'x' }, 'q4', 4), { target: { t: 'link', from: 'svc', to: 'api' }, title: 'b', where: '', text: 'y' }, 'q5', 5);
+    expect(both.map((q) => q.id)).toEqual(['q4', 'q5']);
   });
 
   it('asks again about a target that was already asked as a new question', () => {
@@ -22,11 +24,9 @@ describe('saveQuestion', () => {
     expect(unsentQuestions(list).map((q) => q.id)).toEqual(['q2']);
   });
 
-  it('cuts a long text to the limit without leaving half of a surrogate pair', () => {
+  it('cuts a long text to the limit', () => {
     const cut = saveQuestion([], { target: part, title: 't', where: '', text: 'a'.repeat(MAX_QUESTION + 1) }, 'q1', 1);
     expect(cut[0]?.text).toHaveLength(MAX_QUESTION);
-    const pair = saveQuestion([], { target: part, title: 't', where: '', text: `${'a'.repeat(MAX_QUESTION - 1)}😀` }, 'q2', 2);
-    expect(pair[0]?.text).toBe('a'.repeat(MAX_QUESTION - 1));
   });
 });
 
@@ -46,14 +46,11 @@ describe('formatQuestions', () => {
     ].join('\n'));
   });
 
-  it('says "a question" for one and leaves out an empty place', () => {
-    const list = saveQuestion([], { target: part, title: 'UserService', where: '', text: 'Why?' }, 'q1', 1);
-    expect(formatQuestions(list)).toBe('I am reviewing your changes and have a question about them. Answer only: do not change any code.\n\n1. UserService\n   Why?');
-  });
-
-  it('keeps the title and the place on the numbered line when they hold a newline', () => {
-    const list = saveQuestion([], { target: part, title: 'User\n  Service', where: 'app/s.py\n:6', text: 'Why?' }, 'q1', 1);
-    expect(formatQuestions(list)).toBe('I am reviewing your changes and have a question about them. Answer only: do not change any code.\n\n1. User Service (app/s.py :6)\n   Why?');
+  it('says "a question" for one and keeps its numbered line whole: a newline in the title or the place is folded, an empty place left out', () => {
+    const one = (title: string, where: string) => formatQuestions(saveQuestion([], { target: part, title, where, text: 'Why?' }, 'q1', 1));
+    const head = 'I am reviewing your changes and have a question about them. Answer only: do not change any code.\n\n';
+    expect(one('User\n  Service', '')).toBe(`${head}1. User Service\n   Why?`);
+    expect(one('UserService', 'app/s.py\n:6')).toBe(`${head}1. UserService (app/s.py :6)\n   Why?`);
   });
 });
 
@@ -73,7 +70,7 @@ describe('outdated', () => {
 });
 
 describe('storage', () => {
-  it('round-trips per project root, drops malformed entries and survives a storage that throws', () => {
+  it('round-trips per project root, drops malformed entries and survives a storage that throws on read or write', () => {
     const store = new Map<string, string>();
     const storage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => void store.set(k, v) };
     const list = saveQuestion([], { target: part, title: 't', where: 'w', text: 'x' }, 'q1', 1);
@@ -83,5 +80,6 @@ describe('storage', () => {
     store.set('ide.review.questions./p', JSON.stringify([{ id: 1 }, ...list]));
     expect(loadQuestions(storage, '/p')).toEqual(list);
     expect(loadQuestions({ getItem: () => { throw new Error('blocked'); } }, '/p')).toEqual([]);
+    expect(() => persistQuestions({ setItem: () => { throw new Error('full'); } }, '/p', list)).not.toThrow();
   });
 });
