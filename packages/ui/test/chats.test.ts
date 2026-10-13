@@ -33,8 +33,8 @@ describe('modelOptions', () => {
 
 describe('models from the core', () => {
   const models = [
-    { value: 'sonnet', name: 'Sonnet 5.5' },
-    { value: 'claude-opus-4-6', name: 'Opus 4.6' },
+    { value: 'sonnet', name: 'Sonnet 5.5', engine: 'claude' as const, efforts: [] },
+    { value: 'claude-opus-4-6', name: 'Opus 4.6', engine: 'claude' as const, efforts: [] },
   ];
 
   it('replaces the built-in list, old models included', () => {

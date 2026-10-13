@@ -32,8 +32,12 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export interface ModelInfo {
+  /** The model id as session.configure takes it: bare for Claude, prefixed for the other engines. */
   value: string;
   name: string;
+  engine: EngineId;
+  /** The efforts the model supports, in the order to offer them; empty when it takes none. */
+  efforts: string[];
 }
 
 export interface ChatSummary {

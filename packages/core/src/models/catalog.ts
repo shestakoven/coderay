@@ -1,4 +1,4 @@
-import type { ModelInfo } from '@ide/protocol';
+import { EFFORT_LEVELS, formatModelId, isClaudeEffort, type ModelInfo } from '@ide/protocol';
 import { startClaude, type ClaudeCommand } from '../agent/claude-process';
 import { isRecord, parseJson } from '../json';
 
@@ -11,10 +11,14 @@ export function parseModels(line: string): ModelInfo[] | null {
   const body = isRecord(message.response.response) ? message.response.response : null;
   if (message.response.request_id !== REQUEST_ID || !body) return null;
   const models = Array.isArray(body.models) ? body.models : [];
-  return models.flatMap((model) => {
+  return models.flatMap((model): ModelInfo[] => {
     if (!isRecord(model) || typeof model.value !== 'string' || typeof model.displayName !== 'string') return [];
     // "default" is the CLI's own pick, shown under whatever it resolves to; the user chooses explicitly.
-    return model.value === 'default' ? [] : [{ value: model.value, name: model.displayName }];
+    if (model.value === 'default') return [];
+    const named = Array.isArray(model.supportedEffortLevels)
+      ? model.supportedEffortLevels.filter((level): level is string => typeof level === 'string' && isClaudeEffort(level))
+      : null;
+    return [{ value: formatModelId({ engine: 'claude', model: model.value }), name: model.displayName, engine: 'claude', efforts: named ?? [...EFFORT_LEVELS] }];
   });
 }
 
