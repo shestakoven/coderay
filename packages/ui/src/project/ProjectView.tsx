@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type ReviewGraphFile, type SettingsView } from '@ide/protocol';
 import { createPortal } from 'react-dom';
 import { BranchChip } from '../git/BranchChip';
 import { GitClient } from '../git/git-client';
@@ -143,7 +143,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           dispatchHist({ type: 'patch', patch: message.patch });
           break;
         case 'history.result':
-          dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview });
+          dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview, graph: message.graph });
           break;
         case 'git.snapshot':
           setGitStatus(message.status);
@@ -318,6 +318,10 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     const requestId = crypto.randomUUID();
     return send({ type: 'history.diff', requestId, path, before, after }) ? requestId : null;
   };
+  const requestGraph = (files: ReviewGraphFile[], planId: string | null): string | null => {
+    const requestId = crypto.randomUUID();
+    return send({ type: 'review.graph', requestId, planId, files }) ? requestId : null;
+  };
   const changes = useMemo(() => changeIndex(hist.history, snapshot), [hist.history, snapshot]);
   const latestPlan = useMemo(() => (shown ? latestPlanVersion(plans.plans, shown.id) : null), [plans.plans, shown]);
   const selectTimelineItem = (item: TimelineItem): void => {
@@ -465,8 +469,13 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 results={hist.results}
                 chatItems={chat.items}
                 requestDiff={requestDiff}
+                requestGraph={requestGraph}
                 send={send}
                 root={project.root}
+                onOpenChat={() => {
+                  dispatchPanels({ type: 'right-tab', tab: 'agent' });
+                  dispatchChat({ type: 'filter', filter: null });
+                }}
                 onShowInChat={(id) => {
                   dispatchPanels({ type: 'right-tab', tab: 'agent' });
                   dispatchChat({ type: 'filter', filter: null });

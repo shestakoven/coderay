@@ -30,8 +30,12 @@ export const SHORTCUTS: { title: string; items: Shortcut[] }[] = [
     { keys: ['n', 'p'], does: 'Next and previous hunk' },
     { keys: ['s'], does: 'Switch between unified and split' },
     { keys: ['i'], does: 'Show or hide why the change exists' },
+    { keys: ['m'], does: 'Switch between the diff and the map' },
     { keys: ['c'], does: 'Comment on the current hunk' },
-    { keys: ['⌘', '↵'], does: 'Save the comment' },
+    { keys: ['⌘', '↵'], does: 'Save the comment, or send the map questions' },
+  ] },
+  { title: 'The map', items: [
+    { keys: ['q'], does: 'Ask about the selected part or link' },
   ] },
   { title: 'Decisions', items: [
     { keys: ['a'], does: 'Accept the file' },

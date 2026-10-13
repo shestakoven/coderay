@@ -27,10 +27,11 @@ export interface ReviewPrefs {
   mode: DiffMode;
   listWidth: number;
   showContext: boolean;
+  view: 'diff' | 'map';
 }
 
 export const LIST_WIDTH = { min: 220, max: 560, initial: 320 } as const;
-export const DEFAULT_PREFS: ReviewPrefs = { mode: 'unified', listWidth: LIST_WIDTH.initial, showContext: true };
+export const DEFAULT_PREFS: ReviewPrefs = { mode: 'unified', listWidth: LIST_WIDTH.initial, showContext: true, view: 'diff' };
 
 export const clampListWidth = (width: number): number => Math.round(Math.min(LIST_WIDTH.max, Math.max(LIST_WIDTH.min, width)));
 
@@ -44,6 +45,7 @@ export function loadPrefs(storage: Reader): ReviewPrefs {
       mode: v.mode === 'split' ? 'split' : 'unified',
       listWidth: typeof v.listWidth === 'number' && Number.isFinite(v.listWidth) ? clampListWidth(v.listWidth) : DEFAULT_PREFS.listWidth,
       showContext: v.showContext !== false,
+      view: v.view === 'map' ? 'map' : 'diff',
     };
   } catch {
     return DEFAULT_PREFS;
