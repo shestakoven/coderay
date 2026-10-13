@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { EMPTY_USAGE, type UsageView } from '@ide/protocol';
+import { EMPTY_USAGE, type LimitWindow, type UsageView } from '@ide/protocol';
 import { chatReducer, initialChatState } from '../src/chat/chat-state';
 import { contextMeter, levelOf, limitMeter, resetsIn, usageMeters } from '../src/chat/usage';
 
@@ -41,25 +41,34 @@ describe('contextMeter', () => {
   });
 });
 
+const FIVE = { label: '5h', name: 'five-hour', minutes: 300 };
+const SEVEN = { label: '7d', name: 'seven-day', minutes: 10_080 };
+const limit = (kind: typeof FIVE, utilization: number, resetsAt: number): LimitWindow => ({ ...kind, utilization, resetsAt });
+
 describe('limitMeter', () => {
   it('shows the share used and when the window resets', () => {
-    expect(limitMeter('5h', { utilization: 0.42, resetsAt: inSeconds(2 * 3600 + 14 * 60) }, NOW)).toEqual({
+    expect(limitMeter(limit(FIVE, 0.42, inSeconds(2 * 3600 + 14 * 60)), NOW)).toEqual({
       text: '5h 42%', title: '42% of the five-hour limit used; resets in 2h 14m', fraction: 0.42, level: 'ok',
     });
-    expect(limitMeter('7d', { utilization: 0.95, resetsAt: inSeconds(86_400) }, NOW)).toMatchObject({ text: '7d 95%', level: 'high' });
+    expect(limitMeter(limit(SEVEN, 0.95, inSeconds(86_400)), NOW)).toMatchObject({ text: '7d 95%', level: 'high' });
   });
 
-  it('hides a window that has no data or has already reset', () => {
-    expect([limitMeter('5h', null, NOW), limitMeter('5h', { utilization: 0.9, resetsAt: inSeconds(-1) }, NOW)]).toEqual([null, null]);
+  it('hides a window that has already reset', () => {
+    expect(limitMeter(limit(FIVE, 0.9, inSeconds(-1)), NOW)).toBeNull();
   });
 });
 
 describe('usageMeters', () => {
-  it('lists the context first, then the five-hour and the seven-day limit, skipping what is unknown', () => {
-    const all = usage({ contextTokens: 1000, contextWindow: 200_000, fiveHour: { utilization: 0.1, resetsAt: inSeconds(60) }, sevenDay: { utilization: 0.2, resetsAt: inSeconds(60) } });
+  it('lists the context first, then the limit windows in the order the core gives them, skipping what is unknown', () => {
+    const all = usage({ contextTokens: 1000, contextWindow: 200_000, limits: [limit(FIVE, 0.1, inSeconds(60)), limit(SEVEN, 0.2, inSeconds(60))] });
     expect(usageMeters(all, NOW).map((meter) => meter.text)).toEqual(['ctx 1%', '5h 10%', '7d 20%']);
-    expect(usageMeters(usage({ sevenDay: all.sevenDay }), NOW).map((meter) => meter.text)).toEqual(['7d 20%']);
+    expect(usageMeters(usage({ limits: all.limits.slice(1) }), NOW).map((meter) => meter.text)).toEqual(['7d 20%']);
     expect(usageMeters(EMPTY_USAGE, NOW)).toEqual([]);
+  });
+
+  it('shows the context of a core older than the list of windows, which sends none', () => {
+    const old = { contextTokens: 1000, contextWindow: 200_000, fiveHour: null, sevenDay: null } as unknown as UsageView;
+    expect(usageMeters(old, NOW).map((meter) => meter.text)).toEqual(['ctx 1%']);
   });
 });
 

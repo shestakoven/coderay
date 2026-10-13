@@ -705,7 +705,8 @@ describe('AgentSession usage', () => {
     const h = await harness('usage');
     await ask(h, 'hi');
     expect(h.session.state().usage).toEqual({
-      contextTokens: 96_010, contextWindow: 200_000, fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 },
+      contextTokens: 96_010, contextWindow: 200_000,
+      limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }],
     });
     const patches = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.usage ? [message.patch.usage] : []));
     expect(patches.at(-1)).toEqual(h.session.state().usage);
@@ -716,12 +717,15 @@ describe('AgentSession usage', () => {
     const h = await harness('usage');
     await ask(h, 'hi');
     await h.session.newSession();
-    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 } });
+    expect(h.session.state().usage).toEqual({
+      contextTokens: null, contextWindow: null,
+      limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }],
+    });
     expect(lastSnapshot(h)).toMatchObject({ state: { usage: { contextTokens: null } } });
   });
 
   it('shows no usage before the agent has said anything', async () => {
     const h = await harness('usage');
-    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, fiveHour: null, sevenDay: null });
+    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, limits: [] });
   });
 });

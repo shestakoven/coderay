@@ -160,6 +160,12 @@ export interface McpServerState {
 }
 
 export interface LimitWindow {
+  /** Short name the meter shows, such as "5h". */
+  label: string;
+  /** The window's name in a sentence, such as "five-hour". */
+  name: string;
+  /** Length of the window in minutes; windows are listed shortest first. */
+  minutes: number;
   /** Share of the window already used, 0 to 1. */
   utilization: number;
   /** Unix seconds. */
@@ -169,11 +175,11 @@ export interface LimitWindow {
 export interface UsageView {
   contextTokens: number | null;
   contextWindow: number | null;
-  fiveHour: LimitWindow | null;
-  sevenDay: LimitWindow | null;
+  /** The account's limit windows, shortest first; empty when the engine reports none. */
+  limits: LimitWindow[];
 }
 
-export const EMPTY_USAGE: UsageView = { contextTokens: null, contextWindow: null, fiveHour: null, sevenDay: null };
+export const EMPTY_USAGE: UsageView = { contextTokens: null, contextWindow: null, limits: [] };
 
 export interface SessionState {
   session: SessionView | null;

@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { usageOf } from '../../src/agent/usage';
+import { mergeLimits, usageOf } from '../../src/agent/usage';
+
+const FIVE = { label: '5h', name: 'five-hour', minutes: 300 };
+const SEVEN = { label: '7d', name: 'seven-day', minutes: 10_080 };
 
 const line = (event: object) => JSON.stringify(event);
 const parseUsage = (text: string, model: string | null) => usageOf(JSON.parse(text), model);
@@ -33,12 +36,12 @@ describe('usageOf', () => {
       type: 'rate_limit_event',
       rate_limit_info: { unifiedWindows: { five_hour: { utilization: 0.42, resetsAt: 100 }, seven_day: { utilization: 0.07, resetsAt: 200 } } },
     });
-    expect(parseUsage(event, null)).toEqual({ fiveHour: { utilization: 0.42, resetsAt: 100 }, sevenDay: { utilization: 0.07, resetsAt: 200 } });
+    expect(parseUsage(event, null)).toEqual({ limits: [{ ...FIVE, utilization: 0.42, resetsAt: 100 }, { ...SEVEN, utilization: 0.07, resetsAt: 200 }] });
   });
 
   it('reads a single window announced at the top level of the event', () => {
     const event = line({ type: 'rate_limit_event', rate_limit_info: { rateLimitType: 'seven_day', utilization: 0.9, resetsAt: 300 } });
-    expect(parseUsage(event, null)).toEqual({ sevenDay: { utilization: 0.9, resetsAt: 300 } });
+    expect(parseUsage(event, null)).toEqual({ limits: [{ ...SEVEN, utilization: 0.9, resetsAt: 300 }] });
   });
 
   it.each([
@@ -48,5 +51,15 @@ describe('usageOf', () => {
     ['an unrelated event', { type: 'system', subtype: 'init' }],
   ])('says nothing for %s', (_name, message) => {
     expect(usageOf(message, null)).toBeNull();
+  });
+});
+
+describe('mergeLimits', () => {
+  it('replaces a window by its label, keeps the others, and lists them shortest first whatever order they came in', () => {
+    const week = [{ ...SEVEN, utilization: 0.2, resetsAt: 9 }];
+    expect([mergeLimits(week, [{ ...FIVE, utilization: 0.1, resetsAt: 5 }]), mergeLimits(week, [{ ...SEVEN, utilization: 0.3, resetsAt: 9 }])]).toEqual([
+      [{ ...FIVE, utilization: 0.1, resetsAt: 5 }, { ...SEVEN, utilization: 0.2, resetsAt: 9 }],
+      [{ ...SEVEN, utilization: 0.3, resetsAt: 9 }],
+    ]);
   });
 });

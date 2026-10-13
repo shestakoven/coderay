@@ -103,7 +103,7 @@ describe('startSdkTransport', () => {
     const usages = t.events.flatMap((e) => (e.type === 'usage' ? [e.update] : []));
     const order = t.events.map((e) => e.type).filter((type) => type === 'usage' || type === 'assistant' || type === 'result');
     expect([usages, order, t.raw.some((m) => (m as { type?: unknown }).type === 'rate_limit_event')]).toEqual([
-      [{ contextTokens: 96_010 }, { fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 } }, { contextWindow: 200_000 }],
+      [{ contextTokens: 96_010 }, { limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }] }, { contextWindow: 200_000 }],
       ['usage', 'assistant', 'assistant', 'usage', 'usage', 'result'],
       true,
     ]);

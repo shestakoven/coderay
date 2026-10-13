@@ -37,15 +37,16 @@ export function contextMeter(usage: UsageView): Meter | null {
 }
 
 // A window whose reset time has passed no longer says how much is used, so it is not shown.
-export function limitMeter(label: string, window: LimitWindow | null, now: number): Meter | null {
-  if (window === null || window.resetsAt * 1000 <= now) return null;
+export function limitMeter(window: LimitWindow, now: number): Meter | null {
+  if (window.resetsAt * 1000 <= now) return null;
   return {
-    text: `${label} ${percent(window.utilization)}`,
-    title: `${percent(window.utilization)} of the ${label === '5h' ? 'five-hour' : 'seven-day'} limit used; resets in ${resetsIn(window.resetsAt, now)}`,
+    text: `${window.label} ${percent(window.utilization)}`,
+    title: `${percent(window.utilization)} of the ${window.name} limit used; resets in ${resetsIn(window.resetsAt, now)}`,
     fraction: Math.min(1, window.utilization),
     level: levelOf(window.utilization),
   };
 }
 
+// A core older than the list of windows sends none.
 export const usageMeters = (usage: UsageView, now: number): Meter[] =>
-  [contextMeter(usage), limitMeter('5h', usage.fiveHour, now), limitMeter('7d', usage.sevenDay, now)].filter((meter): meter is Meter => meter !== null);
+  [contextMeter(usage), ...(usage.limits ?? []).map((window) => limitMeter(window, now))].filter((meter): meter is Meter => meter !== null);
