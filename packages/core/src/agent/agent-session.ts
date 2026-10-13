@@ -19,6 +19,7 @@ import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } f
 import { startSdkTransport } from './sdk-transport';
 import { reapOrphans } from './reaper';
 import { type StreamEvent, type ToolResultBlock } from './stream';
+import { CLAUDE_PROMPT_NAMES, type PromptNames } from './system-prompt';
 import { TranscriptTail } from './transcript-tail';
 import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type TransportSink, type UserMessage } from './transport';
 import { mergeLimits, type UsageUpdate } from './usage';
@@ -30,7 +31,7 @@ export type McpServers = Record<string, object>;
 export interface SessionGate {
   write(sessionId: string, events?: boolean): { settingsPath: string };
   remove(sessionId: string): void;
-  systemPrompt(): string;
+  systemPrompt(names: PromptNames): string;
   canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
 }
 
@@ -955,7 +956,7 @@ export class AgentSession {
     if (this.options.gate) {
       try {
         const { settingsPath } = this.options.gate.write(session.id, terminal);
-        gate = { settingsPath, appendSystemPrompt: this.options.gate.systemPrompt() };
+        gate = { settingsPath, appendSystemPrompt: this.options.gate.systemPrompt(CLAUDE_PROMPT_NAMES) };
       } catch (error) {
         console.error('agent: could not write the hook settings', error);
         this.apply(this.tracker.notice(`CodeRay could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));

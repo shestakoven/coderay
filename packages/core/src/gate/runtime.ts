@@ -98,7 +98,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
         settingsPath: writeGateFiles(runDir(options.home), base(id), { url: url('/hook'), secret, sessionId: id, deadlineMs: options.hookDeadlineMs, events }).settingsPath,
       }),
       remove: (id) => removeGateFiles(runDir(options.home), base(id)),
-      systemPrompt: () => systemPrompt(options.components(), options.map !== undefined, options.search !== undefined),
+      systemPrompt: (names) => systemPrompt(options.components(), options.map !== undefined, options.search !== undefined, names),
       canary,
     },
     attach(agent) {

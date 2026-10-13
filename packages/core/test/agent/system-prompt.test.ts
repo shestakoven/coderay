@@ -1,5 +1,6 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
-import { systemPrompt } from '../../src/agent/system-prompt';
+import { systemPrompt, type PromptNames } from '../../src/agent/system-prompt';
 
 describe('systemPrompt', () => {
   it('tells the agent to propose a plan and mark steps, and lists the component ids with their names', () => {
@@ -44,5 +45,27 @@ describe('systemPrompt', () => {
 
   it('leaves the map tools line out when only the search tool is on', () => {
     expect(systemPrompt([], false, true)).not.toContain('map_overview');
+  });
+
+  it("keeps Claude's prompt byte for byte", () => {
+    const sha = (text: string) => createHash('sha256').update(text).digest('hex');
+    expect([
+      systemPrompt([{ id: 'auth', name: 'Auth' }, { id: 'billing', name: 'Billing' }], true, true),
+      systemPrompt([], false, false),
+      systemPrompt([{ id: 'auth', name: 'Auth' }], false, true),
+    ].map(sha)).toEqual([
+      'f09138538d17fa647a6ea70d50521f9c7ed150f23aa93c31ece7b07dfcaeaa03',
+      '14a64853f6a817d8f051c27d85585daf651997b662be022969f4fa44cce16578',
+      'f4acfc2a482f426abef20f9a8856526ed25a7ee3b035ff36afc5f1f385b0fd94',
+    ]);
+  });
+
+  it("names every tool the way the engine's names say, and none of Claude's", () => {
+    const names: PromptNames = { idecore: (tool) => `idecore_${tool}`, writeTools: 'edit, write', exploreTools: 'grep, glob or exploring bash command' };
+    const prompt = systemPrompt([], true, true, names);
+    expect([...prompt.matchAll(/idecore_\w+/g)].map(([name]) => name))
+      .toEqual(['idecore_map_overview', 'idecore_propose_plan', 'idecore_step', 'idecore_map_component', 'idecore_search_code', 'idecore_set_chat_title']);
+    expect([prompt.includes('mcp__'), prompt.includes('NotebookEdit'), prompt.includes('(edit, write, or a shell command'), prompt.includes('Before your first grep, glob or exploring bash command')])
+      .toEqual([false, false, true, true]);
   });
 });
