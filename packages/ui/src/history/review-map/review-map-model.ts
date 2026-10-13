@@ -74,6 +74,28 @@ export function totalsOf(graph: ReviewGraph): Totals {
   };
 }
 
+const listed = (list: string): string[] =>
+  list.split(',').map((name) => name.trim().replace(/^type\s+/, '').split(/\s+as\s+/)[0]!.trim()).filter((name) => /^[\w$]+$/.test(name));
+
+const shortList = (names: string[]): string | null => (names.length === 0 ? null : names.length === 1 ? names[0]! : `${names[0]} +${names.length - 1}`);
+
+// The name the importing line takes from its target, the way the code calls it; null when the line does not say.
+export function importedName(line: string): string | null {
+  const python = /^from\s+[\w.]+\s+import\s+\(?([^)#]*)/.exec(line);
+  if (python) return shortList(listed(python[1]!));
+  const braces = /^(?:import|export)\s+(?:type\s+)?(?:[\w$]+\s*,\s*)?\{([^}]*)\}/.exec(line);
+  if (braces) return shortList(listed(braces[1]!));
+  const named = /^import\s+(?:type\s+)?(?:\*\s+as\s+)?([\w$]+)\s*(?:,|from\b)/.exec(line);
+  if (named) return named[1]!;
+  const required = /^(?:const|let|var)\s+(?:\{([^}]*)\}|([\w$]+))\s*=\s*(?:await\s+)?(?:require|import)\s*\(/.exec(line);
+  if (required) return required[2] ?? shortList(listed(required[1]!.replace(/:\s*[\w$]+/g, '')));
+  const module = /^(?:import|using)\s+(?:static\s+)?([\w.]+)(?:\s+as\s+[\w$]+)?\s*;?$/.exec(line);
+  if (module) return module[1]!.slice(module[1]!.lastIndexOf('.') + 1) || null;
+  const include = /^#\s*include\s*["<]([^">]+)[">]/.exec(line);
+  if (include) return include[1]!.slice(include[1]!.lastIndexOf('/') + 1);
+  return null;
+}
+
 export const partOfPath = (graph: ReviewGraph, path: string): string | null =>
   graph.parts.find((part) => part.files.some((file) => file.path === path))?.id ?? null;
 

@@ -38,10 +38,10 @@ export function ReviewMapBar({ reviewed, files, unsent, outdated, asked, text, o
       return (
         <div className="pf-bar" data-testid="review-map-bar" data-phase="asked">
           <span className="rm-bar-asked"><Icon name="check" size={12} /></span>
-          <span className="pf-bar-text"><b>{plural(asked, 'question')} sent</b> · answers are in the chat</span>
+          <span className="pf-bar-text"><b>{plural(asked, 'question')} sent</b><span className="rm-bar-more"> · answers are in the chat</span></span>
           <button type="button" className="pf-btn ghost" onClick={onOpenChat}>Open chat</button>
           <button type="button" className="pf-btn ghost" onClick={onClearAsked} title="Take the Asked marks off the map">Clear</button>
-          <span className="pf-bar-sep" />
+          <span className="pf-bar-sep rm-bar-more" />
           <span className="pf-bar-hint">{reviewed} of {files} files reviewed</span>
         </div>
       );

@@ -1,4 +1,4 @@
-import { getViewportForBounds, MarkerType, ReactFlow, ReactFlowProvider, useReactFlow, useStoreApi, type Edge, type Node } from '@xyflow/react';
+import { getViewportForBounds, MarkerType, ReactFlow, ReactFlowProvider, useReactFlow, useStore, useStoreApi, type Edge, type Node, type Viewport } from '@xyflow/react';
 import type { ReviewLinkState } from '@ide/protocol';
 import ELK from 'elkjs/lib/elk-api.js';
 import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
@@ -9,6 +9,7 @@ import type { Bounds } from '../../map/layout';
 import type { Direction } from '../../map/layout-settings';
 import { boundsOf, FLOW_NODE_SIZE, type Positions } from '../../plan-flow/flow-layout';
 import { useTweened } from '../../plan-flow/use-tweened';
+import { placeLabels } from './review-map-labels';
 import { fitStep, focusOf, targetKey, type Focus, type MapStep, type MapView, type Target } from './review-map-model';
 import { questionFor, type MapQuestion } from './review-map-questions';
 import { ReviewMapCard, type ReviewMapCardData, type ReviewMapCardNode } from './ReviewMapCard';
@@ -22,9 +23,20 @@ const COLOR: Record<ReviewLinkState, string> = {
   existing: '#868a91', new: '#73c991', removed: '#f75464', unplanned: '#f2c55c', missing: '#868a91', broken: '#f75464',
 };
 
-const padding = { top: '84px', right: '56px', bottom: '104px', left: '56px' } as const;
+const PADDING = { right: '56px', bottom: '104px', left: '56px' } as const;
+// Above the map: the toolbar's offset and a gap below it; 60 stands in for a toolbar of two rows until it is measured.
+const topPadding = (headHeight: number): `${number}px` => `${12 + (headHeight > 0 ? headHeight : 60) + 12}px`;
 
-const reducedMotion = (): boolean => typeof window !== 'undefined' && (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false);
+// The app's Reduce motion setting, which already folds in the system's; the media query only when the app has not said.
+function reducedMotion(): boolean {
+  if (typeof window === 'undefined') return false;
+  const app = document.documentElement.dataset.motion;
+  if (app !== undefined) return app === 'reduce';
+  return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+// Flagged links pick their label spot first, then new ones; an existing link is labelled only when pointed at.
+const LABEL_RANK: Record<ReviewLinkState, number> = { broken: 0, unplanned: 0, missing: 0, removed: 1, new: 2, existing: 3 };
 
 interface Layout {
   shape: string;
@@ -62,9 +74,11 @@ export interface ReviewMapCanvasProps {
   onSave: (target: Target, text: string) => void;
   onCancel: () => void;
   onOpenChat: () => void;
+  headHeight: number;
 }
 
-function Canvas({ view, focus: selectedFocus, selection, direction, steps, reviewed, questions, editing, onSelect, onAsk, onSave, onCancel, onOpenChat }: ReviewMapCanvasProps) {
+function Canvas({ view, focus: selectedFocus, selection, direction, steps, reviewed, questions, editing, onSelect, onAsk, onSave, onCancel, onOpenChat, headHeight }: ReviewMapCanvasProps) {
+  const padding = useMemo(() => ({ ...PADDING, top: topPadding(headHeight) }), [headHeight]);
   const [layout, setLayout] = useState<Layout | null>(null);
   const [failed, setFailed] = useState(false);
   const [hoverPart, setHoverPart] = useState<string | null>(null);
@@ -75,10 +89,14 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
   const store = useStoreApi();
 
   const ids = useMemo(() => view.parts.map((part) => part.id), [view]);
+  // The last viewport the map chose itself: while the camera is still there, a resized canvas is fitted again.
+  const autoFit = useRef<Viewport | null>(null);
   const fitTo = useCallback((bounds: Bounds, duration?: number) => {
     const { width, height, minZoom } = store.getState();
-    void setViewport(getViewportForBounds(bounds, width, height, minZoom, 1, padding), { duration });
-  }, [store, setViewport]);
+    const viewport = getViewportForBounds(bounds, width, height, minZoom, 1, padding);
+    autoFit.current = viewport;
+    void setViewport(viewport, { duration });
+  }, [store, setViewport, padding]);
 
   const signature = useMemo(() => `${direction}|${ids.join()}|${view.links.map(({ link }) => `${link.from}>${link.to}`).join()}`, [direction, ids, view]);
   useEffect(() => {
@@ -110,8 +128,22 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
     const step = fitStep(layout?.shape ?? null, signature, fitted.current);
     if (step === 'wait' || step === 'done') return;
     fitted.current = signature;
-    if (step === 'fit' && destination !== null) fitTo(destination, reduced ? 0 : 420);
-  }, [layout, signature, destination, fitTo, reduced]);
+    if (destination === null) return;
+    if (step === 'fit') fitTo(destination, reduced ? 0 : 420);
+    // fitView places the first layout; once the canvas has a size, fitting it again to the same place records the camera.
+    else if (store.getState().width > 0) fitTo(destination, 0);
+  }, [layout, signature, destination, fitTo, reduced, store]);
+
+  const width = useStore((state) => state.width);
+  const height = useStore((state) => state.height);
+  useEffect(() => {
+    if (destination === null || width === 0 || height === 0 || fitted.current !== signature) return;
+    const chosen = autoFit.current;
+    const [x, y, zoom] = store.getState().transform;
+    // The user panned or zoomed since: the camera is theirs.
+    if (chosen !== null && (Math.abs(x - chosen.x) > 0.5 || Math.abs(y - chosen.y) > 0.5 || Math.abs(zoom - chosen.zoom) > 0.001)) return;
+    fitTo(destination, 0);
+  }, [width, height, padding]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => () => {
     window.clearTimeout(leavePart.current);
@@ -130,6 +162,13 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
   }, []);
 
   const titles = useMemo(() => new Map(view.parts.map((part) => [part.id, part.title])), [view]);
+  const labelTs = useMemo(
+    () => (laidOut === null ? new Map<number, number>() : placeLabels(
+      view.links.map(({ link, index }) => ({ index, from: link.from, to: link.to, text: linkLabel(link), rank: LABEL_RANK[link.state] })),
+      laidOut, FLOW_NODE_SIZE, direction,
+    )),
+    [laidOut, view, direction],
+  );
 
   const hovered: Focus | null = useMemo(() => {
     const at = hoverLink === null ? undefined : view.links.find(({ index }) => index === hoverLink);
@@ -195,6 +234,7 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
           link,
           index,
           label: linkLabel(link),
+          labelT: labelTs.get(index),
           title: `${titles.get(link.from) ?? link.from} → ${titles.get(link.to) ?? link.to}`,
           hot: focus?.links.has(index) ?? false,
           active: hoverLink === index || selectedLink === index,
@@ -210,7 +250,7 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
         } satisfies ReviewMapLinkData,
       };
     }),
-    [view, placedIds, titles, focus, hoverLink, selectedLink, questions, editing, hoverLinkIn, onSelect, onAsk, onSave, onCancel],
+    [view, placedIds, titles, labelTs, focus, hoverLink, selectedLink, questions, editing, hoverLinkIn, onSelect, onAsk, onSave, onCancel],
   );
 
   if (positions === null) {

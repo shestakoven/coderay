@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { PlanView, ReviewGraph, ReviewPart } from '@ide/protocol';
-import { focusOf, graphFilesOf, graphKey, partOfPath, stepOutcomes, targetKey, totalsOf, visibleMap } from '../src/history/review-map/review-map-model';
+import { focusOf, graphFilesOf, graphKey, importedName, partOfPath, stepOutcomes, targetKey, totalsOf, visibleMap } from '../src/history/review-map/review-map-model';
 
 const part = (id: string, status: ReviewPart['status'], extra: Partial<ReviewPart> = {}): ReviewPart =>
   ({ id, title: id, status, steps: [], outside: false, files: [], broken: [], ...extra });
@@ -108,5 +108,29 @@ describe('totalsOf and partOfPath and targetKey', () => {
     expect(partOfPath(g, 'x.ts')).toBe('a');
     expect(partOfPath(g, 'nope.ts')).toBeNull();
     expect(targetKey({ t: 'link', from: 'a', to: 'b' })).toBe('l:a>b');
+  });
+});
+
+describe('importedName', () => {
+  it.each([
+    ['from app.utils.validators import validate_email_domain', 'validate_email_domain'],
+    ['from app.services.user_service import EmailTakenError, UserService', 'EmailTakenError +1'],
+    ['from . import db as database', 'db'],
+    ['from app.api import (', null],
+    ['import app.core.security as security', 'security'],
+    ["import { client, type Auth as A } from '../api/client';", 'client +1'],
+    ["import React, { useState } from 'react';", 'useState'],
+    ["import * as path from 'node:path';", 'path'],
+    ["import layout from './views/layout';", 'layout'],
+    ["export { store } from './state/store';", 'store'],
+    ["const { join: joinPath } = require('node:path');", 'join'],
+    ["const fs = require('node:fs');", 'fs'],
+    ['using Accounts.Services;', 'Services'],
+    ['import Foundation', 'Foundation'],
+    ['#include "net/socket.h"', 'socket.h'],
+    ["import './polyfills';", null],
+    ['db.query(sql)', null],
+  ])('reads %j as %j', (line, name) => {
+    expect(importedName(line)).toBe(name);
   });
 });

@@ -48,6 +48,7 @@ interface Toast {
 const COMPACT = 720;
 const PREFETCH = 2;
 const GRAPH_DEBOUNCE = 300;
+const GRAPH_RETRY = 2000;
 const NOT_CONNECTED = 'Not connected to the core.';
 const EMPTY_GRAPH: ReviewGraph = { parts: [], links: [], partial: null };
 const diffKey = (file: ReviewItem): string => `${file.path}:${file.before}:${file.after}`;
@@ -130,6 +131,15 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
   useEffect(() => {
     if (showMap) setGraphRequest(null);
   }, [showMap]);
+  // Without a connection the request is not even sent: it is tried again until the core is back.
+  useEffect(() => {
+    if (!graphWanted || graphRequest === null || graphRequest.requestId !== null || graphRequest.key !== wantedKey) return;
+    const timer = window.setTimeout(() => {
+      const ask = asking.current;
+      setGraphRequest({ key: wantedKey, requestId: ask.requestGraph(ask.graphFiles, ask.planId) });
+    }, GRAPH_RETRY);
+    return () => window.clearTimeout(timer);
+  }, [graphWanted, graphRequest, wantedKey]);
   const tally = useMemo(() => tallyOf(sections, decisions), [sections, decisions]);
   const totals = useMemo(() => Object.fromEntries(sections.map((section) => {
     const decided = section.files.filter((file) => !isOpen(fileState(decisions.reviewed, decisions.requested, file))).length;
@@ -361,6 +371,11 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
     const section = latest.current.sections.find((entry) => entry.files.some((file) => file.path === path));
     if (section) select({ group: section.key, path });
   }, [select]);
+  const filesButton = (
+    <button className="rv-files-button" onClick={() => setDrawer(true)} aria-label="Show the file list">
+      <Icon name="panel-left" size={15} />Files <b>{tally.accepted + tally.requested + tally.reverted}/{tally.total}</b>
+    </button>
+  );
   const onMarkRef = useRef(onMark);
   onMarkRef.current = onMark;
   const markFile = useCallback((file: ReviewItem, markState: FileState): void => onMarkRef.current(file, markState), []);
@@ -403,13 +418,10 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
         />
       )}
       <section className="rv-main">
-        {compact && (
-          <button className="rv-files-button" onClick={() => setDrawer(true)} aria-label="Show the file list">
-            <Icon name="panel-left" size={15} />Files <b>{tally.accepted + tally.requested + tally.reverted}/{tally.total}</b>
-          </button>
-        )}
+        {compact && sections.length === 0 && filesButton}
         {sections.length > 0 && (
           <div className="rv-view-bar">
+            {compact && filesButton}
             <div className="rv-mode rv-view" role="group" aria-label="Review view">
               <button className={showMap ? '' : 'on'} aria-pressed={!showMap} onClick={() => setView('diff')} title="Diff (m)"><Icon name="view-unified" size={14} />Diff</button>
               <button className={showMap ? 'on' : ''} aria-pressed={showMap} onClick={() => setView('map')} title="Map (m)"><Icon name="map" size={14} />Map</button>
@@ -473,10 +485,21 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
         )}
         <footer className="rv-keys">
           <span><Kbd>j</Kbd><Kbd>k</Kbd> files</span>
-          <span><Kbd>n</Kbd><Kbd>p</Kbd> hunks</span>
-          <span><Kbd>a</Kbd> accept</span>
-          <span><Kbd>c</Kbd> comment</span>
-          <span><Kbd>r</Kbd> revert</span>
+          {showMap ? (
+            <>
+              <span><Kbd>q</Kbd> ask</span>
+              <span><Kbd>⌘</Kbd><Kbd>↵</Kbd> send</span>
+              <span><Kbd>a</Kbd> accept</span>
+              <span><Kbd>esc</Kbd> close</span>
+            </>
+          ) : (
+            <>
+              <span><Kbd>n</Kbd><Kbd>p</Kbd> hunks</span>
+              <span><Kbd>a</Kbd> accept</span>
+              <span><Kbd>c</Kbd> comment</span>
+              <span><Kbd>r</Kbd> revert</span>
+            </>
+          )}
           <span className="rv-spacer" />
           <button className="rv-keys-help" onClick={() => setHelp(true)} title="Keyboard shortcuts (?)"><Kbd>?</Kbd> shortcuts</button>
         </footer>

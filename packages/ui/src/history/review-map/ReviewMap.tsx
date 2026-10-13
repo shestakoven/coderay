@@ -77,10 +77,38 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
   const [sendError, setSendError] = useState<string | null>(null);
   const [draftOpen, setDraftOpen] = useState(false);
   const frame = useRef<HTMLDivElement>(null);
+  const head = useRef<HTMLDivElement>(null);
+  const [headHeight, setHeadHeight] = useState(0);
 
   useEffect(() => {
     persistQuestions(storage(), root, questions);
   }, [root, questions]);
+
+  // A closed editor takes its focus with it; the review gets it back so its keys and the next Esc keep working from it.
+  const wasEditing = useRef(false);
+  useEffect(() => {
+    if (editing !== null) {
+      wasEditing.current = true;
+      return;
+    }
+    if (!wasEditing.current) return;
+    wasEditing.current = false;
+    // The editor lives in a React Flow node, which drops it a render later: look once it is gone.
+    const timer = window.setTimeout(() => {
+      if (document.activeElement === null || document.activeElement === document.body) frame.current?.closest<HTMLElement>('.rv')?.focus({ preventScroll: true });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [editing]);
+
+  // The toolbar wraps and a note may sit under it: the map fits below whatever they take.
+  const drawn = graph !== null;
+  useEffect(() => {
+    const element = head.current;
+    if (element === null || typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(([entry]) => setHeadHeight(Math.round(entry?.contentRect.height ?? 0)));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [drawn]);
 
   const view = useMemo(() => (graph === null ? null : visibleMap(graph, context)), [graph, context]);
   const focus = useMemo(() => (view === null ? null : focusOf(view, selection)), [view, selection]);
@@ -245,33 +273,36 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
           onSave={save}
           onCancel={cancel}
           onOpenChat={onOpenChat}
+          headHeight={headHeight}
         />
       )}
       <div className="rm-top">
-        <div className="pf-row">
-          <div className="pf-seg">
-            <button type="button" className={context ? 'on' : ''} onClick={() => changeContext(true)}>With context</button>
-            <button type="button" className={!context ? 'on' : ''} onClick={() => changeContext(false)}>Changed only</button>
+        <div className="rm-head" ref={head}>
+          <div className="pf-row">
+            <div className="pf-seg">
+              <button type="button" className={context ? 'on' : ''} onClick={() => changeContext(true)}>With context</button>
+              <button type="button" className={!context ? 'on' : ''} onClick={() => changeContext(false)}>Changed only</button>
+            </div>
+            <LayoutMenu settings={{ ...DEFAULT_LAYOUT, direction }} fields={['direction']} onChange={(next) => changeDirection(next.direction)} />
+            <div className="pf-impact">
+              {totals.created > 0 && <span className="pf-stat"><b className="rm-c-new">{totals.created}</b> new</span>}
+              {totals.modified > 0 && <span className="pf-stat"><b className="rm-c-mod">{totals.modified}</b> changed</span>}
+              {totals.deleted > 0 && <span className="pf-stat"><b className="rm-c-del">{totals.deleted}</b> removed</span>}
+              {files.length > 0 && <span className="pf-stat"><b className="op-add">+{totals.added}</b> <b className="op-del">−{totals.removed}</b></span>}
+              {totals.missing > 0 && <span className="pf-stat rm-flag"><b>{totals.missing}</b> not done</span>}
+              {totals.outside > 0 && <span className="pf-stat rm-flag"><b>{totals.outside}</b> outside the plan</span>}
+              {totals.unplanned > 0 && <span className="pf-stat rm-flag"><b>{totals.unplanned}</b> unplanned {totals.unplanned === 1 ? 'link' : 'links'}</span>}
+              {totals.broken > 0 && <span className="pf-stat rm-flag bad"><b>{totals.broken}</b> broken {totals.broken === 1 ? 'import' : 'imports'}</span>}
+            </div>
+            {loading && <span className="pf-spin rm-refresh" title="Updating the map" role="status" aria-label="Updating the map" />}
           </div>
-          <LayoutMenu settings={{ ...DEFAULT_LAYOUT, direction }} fields={['direction']} onChange={(next) => changeDirection(next.direction)} />
-          <div className="pf-impact">
-            {totals.created > 0 && <span className="pf-stat"><b className="rm-c-new">{totals.created}</b> new</span>}
-            {totals.modified > 0 && <span className="pf-stat"><b className="rm-c-mod">{totals.modified}</b> changed</span>}
-            {totals.deleted > 0 && <span className="pf-stat"><b className="rm-c-del">{totals.deleted}</b> removed</span>}
-            <span className="pf-stat"><b className="op-add">+{totals.added}</b> <b className="op-del">−{totals.removed}</b></span>
-            {totals.missing > 0 && <span className="pf-stat rm-flag"><b>{totals.missing}</b> not done</span>}
-            {totals.outside > 0 && <span className="pf-stat rm-flag"><b>{totals.outside}</b> outside the plan</span>}
-            {totals.unplanned > 0 && <span className="pf-stat rm-flag"><b>{totals.unplanned}</b> unplanned {totals.unplanned === 1 ? 'link' : 'links'}</span>}
-            {totals.broken > 0 && <span className="pf-stat rm-flag bad"><b>{totals.broken}</b> broken {totals.broken === 1 ? 'import' : 'imports'}</span>}
-          </div>
-          {loading && <span className="pf-spin rm-refresh" title="Updating the map" role="status" aria-label="Updating the map" />}
+          {note !== null && (
+            <p className={`rm-note${error === null ? '' : ' bad'}`} title={note} role={error === null ? 'note' : 'alert'}>
+              <Icon name={error === null ? 'info' : 'alert'} size={12} />
+              <span>{note}</span>
+            </p>
+          )}
         </div>
-        {note !== null && (
-          <p className={`rm-note${error === null ? '' : ' bad'}`} title={note} role={error === null ? 'note' : 'alert'}>
-            <Icon name={error === null ? 'info' : 'alert'} size={12} />
-            <span>{note}</span>
-          </p>
-        )}
         {target !== null && (
           <ReviewMapPanel
             graph={graph}

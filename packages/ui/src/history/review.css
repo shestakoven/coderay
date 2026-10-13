@@ -354,7 +354,8 @@
 .rv .rv-files-button:hover { color: var(--fg); }
 .rv-files-button b { font: 600 11.5px var(--font-mono); color: var(--fg); }
 .rv.compact .rv-file-head, .rv.compact .rv-diff { padding-left: 10px; padding-right: 10px; }
-.rv.compact .rv-view-bar { padding-left: 10px; padding-right: 10px; }
+.rv.compact .rv-view-bar { gap: 12px; padding-left: 10px; padding-right: 10px; }
+.rv .rv-view-bar .rv-files-button { height: 28px; padding: 0 2px; }
 .rv.compact .rv-context { margin-left: 10px; margin-right: 10px; }
 .rv.compact .rv-keys span:nth-child(n+3):not(.rv-spacer) { display: none; }
 .rv.compact .rv-label, .rv.compact .rv-file-bar .rv-btn kbd { display: none; }
