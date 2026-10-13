@@ -8,6 +8,7 @@ import type { ChatClientMessage, SessionServerMessage } from './session';
 import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 
 export * from './session';
+export * from './engines';
 export * from './settings';
 export * from './plans';
 export * from './history';
