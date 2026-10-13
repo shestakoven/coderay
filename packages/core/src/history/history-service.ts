@@ -132,6 +132,8 @@ export class HistoryService {
     switch (message.type) {
       case 'history.diff':
         return { diff: await this.o.diff.diff(message.path, message.before, message.after) };
+      case 'review.graph':
+        throw new Error('the review map is not available');
       case 'step.rollback-preview':
         return { preview: await this.o.reverts.previewStepRollback(message.planId, message.stepKey) };
       case 'revert.undo': {

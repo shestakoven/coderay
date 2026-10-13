@@ -11,6 +11,7 @@ export * from './session';
 export * from './settings';
 export * from './plans';
 export * from './history';
+export * from './review';
 export * from './git';
 export * from './hub';
 export * from './project';

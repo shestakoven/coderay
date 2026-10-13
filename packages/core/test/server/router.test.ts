@@ -13,6 +13,10 @@ describe('routeOf', () => {
     expect(routeOf(type)).toBe('history');
   });
 
+  it('routes review.graph to the history handler', () => {
+    expect(routeOf('review.graph')).toBe('history');
+  });
+
   it.each(['mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits'])('routes %s to settings', (type) => {
     expect(routeOf(type)).toBe('settings');
   });

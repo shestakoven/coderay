@@ -3,7 +3,7 @@ import type { ClientMessage, GitClientMessage, HistoryClientMessage } from '@ide
 export type MessageRoute = 'history' | 'git' | 'settings' | 'unknown';
 export type SettingsClientMessage = Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` | `account.${string}` }>;
 
-const HISTORY = new Set(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback']);
+const HISTORY = new Set(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'review.graph', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback']);
 const GIT = new Set([
   'git.refresh', 'git.init', 'git.diff', 'git.stage', 'git.unstage', 'git.discard', 'git.commit', 'git.branches',
   'git.branch-create', 'git.branch-switch', 'git.branch-delete',
