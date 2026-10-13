@@ -36,6 +36,7 @@ interface Props {
   onShowInChat: (toolUseId: string) => void;
   onOpenChat: () => void;
   onExit: () => void;
+  active: boolean;
 }
 
 interface Toast {
@@ -51,7 +52,7 @@ const NOT_CONNECTED = 'Not connected to the core.';
 const EMPTY_GRAPH: ReviewGraph = { parts: [], links: [], partial: null };
 const diffKey = (file: ReviewItem): string => `${file.path}:${file.before}:${file.after}`;
 
-export function ReviewMode({ history, plans, results, chatItems, requestDiff, requestGraph, send, root, onShowOnMap, onShowInChat, onOpenChat, onExit }: Props) {
+export function ReviewMode({ history, plans, results, chatItems, requestDiff, requestGraph, send, root, onShowOnMap, onShowInChat, onOpenChat, onExit, active }: Props) {
   const sections = useMemo(() => reviewSections(history, plans), [history, plans]);
   const finished = useMemo(() => { const plan = planOnMap(plans); return plan?.status === 'done' ? plan : null; }, [plans]);
   const [decisions, setDecisions] = useState<Decisions>(() => ({ reviewed: loadReviewed(window.localStorage, root), requested: loadRequested(window.localStorage, root) }));
@@ -125,10 +126,10 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
   if (answer?.graph) lastGraph.current = answer.graph;
   const graphFailure = graphRequest === null ? null : graphRequest.requestId === null ? NOT_CONNECTED : answer?.error ?? null;
   const graphSettled = graphRequest !== null && graphRequest.key === wantedKey && (graphRequest.requestId === null || answer !== undefined);
-  // A failed answer is not asked again until the map is shown anew.
+  // Showing the map anew asks again: an answer that failed or never came is not waited for.
   useEffect(() => {
-    if (!showMap && graphFailure !== null) setGraphRequest(null);
-  }, [showMap, graphFailure]);
+    if (showMap) setGraphRequest(null);
+  }, [showMap]);
   const tally = useMemo(() => tallyOf(sections, decisions), [sections, decisions]);
   const totals = useMemo(() => Object.fromEntries(sections.map((section) => {
     const decided = section.files.filter((file) => !isOpen(fileState(decisions.reviewed, decisions.requested, file))).length;
@@ -425,10 +426,10 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
               root={root}
               reviewed={reviewedPaths}
               selectedPath={current?.file.path ?? null}
-              active={!modal && !drawer}
+              active={active && !modal && !drawer}
               send={send}
               onSelectPath={selectPath}
-              onAccept={(paths) => accept(files.filter((file) => paths.includes(file.path)), true)}
+              onAccept={(paths) => accept(files.filter((file) => paths.includes(file.path)), false)}
               onOpenChat={onOpenChat}
             />
           </div>

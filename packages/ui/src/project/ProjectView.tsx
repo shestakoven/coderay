@@ -486,6 +486,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   showPathsOnMap(paths);
                 }}
                 onExit={() => setReviewMode(false)}
+                active={active}
               />
             )}
             {gitSelection && gitStatus && <GitDiffView selection={gitSelection} status={gitStatus} client={git} onClose={() => setGitSelection(null)} />}
