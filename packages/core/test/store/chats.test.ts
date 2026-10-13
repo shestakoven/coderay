@@ -53,7 +53,9 @@ describe('schema 4 migration', () => {
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
     db.prepare("INSERT INTO sessions (id, engine_session_id, cwd, status, conversation_started, started_at) VALUES ('old','c','/p','stopped',1,3)").run();
     db.close();
-    expect(freshStore(dir).session('old')).toMatchObject({ engine: 'claude', engineSessionId: 'c', modelChoice: null, effort: null, conversationStarted: true });
+    const old = freshStore(dir).session('old');
+    expect(old).toMatchObject({ engine: 'claude', engineSessionId: 'c', modelChoice: null, effort: null, conversationStarted: true });
+    expect(old).not.toHaveProperty('foreignEngine');
   });
 
   it('reads an effort CodeRay does not know as the default', () => {
@@ -91,13 +93,6 @@ describe('model choice and effort on a session', () => {
     expect(store.session('s1')).toMatchObject({ modelChoice: 'sonnet', effort: 'low' });
     store.saveSession(session('s1', 1, { modelChoice: null, effort: null }));
     expect(store.session('s1')).toMatchObject({ modelChoice: null, effort: null });
-  });
-
-  it('updates the engine and its conversation id when the session is saved again', () => {
-    const store = freshStore();
-    store.saveSession(session('s1', 1));
-    store.saveSession(session('s1', 1, { engine: 'codex', engineSessionId: 'thread-1' }));
-    expect(store.session('s1')).toMatchObject({ engine: 'codex', engineSessionId: 'thread-1' });
   });
 
   it('keeps the model of one session out of another', () => {
@@ -353,7 +348,9 @@ describe('schema 10 migration', () => {
     db.close();
 
     const store = freshStore(dir);
-    expect(store.session('s1')).toMatchObject({ engine: 'claude', engineSessionId: 'claude-s1', modelChoice: 'opus', effort: 'high' });
+    const chat = store.session('s1');
+    expect(chat).toMatchObject({ engine: 'claude', engineSessionId: 'claude-s1', modelChoice: 'opus', effort: 'high' });
+    expect(chat).not.toHaveProperty('foreignEngine');
     expect([store.listSessions().map((chat) => [chat.id, chat.engine]), store.history('s1').messages.map((m) => m.text)]).toEqual([[['s1', 'claude']], ['hello']]);
   });
 
@@ -370,5 +367,12 @@ describe('schema 10 migration', () => {
     const read = store.session('s1');
     store.saveSession({ ...read!, status: 'crashed' });
     expect([read?.foreignEngine, store.session('s1')]).toMatchObject(['gemini', { foreignEngine: 'gemini', status: 'crashed' }]);
+  });
+
+  it('updates the engine and its conversation id when the session is saved again', () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveSession(session('s1', 1, { engine: 'codex', engineSessionId: 'thread-1' }));
+    expect(store.session('s1')).toMatchObject({ engine: 'codex', engineSessionId: 'thread-1' });
   });
 });
