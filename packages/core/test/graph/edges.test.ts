@@ -53,6 +53,11 @@ describe('computeFileEdges', () => {
     expect(pairs(computeFileEdges(files, adapters))).toEqual([]);
     expect(pairs(computeFileEdges(files, adapters, ['app/utils/throttle.py']))).toEqual(['app/api/routes.py -> app/utils/throttle.py']);
   });
+
+  it('lets a live file win over a deleted path named as a ghost', () => {
+    const files = [indexed('app/api/routes.py', 'python', ['app.utils.throttle']), indexed('app/utils/throttle/__init__.py', 'python', [])];
+    expect(pairs(computeFileEdges(files, adapters, ['app/utils/throttle.py']))).toEqual(['app/api/routes.py -> app/utils/throttle/__init__.py']);
+  });
 });
 
 describe('unresolvedImports', () => {

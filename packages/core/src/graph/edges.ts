@@ -30,8 +30,10 @@ export function unresolvedImports(files: IndexedFile[], adapters: LanguageAdapte
 }
 
 function resolver(files: IndexedFile[], ghosts: readonly string[] = []): (adapter: LanguageAdapter, file: IndexedFile, specifier: string) => string[] {
-  const known = new Set([...files.map((f) => f.path), ...ghosts]);
-  const exists = (path: string) => known.has(path);
+  const live = new Set(files.map((f) => f.path));
+  const ghostSet = new Set(ghosts);
+  const exists = (path: string) => live.has(path);
+  const existsOrGhost = (path: string) => live.has(path) || ghostSet.has(path);
   const providers = new Map<string, string[]>();
   for (const file of files) {
     for (const name of file.provides ?? []) {
@@ -42,6 +44,9 @@ function resolver(files: IndexedFile[], ghosts: readonly string[] = []): (adapte
   return (adapter, file, specifier) => {
     if (adapter.resolveAll) return adapter.resolveAll(specifier, (name) => providers.get(`${file.lang}\0${name}`) ?? []);
     const to = adapter.resolve(file.path, specifier, exists);
-    return to ? [to] : [];
+    if (to) return [to];
+    if (ghostSet.size === 0) return [];
+    const ghost = adapter.resolve(file.path, specifier, existsOrGhost);
+    return ghost && ghostSet.has(ghost) ? [ghost] : [];
   };
 }
