@@ -34,7 +34,7 @@ async function fixture(cacheSize?: number) {
     return (await shadow.put(abs))!.hash;
   };
   const diffs = new DiffService({ shadow, changes: () => changes, baselines, checkpoints, cacheSize });
-  return { shadow, baselines, checkpoints, changes, blob, diffs };
+  return { shadow, baselines, checkpoints, changes, blob, diffs, workDir: work };
 }
 
 describe('DiffService.diff', () => {
@@ -198,5 +198,26 @@ describe('DiffService.stepDiff', () => {
     f.checkpoints.begin('p', 'edit');
     f.checkpoints.record(change('a.ts', h0, h1));
     await expect(f.diffs.stepDiff('p', 'edit', 'a.ts')).rejects.toBeInstanceOf(DiffError);
+  });
+});
+
+describe('DiffService.content', () => {
+  it('returns the text of a recorded version and refuses a hash the path never carried', async () => {
+    const f = await fixture();
+    const h1 = await f.blob('a.ts', 'one\n');
+    const h2 = await f.blob('a.ts', 'two\n');
+    const other = await f.blob('secret.ts', 'TOKEN\n');
+    f.changes.push(change('a.ts', h1, h2), change('secret.ts', null, other));
+    await expect(f.diffs.content('a.ts', h1)).resolves.toBe('one\n');
+    await expect(f.diffs.content('a.ts', other)).rejects.toBeInstanceOf(DiffError);
+  });
+
+  it('answers null for a binary version', async () => {
+    const f = await fixture();
+    const abs = join(f.workDir, 'logo.bin');
+    writeFileSync(abs, Buffer.from([0x89, 0x00, 0x01]));
+    const hash = (await f.shadow.put(abs))!.hash;
+    f.changes.push(change('logo.bin', null, hash));
+    await expect(f.diffs.content('logo.bin', hash)).resolves.toBeNull();
   });
 });

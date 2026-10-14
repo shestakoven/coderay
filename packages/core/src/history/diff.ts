@@ -5,6 +5,7 @@ import type { Checkpoints } from './checkpoints';
 import type { ShadowRepo } from './shadow';
 
 const CACHE_SIZE = 200;
+const CONTENT_LIMIT = 1_000_000;
 
 export class DiffError extends Error {}
 
@@ -16,7 +17,7 @@ export interface DiffServiceOptions {
   cacheSize?: number;
 }
 
-const validPath = (path: string): boolean =>
+export const validPath = (path: string): boolean =>
   path !== '' && !path.includes('\0') && !path.includes('\\') && !posix.isAbsolute(path) && posix.normalize(path) === path && path !== '.' && !path.startsWith('../') && path !== '..' && !path.endsWith('/');
 
 export class DiffService {
@@ -42,6 +43,16 @@ export class DiffService {
     pending.catch(() => { if (this.cache.get(key) === pending) this.cache.delete(key); });
     if (this.cache.size > (this.o.cacheSize ?? CACHE_SIZE)) this.cache.delete(this.cache.keys().next().value as string);
     return pending;
+  }
+
+  async content(path: string, hash: string): Promise<string | null> {
+    if (!validPath(path)) throw new DiffError('not a project-relative path');
+    const allowed = new Set<string | null | undefined>([this.o.baselines.get(path)?.hash]);
+    for (const c of this.o.changes()) if (c.path === path) { allowed.add(c.beforeHash); allowed.add(c.afterHash); }
+    if (!allowed.has(hash)) throw new DiffError('no recorded version of this path has that content');
+    const bytes = await this.o.shadow.read(hash);
+    if (bytes === null || bytes.length > CONTENT_LIMIT || bytes.includes(0)) return null;
+    return bytes.toString('utf8');
   }
 
   async netDiff(path: string): Promise<FileDiff | null> {

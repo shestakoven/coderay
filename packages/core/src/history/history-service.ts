@@ -1,8 +1,9 @@
 import type {
-  ChangeView, FileDiff, GateEventView, HistoryClientMessage, HistoryPatch, HistoryServerMessage, HistoryView, RollbackPreview,
+  ChangeView, FileDiff, GateEventView, HistoryClientMessage, HistoryPatch, HistoryServerMessage, HistoryView, ReviewGraph, RollbackPreview,
 } from '@ide/protocol';
 import type { HookGate } from '../gate/hook-gate';
 import type { PlanService } from '../plans/plan-service';
+import type { ReviewGraphService } from '../review/review-graph-service';
 import type { Store } from '../store/store';
 import type { Watchdog } from '../watchdog/watchdog';
 import type { ChangeService } from './changes';
@@ -26,6 +27,7 @@ export interface HistoryServiceOptions {
   checkpoints: Pick<Checkpoints, 'views'>;
   summarizer: Pick<Summarizer, 'views' | 'onChange'>;
   diff: Pick<DiffService, 'diff'>;
+  reviewGraph?: Pick<ReviewGraphService, 'graph'>;
   gate: Pick<HookGate, 'onChange'>;
   plans: Pick<PlanService, 'onStep'>;
   ready: () => Promise<void>;
@@ -116,7 +118,7 @@ export class HistoryService {
       return;
     }
     const requestId = message.requestId;
-    let outcome: { diff?: FileDiff; preview?: RollbackPreview };
+    let outcome: { diff?: FileDiff; preview?: RollbackPreview; graph?: ReviewGraph };
     let error: string | null = null;
     try {
       await this.available();
@@ -128,10 +130,14 @@ export class HistoryService {
     reply({ type: 'history.result', requestId, error, ...outcome });
   }
 
-  private async run(message: Exclude<HistoryClientMessage, { type: 'watchdog.answer' | 'watchdog.stop-agent' }>): Promise<{ diff?: FileDiff; preview?: RollbackPreview }> {
+  private async run(message: Exclude<HistoryClientMessage, { type: 'watchdog.answer' | 'watchdog.stop-agent' }>): Promise<{ diff?: FileDiff; preview?: RollbackPreview; graph?: ReviewGraph }> {
     switch (message.type) {
       case 'history.diff':
         return { diff: await this.o.diff.diff(message.path, message.before, message.after) };
+      case 'review.graph': {
+        if (this.o.reviewGraph === undefined) throw new Error('the review map is not available');
+        return { graph: await this.o.reviewGraph.graph({ planId: message.planId, files: message.files }) };
+      }
       case 'step.rollback-preview':
         return { preview: await this.o.reverts.previewStepRollback(message.planId, message.stepKey) };
       case 'revert.undo': {

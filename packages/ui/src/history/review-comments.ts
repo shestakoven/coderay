@@ -17,7 +17,7 @@ export type NewComment = Pick<ReviewComment, 'path' | 'side' | 'line' | 'quote' 
 export const MAX_COMMENT = 4000;
 
 // Cuts to `max` UTF-16 units without leaving half of a surrogate pair behind.
-function clip(text: string, max: number): string {
+export function clip(text: string, max: number): string {
   if (text.length <= max) return text;
   const cut = text.slice(0, max);
   const last = cut.charCodeAt(max - 1);

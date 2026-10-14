@@ -12,6 +12,7 @@ export * from './engines';
 export * from './settings';
 export * from './plans';
 export * from './history';
+export * from './review';
 export * from './git';
 export * from './hub';
 export * from './project';

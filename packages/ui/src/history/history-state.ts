@@ -1,17 +1,17 @@
 import type {
-  ChangeView, CheckpointView, FileDiff, HistoryPatch, HistoryView, MapSnapshot, PlanView, RollbackPreview, SummaryView, WatchdogEventView,
+  ChangeView, CheckpointView, FileDiff, HistoryPatch, HistoryView, MapSnapshot, PlanView, ReviewGraph, RollbackPreview, SummaryView, WatchdogEventView,
 } from '@ide/protocol';
 import { projectPathOf } from './project-path';
 
 export interface HistoryState {
   history: HistoryView;
-  results: Record<string, { error: string | null; diff?: FileDiff; preview?: RollbackPreview }>;
+  results: Record<string, { error: string | null; diff?: FileDiff; preview?: RollbackPreview; graph?: ReviewGraph }>;
 }
 
 export type HistoryAction =
   | { type: 'snapshot'; history: HistoryView }
   | { type: 'patch'; patch: HistoryPatch }
-  | { type: 'result'; requestId: string; error: string | null; diff?: FileDiff; preview?: RollbackPreview }
+  | { type: 'result'; requestId: string; error: string | null; diff?: FileDiff; preview?: RollbackPreview; graph?: ReviewGraph }
   | { type: 'forget'; requestId: string };
 
 const emptyHistory = (): HistoryView => ({ changes: [], events: [], reverts: [], checkpoints: [], gateEvents: [], summaries: [] });
@@ -56,7 +56,7 @@ export function historyReducer(state: HistoryState, action: HistoryAction): Hist
       };
     }
     case 'result':
-      return { ...state, results: { ...state.results, [action.requestId]: { error: action.error, diff: action.diff, preview: action.preview } } };
+      return { ...state, results: { ...state.results, [action.requestId]: { error: action.error, diff: action.diff, preview: action.preview, graph: action.graph } } };
     case 'forget': {
       const { [action.requestId]: _gone, ...rest } = state.results;
       return { ...state, results: rest };

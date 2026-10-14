@@ -24,14 +24,20 @@ export const SHORTCUTS: { title: string; items: Shortcut[] }[] = [
   { title: 'Files', items: [
     { keys: ['j', 'k'], does: 'Next and previous file' },
     { keys: ['/'], does: 'Filter the list' },
-    { keys: ['esc'], does: 'Exit the review' },
   ] },
   { title: 'The diff', items: [
     { keys: ['n', 'p'], does: 'Next and previous hunk' },
     { keys: ['s'], does: 'Switch between unified and split' },
     { keys: ['i'], does: 'Show or hide why the change exists' },
     { keys: ['c'], does: 'Comment on the current hunk' },
-    { keys: ['⌘', '↵'], does: 'Save the comment' },
+  ] },
+  { title: 'The map', items: [
+    { keys: ['q'], does: 'Ask about the selected part or link' },
+  ] },
+  { title: 'Diff and map', items: [
+    { keys: ['m'], does: 'Switch between the diff and the map' },
+    { keys: ['⌘', '↵'], does: 'Save the comment in the diff, send the questions on the map' },
+    { keys: ['esc'], does: 'Close what is open, then exit the review' },
   ] },
   { title: 'Decisions', items: [
     { keys: ['a'], does: 'Accept the file' },

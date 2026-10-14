@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import type { ChatItem, ClientMessage, HistoryView, PlanView } from '@ide/protocol';
+import type { ChatItem, ClientMessage, HistoryView, PlanView, ReviewGraph, ReviewGraphFile } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
 import { Resizer } from '../layout/Resizer';
 import type { DiffMode, LineAnchor } from './diff-rows';
+import { latestPlanVersion } from './history-state';
 import { addComment, dropFor, editComment, filesWith, formatRequest, loadComments, markSent, removeComment, saveComments, unsent, type NewComment, type ReviewComment } from './review-comments';
 import { contextOf } from './review-context';
 import { acceptFiles, fileState, isOpen, nextOpen, requestChanges, step, tally as tallyOf, undoAccept, type Decisions, type FileState, type Position } from './review-flow';
@@ -10,6 +11,8 @@ import { focusIsHere, keyOf, typing } from './review-keys';
 import { filterSections, type ListFilter } from './review-list';
 import { planOnMap } from '../plan/plan-state';
 import { reviewSections, sectionFiles, type ReviewItem, type ReviewSection } from './review-model';
+import { graphFilesOf, graphKey } from './review-map/review-map-model';
+import { ReviewMap } from './review-map/ReviewMap';
 import { loadReviewed, saveReviewed } from './review-progress';
 import { clampListWidth, LIST_WIDTH, loadPrefs, loadRequested, savePrefs, saveRequested, type ReviewPrefs } from './review-store';
 import { ConfirmRevert, ShortcutHelp } from './ReviewDialogs';
@@ -23,14 +26,18 @@ import type { DiffResult } from './WatchdogDialog';
 interface Props {
   history: HistoryView;
   plans: PlanView[];
-  results: Record<string, DiffResult | undefined>;
+  results: Record<string, (DiffResult & { graph?: ReviewGraph }) | undefined>;
   chatItems: Record<string, ChatItem | undefined>;
   requestDiff: (path: string, before: string | null, after: string | null) => string | null;
+  requestGraph: (files: ReviewGraphFile[], planId: string | null) => string | null;
+  forgetResult: (requestId: string) => void;
   send: (message: ClientMessage) => boolean;
   root: string;
   onShowOnMap: (paths: string[]) => void;
   onShowInChat: (toolUseId: string) => void;
+  onOpenChat: () => void;
   onExit: () => void;
+  active: boolean;
 }
 
 interface Toast {
@@ -41,9 +48,15 @@ interface Toast {
 
 const COMPACT = 720;
 const PREFETCH = 2;
+const GRAPH_DEBOUNCE = 300;
+const GRAPH_RETRY = 2000;
+const GRAPH_ANSWER_TIMEOUT = 20000;
+const NOT_CONNECTED = 'Not connected to the core.';
+const NO_ANSWER = 'The core did not answer the request for the map. Switch to Diff and back to try again.';
+const EMPTY_GRAPH: ReviewGraph = { parts: [], links: [], partial: null };
 const diffKey = (file: ReviewItem): string => `${file.path}:${file.before}:${file.after}`;
 
-export function ReviewMode({ history, plans, results, chatItems, requestDiff, send, root, onShowOnMap, onShowInChat, onExit }: Props) {
+export function ReviewMode({ history, plans, results, chatItems, requestDiff, requestGraph, forgetResult, send, root, onShowOnMap, onShowInChat, onOpenChat, onExit, active }: Props) {
   const sections = useMemo(() => reviewSections(history, plans), [history, plans]);
   const finished = useMemo(() => { const plan = planOnMap(plans); return plan?.status === 'done' ? plan : null; }, [plans]);
   const [decisions, setDecisions] = useState<Decisions>(() => ({ reviewed: loadReviewed(window.localStorage, root), requested: loadRequested(window.localStorage, root) }));
@@ -89,6 +102,68 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
   const files = useMemo(() => sectionFiles(sections), [sections]);
   const latest = useRef({ files, sections });
   latest.current = { files, sections };
+  const showMap = prefs.view === 'map' && sections.length > 0;
+  const reviewedPaths = useMemo(
+    () => new Set(files.filter((file) => !isOpen(fileState(decisions.reviewed, decisions.requested, file))).flatMap((file) => (file.renamedFrom ? [file.path, file.renamedFrom] : [file.path]))),
+    [files, decisions],
+  );
+
+  const graphFiles = useMemo(() => graphFilesOf(sections), [sections]);
+  const planId = useMemo(() => sections.find((section) => section.planId !== null)?.planId ?? null, [sections]);
+  const mapPlan = useMemo(() => (planId === null ? null : latestPlanVersion(plans, planId)), [plans, planId]);
+  const planVersion = mapPlan?.version ?? null;
+  const graphWanted = showMap && graphFiles.length > 0;
+  const wantedKey = useMemo(() => graphKey(graphFiles, planId === null ? null : `${planId}@${planVersion ?? ''}`), [graphFiles, planId, planVersion]);
+  const asking = useRef({ graphFiles, planId, requestGraph });
+  asking.current = { graphFiles, planId, requestGraph };
+  const [graphRequest, setGraphRequest] = useState<{ key: string; requestId: string | null } | null>(null);
+  const lastGraph = useRef<ReviewGraph | null>(null);
+  useEffect(() => {
+    if (!graphWanted || graphRequest?.key === wantedKey) return;
+    const timer = window.setTimeout(() => {
+      const ask = asking.current;
+      setGraphRequest({ key: wantedKey, requestId: ask.requestGraph(ask.graphFiles, ask.planId) });
+    }, GRAPH_DEBOUNCE);
+    return () => window.clearTimeout(timer);
+  }, [graphWanted, wantedKey, graphRequest?.key]);
+  const answer = graphRequest?.requestId ? results[graphRequest.requestId] : undefined;
+  if (answer?.graph) lastGraph.current = answer.graph;
+  const pendingId = graphRequest?.requestId ?? null;
+  const [stalled, setStalled] = useState<string | null>(null);
+  const answered = answer !== undefined;
+  useEffect(() => {
+    if (pendingId === null || answered) return;
+    const timer = window.setTimeout(() => setStalled(pendingId), GRAPH_ANSWER_TIMEOUT);
+    return () => window.clearTimeout(timer);
+  }, [pendingId, answered]);
+  const noAnswer = pendingId !== null && stalled === pendingId && !answered;
+  const graphFailure = graphRequest === null ? null : graphRequest.requestId === null ? NOT_CONNECTED : answer?.error ?? (noAnswer ? NO_ANSWER : null);
+  const graphSettled = graphRequest !== null && graphRequest.key === wantedKey && (graphRequest.requestId === null || answered || noAnswer);
+  // Graph answers are kept by request id: one that a newer request replaced is not needed any more.
+  const shownId = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = shownId.current;
+    shownId.current = pendingId;
+    if (previous !== null && previous !== pendingId) forgetResult(previous);
+  }, [pendingId, forgetResult]);
+  const forgetting = useRef(forgetResult);
+  forgetting.current = forgetResult;
+  useEffect(() => () => {
+    if (shownId.current !== null) forgetting.current(shownId.current);
+  }, []);
+  // Showing the map anew asks again: an answer that failed or never came is not waited for.
+  useEffect(() => {
+    if (showMap) setGraphRequest(null);
+  }, [showMap]);
+  // Without a connection the request is not even sent: it is tried again until the core is back.
+  useEffect(() => {
+    if (!graphWanted || graphRequest === null || graphRequest.requestId !== null || graphRequest.key !== wantedKey) return;
+    const timer = window.setTimeout(() => {
+      const ask = asking.current;
+      setGraphRequest({ key: wantedKey, requestId: ask.requestGraph(ask.graphFiles, ask.planId) });
+    }, GRAPH_RETRY);
+    return () => window.clearTimeout(timer);
+  }, [graphWanted, graphRequest, wantedKey]);
   const tally = useMemo(() => tallyOf(sections, decisions), [sections, decisions]);
   const totals = useMemo(() => Object.fromEntries(sections.map((section) => {
     const decided = section.files.filter((file) => !isOpen(fileState(decisions.reviewed, decisions.requested, file))).length;
@@ -262,6 +337,7 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
     return rest;
   }), []);
   const setMode = useCallback((mode: DiffMode): void => setPrefs((existing) => ({ ...existing, mode })), []);
+  const setView = useCallback((view: ReviewPrefs['view']): void => setPrefs((existing) => ({ ...existing, view })), []);
 
   const modal = confirming || help;
   useEffect(() => {
@@ -278,7 +354,7 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
       const inList = event.target instanceof HTMLElement && event.target.closest('.rv-list') !== null;
       if (key === 'j' || (key === 'ArrowDown' && inList)) setSelected(step(navigable, selected, 1));
       else if (key === 'k' || (key === 'ArrowUp' && inList)) setSelected(step(navigable, selected, -1));
-      else if (key === 'a' && current) accept([current.file], true);
+      else if (key === 'a' && current) accept([current.file], !showMap);
       else if (key === 'u') {
         if (toast?.undo) {
           const run = toast.undo;
@@ -288,6 +364,7 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
       }
       else if (key === 'r' && current && !current.file.reverted) setConfirming(true);
       else if (key === 'i') setPrefs((existing) => ({ ...existing, showContext: !existing.showContext }));
+      else if (key === 'm' && sections.length > 0) setPrefs((existing) => ({ ...existing, view: existing.view === 'map' ? 'diff' : 'map' }));
       else if (key === '?') setHelp(true);
       else if (key === '/') {
         if (compact && !drawer) setDrawer(true);
@@ -313,6 +390,17 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
     setSelected(position);
     frame.current?.focus({ preventScroll: true });
   }, []);
+  const selectPath = useCallback((path: string | null): void => {
+    if (path === null) return;
+    const section = latest.current.sections.find((entry) => entry.files.some((file) => file.path === path || file.renamedFrom === path));
+    const file = section?.files.find((entry) => entry.path === path || entry.renamedFrom === path);
+    if (section && file) select({ group: section.key, path: file.path });
+  }, [select]);
+  const filesButton = (
+    <button className="rv-files-button" onClick={() => setDrawer(true)} aria-label="Show the file list">
+      <Icon name="panel-left" size={15} />Files <b>{tally.accepted + tally.requested + tally.reverted}/{tally.total}</b>
+    </button>
+  );
   const onMarkRef = useRef(onMark);
   onMarkRef.current = onMark;
   const markFile = useCallback((file: ReviewItem, markState: FileState): void => onMarkRef.current(file, markState), []);
@@ -355,12 +443,34 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
         />
       )}
       <section className="rv-main">
-        {compact && (
-          <button className="rv-files-button" onClick={() => setDrawer(true)} aria-label="Show the file list">
-            <Icon name="panel-left" size={15} />Files <b>{tally.accepted + tally.requested + tally.reverted}/{tally.total}</b>
-          </button>
+        {compact && sections.length === 0 && filesButton}
+        {sections.length > 0 && (
+          <div className="rv-view-bar">
+            {compact && filesButton}
+            <div className="rv-mode rv-view" role="group" aria-label="Review view">
+              <button className={showMap ? '' : 'on'} aria-pressed={!showMap} onClick={() => setView('diff')} title="Diff (m)"><Icon name="view-unified" size={14} />Diff</button>
+              <button className={showMap ? 'on' : ''} aria-pressed={showMap} onClick={() => setView('map')} title="Map (m)"><Icon name="map" size={14} />Map</button>
+            </div>
+          </div>
         )}
-        {current && state && context ? (
+        {showMap ? (
+          <div className="rv-map">
+            <ReviewMap
+              graph={graphFiles.length === 0 ? EMPTY_GRAPH : lastGraph.current}
+              loading={graphWanted && !graphSettled}
+              error={graphFailure}
+              plan={mapPlan}
+              root={root}
+              reviewed={reviewedPaths}
+              selectedPath={current?.file.path ?? null}
+              active={active && !modal && !drawer}
+              send={send}
+              onSelectPath={selectPath}
+              onAccept={(paths) => accept(files.filter((file) => paths.includes(file.path) || (file.renamedFrom !== null && paths.includes(file.renamedFrom))), false)}
+              onOpenChat={onOpenChat}
+            />
+          </div>
+        ) : current && state && context ? (
           <ReviewDiff
             key={current.file.path}
             file={current.file}
@@ -400,10 +510,21 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, se
         )}
         <footer className="rv-keys">
           <span><Kbd>j</Kbd><Kbd>k</Kbd> files</span>
-          <span><Kbd>n</Kbd><Kbd>p</Kbd> hunks</span>
-          <span><Kbd>a</Kbd> accept</span>
-          <span><Kbd>c</Kbd> comment</span>
-          <span><Kbd>r</Kbd> revert</span>
+          {showMap ? (
+            <>
+              <span><Kbd>q</Kbd> ask</span>
+              <span><Kbd>⌘</Kbd><Kbd>↵</Kbd> send</span>
+              <span><Kbd>a</Kbd> accept</span>
+              <span><Kbd>esc</Kbd> close</span>
+            </>
+          ) : (
+            <>
+              <span><Kbd>n</Kbd><Kbd>p</Kbd> hunks</span>
+              <span><Kbd>a</Kbd> accept</span>
+              <span><Kbd>c</Kbd> comment</span>
+              <span><Kbd>r</Kbd> revert</span>
+            </>
+          )}
           <span className="rv-spacer" />
           <button className="rv-keys-help" onClick={() => setHelp(true)} title="Keyboard shortcuts (?)"><Kbd>?</Kbd> shortcuts</button>
         </footer>

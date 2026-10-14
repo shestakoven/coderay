@@ -21,6 +21,7 @@ import { createCSharpAdapter } from './lang/csharp';
 import { createPythonAdapter } from './lang/python';
 import { createSwiftAdapter } from './lang/swift';
 import { createTypeScriptAdapter } from './lang/typescript';
+import type { LanguageAdapter } from './lang/types';
 import { acquireCoreLock } from './lock';
 import { takeNodeLauncher } from './node-exec';
 import { descendants, isAlive, signal as sendSignal } from './os-process';
@@ -201,6 +202,7 @@ try {
     },
   });
   const models = createModelProvider(home, () => accounts.claudeEnv());
+  let languageAdapters: LanguageAdapter[] = [];
   const rt = createExecutionRuntime({
     root, home, store,
     policy: () => policy.effective(),
@@ -216,6 +218,7 @@ try {
     shadowDir: join(projectDir(home, root), 'shadow.git'),
     provider: models,
     files: () => indexer?.files() ?? [],
+    adapters: () => languageAdapters,
     notice: (text) => (session ? session.notice(text) : console.warn(text)),
   });
   const git = new GitService({ root, ideWrites: rt.ideWrites, agentBusy: () => rt.agentBusy() });
@@ -618,6 +621,7 @@ try {
     createCSharpAdapter(),
     createSwiftAdapter(),
   ]);
+  languageAdapters = adapters;
   const index = new Indexer({ root, adapters, onProgress: (indexed) => progress.set({ indexing: { indexed } }) });
   indexer = index;
   await index.start();

@@ -1,7 +1,7 @@
 import {
-  AGENT_TERMINAL_ID, IMAGE_MEDIA_TYPES, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
+  AGENT_TERMINAL_ID, IMAGE_MEDIA_TYPES, isEffortFor, MAX_CHAT_IMAGES, MAX_REVIEW_GRAPH_FILES, parseModelId,
   type ChatImage, type ClientMessage, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
-  type WatchdogAnswer,
+  type ReviewGraphFile, type WatchdogAnswer,
 } from '@ide/protocol';
 import { isAccountId } from '../accounts/account-store';
 import { BLOB_ID } from '../images/blob-store';
@@ -22,7 +22,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   if (!isRecord(value)) return null;
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
-    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message, key,
+    after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message, key, files,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -136,6 +136,8 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isBoundedString(id, MAX_ID_LENGTH) ? { type, requestId, id } : null;
     case 'history.diff':
       return typeof path === 'string' && isHashOrNull(before) && isHashOrNull(after) ? { type, requestId, path, before, after } : null;
+    case 'review.graph':
+      return (planId === null || isBoundedString(planId, MAX_ID_LENGTH)) && isGraphFiles(files) ? { type, requestId, planId, files } : null;
     case 'revert.undo':
       return typeof revertId === 'string' ? { type, requestId, revertId } : null;
     case 'change.revert':
@@ -215,6 +217,19 @@ const isBoundedString = (value: unknown, max: number): value is string => typeof
 const isTerminalId = (value: unknown): value is string => typeof value === 'string' && TERMINAL_ID.test(value);
 
 const isHashOrNull = (value: unknown): value is string | null => value === null || typeof value === 'string';
+
+const isGraphFile = (value: unknown): value is ReviewGraphFile =>
+  isRecord(value)
+  && isBoundedString(value.path, MAX_PATH_LENGTH)
+  && isHashOrNull(value.before)
+  && isHashOrNull(value.after)
+  && (value.step === null || isBoundedString(value.step, MAX_ID_LENGTH))
+  && typeof value.external === 'boolean'
+  && Number.isSafeInteger(value.added)
+  && Number.isSafeInteger(value.removed);
+
+const isGraphFiles = (value: unknown): value is ReviewGraphFile[] =>
+  Array.isArray(value) && value.length <= MAX_REVIEW_GRAPH_FILES && value.every(isGraphFile);
 
 const isGitPaths = (value: unknown): value is string[] =>
   Array.isArray(value) && value.length > 0 && value.length <= MAX_GIT_PATHS && value.every((item) => isBoundedString(item, MAX_PATH_LENGTH));
