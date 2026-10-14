@@ -12,3 +12,4 @@ playwright-report/
 .serena/
 packages/desktop/out/
 packages/desktop/dist/
+docs/
