@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { EFFORT_LEVELS, type ModelInfo } from '@ide/protocol';
+import { EFFORT_LEVELS, type ChatPick, type ModelInfo } from '@ide/protocol';
 import {
-  catalogOf, effortChoices, firstEffort, initialActive, loadRecent, moveActive, newChatEffort, pickerGroups, rememberModel, saveRecent, type PickerInput,
+  catalogOf, chooseMessage, effortChoices, firstEffort, initialActive, loadRecent, matchSpans, menuKey, moveActive, newChatEffort, pickerGroups, rememberModel, saveRecent, shownId,
+  type KeyPress, type MenuAction, type PickerInput,
 } from '../src/chat/model-picker';
 import { blockedStorage, memoryStorage } from './memory-storage';
 import { ENGINE_STATES, THREE_ENGINES } from './model-fixtures';
@@ -29,19 +30,33 @@ describe('pickerGroups', () => {
     ]);
   });
 
-  it("filters by name, id or engine, ignoring case, and shows an engine with no models only while nothing is typed and only when it cannot run", () => {
+  it("filters by name, id or engine, ignoring case, and shows an engine with no models only when it cannot run, while nothing is typed or its name is", () => {
     const noCodex = THREE_ENGINES.filter((model) => model.engine !== 'codex');
+    const titles = (overrides: Partial<PickerInput>) => shown(overrides).map(([title]) => title);
     expect([
       shown({ query: 'LUNA' }), shown({ query: 'openrouter' }), shown({ query: 'codex' }),
-      shown({ models: noCodex }).map(([title]) => title), shown({ models: noCodex, query: 'son' }).map(([title]) => title),
-      shown({ models: noCodex, engines: [{ engine: 'codex', state: 'ready', hint: null }] }).map(([title]) => title),
+      titles({ models: noCodex }), titles({ models: noCodex, query: 'son' }), shown({ models: noCodex, query: 'Codex ' }),
+      titles({ models: noCodex, engines: [{ engine: 'codex', state: 'ready', hint: null }] }),
+      titles({ models: noCodex, engines: [{ engine: 'codex', state: 'ready', hint: null }], query: 'codex' }),
     ]).toEqual([
       [['Codex', ['codex:gpt-6-luna']]],
       [['opencode', ['opencode:openrouter/anthropic/claude-3.5:beta']]],
       [['Codex', ['codex:gpt-6-luna']]],
       ['Claude', 'Codex', 'opencode'],
       ['Claude'],
+      [['Codex', []]],
       ['Claude', 'opencode'],
+      [],
+    ]);
+  });
+
+  it('matches a query of several words when every word occurs, in any order, in the name, id or engine', () => {
+    expect([shown({ query: 'gpt 6' }), shown({ query: '  luna   GPT ' }), shown({ query: 'claude sonnet' }), shown({ query: 'claude beta' }), shown({ query: 'sonnet luna' })]).toEqual([
+      [['Codex', ['codex:gpt-6-luna']]],
+      [['Codex', ['codex:gpt-6-luna']]],
+      [['Claude', ['sonnet']]],
+      [['opencode', ['opencode:openrouter/anthropic/claude-3.5:beta']]],
+      [],
     ]);
   });
 
@@ -84,6 +99,38 @@ describe('keyboard', () => {
       moveActive(18, 20, 'PageDown'), moveActive(5, 20, 'PageUp'), moveActive(3, 5, 'Home'), moveActive(1, 5, 'End'), moveActive(2, 5, 'a'), moveActive(0, 0, 'ArrowDown'),
     ]).toEqual([0, 4, 4, 9, 19, 0, 0, 4, null, 0]);
   });
+
+  it('in the search box moves with the arrows and page keys, chooses with Enter, closes with Tab either way, and leaves the rest to the box', () => {
+    const press = (key: string, modifiers: Partial<KeyPress> = {}, query = 'son'): MenuAction => menuKey({ key, shiftKey: false, altKey: false, ctrlKey: false, metaKey: false, ...modifiers }, 3, 20, query);
+    expect([
+      press('ArrowDown'), press('ArrowUp'), press('PageDown'), press('PageUp'), press('Enter'), press('Tab'), press('Tab', { shiftKey: true }),
+      press('a'), press('Escape'), press('ArrowLeft'), press('Enter', { metaKey: true }), press('ArrowDown', { altKey: true }), press('ArrowUp', { metaKey: true }),
+    ]).toEqual([{ move: 4 }, { move: 2 }, { move: 11 }, { move: 0 }, 'choose', 'close', 'close', null, null, null, null, null, null]);
+  });
+
+  it('moves to either end with Home and End only while nothing is typed: then they move the caret, and Shift with them selects', () => {
+    const press = (key: string, query: string, shiftKey = false): MenuAction => menuKey({ key, shiftKey, altKey: false, ctrlKey: false, metaKey: false }, 3, 20, query);
+    expect([press('Home', ''), press('End', ''), press('Home', 'son'), press('End', ' '), press('Home', '', true), press('ArrowDown', 'son', true)])
+      .toEqual([{ move: 0 }, { move: 19 }, null, null, null, null]);
+  });
+});
+
+describe('shownId', () => {
+  it("shows a model's id as its engine names it, and none when the id is its name", () => {
+    const named = (value: string, name: string) => shownId({ value, name, engine: 'claude', efforts: [] });
+    expect([shownId(sonnet), shownId(luna), shownId(openrouter), named('claude-opus-4-6', 'claude-opus-4-6'), named('codex:gpt-5', 'gpt-5')])
+      .toEqual(['sonnet', 'gpt-6-luna', 'openrouter/anthropic/claude-3.5:beta', null, null]);
+  });
+});
+
+describe('matchSpans', () => {
+  it("underlines the first place each word of the query occurs, ignoring case, merging words that touch or overlap", () => {
+    const underlined = (text: string, query: string) => matchSpans(text, query).map((span) => (span.hit ? `[${span.text}]` : span.text)).join('');
+    expect([
+      underlined('GPT-6 Luna', 'gpt 6'), underlined('GPT-6 Luna', 'luna  gpt'), underlined('Sonnet 5.5', 'NET son'), underlined('Sonnet 5.5', ''),
+      underlined('Sonnet 5.5', 'zzz son'), underlined('opencode:openrouter/anthropic/claude-3.5:beta', 'open'),
+    ]).toEqual(['[GPT]-[6] Luna', '[GPT]-6 [Luna]', '[Sonnet] 5.5', 'Sonnet 5.5', '[Son]net 5.5', '[open]code:openrouter/anthropic/claude-3.5:beta']);
+  });
 });
 
 describe('recent models', () => {
@@ -96,6 +143,10 @@ describe('recent models', () => {
     expect([loadRecent(storage), loadRecent(blockedStorage()), loadRecent(memoryStorage({ 'ide.recentModels': '{"not":"a list"}' })), loadRecent(undefined)])
       .toEqual([['f', 'e', 'd', 'a', 'c'], [], [], []]);
   });
+
+  it('reads each model once from a store written by hand or by an older build', () => {
+    expect(loadRecent(memoryStorage({ 'ide.recentModels': '["a","b","a",3,"c","b","d","e","f"]' }))).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
 });
 
 describe('efforts', () => {
@@ -105,6 +156,34 @@ describe('efforts', () => {
       effortChoices(undefined, 'claude', null), effortChoices(undefined, 'codex', null), effortChoices(sonnet, 'claude', 'max'),
     ]).toEqual([
       ['minimal', 'low', 'medium', 'high'], ['minimal', 'low', 'medium', 'high', 'ultra'], ['medium'], [], [...EFFORT_LEVELS], [], [...EFFORT_LEVELS],
+    ]);
+  });
+
+  it("hands out Claude's efforts as copies, so changing one list leaves every other model's alone", () => {
+    const [fallback] = catalogOf([]) as [ModelInfo];
+    const [old] = catalogOf([{ value: 'claude-opus-4-6', name: 'Opus 4.6' }] as ModelInfo[]) as [ModelInfo];
+    fallback.efforts.push('ultra');
+    old.efforts.push('ultra');
+    effortChoices(undefined, 'claude', null).push('ultra');
+    expect([catalogOf([])[1]?.efforts, catalogOf([{ value: 'x', name: 'X' }] as ModelInfo[])[0]?.efforts, effortChoices(undefined, 'claude', null)])
+      .toEqual([[...EFFORT_LEVELS], [...EFFORT_LEVELS], [...EFFORT_LEVELS]]);
+  });
+
+  it("sends a new chat for another engine's model, a project's first pick with its first effort, the chat's new model with its effort, and nothing for the model it has", () => {
+    const choose = (model: ModelInfo, locked: boolean, current: ChatPick | null) => chooseMessage({ model, locked }, current);
+    const chat: ChatPick = { engine: 'claude', modelChoice: 'sonnet', effort: 'medium' };
+    expect([
+      choose(luna, true, chat), choose(openrouter, true, chat), choose(sonnet, false, null), choose(haiku, false, null), choose(openrouter, false, null),
+      choose(haiku, false, chat), choose(sonnet, false, chat), choose(sonnet, false, { engine: 'claude', modelChoice: null, effort: null }),
+    ]).toEqual([
+      { type: 'session.new', modelChoice: 'codex:gpt-6-luna', effort: 'medium' },
+      { type: 'session.new', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
+      { type: 'session.configure', modelChoice: 'sonnet', effort: 'medium' },
+      { type: 'session.configure', modelChoice: 'haiku', effort: null },
+      { type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: 'high' },
+      { type: 'session.configure', modelChoice: 'haiku', effort: 'medium' },
+      null,
+      { type: 'session.configure', modelChoice: 'sonnet', effort: null },
     ]);
   });
 
