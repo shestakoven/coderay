@@ -5,7 +5,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { onTestFinished, type TestContext } from 'vitest';
 import { stringify } from 'yaml';
-import type { Lang, MapStatus } from '@ide/protocol';
+import type { ChatPick, Lang, MapStatus } from '@ide/protocol';
 import type { IndexedFile } from '../src/model';
 import type { SessionRecord } from '../src/store/store';
 
@@ -20,6 +20,9 @@ export function sessionRecord(id: string, cwd: string): SessionRecord {
     pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null,
   };
 }
+
+// What a test chat starts with when nothing else names a model, as IDE_DEFAULT_MODEL does for the app.
+export const SONNET: ChatPick = { engine: 'claude', modelChoice: 'sonnet', effort: 'medium' };
 
 export function indexed(path: string, lang: Lang, imports: string[], overrides: Partial<IndexedFile> = {}): IndexedFile {
   return { path, lang, contentHash: path, imports, symbols: [], parseError: false, ...overrides };

@@ -10,7 +10,7 @@ import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { startServer, type RunningServer } from '../../src/server/server';
 import { openStore } from '../../src/store/store';
 import { fakeClaude, readRecords } from '../fake-claude/fake';
-import { tempDir, waitFor, writeTree } from '../helpers';
+import { SONNET, tempDir, waitFor, writeTree } from '../helpers';
 
 const ORIGINAL = { 'src/app.ts': "export const greeting = 'helo';\n", 'src/other.ts': "export const other = 'helo';\n" };
 
@@ -39,7 +39,7 @@ async function flow(scenario: string, options: { mode?: ControlMode } = {}): Pro
   });
   const recordFile = join(home, 'record.jsonl');
   const session = new AgentSession({
-    root, home, store, claude: fakeClaude(scenario, recordFile),
+    root, home, store, claude: fakeClaude(scenario, recordFile), defaultModel: SONNET,
     mcpServers: () => ({ idecore: runtime.mcpEntry() }), gate: runtime.sessionGate,
   });
   runtime.attach(session);

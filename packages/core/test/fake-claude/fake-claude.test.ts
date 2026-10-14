@@ -12,7 +12,7 @@ import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { startServer, type RunningServer } from '../../src/server/server';
 import { openStore } from '../../src/store/store';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from './fake';
-import { tempDir, waitFor } from '../helpers';
+import { SONNET, tempDir, waitFor } from '../helpers';
 
 const INIT = { type: 'system', subtype: 'init', cwd: '$CWD', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' };
 const text = (value: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: value }] }, parent_tool_use_id: null, session_id: '$SESSION' });
@@ -40,7 +40,7 @@ async function run(lines: object[]) {
   });
   const recordFile = join(home, 'record.jsonl');
   const session = new AgentSession({
-    root, home, store, claude: fakeClaude(scenarioFile(lines), recordFile),
+    root, home, store, claude: fakeClaude(scenarioFile(lines), recordFile), defaultModel: SONNET,
     mcpServers: () => ({ idecore: runtime.mcpEntry() }), gate: runtime.sessionGate,
   });
   runtime.attach(session);

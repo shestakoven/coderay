@@ -7,7 +7,7 @@ import { AgentSession } from '../../src/agent/agent-session';
 import { projectDir } from '../../src/home';
 import { openStore, type Store } from '../../src/store/store';
 import { fakeClaude } from '../fake-claude/fake';
-import { fixture, tempDir, waitFor } from '../helpers';
+import { fixture, SONNET, tempDir, waitFor } from '../helpers';
 import { png } from '../images/bytes';
 
 interface Harness {
@@ -24,7 +24,7 @@ async function harness(scenario: string, before?: (blobs: string) => void): Prom
   before?.(blobs);
   const store = openStore(projectDir(home, root));
   onTestFinished(() => store.close());
-  const session = new AgentSession({ root, home, store, claude: fakeClaude(scenario, join(home, `record-${randomUUID()}.jsonl`)) });
+  const session = new AgentSession({ root, home, store, claude: fakeClaude(scenario, join(home, `record-${randomUUID()}.jsonl`)), defaultModel: SONNET });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(() => session.close());

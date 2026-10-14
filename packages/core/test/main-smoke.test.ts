@@ -25,7 +25,7 @@ async function startMain(options: { claude?: string; env?: Record<string, string
     ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE],
     {
       cwd: REPO,
-      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), ...options.env },
+      env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), IDE_DEFAULT_MODEL: 'sonnet', ...options.env },
       stdio: ['ignore', 'pipe', 'pipe'],
     },
   );
@@ -79,6 +79,19 @@ describe('main.ts', { timeout: 90_000 }, () => {
     expect([answers.map((m) => m.type), answers[0]]).toEqual([
       ['engines.snapshot', 'models.snapshot'],
       { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }] },
+    ]);
+  });
+
+  it('tells the UI what a new chat starts with, and lists the model a New chat gives the unused chat', async () => {
+    const { messages, socket } = await startMain();
+    const greeting = await waitFor(() => messages.find((m) => m.type === 'sessions.snapshot'), 'the chats');
+    socket.send(JSON.stringify({ type: 'session.new' }));
+    await waitFor(() => messages.some((m) => m.type === 'session.patch' && m.patch.session?.status === 'running'), "the new chat's agent");
+    socket.send(JSON.stringify({ type: 'session.new', modelChoice: 'opus', effort: 'medium' }));
+    const listed = await waitFor(() => messages.find((m) => m.type === 'sessions.snapshot' && m.sessions[0]?.modelChoice === 'opus'), 'the chat on its new model');
+    expect([greeting, listed]).toMatchObject([
+      { next: { engine: 'claude', modelChoice: 'sonnet', effort: 'medium' } },
+      { next: { engine: 'claude', modelChoice: 'opus', effort: 'medium' } },
     ]);
   });
 });

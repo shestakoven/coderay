@@ -10,7 +10,7 @@ import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
 import { accountsDir, fakeCli, seedAccounts, withEnv, type SeededAccount } from '../accounts/fake-cli';
 import { argValue, fakeClaude, hasArg, readRecords } from '../fake-claude/fake';
-import { tempDir, waitFor } from '../helpers';
+import { SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
   session: AgentSession;
@@ -40,7 +40,7 @@ function world(active: number | null): World {
 async function harness(w: World, scenario = 'multi-turn'): Promise<Harness> {
   const store = openStore(projectDir(w.home, w.root));
   const recordFile = join(w.home, `record-${randomUUID()}.jsonl`);
-  const session = new AgentSession({ root: w.root, home: w.home, store, claude: fakeClaude(scenario, recordFile), accounts: w.accounts });
+  const session = new AgentSession({ root: w.root, home: w.home, store, claude: fakeClaude(scenario, recordFile), accounts: w.accounts, defaultModel: SONNET });
   let closed = false;
   const close = async () => {
     if (closed) return;

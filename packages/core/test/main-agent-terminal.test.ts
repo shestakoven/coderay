@@ -79,7 +79,7 @@ async function startMain(mode: Mode, extraEnv: Record<string, string> = {}) {
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), FAKE_CLAUDE_RECORD: record,
-        WRAPPER_LOG: log, WRAPPER_MODE: mode, WRAPPER_TRANSCRIPT: transcript, WRAPPED_CLAUDE: pathToFileURL(FAKE_CLAUDE).href, ...extraEnv,
+        WRAPPER_LOG: log, WRAPPER_MODE: mode, WRAPPER_TRANSCRIPT: transcript, WRAPPED_CLAUDE: pathToFileURL(FAKE_CLAUDE).href, IDE_DEFAULT_MODEL: 'sonnet', ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

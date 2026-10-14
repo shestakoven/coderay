@@ -12,7 +12,7 @@ import { forceKill, isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { fakeClaude, readRecords } from '../fake-claude/fake';
-import { tempDir } from '../helpers';
+import { SONNET, tempDir } from '../helpers';
 
 const SECRET = 'terminal-secret';
 const COMPONENTS = [{ id: 'auth', name: 'Auth' }];
@@ -68,7 +68,7 @@ export async function terminalHarness({ hooks, canaryMs, scenario = 'multi-turn'
   const transcriptsDir = tempDir('ide-transcripts-');
   seed?.({ store, root, transcriptsDir });
   const session = new AgentSession({
-    root, home, store, claude: { ...claude, env }, canaryMs, transcriptsDir, terminalInput: (data) => input.push(data), ...(gated ? { gate } : {}),
+    root, home, store, claude: { ...claude, env }, canaryMs, transcriptsDir, defaultModel: SONNET, terminalInput: (data) => input.push(data), ...(gated ? { gate } : {}),
     ...(killGraceMs === undefined ? {} : { killGraceMs }),
   });
   const ignoredSigterms = () => readRecords(recordFile).filter((r) => r.ignoredSignal === 'SIGTERM').length;

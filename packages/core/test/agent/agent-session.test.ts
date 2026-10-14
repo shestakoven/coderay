@@ -17,7 +17,7 @@ import { commandLine, isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, writePidRecord, type Launched } from '../fake-claude/fake';
-import { fixture, tempDir, waitFor } from '../helpers';
+import { fixture, SONNET, tempDir, waitFor } from '../helpers';
 
 // Unchanged behaviour; it only lets a test reach the sink of a transport the session no longer runs.
 vi.mock('../../src/agent/sdk-transport', async (original) => {
@@ -48,7 +48,7 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
   const store = overrides.store ?? openStore(projectDir(home, root));
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
   const claude = fakeClaude(scenario, recordFile);
-  const session = new AgentSession({ root, home, store, claude: { ...claude, env: { ...claude.env, ...fakeEnv } }, ...overrides });
+  const session = new AgentSession({ root, home, store, claude: { ...claude, env: { ...claude.env, ...fakeEnv } }, defaultModel: SONNET, ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(async () => {

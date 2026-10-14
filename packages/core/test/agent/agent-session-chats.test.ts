@@ -8,7 +8,7 @@ import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type SessionRecord, type Store } from '../../src/store/store';
 import { argValue, fakeClaude, hasArg, readRecords } from '../fake-claude/fake';
-import { tempDir, waitFor } from '../helpers';
+import { SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
   session: AgentSession;
@@ -28,7 +28,7 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
   if (!overrides.store) onTestFinished(() => store.close());
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
   const claude = fakeClaude(scenarioFile ?? scenario, recordFile);
-  const session = new AgentSession({ root, home, store, claude, ...overrides });
+  const session = new AgentSession({ root, home, store, claude, defaultModel: SONNET, ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(() => session.close());

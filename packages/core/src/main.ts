@@ -3,7 +3,7 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { AGENT_TERMINAL_ID, type ClientMessage, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, parseModelId, type ChatPick, type ClientMessage, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
 import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
@@ -48,6 +48,12 @@ import { routeClientMessage, type SettingsClientMessage } from './server/router'
 import { startServer, type Reply, type RunningServer } from './server/server';
 import { openStore } from './store/store';
 import { TerminalService } from './terminal/terminal-service';
+
+// IDE_DEFAULT_MODEL names the model a project's first chat starts with; without it the user picks one first.
+function defaultModel(value: string | undefined): ChatPick | undefined {
+  const ref = value ? parseModelId(value) : null;
+  return ref && value ? { engine: ref.engine, modelChoice: value, effort: null } : undefined;
+}
 
 const { values } = parseArgs({
   options: {
@@ -226,6 +232,7 @@ try {
     claude: { command: values.claude, args: [] },
     accounts,
     engines,
+    defaultModel: defaultModel(process.env.IDE_DEFAULT_MODEL),
     mcpServers: () => registry.sessionServers(),
     ...rt.sessionOptions,
     canLeave: () => rt.canLeave(),
@@ -266,7 +273,7 @@ try {
   });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
-  const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats() });
+  const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats(), next: agent.nextPick() });
   const broadcastSessions = (): void => {
     try {
       server?.broadcast(sessionsSnapshot());
@@ -360,6 +367,7 @@ try {
       case 'session.new':
         await watching;
         await agent.newSession(message.modelChoice === undefined ? null : { modelChoice: message.modelChoice, effort: message.effort ?? null });
+        broadcastSessions();
         return;
       case 'session.list':
         reply(sessionsSnapshot());

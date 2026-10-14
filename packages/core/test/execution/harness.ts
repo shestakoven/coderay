@@ -10,7 +10,7 @@ import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { startServer, type RunningServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { fakeClaude, readRecords, type FakeRecord } from '../fake-claude/fake';
-import { tempDir, waitFor, writeTree } from '../helpers';
+import { SONNET, tempDir, waitFor, writeTree } from '../helpers';
 
 export const FILES = { 'src/app.ts': "export const greeting = 'helo';\n", 'src/other.ts': "export const other = 'helo';\n", 'notes.txt': 'notes\n' };
 export const COMPONENTS = [{ id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts'], globs: [] }];
@@ -78,7 +78,7 @@ export async function build(options: BuildOptions): Promise<Built> {
   const recordFile = join(home, `record-${n}.jsonl`);
   const fake = fakeClaude(scenarioPath, recordFile);
   const session = new AgentSession({
-    root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000,
+    root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000, defaultModel: SONNET,
     mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), ...rt.sessionOptions, terminalInput: (data) => typed.push(data),
   });
   rt.attach(session);

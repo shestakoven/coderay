@@ -63,6 +63,8 @@ export interface AgentSessionOptions {
   canLeave?: () => string | null;
   // The engines a chat can run on; Claude only, by default.
   engines?: EngineRegistry;
+  // What a project's first chat starts with; without it nothing starts until the user picks a model.
+  defaultModel?: ChatPick;
 }
 
 const ACTIVE_SESSION_KEY = 'activeSessionId';
@@ -75,6 +77,7 @@ const NO_TRANSCRIPT_GAP_NOTICE = 'Calls made while the core was down may be miss
 
 const SESSION_ERRORS = {
   empty: 'Type a message first.',
+  'no-model': 'Choose a model for this chat first.',
   restarting: 'The session is restarting. Try again in a moment.',
   'prompt-gone': 'That question is no longer waiting for an answer.',
   'bad-answer': 'That answer does not fit the question.',
@@ -661,7 +664,7 @@ export class AgentSession {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     const chosen = pick === null ? null : this.checkedPick(pick.modelChoice, pick.effort);
     const current = this.session;
-    if (current && this.unused(current)) {
+    if (current && current.foreignEngine === undefined && this.unused(current)) {
       this.clearRefusal();
       if (chosen) await this.configure(chosen.modelChoice, chosen.effort);
       this.warm();
@@ -682,7 +685,7 @@ export class AgentSession {
 
   // A new chat's claude starts before its first message, so its skills are listed by the time the user types "/".
   private warm(pick: ChatPick | null = null): void {
-    if (this.closed || this.terminalOpen || this.terminating || this.transport || this.refused) return;
+    if (this.closed || this.terminalOpen || this.terminating || this.transport || this.refused || (pick ?? this.nextPick()) === null) return;
     try {
       if (!this.session || this.session.status === 'ended') this.begin(pick);
       this.spawn();
@@ -743,10 +746,12 @@ export class AgentSession {
 
   async configure(modelChoice: string | null, effort: string | null): Promise<void> {
     const pick = this.checkedPick(modelChoice, effort);
+    // An effort alone names no model, and with nothing to inherit a chat would start on none.
+    if (pick.modelChoice === null && this.nextPick() === null) throw new SessionError('no-model');
     if (this.terminating) throw new SessionError('restarting');
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.isIdle()) throw new SessionError('busy-configure');
-    if (!this.session || this.session.status === 'ended') this.begin();
+    if (!this.session || this.session.status === 'ended') this.begin(this.nextPick() === null ? pick : null);
     const session = this.session;
     if (!session || (session.engine === pick.engine && session.modelChoice === pick.modelChoice && session.effort === pick.effort)) return;
     // The conversation lives in its engine: once the chat is in use, another engine needs a new chat; a chat of an unknown engine never changes.
@@ -818,8 +823,8 @@ export class AgentSession {
   }
 
   private begin(pick: ChatPick | null = null): void {
-    const from = this.session ?? this.previous;
-    const chosen: ChatPick = pick ?? { engine: from?.engine ?? 'claude', modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium' };
+    const chosen = pick ?? this.nextPick();
+    if (chosen === null) throw new SessionError('no-model');
     const session: SessionRecord = {
       id: randomUUID(), engine: chosen.engine, engineSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
       modelChoice: chosen.modelChoice, effort: chosen.effort, cliVersion: null,
@@ -828,6 +833,19 @@ export class AgentSession {
     this.persist(() => this.options.store.saveSession(session));
     this.setActive(session.id);
     this.reset(session);
+  }
+
+  /** What a new chat starts with: the open or previous chat's engine, model and effort, else the default model; null when nothing names one. */
+  nextPick(): ChatPick | null {
+    // A chat of an engine this CodeRay does not know, or does not run, names nothing it can start.
+    const chat = [this.session, this.previous].find((candidate): candidate is SessionRecord =>
+      candidate !== null && candidate.foreignEngine === undefined && this.engines.get(candidate.engine) !== undefined);
+    const from = chat ?? this.options.defaultModel ?? null;
+    if (from === null) return null;
+    // An earlier Claude chat with no model or effort ran on claude's defaults; the chat after it names them, as it always has.
+    return from.engine === 'claude'
+      ? { engine: 'claude', modelChoice: from.modelChoice ?? 'sonnet', effort: from.effort ?? 'medium' }
+      : { engine: from.engine, modelChoice: from.modelChoice, effort: from.effort };
   }
 
   private setActive(id: string): void {
@@ -890,8 +908,9 @@ export class AgentSession {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
     if (!this.isIdle()) throw new SessionError('busy-terminal');
-    this.refuseForeign(this.session && this.session.status !== 'ended' ? this.session : null);
-    if (!ENGINE_CAPABILITIES[(this.session ?? this.previous)?.engine ?? 'claude'].terminalView) throw new SessionError('no-terminal');
+    const open = this.session && this.session.status !== 'ended' ? this.session : null;
+    this.refuseForeign(open);
+    if (!ENGINE_CAPABILITIES[(open ?? this.nextPick())?.engine ?? 'claude'].terminalView) throw new SessionError('no-terminal');
     await this.terminate('close');
     this.clearRefusal();
     if (!this.session || this.session.status === 'ended') this.begin();

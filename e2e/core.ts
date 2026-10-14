@@ -56,7 +56,7 @@ async function spawnCore(base: string, args: string[], env: NodeJS.ProcessEnv): 
   mkdirSync(userHome, { recursive: true });
   const child = spawn(process.execPath, ['--import', 'tsx', join(REPO, 'packages/core/src/main.ts'), ...args], {
     cwd: REPO,
-    env: { ...process.env, HOME: userHome, ...env },
+    env: { ...process.env, HOME: userHome, IDE_DEFAULT_MODEL: 'sonnet', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
