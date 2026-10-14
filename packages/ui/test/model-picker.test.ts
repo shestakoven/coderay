@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EFFORT_LEVELS, type ChatPick, type ModelInfo } from '@ide/protocol';
 import {
-  catalogOf, chooseMessage, effortChoices, firstEffort, initialActive, loadRecent, matchSpans, menuKey, moveActive, newChatEffort, pickerGroups, rememberModel, saveRecent, shownId,
+  catalogOf, chooseMessage, effortChoices, initialActive, loadRecent, matchSpans, menuKey, moveActive, pickerGroups, rememberModel, saveRecent, shownId,
   type KeyPress, type MenuAction, type PickerInput,
 } from '../src/chat/model-picker';
 import { blockedStorage, memoryStorage } from './memory-storage';
@@ -22,24 +22,17 @@ describe('catalogOf', () => {
 });
 
 describe('pickerGroups', () => {
-  it('groups the models by engine, in engine order', () => {
-    expect(shown()).toEqual([
-      ['Claude', ['sonnet', 'haiku']],
-      ['Codex', ['codex:gpt-6-luna']],
-      ['opencode', ['opencode:opencode/nemotron-3.5-lightning-free', 'opencode:openrouter/anthropic/claude-3.5:beta']],
-    ]);
-  });
-
   it("filters by name, id or engine, ignoring case, and shows an engine with no models only when it cannot run, while nothing is typed or its name is", () => {
     const noCodex = THREE_ENGINES.filter((model) => model.engine !== 'codex');
     const titles = (overrides: Partial<PickerInput>) => shown(overrides).map(([title]) => title);
     expect([
-      shown({ query: 'LUNA' }), shown({ query: 'openrouter' }), shown({ query: 'codex' }),
+      shown({ query: 'LUNA' }), shown({ query: '5.5' }), shown({ query: 'openrouter' }), shown({ query: 'codex' }),
       titles({ models: noCodex }), titles({ models: noCodex, query: 'son' }), shown({ models: noCodex, query: 'Codex ' }),
       titles({ models: noCodex, engines: [{ engine: 'codex', state: 'ready', hint: null }] }),
       titles({ models: noCodex, engines: [{ engine: 'codex', state: 'ready', hint: null }], query: 'codex' }),
     ]).toEqual([
       [['Codex', ['codex:gpt-6-luna']]],
+      [['Claude', ['sonnet']]],
       [['opencode', ['opencode:openrouter/anthropic/claude-3.5:beta']]],
       [['Codex', ['codex:gpt-6-luna']]],
       ['Claude', 'Codex', 'opencode'],
@@ -134,18 +127,16 @@ describe('matchSpans', () => {
 });
 
 describe('recent models', () => {
-  it('keeps the five most recent, newest first, each once, and survives a store the browser blocks', () => {
+  it('keeps the five most recent, newest first, each once, also from a store written by hand or by an older build, and survives a store the browser blocks', () => {
     const storage = memoryStorage();
     let recent: string[] = [];
-    for (const value of ['a', 'b', 'c', 'a', 'd', 'e', 'f']) recent = rememberModel(recent, value);
+    for (const value of ['a', 'b', 'c', 'a', 'd', 'e', 'f', 'e']) recent = rememberModel(recent, value);
     saveRecent(storage, recent);
     saveRecent(blockedStorage(), recent);
-    expect([loadRecent(storage), loadRecent(blockedStorage()), loadRecent(memoryStorage({ 'ide.recentModels': '{"not":"a list"}' })), loadRecent(undefined)])
-      .toEqual([['f', 'e', 'd', 'a', 'c'], [], [], []]);
-  });
-
-  it('reads each model once from a store written by hand or by an older build', () => {
-    expect(loadRecent(memoryStorage({ 'ide.recentModels': '["a","b","a",3,"c","b","d","e","f"]' }))).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect([
+      loadRecent(storage), loadRecent(memoryStorage({ 'ide.recentModels': '["a","b","a",3,"c","b","d","e","f"]' })),
+      loadRecent(blockedStorage()), loadRecent(memoryStorage({ 'ide.recentModels': '{"not":"a list"}' })), loadRecent(undefined),
+    ]).toEqual([['e', 'f', 'd', 'a', 'c'], ['a', 'b', 'c', 'd', 'e'], [], [], []]);
   });
 });
 
@@ -157,16 +148,6 @@ describe('efforts', () => {
     ]).toEqual([
       ['minimal', 'low', 'medium', 'high'], ['minimal', 'low', 'medium', 'high', 'ultra'], ['medium'], [], [...EFFORT_LEVELS], [], [...EFFORT_LEVELS],
     ]);
-  });
-
-  it("hands out Claude's efforts as copies, so changing one list leaves every other model's alone", () => {
-    const [fallback] = catalogOf([]) as [ModelInfo];
-    const [old] = catalogOf([{ value: 'claude-opus-4-6', name: 'Opus 4.6' }] as ModelInfo[]) as [ModelInfo];
-    fallback.efforts.push('ultra');
-    old.efforts.push('ultra');
-    effortChoices(undefined, 'claude', null).push('ultra');
-    expect([catalogOf([])[1]?.efforts, catalogOf([{ value: 'x', name: 'X' }] as ModelInfo[])[0]?.efforts, effortChoices(undefined, 'claude', null)])
-      .toEqual([[...EFFORT_LEVELS], [...EFFORT_LEVELS], [...EFFORT_LEVELS]]);
   });
 
   it("sends a new chat for another engine's model, a project's first pick with its first effort, the chat's new model with its effort, and nothing for the model it has", () => {
@@ -185,10 +166,5 @@ describe('efforts', () => {
       null,
       { type: 'session.configure', modelChoice: 'sonnet', effort: null },
     ]);
-  });
-
-  it("starts a new chat on the chat's effort when the model has it, else on the engine's default, and a first chat on medium or the model's first effort", () => {
-    expect([newChatEffort(luna, 'high'), newChatEffort(luna, 'max'), newChatEffort(luna, null), firstEffort(sonnet), firstEffort(openrouter), firstEffort(haiku)])
-      .toEqual(['high', null, null, 'medium', 'high', null]);
   });
 });

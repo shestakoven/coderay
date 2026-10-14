@@ -1,6 +1,9 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { ChatPick } from '@ide/protocol';
+import { initialChatState } from '../src/chat/chat-state';
+import { ChatPanel } from '../src/chat/ChatPanel';
+import { ImageStore } from '../src/chat/image-store';
 import { ModelControls, ModelMenu } from '../src/chat/ModelControls';
 import { ENGINE_STATES, THREE_ENGINES } from './model-fixtures';
 
@@ -24,10 +27,11 @@ describe('ModelMenu', () => {
       .toEqual([[3, 3], [0, 0]]);
   });
 
-  it('marks the current model, starts the keyboard on it and points the search box at it', () => {
+  it('marks the current model and no other, starts the keyboard on it and points the search box at it', () => {
     const html = menu(false);
     const selected = /<div id="([^"]+)" role="option" aria-selected="true"[^>]*>(.*?)<\/div>/.exec(html);
-    expect([selected?.[2]?.includes('Sonnet 5.5'), selected?.[2]?.includes('<svg'), html.includes(`aria-activedescendant="${selected?.[1]}"`)]).toEqual([true, true, true]);
+    expect([selected?.[2]?.includes('Sonnet 5.5'), selected?.[2]?.includes('<svg'), html.match(/class="model-check"><svg/g)?.length, html.includes(`aria-activedescendant="${selected?.[1]}"`)])
+      .toEqual([true, true, 1, true]);
   });
 
   it('gives a model shown both among the recent ones and in its engine two options of their own, and starts on the one in its engine', () => {
@@ -67,5 +71,24 @@ describe('ModelControls', () => {
       texts(chosen, 'model-button-label'), texts(none, 'model-button-label'), [chosen, none, claudeDefault].map((html) => html.includes('model-button needed')),
       chosen.includes('aria-expanded="false"'), chosen.includes('aria-haspopup="listbox"'),
     ]).toEqual([['Sonnet 5.5'], ['Select model'], [false, true, false], true, true]);
+  });
+});
+
+describe('ChatPanel', () => {
+  it('asks for a model before the first message when the core says a chat needs one, and not when a core older than the engines says nothing', () => {
+    const composer = (next: ChatPick | null | undefined) => {
+      const html = renderToStaticMarkup(
+        <ChatPanel
+          chat={initialChatState} chats={{ activeId: null, sessions: [], models: [], engines: [], next }} send={() => true} onClearFilter={() => undefined}
+          onDismissError={() => undefined} prompts={[]} promptAnchored={false} onAnswerPrompt={() => undefined} onFocusTargets={() => undefined} dialog={null}
+          view="chat" onView={() => undefined} terminal={null} images={new ImageStore(() => true)} imagesLive={false}
+        />,
+      );
+      return [/<textarea[^>]*placeholder="([^"]*)"/.exec(html)?.[1], /<button class="composer-action send"[^>]*title="([^"]*)"/.exec(html)?.[1]];
+    };
+    expect([composer(null), composer(undefined)]).toEqual([
+      ['Choose a model to start the agent', 'Choose a model first'],
+      ['Message the agent (Enter sends, Shift+Enter adds a line)', 'Send (Enter)'],
+    ]);
   });
 });

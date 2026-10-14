@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { startCore, type Core } from './core';
-import { chatConversation, chooseModel } from './helpers';
+import { chooseModel, flagOf, hasFlag } from './helpers';
 
 let core: Core | undefined;
 
@@ -91,34 +91,47 @@ test('on a project with no chat yet, the agent starts only after a model is chos
   await expect(page.getByPlaceholder(/Message the agent/)).toBeFocused();
   await expect(button).toHaveText(/Sonnet 5\.5/);
   await expect(page.getByLabel('Effort')).toHaveValue('medium');
-  expect(chatConversation(core.record)).toBeUndefined();
   await page.keyboard.press('Enter');
   await expect(page.locator('.msg.assistant')).toContainText('OK');
-  const record = readFileSync(core.record, 'utf8');
-  expect([record.includes('--model=sonnet'), record.includes('--effort=medium')]).toEqual([true, true]);
+  // Every chat agent the core started, oldest first: one, on the model chosen for it.
+  const agents = readFileSync(core.record, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
+    const { argv } = JSON.parse(line) as { argv?: string[] };
+    return argv && hasFlag(argv, '--session-id') ? [[flagOf(argv, '--model'), flagOf(argv, '--effort')]] : [];
+  });
+  expect(agents).toEqual([['sonnet', 'medium']]);
 });
 
 test('the model menu filters as you type, moves with the keys, says when nothing matches and gives the focus back, at the narrowest chat panel', async ({ page }) => {
   // The chat panel at its minimum width (LIMITS.right.min, 280 px) in Playwright's default 1280×720 window.
   await page.addInitScript(() => localStorage.setItem('ide.panel-sizes', JSON.stringify({ left: 264, right: 280, bottom: 200 })));
-  core = await startCore('multi-turn');
+  // A model no list names shows as its id, which may be as long as claude takes.
+  const longId = 'claude-opus-5-5-20261013-extended-preview[1m]';
+  core = await startCore('multi-turn', { IDE_DEFAULT_MODEL: longId });
   await page.goto(core.url);
   await expect(page.getByText('core connected')).toBeVisible();
-  expect(await page.locator('.composer-actions').evaluate((row) => row.scrollWidth - row.clientWidth)).toBeLessThanOrEqual(0);
   const button = page.locator('.model-button');
+  await expect(button).toHaveText(longId);
+  // The row ends at its right edge, so what does not fit would spill out on the left, where scrollWidth does not see it.
+  const spilled = await page.locator('.composer-actions').evaluate((row) => {
+    const box = row.getBoundingClientRect();
+    return [...row.children].map((child) => child.getBoundingClientRect()).filter((rect) => rect.width > 0 && (rect.left < box.left - 0.5 || rect.right > box.right + 0.5)).length;
+  });
+  expect(spilled).toBe(0);
   await button.click();
   const menu = page.getByTestId('model-menu');
   const [menuBox, composerBox] = [await menu.boundingBox(), await page.locator('.composer').boundingBox()];
   expect(menuBox!.x >= composerBox!.x && menuBox!.x + menuBox!.width <= composerBox!.x + composerBox!.width).toBe(true);
   await expect(menu.locator('.model-engine')).toHaveText(['Claude']);
   const selected = menu.getByRole('option', { selected: true });
-  await expect(selected).toContainText('Sonnet 5.5');
+  await expect(selected).toContainText(longId);
   await page.keyboard.press('ArrowDown');
+  await expect(selected).toContainText(longId);
+  await page.keyboard.press('ArrowUp');
   await expect(selected).toContainText('Haiku 4.5');
   await page.keyboard.press('Home');
   await expect(selected).toContainText('Fable 5.1');
   await page.keyboard.press('End');
-  await expect(selected).toContainText('Haiku 4.5');
+  await expect(selected).toContainText(longId);
   await page.keyboard.type('zzz');
   await expect(menu.locator('.model-empty')).toHaveText('No model matches “zzz”');
   await page.keyboard.press('Escape');
@@ -146,7 +159,12 @@ test('the model menu gives way to another menu, takes a click on a model, and op
   await menu.getByRole('option', { name: /Opus 5\.5/ }).click();
   await expect(menu).toHaveCount(0);
   await expect(button).toHaveText(/Opus 5\.5/);
-  await expect(page.getByPlaceholder(/Message the agent/)).toBeFocused();
+  const composer = page.getByPlaceholder(/Message the agent/);
+  await expect(composer).toBeFocused();
+  // The closed model menu no longer holds back the skill menu.
+  await page.keyboard.type('/');
+  await expect(page.locator('[data-testid="skill-menu"], [data-testid="skill-menu-empty"]')).toBeVisible();
+  await composer.fill('');
   await expect(button).toBeEnabled();
   await button.focus();
   await page.keyboard.press('h');
