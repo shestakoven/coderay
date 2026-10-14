@@ -116,7 +116,7 @@ function Canvas({ view, focus: selectedFocus, selection, direction, steps, revie
       },
     );
     return () => { live = false; };
-  }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [signature]); // eslint-disable-line react-hooks/exhaustive-deps -- the layout is computed from the shape the signature spells out; view and direction are folded into it
 
   const reduced = reducedMotion();
   const laidOut = layout === null ? null : layout.positions;

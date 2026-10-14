@@ -123,7 +123,7 @@ function PartDetails({ graph, plan, part, question, reviewed, selectedPath, onAc
                     </button>
                     <span className="pf-note">
                       {file.added > 0 && <i className="op-add">+{file.added}</i>} {file.removed > 0 && <i className="op-del">−{file.removed}</i>}
-                      {fileOutsidePlan(file, plan !== null) && <span className="rm-file-outside">outside the plan</span>}
+                      {!part.outside && fileOutsidePlan(file, plan !== null) && <span className="rm-file-outside">outside the plan</span>}
                     </span>
                   </span>
                 </li>

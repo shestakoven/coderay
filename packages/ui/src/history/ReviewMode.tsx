@@ -30,6 +30,7 @@ interface Props {
   chatItems: Record<string, ChatItem | undefined>;
   requestDiff: (path: string, before: string | null, after: string | null) => string | null;
   requestGraph: (files: ReviewGraphFile[], planId: string | null) => string | null;
+  forgetResult: (requestId: string) => void;
   send: (message: ClientMessage) => boolean;
   root: string;
   onShowOnMap: (paths: string[]) => void;
@@ -49,11 +50,13 @@ const COMPACT = 720;
 const PREFETCH = 2;
 const GRAPH_DEBOUNCE = 300;
 const GRAPH_RETRY = 2000;
+const GRAPH_ANSWER_TIMEOUT = 20000;
 const NOT_CONNECTED = 'Not connected to the core.';
+const NO_ANSWER = 'The core did not answer the request for the map. Switch to Diff and back to try again.';
 const EMPTY_GRAPH: ReviewGraph = { parts: [], links: [], partial: null };
 const diffKey = (file: ReviewItem): string => `${file.path}:${file.before}:${file.after}`;
 
-export function ReviewMode({ history, plans, results, chatItems, requestDiff, requestGraph, send, root, onShowOnMap, onShowInChat, onOpenChat, onExit, active }: Props) {
+export function ReviewMode({ history, plans, results, chatItems, requestDiff, requestGraph, forgetResult, send, root, onShowOnMap, onShowInChat, onOpenChat, onExit, active }: Props) {
   const sections = useMemo(() => reviewSections(history, plans), [history, plans]);
   const finished = useMemo(() => { const plan = planOnMap(plans); return plan?.status === 'done' ? plan : null; }, [plans]);
   const [decisions, setDecisions] = useState<Decisions>(() => ({ reviewed: loadReviewed(window.localStorage, root), requested: loadRequested(window.localStorage, root) }));
@@ -99,16 +102,16 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
   const files = useMemo(() => sectionFiles(sections), [sections]);
   const latest = useRef({ files, sections });
   latest.current = { files, sections };
-  const mapPlan = useMemo(() => planOnMap(plans), [plans]);
   const showMap = prefs.view === 'map' && sections.length > 0;
   const reviewedPaths = useMemo(
-    () => new Set(files.filter((file) => !isOpen(fileState(decisions.reviewed, decisions.requested, file))).map((file) => file.path)),
+    () => new Set(files.filter((file) => !isOpen(fileState(decisions.reviewed, decisions.requested, file))).flatMap((file) => (file.renamedFrom ? [file.path, file.renamedFrom] : [file.path]))),
     [files, decisions],
   );
 
   const graphFiles = useMemo(() => graphFilesOf(sections), [sections]);
   const planId = useMemo(() => sections.find((section) => section.planId !== null)?.planId ?? null, [sections]);
-  const planVersion = useMemo(() => (planId === null ? null : latestPlanVersion(plans, planId)?.version ?? null), [plans, planId]);
+  const mapPlan = useMemo(() => (planId === null ? null : latestPlanVersion(plans, planId)), [plans, planId]);
+  const planVersion = mapPlan?.version ?? null;
   const graphWanted = showMap && graphFiles.length > 0;
   const wantedKey = useMemo(() => graphKey(graphFiles, planId === null ? null : `${planId}@${planVersion ?? ''}`), [graphFiles, planId, planVersion]);
   const asking = useRef({ graphFiles, planId, requestGraph });
@@ -125,8 +128,29 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
   }, [graphWanted, wantedKey, graphRequest?.key]);
   const answer = graphRequest?.requestId ? results[graphRequest.requestId] : undefined;
   if (answer?.graph) lastGraph.current = answer.graph;
-  const graphFailure = graphRequest === null ? null : graphRequest.requestId === null ? NOT_CONNECTED : answer?.error ?? null;
-  const graphSettled = graphRequest !== null && graphRequest.key === wantedKey && (graphRequest.requestId === null || answer !== undefined);
+  const pendingId = graphRequest?.requestId ?? null;
+  const [stalled, setStalled] = useState<string | null>(null);
+  const answered = answer !== undefined;
+  useEffect(() => {
+    if (pendingId === null || answered) return;
+    const timer = window.setTimeout(() => setStalled(pendingId), GRAPH_ANSWER_TIMEOUT);
+    return () => window.clearTimeout(timer);
+  }, [pendingId, answered]);
+  const noAnswer = pendingId !== null && stalled === pendingId && !answered;
+  const graphFailure = graphRequest === null ? null : graphRequest.requestId === null ? NOT_CONNECTED : answer?.error ?? (noAnswer ? NO_ANSWER : null);
+  const graphSettled = graphRequest !== null && graphRequest.key === wantedKey && (graphRequest.requestId === null || answered || noAnswer);
+  // Graph answers are kept by request id: one that a newer request replaced is not needed any more.
+  const shownId = useRef<string | null>(null);
+  useEffect(() => {
+    const previous = shownId.current;
+    shownId.current = pendingId;
+    if (previous !== null && previous !== pendingId) forgetResult(previous);
+  }, [pendingId, forgetResult]);
+  const forgetting = useRef(forgetResult);
+  forgetting.current = forgetResult;
+  useEffect(() => () => {
+    if (shownId.current !== null) forgetting.current(shownId.current);
+  }, []);
   // Showing the map anew asks again: an answer that failed or never came is not waited for.
   useEffect(() => {
     if (showMap) setGraphRequest(null);
@@ -330,7 +354,7 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
       const inList = event.target instanceof HTMLElement && event.target.closest('.rv-list') !== null;
       if (key === 'j' || (key === 'ArrowDown' && inList)) setSelected(step(navigable, selected, 1));
       else if (key === 'k' || (key === 'ArrowUp' && inList)) setSelected(step(navigable, selected, -1));
-      else if (key === 'a' && current) accept([current.file], true);
+      else if (key === 'a' && current) accept([current.file], !showMap);
       else if (key === 'u') {
         if (toast?.undo) {
           const run = toast.undo;
@@ -368,8 +392,9 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
   }, []);
   const selectPath = useCallback((path: string | null): void => {
     if (path === null) return;
-    const section = latest.current.sections.find((entry) => entry.files.some((file) => file.path === path));
-    if (section) select({ group: section.key, path });
+    const section = latest.current.sections.find((entry) => entry.files.some((file) => file.path === path || file.renamedFrom === path));
+    const file = section?.files.find((entry) => entry.path === path || entry.renamedFrom === path);
+    if (section && file) select({ group: section.key, path: file.path });
   }, [select]);
   const filesButton = (
     <button className="rv-files-button" onClick={() => setDrawer(true)} aria-label="Show the file list">
@@ -441,7 +466,7 @@ export function ReviewMode({ history, plans, results, chatItems, requestDiff, re
               active={active && !modal && !drawer}
               send={send}
               onSelectPath={selectPath}
-              onAccept={(paths) => accept(files.filter((file) => paths.includes(file.path)), false)}
+              onAccept={(paths) => accept(files.filter((file) => paths.includes(file.path) || (file.renamedFrom !== null && paths.includes(file.renamedFrom))), false)}
               onOpenChat={onOpenChat}
             />
           </div>

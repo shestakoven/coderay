@@ -52,6 +52,14 @@ describe('graphFilesOf', () => {
     const many = Array.from({ length: MAX_REVIEW_GRAPH_FILES + 1 }, (_, i) => ({ path: `f${i}.ts` }));
     expect(graphFilesOf([section('p/s1', 's1', many)])).toHaveLength(MAX_REVIEW_GRAPH_FILES);
   });
+
+  it('sends a moved file as its old path going away with the content it moved and its new path appearing', () => {
+    const moved = { key: 'p/s1', stepKey: 's1', files: [{ path: 'new.ts', renamedFrom: 'old.ts', reverted: false, before: 'h', after: 'h', added: 0, removed: 0 }] } as never;
+    expect(graphFilesOf([moved])).toEqual([
+      { path: 'old.ts', before: 'h', after: null, step: 's1', external: false, added: 0, removed: 0 },
+      { path: 'new.ts', before: null, after: 'h', step: 's1', external: false, added: 0, removed: 0 },
+    ]);
+  });
 });
 
 describe('graphKey', () => {

@@ -17,13 +17,21 @@ const FOLLOW_UP_STEP = '(follow-up)';
 
 // Reverted files are back to how they were: they would draw links that no longer exist.
 // A follow-up section has an empty step key, which the request refuses; any non-null step marks a file as in-plan.
+// A moved file is sent as its old path going away and the new path appearing: the core compares the two sides by path.
 export function graphFilesOf(sections: ReviewSection[]): ReviewGraphFile[] {
   return sections
-    .flatMap((section) => section.files
-      .filter((file) => !file.reverted)
-      .map((file): ReviewGraphFile => ({
-        path: file.path, before: file.before, after: file.after, step: section.stepKey === '' ? FOLLOW_UP_STEP : section.stepKey, external: section.key === 'external', added: file.added, removed: file.removed,
-      })))
+    .flatMap((section) => {
+      const step = section.stepKey === '' ? FOLLOW_UP_STEP : section.stepKey;
+      const external = section.key === 'external';
+      return section.files
+        .filter((file) => !file.reverted)
+        .flatMap((file): ReviewGraphFile[] => (file.renamedFrom
+          ? [
+            { path: file.renamedFrom, before: file.after, after: null, step, external, added: 0, removed: 0 },
+            { path: file.path, before: null, after: file.after, step, external, added: file.added, removed: file.removed },
+          ]
+          : [{ path: file.path, before: file.before, after: file.after, step, external, added: file.added, removed: file.removed }]));
+    })
     .slice(0, MAX_REVIEW_GRAPH_FILES);
 }
 

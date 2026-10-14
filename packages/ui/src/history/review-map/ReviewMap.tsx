@@ -143,7 +143,7 @@ function ReviewMapView({ graph, loading, error, plan, root, reviewed, selectedPa
     if (id === null) return;
     setSelection((current) => (current?.t === 'part' && current.id === id ? current : { t: 'part', id }));
     setEditing((current) => (current === targetKey({ t: 'part', id }) ? current : null));
-  }, [selectedPath, ready]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedPath, ready]); // eslint-disable-line react-hooks/exhaustive-deps -- follows the file the list selects once a graph is there; a newer graph must not pull the selection back
 
   const select = useCallback((target: Target | null) => {
     setSelection(target);

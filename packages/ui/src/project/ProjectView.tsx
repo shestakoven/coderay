@@ -470,6 +470,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 chatItems={chat.items}
                 requestDiff={requestDiff}
                 requestGraph={requestGraph}
+                forgetResult={(requestId) => dispatchHist({ type: 'forget', requestId })}
                 send={send}
                 root={project.root}
                 onOpenChat={() => {
