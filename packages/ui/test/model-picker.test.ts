@@ -45,6 +45,14 @@ describe('pickerGroups', () => {
     ]);
   });
 
+  it('shows only Claude when only Claude lists models, whether the core sent no engine status or only its own', () => {
+    const claudeOnly = THREE_ENGINES.filter((model) => model.engine === 'claude');
+    expect([shown({ models: claudeOnly, engines: [] }), shown({ models: claudeOnly, engines: [{ engine: 'claude', state: 'ready', hint: null }] })]).toEqual([
+      [['Claude', ['sonnet', 'haiku']]],
+      [['Claude', ['sonnet', 'haiku']]],
+    ]);
+  });
+
   it('locks the models of other engines only on a chat in use, and none before any chat', () => {
     const locked = (overrides: Partial<PickerInput>) => pickerGroups(input(overrides)).flatMap((group) => group.rows.filter((row) => row.locked).map((row) => row.model.engine));
     expect([locked({ started: true }), locked({ started: false }), locked({ started: true, engine: null })]).toEqual([['codex', 'opencode', 'opencode'], [], []]);
