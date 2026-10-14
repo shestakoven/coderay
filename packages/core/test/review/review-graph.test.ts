@@ -175,6 +175,26 @@ describe('buildReviewGraph', () => {
     expect(graph.links.map((link) => [link.from, link.to, link.state])).toEqual([['api', 'unassigned', 'broken']]);
   });
 
+  it('treats the old path of a renamed file as a ghost: an importer that still names it is broken, one moved to the new path keeps its link', async () => {
+    const graph = await run({
+      changed: [
+        file('app/utils/old_helpers.py', 'h1', null, 's1', { added: 0 }),
+        file('app/utils/helpers.py', null, 'h1', 's1', { added: 0 }),
+        file('app/services/user_service.py', 'u0', 'u1', 's1'),
+      ],
+      current: [
+        indexed('app/api/routes.py', 'python', ['app.utils.old_helpers']),
+        indexed('app/services/user_service.py', 'python', ['app.utils.helpers']),
+        indexed('app/utils/helpers.py', 'python', []),
+      ],
+      readBefore: reader({ 'app/utils/old_helpers.py': 'X = 1\n', 'app/services/user_service.py': 'from app.utils.old_helpers import X\n' }),
+      readNow: reader({ 'app/api/routes.py': 'from app.utils.old_helpers import X\n' }),
+    });
+    expect(graph.links.map((link) => [link.from, link.to, link.state])).toEqual([['api', 'utils', 'broken'], ['services', 'utils', 'existing']]);
+    expect(graph.links[0]!.evidence).toEqual([{ path: 'app/api/routes.py', line: 1, text: 'from app.utils.old_helpers import X' }]);
+    expect(graph.parts.find((part) => part.id === 'utils')).toMatchObject({ status: 'modified', files: [{ path: 'app/utils/old_helpers.py', op: '-' }, { path: 'app/utils/helpers.py', op: '+' }] });
+  });
+
   it('says so when a changed file is in a language the map does not read, and draws no link for it', async () => {
     const graph = await run({ changed: [file('cmd/main.go', null, 'h1')], current: [] });
     expect(graph.links).toEqual([]);

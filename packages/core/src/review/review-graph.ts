@@ -119,7 +119,15 @@ export async function buildReviewGraph(input: ReviewGraphInput): Promise<ReviewG
   const nowEdges = computeFileEdges(current, adapters, gone).filter(drawn);
   const beforeEdges = computeFileEdges(before, adapters).filter(drawn);
   const owner = new Map(components.flatMap((component) => component.files.map((path) => [path, component.id] as const)));
-  const partOf = (path: string): string => owner.get(path) ?? (goneSet.has(path) ? nearest(path, owner) : UNASSIGNED);
+  const placed = new Map<string, string>();
+  const partOf = (path: string): string => {
+    let id = placed.get(path);
+    if (id === undefined) {
+      id = owner.get(path) ?? (goneSet.has(path) ? nearest(path, owner) : UNASSIGNED);
+      placed.set(path, id);
+    }
+    return id;
+  };
   const nowLinks = lift(nowEdges, partOf);
   const beforeLinks = lift(beforeEdges, partOf);
   const titleOf = (id: string): string => components.find((component) => component.id === id)?.name ?? (id === UNASSIGNED ? 'Unassigned files' : id);
