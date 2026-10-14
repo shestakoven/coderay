@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { EFFORT_LEVELS, type ChatPick, type ModelInfo } from '@ide/protocol';
 import {
-  catalogOf, chooseMessage, effortChoices, initialActive, loadRecent, matchSpans, menuKey, moveActive, pickerGroups, rememberModel, saveRecent, shownId,
+  catalogOf, chooseMessage, effortChoices, indexOfKey, initialActive, loadRecent, matchSpans, menuKey, moveActive, pickerGroups, rememberModel, rowKeys, saveRecent, shownId,
   type KeyPress, type MenuAction, type PickerInput,
 } from '../src/chat/model-picker';
 import { blockedStorage, memoryStorage } from './memory-storage';
@@ -81,9 +81,13 @@ describe('pickerGroups', () => {
 });
 
 describe('keyboard', () => {
-  it("starts on the current model in its engine's list, not among the recent ones, and on the first row otherwise", () => {
+  it("starts on the current model in its engine's list, not among the recent ones, and on the first row otherwise; keeps a row by its group and model, falling back to the first once it is gone", () => {
     const groups = pickerGroups(input({ recent: ['haiku'] }));
-    expect([initialActive(groups, 'haiku'), initialActive(groups, 'gone'), initialActive(groups, null)]).toEqual([2, 0, 0]);
+    const keys = rowKeys(groups);
+    expect([
+      initialActive(groups, 'haiku'), initialActive(groups, 'gone'), initialActive(groups, null),
+      keys.slice(0, 3), indexOfKey(keys, 'claude:haiku'), indexOfKey(keys, 'recent:haiku'), indexOfKey(keys, 'claude:gone'), indexOfKey(keys, null), indexOfKey([], 'claude:haiku'),
+    ]).toEqual([2, 0, 0, ['recent:haiku', 'claude:sonnet', 'claude:haiku'], 2, 0, 0, 0, 0]);
   });
 
   it('moves one row with the arrows, eight with the page keys and to either end with Home and End, never past an end, and ignores other keys', () => {

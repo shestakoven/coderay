@@ -110,6 +110,12 @@ export function matchSpans(text: string, query: string): { text: string; hit: bo
   return spans;
 }
 
+/** Each row's key, in menu order: its group and model, as a model can show both among the recent ones and in its engine. */
+export const rowKeys = (groups: PickerGroup[]): string[] => groups.flatMap((group) => group.rows.map((row) => `${group.id}:${row.model.value}`));
+
+/** Where the active row is now: the row with its key, else, once that row is gone or before any, the first. */
+export const indexOfKey = (keys: string[], key: string | null): number => (key === null ? 0 : Math.max(0, keys.indexOf(key)));
+
 /** Where the keyboard starts: the current model in its engine's list, else the first row. */
 export function initialActive(groups: PickerGroup[], current: string | null): number {
   return Math.max(0, groups.flatMap((group) => group.rows).findLastIndex((row) => row.model.value === current));

@@ -8,7 +8,8 @@ export function useDismiss(ref: RefObject<HTMLElement | null>, onClose: (reason:
       if (!ref.current?.contains(target) && target.closest('[data-menu-anchor]')?.getAttribute('aria-expanded') !== 'true') onClose('outside');
     };
     const key = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') {
+      // An Escape that ends an input method's composition is the composition's own.
+      if (event.key === 'Escape' && !event.isComposing) {
         event.stopPropagation();
         onClose('escape');
       }

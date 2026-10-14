@@ -70,6 +70,7 @@ html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(-
 
 button { background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-1); padding: 3px 10px; font: inherit; cursor: pointer; }
 button:disabled { opacity: 0.45; cursor: default; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .badge { padding: 1px 8px; border-radius: 10px; font-size: calc(11px * var(--fs-scale, 1)); font-weight: 600; }
 .badge.plan { background: var(--selection); color: var(--fg); border: 1px solid var(--accent); }
 .no-token { padding: 24px; color: var(--muted); }
@@ -429,7 +430,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .model-state.missing, .model-state.error { color: var(--error); border-color: rgba(247, 84, 100, 0.5); }
 .model-state.old, .model-state.signed-out { color: var(--warn); border-color: rgba(242, 197, 92, 0.45); }
 .model-hint { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
-.model-row { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--r-1); cursor: pointer; }
+.model-row { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--r-1); cursor: pointer; }
 .model-row.sel { background: var(--selection); }
 .model-check { display: grid; flex: none; place-items: center; width: 14px; color: var(--accent-hover); }
 .model-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -439,6 +440,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .model-row.locked .model-name { color: var(--muted); }
 .model-row.locked.sel .model-name, .model-row.locked.sel .model-new { color: var(--fg); }
 .model-empty { padding: 14px 10px; color: var(--muted); text-align: center; }
+.model-empty:empty { padding: 0; }
 .model-foot { display: flex; flex: none; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-xs); }
 .model-foot kbd { margin-right: 3px; }
 /* In the narrowest chat panel the name is what tells models apart; the full id stays in the row's tooltip. */
@@ -613,7 +615,7 @@ body.resizing .resizer { pointer-events: auto; }
 /* Agent view: CodeRay's chat or claude's own terminal interface */
 .agent-view { display: flex; gap: 2px; padding: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; flex: none; }
 .chat-header .agent-view button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--muted); padding: 2px 8px; border-radius: var(--r-1); font-size: calc(12px * var(--fs-scale, 1)); line-height: 18px; }
-.chat-header .agent-view button:hover:not(.on) { color: var(--fg); }
+.chat-header .agent-view button:hover:not(.on):not(:disabled) { color: var(--fg); }
 .chat-header .agent-view button.on { background: var(--raised); color: var(--fg); }
 .chat-header .agent-view button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* FitAddon measures the host's computed size, so the gutter is an inset, not padding; overflow stays inside so .right-body never toggles a scrollbar */

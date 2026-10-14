@@ -5,7 +5,7 @@ import { storage } from '../layout/dom';
 import { useDismiss } from '../project/use-dismiss';
 import { configureMessage, modelLabel } from './chats';
 import {
-  catalogOf, chooseMessage, effortChoices, initialActive, loadRecent, matchSpans, menuKey, pickerGroups, rememberModel, saveRecent, shownId, type PickerRow,
+  catalogOf, chooseMessage, effortChoices, indexOfKey, initialActive, loadRecent, matchSpans, menuKey, pickerGroups, rememberModel, rowKeys, saveRecent, shownId, type PickerRow,
 } from './model-picker';
 
 const RESTART_WAIT_MS = 1500;
@@ -88,7 +88,7 @@ export function ModelControls({ current, models, engines, started, enabled, send
         type="button"
         className={`model-button${current === null ? ' needed' : ''}`}
         data-menu-anchor
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={menuOpen}
         aria-label={`Model: ${label}`}
         title={title}
@@ -131,16 +131,23 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
   const currentModel = current?.modelChoice ?? null;
   const groups = useMemo(() => pickerGroups({ models, engines, engine, current: currentModel, started, query, recent }), [models, engines, engine, currentModel, started, query, recent]);
   const rows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
-  const [active, setActive] = useState(() => (initialQuery === '' ? initialActive(groups, currentModel) : 0));
+  const keys = useMemo(() => rowKeys(groups), [groups]);
+  // By key, not place: claude's list can replace the built-in one under an open menu, and Enter must take the row the user sees.
+  const [activeKey, setActiveKey] = useState(() => keys[initialQuery === '' ? initialActive(groups, currentModel) : 0] ?? null);
+  const selected = indexOfKey(keys, activeKey);
+  const selectedKey = keys[selected] ?? null;
+  // When its row is gone, or the query changed, the first row takes over, by its own key from then on.
+  if (selectedKey !== activeKey) setActiveKey(selectedKey);
   const id = useId();
   const root = useRef<HTMLDivElement>(null);
   const list = useRef<HTMLDivElement>(null);
+  const search = useRef<HTMLInputElement>(null);
+  // The list follows the active row as the keys or the query move it, never as the mouse does: it would scroll away under the pointer.
+  const follow = useRef(true);
   useDismiss(root, useCallback((reason: 'escape' | 'outside') => onClose(reason === 'escape'), [onClose]));
-  // The list can shrink under the active row, as the query narrows it or a new list arrives.
-  const selected = Math.min(active, Math.max(0, rows.length - 1));
   useEffect(() => {
     const row = list.current?.querySelector('.model-row.sel');
-    if (!row) return;
+    if (!row || !follow.current) return;
     // The first row of a group brings its engine's header into view with it.
     if (row === row.parentElement?.firstElementChild) row.parentElement?.previousElementSibling?.scrollIntoView({ block: 'nearest' });
     row.scrollIntoView({ block: 'nearest' });
@@ -156,15 +163,22 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
     } else if (action === 'choose') {
       const row = rows[selected];
       if (row) onChoose(row);
-    } else setActive(action.move);
+    } else {
+      follow.current = true;
+      setActiveKey(keys[action.move] ?? null);
+    }
   };
   const optionId = (at: number): string => `${id}-option-${at}`;
   let index = -1;
   return (
-    <div className="model-menu" ref={root} data-testid="model-menu">
+    // A press anywhere in the menu but the search box leaves the focus in it, so the keys go on working.
+    <div className="model-menu" ref={root} data-testid="model-menu" onMouseDown={(event) => {
+      if (event.target !== search.current) event.preventDefault();
+    }}>
       <div className="model-search">
         <Icon name="search" size={14} />
         <input
+          ref={search}
           autoFocus
           role="combobox"
           aria-label="Search models"
@@ -179,7 +193,8 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
           onFocus={(event) => event.currentTarget.setSelectionRange(event.currentTarget.value.length, event.currentTarget.value.length)}
           onChange={(event) => {
             setQuery(event.target.value);
-            setActive(0);
+            follow.current = true;
+            setActiveKey(null);
           }}
           onKeyDown={onKeyDown}
         />
@@ -188,8 +203,7 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
         <div id={`${id}-list`} role="listbox" aria-label="Models">
           {groups.map((group) => (
             <div key={group.id} className="model-group" role="presentation">
-              {/* An engine with no rows to carry its name keeps its header readable. */}
-              <div className="model-group-head" id={`${id}-${group.id}`} aria-hidden={group.rows.length > 0 ? 'true' : undefined}>
+              <div className="model-group-head" id={`${id}-${group.id}`} aria-hidden="true">
                 <span className="model-engine">{group.title}</span>
                 {group.status && group.status.state !== 'ready' && <span className={`model-state ${group.status.state}`}>{STATE_LABEL[group.status.state]}</span>}
                 {group.status?.hint && <span className="model-hint">{group.status.hint}</span>}
@@ -198,25 +212,29 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
                 {group.rows.map((row) => {
                   index += 1;
                   const at = index;
+                  const key = keys[at] ?? null;
                   const modelId = shownId(row.model);
+                  const isCurrent = row.model.value === currentModel;
                   return (
                     <div
-                      key={`${group.id}:${row.model.value}`}
+                      key={key}
                       id={optionId(at)}
                       role="option"
                       aria-selected={at === selected}
                       className={`model-row${at === selected ? ' sel' : ''}${row.locked ? ' locked' : ''}`}
                       title={row.locked ? NEW_CHAT : row.model.value}
-                      onMouseMove={() => setActive(at)}
+                      onMouseMove={() => {
+                        follow.current = false;
+                        setActiveKey(key);
+                      }}
                       onMouseDown={(event) => {
-                        if (event.button !== 0) return;
-                        event.preventDefault();
-                        onChoose(row);
+                        if (event.button === 0) onChoose(row);
                       }}
                     >
-                      <span className="model-check">{row.model.value === currentModel && <Icon name="check" size={14} />}</span>
+                      <span className="model-check">{isCurrent && <Icon name="check" size={14} />}</span>
                       <span className="model-name">{marked(row.model.name, query)}</span>
                       {row.locked ? <span className="model-new">New chat<span className="model-new-tail"> with this model</span></span> : modelId !== null && <span className="model-id">{marked(modelId, query)}</span>}
+                      {isCurrent && <span className="visually-hidden"> (current)</span>}
                     </div>
                   );
                 })}
@@ -224,7 +242,8 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
             </div>
           ))}
         </div>
-        {groups.length === 0 && query.trim() !== '' && <div className="model-empty" role="status">{`No model matches “${query.trim()}”`}</div>}
+        {/* Mounted while empty, so that a screen reader announces the text when it appears. */}
+        <div className="model-empty" role="status">{groups.length === 0 && query.trim() !== '' ? `No model matches “${query.trim()}”` : ''}</div>
       </div>
       <div className="model-foot" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>↵</kbd>choose</span><span><kbd>esc</kbd>close</span></div>
     </div>
