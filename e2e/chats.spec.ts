@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs';
 import { expect, test } from '@playwright/test';
 import { startCore, type Core } from './core';
-import { chooseModel, flagOf, hasFlag } from './helpers';
+import { chatAgents, chooseModel } from './helpers';
 
 let core: Core | undefined;
 
@@ -93,15 +92,10 @@ test('on a project with no chat yet, the agent starts only after a model is chos
   await expect(page.getByLabel('Effort')).toHaveValue('medium');
   await page.keyboard.press('Enter');
   await expect(page.locator('.msg.assistant')).toContainText('OK');
-  // Every chat agent the core started, oldest first: one, on the model chosen for it.
-  const agents = readFileSync(core.record, 'utf8').split('\n').filter(Boolean).flatMap((line) => {
-    const { argv } = JSON.parse(line) as { argv?: string[] };
-    return argv && hasFlag(argv, '--session-id') ? [[flagOf(argv, '--model'), flagOf(argv, '--effort')]] : [];
-  });
-  expect(agents).toEqual([['sonnet', 'medium']]);
+  expect(chatAgents(core.record)).toEqual([['sonnet', 'medium']]);
 });
 
-test('the model menu filters as you type, moves with the keys, says when nothing matches and gives the focus back, at the narrowest chat panel', async ({ page }) => {
+test('the model menu filters as you type, moves with the keys, says when nothing matches, stays open through an Escape that ends a composition and gives the focus back, at the narrowest chat panel', async ({ page }) => {
   // The chat panel at its minimum width (LIMITS.right.min, 280 px) in Playwright's default 1280×720 window.
   await page.addInitScript(() => localStorage.setItem('ide.panel-sizes', JSON.stringify({ left: 264, right: 280, bottom: 200 })));
   // A model no list names shows as its id, which may be as long as claude takes.
@@ -114,7 +108,7 @@ test('the model menu filters as you type, moves with the keys, says when nothing
   // The row ends at its right edge, so what does not fit would spill out on the left, where scrollWidth does not see it.
   const spilled = await page.locator('.composer-actions').evaluate((row) => {
     const box = row.getBoundingClientRect();
-    return [...row.children].map((child) => child.getBoundingClientRect()).filter((rect) => rect.width > 0 && (rect.left < box.left - 0.5 || rect.right > box.right + 0.5)).length;
+    return [...row.querySelectorAll('*')].map((inner) => inner.getBoundingClientRect()).filter((rect) => rect.width > 0 && (rect.left < box.left - 0.5 || rect.right > box.right + 0.5)).length;
   });
   expect(spilled).toBe(0);
   await button.click();
@@ -134,6 +128,8 @@ test('the model menu filters as you type, moves with the keys, says when nothing
   await expect(selected).toContainText(longId);
   await page.keyboard.type('zzz');
   await expect(menu.locator('.model-empty')).toHaveText('No model matches “zzz”');
+  await page.getByRole('combobox', { name: 'Search models' }).dispatchEvent('keydown', { key: 'Escape', isComposing: true });
+  await expect(menu).toBeVisible();
   await page.keyboard.press('Escape');
   await expect(menu).toHaveCount(0);
   await expect(button).toBeFocused();
@@ -170,4 +166,48 @@ test('the model menu gives way to another menu, takes a click on a model, and op
   await page.keyboard.press('h');
   await expect(page.getByRole('combobox', { name: 'Search models' })).toHaveValue('h');
   await expect(menu.getByRole('option', { selected: true })).toContainText('Haiku 4.5');
+});
+
+test("the model menu keeps its highlighted model as claude's list arrives, scrolls with the keys but not under the mouse, and keeps its search box through a press on its frame", async ({ page }) => {
+  // The core's answer is held back, and the test hands the page claude's list while the menu is open.
+  const arrive: ((models: object[]) => void)[] = [];
+  await page.routeWebSocket(/\/ws\?/, (ws) => {
+    const server = ws.connectToServer();
+    server.onMessage((message) => {
+      if ((JSON.parse(String(message)) as { type: string }).type !== 'models.snapshot') ws.send(message);
+    });
+    arrive.push((models) => ws.send(JSON.stringify({ type: 'models.snapshot', models })));
+  });
+  core = await startCore('multi-turn');
+  await page.goto(core.url);
+  await expect(page.getByText('core connected')).toBeVisible();
+  const menu = page.getByTestId('model-menu');
+  const selected = menu.getByRole('option', { selected: true });
+  await page.locator('.model-button').click();
+  await page.keyboard.press('ArrowDown');
+  await expect(selected).toContainText('Haiku 4.5');
+  // Haiku moves from the fourth row of the built-in list to the first.
+  const names = ['Haiku 4.5', 'Sonnet 5.5', ...Array.from({ length: 18 }, (_, at) => `Model ${at + 1}`)];
+  arrive.at(-1)?.(names.map((name, at) => ({ value: ['haiku', 'sonnet'][at] ?? `model-${at - 1}`, name, engine: 'claude', efforts: ['medium'] })));
+  await expect(menu.getByRole('option')).toHaveCount(names.length);
+  await expect(selected).toContainText('Haiku 4.5');
+
+  const list = menu.locator('.model-list');
+  // The fourth row half hidden above the list's top edge, where the pointer lands on it.
+  const scrolled = await list.evaluate((element) => {
+    const row = element.querySelectorAll('.model-row')[3]!;
+    element.scrollTop += row.getBoundingClientRect().top - element.getBoundingClientRect().top + 16;
+    return element.scrollTop;
+  });
+  const box = (await list.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + 8);
+  await expect(selected).toContainText('Model 2');
+  expect(await list.evaluate((element) => element.scrollTop)).toBe(scrolled);
+  await page.keyboard.press('End');
+  await expect(selected).toContainText('Model 18');
+  await expect(selected).toBeInViewport();
+
+  await menu.locator('.model-foot').click();
+  await page.keyboard.type('model 1');
+  await expect(page.getByRole('combobox', { name: 'Search models' })).toHaveValue('model 1');
 });

@@ -31,7 +31,11 @@ export function chatConversation(record: string): string | undefined {
   return chat?.argv ? flagOf(chat.argv, '--session-id') : undefined;
 }
 
-export const hasFlag = (argv: string[], name: string): boolean => argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
+// Every chat agent the core has started, oldest first, as the model and effort it was started on.
+export const chatAgents = (record: string): (string | undefined)[][] =>
+  recorded(record).flatMap((entry) => (entry.argv && hasFlag(entry.argv, '--session-id') ? [[flagOf(entry.argv, '--model'), flagOf(entry.argv, '--effort')]] : []));
+
+export const hasFlag =(argv: string[], name: string): boolean => argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
 
 // A flag's value in either form: `--name value` or `--name=value`.
 export function flagOf(argv: string[], name: string): string | undefined {
