@@ -13,3 +13,4 @@ playwright-report/
 packages/desktop/out/
 packages/desktop/dist/
 docs/
+.claude/
