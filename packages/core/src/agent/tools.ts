@@ -5,11 +5,6 @@ export const DISALLOWED_TOOLS = [
 
 export const MIN_CLAUDE_VERSION = '2.1.296';
 
-// The value becomes an argv entry for claude, so it must never start with '-' or carry anything but a model alias or id.
-const MODEL_CHOICE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,63}$/;
-
-export const isModelChoice = (value: string): boolean => MODEL_CHOICE.test(value);
-
 const SUMMARY_FIELDS = ['skill', 'command', 'file_path', 'notebook_path', 'description', 'pattern', 'url', 'query', 'prompt'];
 const MAX_SUMMARY = 200;
 

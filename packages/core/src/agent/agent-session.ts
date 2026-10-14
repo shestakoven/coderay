@@ -2,8 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  EFFORT_LEVELS, EMPTY_USAGE, ENGINE_CAPABILITIES, isClaudeEffort, MAX_CHAT_IMAGES, parseModelId,
-  type ChatImage, type ChatItem, type ChatSummary, type EffortLevel, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
+  EMPTY_USAGE, ENGINE_CAPABILITIES, isClaudeEffort, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
+  type ChatImage, type ChatItem, type ChatPick, type ChatSummary, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
@@ -24,7 +24,7 @@ import { CLAUDE_PROMPT_NAMES, type PromptNames } from './system-prompt';
 import { TranscriptTail } from './transcript-tail';
 import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type TransportSink, type UserMessage } from './transport';
 import { mergeLimits, type UsageUpdate } from './usage';
-import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
+import { DISALLOWED_TOOLS, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
 export type McpServers = Record<string, object>;
@@ -84,6 +84,7 @@ const SESSION_ERRORS = {
   'busy-configure': 'Wait for the agent to finish or press Stop before changing the model.',
   'busy-switch': 'Wait for the agent to finish or press Stop before switching chats.',
   'busy-account': 'Wait for the agent to finish or press Stop before switching accounts.',
+  'engine-locked': 'This chat runs on another engine. Start a new chat to use that model.',
   'bad-model': 'That model name is not valid.',
   'bad-effort': 'That effort level is not valid.',
   'no-chat': 'That chat does not exist.',
@@ -105,7 +106,7 @@ export class SessionError extends Error {
 }
 
 type ExitReason = 'restart' | 'new' | 'close';
-type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort' | 'accountId' | 'engineSessionId' | 'conversationStarted'>>;
+type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'engine' | 'modelChoice' | 'effort' | 'accountId' | 'engineSessionId' | 'conversationStarted'>>;
 
 interface LaunchFiles {
   claude: ClaudeCommand;
@@ -656,11 +657,13 @@ export class AgentSession {
     if (this.session && this.unused(this.session)) this.warm();
   }
 
-  async newSession(): Promise<void> {
+  async newSession(pick: { modelChoice: string; effort: string | null } | null = null): Promise<void> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
+    const chosen = pick === null ? null : this.checkedPick(pick.modelChoice, pick.effort);
     const current = this.session;
     if (current && this.unused(current)) {
       this.clearRefusal();
+      if (chosen) await this.configure(chosen.modelChoice, chosen.effort);
       this.warm();
       return;
     }
@@ -674,14 +677,14 @@ export class AgentSession {
     this.previous = this.session ?? this.previous;
     this.setActive('');
     this.reset(null);
-    this.warm();
+    this.warm(chosen);
   }
 
   // A new chat's claude starts before its first message, so its skills are listed by the time the user types "/".
-  private warm(): void {
+  private warm(pick: ChatPick | null = null): void {
     if (this.closed || this.terminalOpen || this.terminating || this.transport || this.refused) return;
     try {
-      if (!this.session || this.session.status === 'ended') this.begin();
+      if (!this.session || this.session.status === 'ended') this.begin(pick);
       this.spawn();
     } catch (error) {
       console.error('agent: could not start the agent of a new chat', error);
@@ -738,28 +741,38 @@ export class AgentSession {
     this.emit({ type: 'session.snapshot', state: this.state() });
   }
 
-  async configure(modelChoice: string | null, effort: EffortLevel | null): Promise<void> {
-    if (modelChoice !== null && !isModelChoice(modelChoice)) throw new SessionError('bad-model');
-    if (effort !== null && !EFFORT_LEVELS.includes(effort)) throw new SessionError('bad-effort');
+  async configure(modelChoice: string | null, effort: string | null): Promise<void> {
+    const pick = this.checkedPick(modelChoice, effort);
     if (this.terminating) throw new SessionError('restarting');
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.isIdle()) throw new SessionError('busy-configure');
     if (!this.session || this.session.status === 'ended') this.begin();
     const session = this.session;
-    if (!session || (session.modelChoice === modelChoice && session.effort === effort)) return;
+    if (!session || (session.engine === pick.engine && session.modelChoice === pick.modelChoice && session.effort === pick.effort)) return;
+    // The conversation lives in its engine: once the chat is in use, another engine needs a new chat; a chat of an unknown engine never changes.
+    if (session.foreignEngine !== undefined || (session.engine !== pick.engine && !this.unused(session))) throw new SessionError('engine-locked');
     // An effort change restarts claude: its only live path, applyFlagSettings, writes the settings layer that also carries the gate's hooks.
-    const liveModel = session.effort === effort;
-    this.update({ modelChoice, effort });
+    const liveModel = session.engine === pick.engine && session.effort === pick.effort;
+    this.update({ engine: pick.engine, modelChoice: pick.modelChoice, effort: pick.effort });
     if (!this.transport) return;
     if (liveModel) {
       try {
-        await this.transport.setModel(modelChoice);
+        await this.transport.setModel(modelOf(pick.modelChoice));
         return;
       } catch (error) {
         console.error('agent: claude did not switch the model, so it restarts with it', error);
       }
     }
     await this.restart();
+  }
+
+  // A null model keeps the engine of the chat it would apply to.
+  private checkedPick(modelChoice: string | null, effort: string | null): ChatPick {
+    const engine = modelChoice === null ? ((this.session ?? this.previous)?.engine ?? 'claude') : parseModelId(modelChoice)?.engine;
+    if (engine === undefined) throw new SessionError('bad-model');
+    if (!this.engines.get(engine)) throw new SessionError('no-engine');
+    if (effort !== null && !isEffortFor(engine, effort)) throw new SessionError('bad-effort');
+    return { engine, modelChoice, effort };
   }
 
   // An idle claude still runs under the previous account, so it is stopped and the next message starts one under the new account.
@@ -804,11 +817,12 @@ export class AgentSession {
     await this.terminate('close');
   }
 
-  private begin(): void {
+  private begin(pick: ChatPick | null = null): void {
     const from = this.session ?? this.previous;
+    const chosen: ChatPick = pick ?? { engine: from?.engine ?? 'claude', modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium' };
     const session: SessionRecord = {
-      id: randomUUID(), engine: from?.engine ?? 'claude', engineSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
-      modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium', cliVersion: null,
+      id: randomUUID(), engine: chosen.engine, engineSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
+      modelChoice: chosen.modelChoice, effort: chosen.effort, cliVersion: null,
       pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(),
     };
     this.persist(() => this.options.store.saveSession(session));
@@ -1309,6 +1323,9 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
     }
   }
 }
+
+// The model as its engine names it, without the engine's prefix.
+const modelOf = (modelChoice: string | null): string | null => (modelChoice === null ? null : (parseModelId(modelChoice)?.model ?? null));
 
 // The model as claude's --model takes it; null for no model, or for one of another engine.
 function claudeModel(modelChoice: string | null): string | null {

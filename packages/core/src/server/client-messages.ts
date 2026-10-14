@@ -1,10 +1,9 @@
 import {
-  AGENT_TERMINAL_ID, EFFORT_LEVELS, IMAGE_MEDIA_TYPES, MAX_CHAT_IMAGES,
-  type ChatImage, type ClientMessage, type EffortLevel, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
+  AGENT_TERMINAL_ID, IMAGE_MEDIA_TYPES, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
+  type ChatImage, type ClientMessage, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
   type WatchdogAnswer,
 } from '@ide/protocol';
 import { isAccountId } from '../accounts/account-store';
-import { isModelChoice } from '../agent/tools';
 import { BLOB_ID } from '../images/blob-store';
 import { isRecord } from '../json';
 import { MAX_TERMINAL_INPUT, TERMINAL_ID } from '../terminal/terminal-service';
@@ -32,7 +31,6 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isImageList(images) ? { type, text, images } : null;
     case 'chat.stop':
     case 'session.restart':
-    case 'session.new':
     case 'session.list':
     case 'models.list':
     case 'session.delete-all':
@@ -49,10 +47,15 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
     case 'session.switch':
       return typeof id === 'string' && id.length > 0 && id.length <= MAX_ID_LENGTH ? { type, id } : null;
-    case 'session.configure':
-      return (modelChoice === null || (typeof modelChoice === 'string' && isModelChoice(modelChoice))) && (effort === null || isEffort(effort))
-        ? { type, modelChoice, effort }
-        : null;
+    case 'session.configure': {
+      const pick = parsePick(modelChoice, effort);
+      return pick ? { type, ...pick } : null;
+    }
+    case 'session.new': {
+      if (modelChoice === undefined && effort === undefined) return { type };
+      const pick = typeof modelChoice === 'string' ? parsePick(modelChoice, effort ?? null) : null;
+      return pick && pick.modelChoice !== null ? { type, modelChoice: pick.modelChoice, effort: pick.effort } : null;
+    }
     case 'image.get':
       if (!isBoundedString(key, MAX_PATH_LENGTH)) return null;
       if (id !== undefined) return path === undefined && typeof id === 'string' && BLOB_ID.test(id) ? { type, key, id } : null;
@@ -175,6 +178,14 @@ function parseAnswer(value: unknown): PromptAnswer | null {
   return { kind: 'answers', answers: answers as Record<string, string> };
 }
 
+// A model of its engine and an effort that engine names; a null model is claude's own default.
+function parsePick(modelChoice: unknown, effort: unknown): { modelChoice: string | null; effort: string | null } | null {
+  if ((modelChoice !== null && typeof modelChoice !== 'string') || (effort !== null && typeof effort !== 'string')) return null;
+  const engine = modelChoice === null ? 'claude' : parseModelId(modelChoice)?.engine;
+  if (engine === undefined || (effort !== null && !isEffortFor(engine, effort))) return null;
+  return { modelChoice, effort };
+}
+
 function parsePlanAnswer(value: unknown): PlanAnswer | null {
   if (!isRecord(value)) return null;
   if (value.kind === 'approve' || value.kind === 'accept') return { kind: value.kind };
@@ -196,8 +207,6 @@ const MAX_BRANCH_NAME = 255;
 const isImageList = (value: unknown): value is ChatImage[] =>
   Array.isArray(value) && value.length > 0 && value.length <= MAX_CHAT_IMAGES && value.every((item) =>
     isRecord(item) && IMAGE_MEDIA_TYPES.includes(item.mediaType as ChatImage['mediaType']) && typeof item.data === 'string' && /^[A-Za-z0-9+/]+={0,2}$/.test(item.data));
-
-const isEffort = (value: unknown): value is EffortLevel => EFFORT_LEVELS.includes(value as EffortLevel);
 
 const isInteger = (value: unknown): value is number => Number.isInteger(value);
 

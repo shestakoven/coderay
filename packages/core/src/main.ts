@@ -359,7 +359,7 @@ try {
         return;
       case 'session.new':
         await watching;
-        await agent.newSession();
+        await agent.newSession(message.modelChoice === undefined ? null : { modelChoice: message.modelChoice, effort: message.effort ?? null });
         return;
       case 'session.list':
         reply(sessionsSnapshot());

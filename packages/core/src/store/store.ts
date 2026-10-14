@@ -1,8 +1,8 @@
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  EFFORT_LEVELS, isEngineId,
-  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type EngineId, type FrozenScope, type GatePromptView, type ImageRef, type PlanFlow,
+  isEffortFor, isEngineId,
+  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EngineId, type FrozenScope, type GatePromptView, type ImageRef, type PlanFlow,
   type PlanReview, type PlanStatus, type PlanStep, type PromptAnswer, type PromptBody, type PromptStatus, type RevertRecordView, type SessionStatus, type StepStatus,
   type TaskKind, type TaskView, type ToolDecision, type ToolStatus, type TurnKind, type TurnView, type WatchdogEventView,
 } from '@ide/protocol';
@@ -18,7 +18,7 @@ export interface SessionRecord {
   status: SessionStatus;
   model: string | null;
   modelChoice: string | null;
-  effort: EffortLevel | null;
+  effort: string | null;
   cliVersion: string | null;
   pid: number | null;
   launchId: string | null;
@@ -360,8 +360,6 @@ const chatTitle = (text: string | null): string => text?.replace(IMAGE_PLACEHOLD
 
 const cleanTitle = (title: string): string => title.replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd();
 
-const toEffort = (value: unknown): EffortLevel | null => (EFFORT_LEVELS.includes(value as EffortLevel) ? (value as EffortLevel) : null);
-
 function migrate(db: InstanceType<typeof DatabaseSync>): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
   const current = Number(row?.user_version ?? 0);
@@ -385,26 +383,32 @@ type Row = Record<string, unknown>;
 
 const optText = (value: unknown): string | null => (value === null || value === undefined ? null : String(value));
 const optNumber = (value: unknown): number | null => (value === null || value === undefined ? null : Number(value));
+const toEffort = (engine: EngineId, value: unknown): string | null => (typeof value === 'string' && isEffortFor(engine, value) ? value : null);
 const toImages = (value: unknown): { images?: ImageRef[] } => (value === null || value === undefined ? {} : { images: JSON.parse(String(value)) as ImageRef[] });
 const imagesColumn = (images: ImageRef[] | undefined): string | null => (images && images.length > 0 ? JSON.stringify(images) : null);
 
-const toSession = (row: Row): SessionRecord => ({
-  id: String(row.id),
-  // Read as Claude's, another engine's conversation id would reach claude's --resume.
-  ...(isEngineId(row.engine) ? { engine: row.engine } : { engine: 'claude' as const, foreignEngine: String(row.engine) }),
-  engineSessionId: String(row.engine_session_id),
-  cwd: String(row.cwd),
-  status: String(row.status) as SessionStatus,
-  model: optText(row.model),
-  modelChoice: optText(row.model_choice),
-  effort: toEffort(row.effort),
-  cliVersion: optText(row.cli_version),
-  pid: optNumber(row.pid),
-  launchId: optText(row.launch_id),
-  conversationStarted: row.conversation_started === 1,
-  startedAt: Number(row.started_at),
-  accountId: optText(row.account_id),
-});
+const toSession = (row: Row): SessionRecord => {
+  const engine = isEngineId(row.engine) ? row.engine : 'claude';
+  return {
+    id: String(row.id),
+    engine,
+    // Read as Claude's, another engine's conversation id would reach claude's --resume.
+    ...(isEngineId(row.engine) ? {} : { foreignEngine: String(row.engine) }),
+    engineSessionId: String(row.engine_session_id),
+    cwd: String(row.cwd),
+    status: String(row.status) as SessionStatus,
+    model: optText(row.model),
+    modelChoice: optText(row.model_choice),
+    // A foreign chat keeps its effort as written, since it is written back.
+    effort: isEngineId(row.engine) ? toEffort(engine, row.effort) : optText(row.effort),
+    cliVersion: optText(row.cli_version),
+    pid: optNumber(row.pid),
+    launchId: optText(row.launch_id),
+    conversationStarted: row.conversation_started === 1,
+    startedAt: Number(row.started_at),
+    accountId: optText(row.account_id),
+  };
+};
 
 const toTurn = (row: Row): TurnView => ({
   id: String(row.id),

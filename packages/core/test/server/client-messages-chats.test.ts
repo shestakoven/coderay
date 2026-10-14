@@ -85,6 +85,36 @@ describe('parseClientMessage session.configure', () => {
   it('keeps only the type, the model and the effort', () => {
     expect(parse({ type: 'session.configure', modelChoice: 'opus', effort: 'low', id: 'a', text: 'x' })).toEqual({ type: 'session.configure', modelChoice: 'opus', effort: 'low' });
   });
+
+  it('takes a model of any engine with an effort that engine names, and refuses one its engine does not', () => {
+    expect([
+      parse({ type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' }),
+      parse({ type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null }),
+      parse({ type: 'session.configure', modelChoice: 'opus', effort: 'minimal' }),
+      parse({ type: 'session.configure', modelChoice: 'codex:', effort: null }),
+    ]).toEqual([
+      { type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' },
+      { type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
+      null, null,
+    ]);
+  });
+});
+
+describe('parseClientMessage session.new', () => {
+  it('opens a new chat on a model when one is named, plain otherwise, and refuses an invalid or missing model', () => {
+    expect([
+      parse({ type: 'session.new' }),
+      parse({ type: 'session.new', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' }),
+      parse({ type: 'session.new', modelChoice: 'opus' }),
+      parse({ type: 'session.new', modelChoice: '--evil', effort: null }),
+      parse({ type: 'session.new', effort: 'high' }),
+    ]).toEqual([
+      { type: 'session.new' },
+      { type: 'session.new', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' },
+      { type: 'session.new', modelChoice: 'opus', effort: null },
+      null, null,
+    ]);
+  });
 });
 
 describe('parseClientMessage session.delete', () => {

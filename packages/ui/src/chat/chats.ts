@@ -23,7 +23,7 @@ export const effortOptions: Choice<EffortLevel>[] = EFFORT_LEVELS.map((level) =>
 
 export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalog(models).find((option) => option.value === choice)?.label ?? choice ?? '—';
 
-export const effortLabel = (effort: EffortLevel | null): string => effort ?? '—';
+export const effortLabel = (effort: string | null): string => effort ?? '—';
 
 export const chatTitle = (chat: Pick<ChatSummary, 'title'>): string => (chat.title.trim() === '' ? 'New chat' : chat.title);
 
@@ -42,7 +42,7 @@ export function relativeTime(ts: number, now: number): string {
 
 export function configureMessage(
   session: Pick<SessionView, 'modelChoice' | 'effort'> | null,
-  change: { modelChoice: string | null } | { effort: EffortLevel | null },
+  change: { modelChoice: string | null } | { effort: string | null },
 ): ClientMessage {
   return {
     type: 'session.configure',

@@ -48,7 +48,7 @@ export interface ChatSummary {
   status: SessionStatus;
   engine: EngineId;
   modelChoice: string | null;
-  effort: EffortLevel | null;
+  effort: string | null;
   messages: number;
 }
 
@@ -59,7 +59,7 @@ export interface SessionView {
   status: SessionStatus;
   model: string | null;
   modelChoice: string | null;
-  effort: EffortLevel | null;
+  effort: string | null;
   cliVersion: string | null;
   permissionMode: string | null;
   startedAt: number;
@@ -225,13 +225,13 @@ export type ChatClientMessage =
   | { type: 'task.stop'; id: string }
   | { type: 'session.rename'; id: string; title: string }
   | { type: 'session.restart' }
-  | { type: 'session.new' }
+  | { type: 'session.new'; modelChoice?: string; effort?: string | null }
   | { type: 'session.list' }
   | { type: 'models.list' }
   | { type: 'session.switch'; id: string }
   | { type: 'session.delete'; id: string }
   | { type: 'session.delete-all' }
-  | { type: 'session.configure'; modelChoice: string | null; effort: EffortLevel | null }
+  | { type: 'session.configure'; modelChoice: string | null; effort: string | null }
   | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer }
   // Exactly one of `id` (a blob the core stores) or `path` (a file as the agent wrote it, relative to the project root or absolute); `key` comes back on the answer.
   | { type: 'image.get'; key: string; id?: string; path?: string };
