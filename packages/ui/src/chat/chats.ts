@@ -1,18 +1,12 @@
 import { EFFORT_LEVELS, type ChatSummary, type ClientMessage, type EffortLevel, type ModelInfo, type SessionView } from '@ide/protocol';
+import { catalogOf } from './model-picker';
 
 export interface Choice<T> {
   value: T | null;
   label: string;
 }
 
-const FALLBACK_MODELS: Choice<string>[] = [
-  { value: 'fable', label: 'Fable 5.1' },
-  { value: 'opus', label: 'Opus 5.5' },
-  { value: 'sonnet', label: 'Sonnet 5.5' },
-  { value: 'haiku', label: 'Haiku 4.5' },
-];
-
-const catalog = (models: ModelInfo[]): Choice<string>[] => (models.length === 0 ? FALLBACK_MODELS : models.map((model) => ({ value: model.value, label: model.name })));
+const catalog = (models: ModelInfo[]): Choice<string>[] => catalogOf(models).map((model) => ({ value: model.value, label: model.name }));
 
 export function modelOptions(current: string | null, models: ModelInfo[] = []): Choice<string>[] {
   const options = catalog(models);
