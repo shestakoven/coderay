@@ -10,6 +10,7 @@ import { MarkdownText } from './MarkdownText';
 import { UsageMeter } from './UsageMeter';
 import { BackgroundTasks } from './BackgroundTasks';
 import { ModelControls } from './ModelControls';
+import { canOpenTerminal } from './chats';
 import { addAttachments, imageFiles, type Attachment } from './attachments';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
@@ -70,6 +71,11 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   const sendable = canSend(chat);
   const tasks = runningTasks(chat);
   const stop = stopControl(chat);
+  // A core older than the engines sends no `next`; the latest chat then stands in for it, as before.
+  const pick = chat.session ?? (chats.next === undefined ? (chats.sessions[0] ?? null) : chats.next);
+  const needsModel = chat.session === null && chats.next === null;
+  const started = Object.values(chat.items).some((item) => item.kind !== 'notice');
+  const [modelMenu, setModelMenu] = useState(false);
 
   const working = workingState(chat, sentAt);
   const active = working !== null;
@@ -119,10 +125,10 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     setAttachments(result.attachments);
     setAttachProblem(result.problem);
   };
-  const canSubmit = draft.trim() !== '' || attachments.length > 0;
+  const canSubmit = !needsModel && (draft.trim() !== '' || attachments.length > 0);
   const query = slashQuery(draft);
   const skillMatches = query === null ? [] : matchSkills(chat.skills, query);
-  const skillMenu = query !== null && !skillsDismissed && (chat.skills.length === 0 || skillMatches.length > 0);
+  const skillMenu = !modelMenu && query !== null && !skillsDismissed && (chat.skills.length === 0 || skillMatches.length > 0);
   const skillActive = Math.min(skillIndex, Math.max(skillMatches.length - 1, 0));
   const changeDraft = (text: string): void => {
     setDraft(text);
@@ -184,14 +190,16 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
         <span className="spacer" />
-        <div className="agent-view" role="radiogroup" aria-label="Agent view">
-          <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="CodeRay's chat">
-            <Icon name="comment" size={13} />Chat
-          </button>
-          <button role="radio" aria-checked={view === 'terminal'} className={view === 'terminal' ? 'on' : undefined} onClick={() => onView('terminal')} title="Claude Code's own terminal interface: every slash command works">
-            <Icon name="terminal" size={13} />Terminal
-          </button>
-        </div>
+        {canOpenTerminal(pick?.engine ?? 'claude') && (
+          <div className="agent-view" role="radiogroup" aria-label="Agent view">
+            <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="CodeRay's chat">
+              <Icon name="comment" size={13} />Chat
+            </button>
+            <button role="radio" aria-checked={view === 'terminal'} className={view === 'terminal' ? 'on' : undefined} onClick={() => onView('terminal')} title="Claude Code's own terminal interface: every slash command works">
+              <Icon name="terminal" size={13} />Terminal
+            </button>
+          </div>
+        )}
         {view === 'chat' && chat.session?.status === 'running' && <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>}
       </header>
       {dialog}
@@ -279,7 +287,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
             event.preventDefault();
             void attach(files);
           }}
-          placeholder={sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
+          placeholder={needsModel ? 'Choose a model to start the agent' : sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
         />
         <div className="composer-actions">
           <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => {
@@ -298,7 +306,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           >
             <Icon name="skill" size={18} />
           </button>
-          <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
+          <ModelControls current={pick} models={chats.models} engines={chats.engines} started={started} enabled={sendable} send={send} onMenu={setModelMenu} onChosen={() => composer.current?.focus()} />
           <span className="spacer" />
           {!sendable && (
             <button className="composer-action stop" onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title} aria-label={stop.label}>
@@ -306,7 +314,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
               {stop.label !== 'Stop' && <span>{stop.label.slice('Stop'.length).trim()}</span>}
             </button>
           )}
-          <button className="composer-action send" onClick={submit} disabled={!canSubmit} title="Send (Enter)" aria-label="Send">
+          <button className="composer-action send" onClick={submit} disabled={!canSubmit} title={needsModel ? 'Choose a model first' : 'Send (Enter)'} aria-label="Send">
             <Icon name="send" size={18} />
           </button>
         </div>

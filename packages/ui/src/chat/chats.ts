@@ -1,23 +1,11 @@
-import { EFFORT_LEVELS, type ChatSummary, type ClientMessage, type EffortLevel, type ModelInfo, type SessionView } from '@ide/protocol';
+import { ENGINE_CAPABILITIES, type ChatSummary, type ClientMessage, type EngineId, type ModelInfo, type SessionView } from '@ide/protocol';
 import { catalogOf } from './model-picker';
 
-export interface Choice<T> {
-  value: T | null;
-  label: string;
-}
-
-const catalog = (models: ModelInfo[]): Choice<string>[] => catalogOf(models).map((model) => ({ value: model.value, label: model.name }));
-
-export function modelOptions(current: string | null, models: ModelInfo[] = []): Choice<string>[] {
-  const options = catalog(models);
-  return [...options, ...(current && !options.some((option) => option.value === current) ? [{ value: current, label: current }] : [])];
-}
-
-export const effortOptions: Choice<EffortLevel>[] = EFFORT_LEVELS.map((level) => ({ value: level, label: level }));
-
-export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalog(models).find((option) => option.value === choice)?.label ?? choice ?? '—';
+export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalogOf(models).find((model) => model.value === choice)?.name ?? choice ?? '—';
 
 export const effortLabel = (effort: string | null): string => effort ?? '—';
+
+export const canOpenTerminal = (engine: EngineId): boolean => ENGINE_CAPABILITIES[engine].terminalView;
 
 export const chatTitle = (chat: Pick<ChatSummary, 'title'>): string => (chat.title.trim() === '' ? 'New chat' : chat.title);
 
@@ -44,5 +32,3 @@ export function configureMessage(
     effort: 'effort' in change ? change.effort : (session?.effort ?? null),
   };
 }
-
-export const isEffort = (value: string): value is EffortLevel => (EFFORT_LEVELS as readonly string[]).includes(value);

@@ -48,3 +48,11 @@ export function isAlive(pid: number): boolean {
     return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
 }
+
+// Opens the model menu, filters it and takes the first match, as a person typing would.
+export async function chooseModel(page: Page, query: string): Promise<void> {
+  await page.locator('.model-button').click();
+  await page.getByRole('combobox', { name: 'Search models' }).fill(query);
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('model-menu')).toHaveCount(0);
+}

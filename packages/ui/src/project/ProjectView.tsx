@@ -96,7 +96,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const images = useMemo(() => new ImageStore((message) => sendRef.current(message)), []);
   useEffect(() => () => images.dispose(), [images]);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
-  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
+  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [], engines: [] });
   const [reviewMode, setReviewMode] = useState(false);
   const [chatFocus, setChatFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
@@ -168,10 +168,13 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           hub.closed(message.id);
           break;
         case 'sessions.snapshot':
-          setChats((previous) => ({ ...previous, activeId: message.activeId, sessions: message.sessions }));
+          setChats((previous) => ({ ...previous, activeId: message.activeId, sessions: message.sessions, next: message.next }));
           break;
         case 'models.snapshot':
           setChats((previous) => ({ ...previous, models: message.models }));
+          break;
+        case 'engines.snapshot':
+          setChats((previous) => ({ ...previous, engines: message.engines }));
           break;
         case 'image.data':
         case 'image.failed':

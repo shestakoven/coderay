@@ -408,10 +408,42 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-delete-all.confirm { color: var(--error); }
 .chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-list-meta { font-size: calc(11px * var(--fs-scale, 1)); }
-.model-controls { display: flex; gap: 6px; flex: none; }
-.model-controls select { appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 6px; height: 28px; padding: 0 8px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; }
+.model-controls { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.model-controls select { flex: none; appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 6px; height: 28px; padding: 0 8px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; }
 .model-controls select:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
 .model-controls select:disabled { opacity: 0.5; cursor: default; }
+.model-button { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 180px; height: 28px; padding: 0 6px 0 8px; background: transparent; border-color: transparent; border-radius: 6px; color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }
+.model-button:hover:not(:disabled), .model-button[aria-expanded='true'] { background: var(--raised); border-color: transparent; color: var(--fg); }
+.model-button:disabled { opacity: 0.5; }
+.model-button.needed { color: var(--accent-hover); }
+.model-button-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu { position: absolute; z-index: 16; left: 10px; right: 10px; bottom: calc(100% - 6px); display: flex; flex-direction: column; max-height: min(420px, 60vh); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); overflow: hidden; transform-origin: 50% 100%; animation: model-pop 0.16s var(--ease) both; container: model-menu / inline-size; }
+@keyframes model-pop { from { opacity: 0; transform: translateY(5px) scale(0.985); } }
+.model-search { display: flex; flex: none; align-items: center; gap: 8px; height: 36px; padding: 0 10px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.model-search input, .model-search input:focus-visible { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none; color: var(--fg); font: inherit; }
+.model-search input::placeholder { color: var(--muted); }
+.model-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; scrollbar-width: thin; }
+.model-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; padding: 8px 8px 4px; }
+.model-engine { flex: none; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.model-state { flex: none; padding: 0 6px; border: 1px solid var(--line); border-radius: 10px; font-size: calc(11px * var(--fs-scale, 1)); }
+.model-state.missing, .model-state.error { color: var(--error); border-color: rgba(247, 84, 100, 0.5); }
+.model-state.old, .model-state.signed-out { color: var(--warn); border-color: rgba(242, 197, 92, 0.45); }
+.model-hint { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-row { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--r-1); cursor: pointer; }
+.model-row.sel { background: var(--selection); }
+.model-check { display: grid; flex: none; place-items: center; width: 14px; color: var(--accent-hover); }
+.model-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-name u, .model-id u { text-decoration: none; color: var(--accent-hover); }
+.model-id, .model-new { flex: 0 1 auto; min-width: 0; max-width: 45%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-id { font-family: var(--font-mono); }
+.model-row.locked .model-name { color: var(--muted); }
+.model-row.locked.sel .model-name, .model-row.locked.sel .model-new { color: var(--fg); }
+.model-empty { padding: 14px 10px; color: var(--muted); text-align: center; }
+.model-foot { display: flex; flex: none; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-xs); }
+.model-foot kbd { margin-right: 3px; }
+/* In the narrowest chat panel the name is what tells models apart; the full id stays in the row's tooltip. */
+@container model-menu (max-width: 300px) { .model-id, .model-new-tail { display: none; } }
+@media (prefers-reduced-motion: reduce) { .model-menu { animation: none; } }
 .composer-actions { align-items: center; gap: 2px; }
 .composer-actions .spacer { flex: 1; }
 .composer-box { display: flex; flex-direction: column; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 8px 6px; transition: border-color 0.12s; }
