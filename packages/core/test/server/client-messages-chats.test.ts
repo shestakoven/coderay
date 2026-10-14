@@ -91,11 +91,12 @@ describe('parseClientMessage session.configure', () => {
       parse({ type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' }),
       parse({ type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null }),
       parse({ type: 'session.configure', modelChoice: 'opus', effort: 'minimal' }),
+      parse({ type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'HIGH' }),
       parse({ type: 'session.configure', modelChoice: 'codex:', effort: null }),
     ]).toEqual([
       { type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' },
       { type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
-      null, null,
+      null, null, null,
     ]);
   });
 });

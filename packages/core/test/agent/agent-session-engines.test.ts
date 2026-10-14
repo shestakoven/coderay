@@ -12,7 +12,7 @@ import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
 import { transcriptPath } from '../../src/watchdog/recovery';
-import { fakeClaude } from '../fake-claude/fake';
+import { argValue, fakeClaude } from '../fake-claude/fake';
 import { sessionRecord, SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
@@ -58,13 +58,6 @@ function crashedCodexChat(store: Store, root: string, transcriptsDir: string): v
 }
 
 describe('AgentSession on an engine other than Claude', () => {
-  it("starts the chat's agent through the engine its record names", async () => {
-    const h = await harness({ seed: crashedCodexChat });
-    h.session.send('again');
-    await waitFor(() => h.started.length === 1, "the chat's agent started");
-    expect(h.started.map((launch) => [launch.engine, launch.engineSessionId])).toEqual([['codex', 'claude-codex-chat']]);
-  });
-
   it('reads no Claude transcript after a crash when the engine keeps none, and says calls may be missing', async () => {
     const h = await harness({ seed: crashedCodexChat });
     const state = h.session.state();
@@ -73,10 +66,12 @@ describe('AgentSession on an engine other than Claude', () => {
     ]);
   });
 
-  it('refuses the terminal view for an engine that has none, and leaves the chat as it was', async () => {
-    const h = await harness({ seed: crashedCodexChat });
+  it('refuses the terminal view for an engine that has none, and leaves its running agent alone', async () => {
+    const h = await harness();
+    await h.session.newSession({ modelChoice: 'codex:gpt-6-luna', effort: null });
+    const pid = await waitFor(() => h.session.state().session?.status === 'running' && h.store.session(h.session.sessionId() ?? '')?.pid, "the chat's agent started");
     await expect(h.session.terminalLaunch()).rejects.toMatchObject({ code: 'no-terminal', message: 'This engine has no terminal view.' });
-    expect([h.started, h.session.sessionId()]).toEqual([[], 'codex-chat']);
+    expect([h.session.state().session?.status, isAlive(pid), h.started.map((launch) => launch.engine)]).toEqual(['running', true, ['codex']]);
   });
 
   it('refuses a chat of an engine CodeRay knows but has not registered, and starts no agent for it', async () => {
@@ -105,29 +100,32 @@ function unusedForeignChat(store: Store, root: string): void {
   store.saveSession({ ...sessionRecord('gemini-chat', root), foreignEngine: 'gemini', modelChoice: 'gemini:pro', status: 'ended', conversationStarted: false });
 }
 
+// A chat whose first message went out but whose agent never answered: in use, though no conversation started.
+function unansweredChat(store: Store, root: string): void {
+  store.saveSession({ ...sessionRecord('unanswered', root), modelChoice: 'sonnet', status: 'stopped', conversationStarted: false });
+  store.saveMessage('unanswered', { id: 'm1', seq: 1, turnId: null, parentToolUseId: null, role: 'user', text: 'hi', ts: 1 });
+}
+
 const turnClosed = (h: Harness) => waitFor(() => h.session.state().turns.some((turn) => turn.closedAt !== null), 'turn closed');
 
 describe('the model decides the engine', () => {
-  it("replaces a new chat's unstarted agent when a model of another engine is chosen before the first message", async () => {
+  it("replaces a new chat's unstarted agent when a model of another engine is chosen before the first message, on the same effort too", async () => {
     const h = await harness();
     await h.session.newSession();
-    await waitFor(() => h.started.length === 1, "the new chat's agent started");
-    const claudePid = h.store.session(h.session.sessionId() ?? '')?.pid ?? -1;
-    await h.session.configure('codex:gpt-6-luna', 'minimal');
+    const claudePid = await waitFor(() => h.started.length === 1 && h.store.session(h.session.sessionId() ?? '')?.pid, "the new chat's agent started");
+    await h.session.configure('codex:gpt-6-luna', 'medium');
     await waitFor(() => h.started.length === 2, 'the agent started again');
     expect([h.started.map((launch) => launch.engine), h.session.state().session, h.store.session(h.session.sessionId() ?? '')?.engine, isAlive(claudePid)]).toMatchObject([
-      ['claude', 'codex'], { engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: 'minimal', status: 'running' }, 'codex', false,
+      ['claude', 'codex'], { engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: 'medium', status: 'running' }, 'codex', false,
     ]);
   });
 
-  it('refuses a model of another engine once the chat is in use, with engine-locked, and keeps the chat as it was', async () => {
-    const h = await harness();
-    h.session.send('hi');
-    await turnClosed(h);
+  it('refuses a model of another engine once the chat has a message, though its agent never answered, with engine-locked, and keeps the chat as it was', async () => {
+    const h = await harness({ seed: unansweredChat });
     await expect(h.session.configure('codex:gpt-6-luna', null)).rejects.toMatchObject({
       code: 'engine-locked', message: 'This chat runs on another engine. Start a new chat to use that model.',
     });
-    expect([h.session.state().session?.engine, h.session.state().session?.modelChoice, h.started.length]).toEqual(['claude', 'sonnet', 1]);
+    expect([h.store.session('unanswered'), h.started]).toMatchObject([{ engine: 'claude', modelChoice: 'sonnet', conversationStarted: false }, []]);
   });
 
   it("refuses even a Claude model on a chat of an engine CodeRay does not know, before its first message too, and keeps the chat's own", async () => {
@@ -167,8 +165,9 @@ describe('the model of a new chat', () => {
     const h = await harness({ overrides: { defaultModel: undefined } });
     expect(() => h.session.send('hi')).toThrow('Choose a model for this chat first.');
     await expect(h.session.configure(null, 'high')).rejects.toMatchObject({ code: 'no-model' });
+    await expect(h.session.terminalLaunch()).rejects.toMatchObject({ code: 'no-model' });
     await h.session.newSession();
-    expect([h.started, h.session.nextPick(), h.session.state().session]).toEqual([[], null, null]);
+    expect([h.started, h.session.nextPick(), h.session.state().session, h.store.listSessions()]).toEqual([[], null, null, []]);
     await h.session.configure('opus', 'high');
     expect([h.started, h.session.nextPick()]).toEqual([[], { engine: 'claude', modelChoice: 'opus', effort: 'high' }]);
     h.session.send('hi');
@@ -185,28 +184,22 @@ describe('the model of a new chat', () => {
     expect(h.started.map((launch) => [launch.engine, launch.model, launch.effort])).toEqual([['claude', null, null], ['claude', 'sonnet', 'medium']]);
   });
 
-  it('opens a new chat on the model it is given at once, also on a project with no chat', async () => {
+  it('opens a new chat on the model it is given at once, also on a project with no chat, and its terminal view on that model too', async () => {
     const h = await harness({ overrides: { defaultModel: undefined } });
     await h.session.newSession({ modelChoice: 'opus', effort: 'high' });
     await waitFor(() => h.started.length === 1, "the new chat's agent started");
-    expect([h.started[0]?.model, h.started[0]?.effort]).toEqual(['opus', 'high']);
+    const terminal = await h.session.terminalLaunch();
+    expect([h.started[0]?.model, h.started[0]?.effort, argValue(terminal?.args, '--model'), argValue(terminal?.args, '--effort')]).toEqual(['opus', 'high', 'opus', 'high']);
   });
 
-  it('never starts a new chat from a chat of an engine this CodeRay does not know', async () => {
-    const h = await harness({ overrides: { defaultModel: undefined }, seed: foreignChat });
-    await h.session.newSession();
-    expect([h.session.nextPick(), h.started]).toEqual([null, []]);
-  });
-
-  it('starts the chat after one of an engine CodeRay has not registered on the default model, and still refuses that chat the terminal view', async () => {
+  it('starts the chat after one of an engine CodeRay has not registered on the default model', async () => {
     const h = await harness({ engines: ['claude'], seed: crashedCodexChat });
-    await expect(h.session.terminalLaunch()).rejects.toMatchObject({ code: 'no-terminal' });
     await h.session.newSession();
     await waitFor(() => h.started.length === 1, "the new chat's agent started");
     expect(h.started.map((launch) => [launch.engine, launch.model, launch.effort])).toEqual([['claude', 'sonnet', 'medium']]);
   });
 
-  it('opens a fresh chat on the default model instead of reusing an unused chat of an engine this CodeRay does not know, and keeps that chat', async () => {
+  it('opens a fresh chat on the default model instead of reusing an unused chat of an engine this CodeRay does not know, or inheriting from it, and keeps that chat', async () => {
     const h = await harness({ seed: unusedForeignChat });
     await h.session.switchSession('gemini-chat');
     await h.session.newSession();
@@ -214,13 +207,5 @@ describe('the model of a new chat', () => {
     expect([h.started.map((launch) => [launch.engine, launch.model, launch.effort]), h.session.sessionId() === 'gemini-chat', h.store.session('gemini-chat')]).toMatchObject([
       [['claude', 'sonnet', 'medium']], false, { foreignEngine: 'gemini', modelChoice: 'gemini:pro' },
     ]);
-  });
-
-  it('opens a fresh chat on the model it is given instead of refusing it on an unused chat of an engine this CodeRay does not know', async () => {
-    const h = await harness({ seed: unusedForeignChat });
-    await h.session.switchSession('gemini-chat');
-    await h.session.newSession({ modelChoice: 'opus', effort: 'high' });
-    await waitFor(() => h.started.length === 1, "the new chat's agent started");
-    expect([h.started[0]?.model, h.started[0]?.effort, h.session.sessionId() === 'gemini-chat']).toEqual(['opus', 'high', false]);
   });
 });

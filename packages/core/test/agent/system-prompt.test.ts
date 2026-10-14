@@ -1,6 +1,10 @@
 import { createHash } from 'node:crypto';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { systemPrompt, type PromptNames } from '../../src/agent/system-prompt';
+import { createGateRuntime } from '../../src/gate/runtime';
+import { DEFAULT_POLICY } from '../../src/policy/policy';
+import { openStore } from '../../src/store/store';
+import { tempDir } from '../helpers';
 
 describe('systemPrompt', () => {
   it('tells the agent to propose a plan and mark steps, and lists the component ids with their names', () => {
@@ -53,16 +57,27 @@ describe('systemPrompt', () => {
       systemPrompt([{ id: 'auth', name: 'Auth' }, { id: 'billing', name: 'Billing' }], true, true),
       systemPrompt([], false, false),
       systemPrompt([{ id: 'auth', name: 'Auth' }], false, true),
+      systemPrompt([{ id: 'auth', name: 'Auth' }], true, false),
     ].map(sha)).toEqual([
       'f09138538d17fa647a6ea70d50521f9c7ed150f23aa93c31ece7b07dfcaeaa03',
       '14a64853f6a817d8f051c27d85585daf651997b662be022969f4fa44cce16578',
       'f4acfc2a482f426abef20f9a8856526ed25a7ee3b035ff36afc5f1f385b0fd94',
+      '5bbcea362aaee6bfdd90d607128d036632502f63e7641279c49c7f110f0b4035',
     ]);
   });
 
-  it("names every tool the way the engine's names say, and none of Claude's", () => {
+  it("names every tool the way the engine's names say, and none of Claude's, in the prompt the gate hands an agent", async () => {
     const names: PromptNames = { idecore: (tool) => `idecore_${tool}`, writeTools: 'edit, write', exploreTools: 'grep, glob or exploring bash command' };
-    const prompt = systemPrompt([], true, true, names);
+    const store = openStore(tempDir('ide-store-'));
+    const runtime = createGateRuntime({
+      root: tempDir('ide-root-'), home: tempDir('ide-home-'), store, policy: () => DEFAULT_POLICY, components: () => [], port: () => 0,
+      map: () => null, search: () => Promise.reject(new Error('not searched')),
+    });
+    onTestFinished(async () => {
+      await runtime.close();
+      store.close();
+    });
+    const prompt = runtime.sessionGate.systemPrompt(names);
     expect([...prompt.matchAll(/idecore_\w+/g)].map(([name]) => name))
       .toEqual(['idecore_map_overview', 'idecore_propose_plan', 'idecore_step', 'idecore_map_component', 'idecore_search_code', 'idecore_set_chat_title']);
     expect([prompt.includes('mcp__'), prompt.includes('NotebookEdit'), prompt.includes('(edit, write, or a shell command'), prompt.includes('Before your first grep, glob or exploring bash command')])

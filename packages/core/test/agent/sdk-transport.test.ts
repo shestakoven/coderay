@@ -6,7 +6,7 @@ import { startSdkTransport } from '../../src/agent/sdk-transport';
 import type { StreamEvent } from '../../src/agent/stream';
 import type { Launch } from '../../src/agent/transport';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
-import { tempDir, waitFor } from '../helpers';
+import { fixture, tempDir, waitFor } from '../helpers';
 
 // Before the imports load the SDK, which writes this variable as it loads; a core started from Claude Code inherits it.
 vi.hoisted(() => {
@@ -96,15 +96,19 @@ describe('startSdkTransport', () => {
     expect([exit.code, t.events.at(-1)?.type]).toEqual([1, 'result']);
   });
 
-  it("hands the session claude's messages as events, a reply's usage ahead of the reply, and every message to the tap", async () => {
-    const t = start('usage');
+  it("hands the session claude's messages as events, a reply's usage ahead of the reply, the context window of the model init names, and every message to the tap", async () => {
+    // The result lists a subagent's model first; the turn ran on the model claude's init names.
+    const scenario = join(tempDir('ide-scenario-'), 'usage.jsonl');
+    writeFileSync(scenario, readFileSync(fixture('stream/usage.jsonl'), 'utf8').replace('"modelUsage":{', '"modelUsage":{"claude-opus-5-5":{"contextWindow":1000000},'));
+    const t = start(scenario);
     t.transport.send(HI);
     await waitFor(() => t.events.some((e) => e.type === 'result'), 'the turn ended');
     const usages = t.events.flatMap((e) => (e.type === 'usage' ? [e.update] : []));
     const order = t.events.map((e) => e.type).filter((type) => type === 'usage' || type === 'assistant' || type === 'result');
-    expect([usages, order, t.raw.some((m) => (m as { type?: unknown }).type === 'rate_limit_event')]).toEqual([
+    expect([usages, order, t.events.find((e) => e.type === 'assistant'), t.raw.some((m) => (m as { type?: unknown }).type === 'rate_limit_event')]).toEqual([
       [{ contextTokens: 96_010 }, { limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }] }, { contextWindow: 200_000 }],
       ['usage', 'assistant', 'assistant', 'usage', 'usage', 'result'],
+      { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'text', text: 'OK' }] },
       true,
     ]);
   });

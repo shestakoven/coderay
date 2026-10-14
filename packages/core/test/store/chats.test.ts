@@ -354,25 +354,25 @@ describe('schema 10 migration', () => {
     expect([store.listSessions().map((chat) => [chat.id, chat.engine]), store.history('s1').messages.map((m) => m.text)]).toEqual([[['s1', 'claude']], ['hello']]);
   });
 
-  it('never reads an engine it does not know as Claude, and writes it back unchanged', () => {
+  it('never reads an engine it does not know as Claude, and writes it back unchanged, with its effort', () => {
     const dir = tempDir('ide-store-');
     const first = openStore(dir);
     first.saveSession(session('s1', 5));
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec("UPDATE sessions SET engine = 'gemini'");
+    db.exec("UPDATE sessions SET engine = 'gemini', effort = 'deep'");
     db.close();
 
     const store = freshStore(dir);
     const read = store.session('s1');
     store.saveSession({ ...read!, status: 'crashed' });
-    expect([read?.foreignEngine, store.session('s1')]).toMatchObject(['gemini', { foreignEngine: 'gemini', status: 'crashed' }]);
+    expect([read?.foreignEngine, store.session('s1')]).toMatchObject(['gemini', { foreignEngine: 'gemini', effort: 'deep', status: 'crashed' }]);
   });
 
-  it('updates the engine and its conversation id when the session is saved again', () => {
+  it("updates the engine and its conversation id when the session is saved again, and reads the effort as that engine names it", () => {
     const store = freshStore();
     store.saveSession(session('s1', 1));
-    store.saveSession(session('s1', 1, { engine: 'codex', engineSessionId: 'thread-1' }));
-    expect(store.session('s1')).toMatchObject({ engine: 'codex', engineSessionId: 'thread-1' });
+    store.saveSession(session('s1', 1, { engine: 'codex', engineSessionId: 'thread-1', effort: 'minimal' }));
+    expect(store.session('s1')).toMatchObject({ engine: 'codex', engineSessionId: 'thread-1', effort: 'minimal' });
   });
 });

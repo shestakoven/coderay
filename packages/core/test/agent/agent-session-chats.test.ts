@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { EMPTY_USAGE, type SessionServerMessage } from '@ide/protocol';
@@ -8,7 +8,7 @@ import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type SessionRecord, type Store } from '../../src/store/store';
 import { argValue, fakeClaude, hasArg, readRecords } from '../fake-claude/fake';
-import { SONNET, tempDir, waitFor } from '../helpers';
+import { fixture, SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
   session: AgentSession;
@@ -62,6 +62,16 @@ async function twoChats(h: Harness) {
   await h.session.newSession();
   await ask(h, 'second question');
   return { a, b: current(h) };
+}
+
+// The usage scenario with the account's two windows in events of their own, as claude reports a window when it changes.
+function windowsApart(): string {
+  const limit = (type: string, utilization: number, resetsAt: number) =>
+    JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: type, utilization, resetsAt }, session_id: '$SESSION' });
+  const file = join(tempDir('ide-scenario-'), 'usage-windows-apart.jsonl');
+  writeFileSync(file, readFileSync(fixture('stream/usage.jsonl'), 'utf8').split('\n')
+    .flatMap((line) => (line.includes('"rate_limit_event"') ? [limit('five_hour', 0.42, 1790898600), limit('seven_day', 0.07, 1791482400)] : [line])).join('\n'));
+  return file;
 }
 
 function longBackgroundShell(): string {
@@ -722,6 +732,15 @@ describe('AgentSession usage', () => {
       limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }],
     });
     expect(lastSnapshot(h)).toMatchObject({ state: { usage: { contextTokens: null } } });
+  });
+
+  it('keeps each limit window as it arrives on its own, and the account limits on a chat it switches to', async () => {
+    const h = await harness('usage', {}, windowsApart());
+    await ask(h, 'hi');
+    const first = current(h).id;
+    await h.session.newSession();
+    await h.session.switchSession(first);
+    expect(h.session.state().usage.limits.map((window) => [window.label, window.utilization])).toEqual([['5h', 0.42], ['7d', 0.07]]);
   });
 
   it('shows no usage before the agent has said anything', async () => {

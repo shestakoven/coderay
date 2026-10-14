@@ -82,6 +82,11 @@ describe('main.ts', { timeout: 90_000 }, () => {
     ]);
   });
 
+  it('tells the UI that a new chat needs a model when IDE_DEFAULT_MODEL names none claude takes', async () => {
+    const { messages } = await startMain({ env: { IDE_DEFAULT_MODEL: '--evil' } });
+    expect(await waitFor(() => messages.find((m) => m.type === 'sessions.snapshot'), 'the chats')).toMatchObject({ sessions: [], next: null });
+  });
+
   it('tells the UI what a new chat starts with, and lists the model a New chat gives the unused chat', async () => {
     const { messages, socket } = await startMain();
     const greeting = await waitFor(() => messages.find((m) => m.type === 'sessions.snapshot'), 'the chats');

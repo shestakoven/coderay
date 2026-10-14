@@ -28,13 +28,14 @@ describe('parseModels', () => {
       .toEqual([{ value: 'haiku', name: 'Haiku 4.5', engine: 'claude', efforts: CLAUDE_EFFORTS }]);
   });
 
-  it("offers the effort levels claude names for a model, none when it names none, and all five when it says nothing", () => {
+  it("offers the effort levels claude names for a model, none when it names none or only levels CodeRay does not know, and all five when it says nothing", () => {
     const line = response([
       { value: 'opus', displayName: 'Opus 5.5', supportedEffortLevels: ['low', 'high', 'ultra'] },
       { value: 'haiku', displayName: 'Haiku 4.5', supportedEffortLevels: [] },
+      { value: 'fable', displayName: 'Fable 5.1', supportedEffortLevels: ['ultra'] },
       { value: 'sonnet', displayName: 'Sonnet 5.5' },
     ]);
-    expect(parseModels(line)?.map((model) => [model.value, model.efforts])).toEqual([['opus', ['low', 'high']], ['haiku', []], ['sonnet', CLAUDE_EFFORTS]]);
+    expect(parseModels(line)?.map((model) => [model.value, model.efforts])).toEqual([['opus', ['low', 'high']], ['haiku', []], ['fable', []], ['sonnet', CLAUDE_EFFORTS]]);
   });
 
   it.each([
