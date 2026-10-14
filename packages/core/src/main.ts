@@ -7,8 +7,6 @@ import { AGENT_TERMINAL_ID, parseModelId, type ChatPick, type ClientMessage, typ
 import { AccountLogin } from './accounts/account-login';
 import { AccountStore } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
-import { claudeEngine } from './agent/engines/claude';
-import { EngineRegistry } from './agent/engines/registry';
 import { createExecutionRuntime } from './execution/runtime';
 import { GitService } from './git/git-service';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
@@ -226,12 +224,10 @@ try {
     expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
     claudeJsonPath: () => claudeJsonPath(accounts.configDir(accounts.activeId())),
   });
-  const engines = new EngineRegistry([claudeEngine({ command: () => ({ command: values.claude, args: [], env: accounts.claudeEnv() }), cwd: root })]);
   const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
     accounts,
-    engines,
     defaultModel: defaultModel(process.env.IDE_DEFAULT_MODEL),
     mcpServers: () => registry.sessionServers(),
     ...rt.sessionOptions,
@@ -332,14 +328,14 @@ try {
 
   let modelList: Promise<ModelInfo[]> | undefined;
   const modelCatalog = (): Promise<ModelInfo[]> => {
-    modelList ??= Promise.all(engines.all().map((engine) => engine.listModels())).then((lists) => {
+    modelList ??= Promise.all(agent.engines.all().map((engine) => engine.listModels())).then((lists) => {
       const list = lists.flat();
       if (list.length === 0) modelList = undefined;
       return list;
     });
     return modelList;
   };
-  const engineStates = (): Promise<EngineStatus[]> => Promise.all(engines.all().map((engine) => engine.status()));
+  const engineStates = (): Promise<EngineStatus[]> => Promise.all(agent.engines.all().map((engine) => engine.status()));
 
   const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {
@@ -372,12 +368,13 @@ try {
       case 'session.list':
         reply(sessionsSnapshot());
         return;
-      case 'models.list': {
-        const models = modelCatalog();
-        reply({ type: 'engines.snapshot', engines: await engineStates() });
-        reply({ type: 'models.snapshot', models: await models });
+      case 'models.list':
+        // The status check runs claude each time; the cached models never wait for it.
+        void engineStates()
+          .then((engines) => reply({ type: 'engines.snapshot', engines }))
+          .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
+        reply({ type: 'models.snapshot', models: await modelCatalog() });
         return;
-      }
       case 'session.switch':
         await watching;
         await agent.switchSession(message.id);

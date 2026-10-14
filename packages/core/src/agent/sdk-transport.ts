@@ -74,12 +74,17 @@ export function startSdkTransport(launch: Launch, sink: TransportSink, tap?: (me
   const pending = new Map<string, (result: PermissionResult) => void>();
   // A turn's context window is the one of the model claude's init names.
   let model: string | null = null;
+  // A message that fails is dropped alone: the drain loop would otherwise end, and a delayed delivery throw out of the core.
   const deliver = (message: unknown): void => {
-    const event = parseStreamMessage(message);
-    if (event.type === 'init') model = event.model;
-    const update = usageOf(message, model);
-    if (update) sink.event({ type: 'usage', update });
-    sink.event(event);
+    try {
+      const event = parseStreamMessage(message);
+      if (event.type === 'init') model = event.model;
+      const update = usageOf(message, model);
+      if (update) sink.event({ type: 'usage', update });
+      sink.event(event);
+    } catch (error) {
+      console.error('agent: could not read a message from claude', error);
+    }
   };
   // The SDK reads claude's control requests apart from its messages: delivering a request after the messages already read keeps a prompt behind its tool call.
   const later = (value: object): void => {

@@ -86,8 +86,10 @@ describe('AgentSession under a Claude account', () => {
     const w = world(1);
     const h = await harness(w);
     const first = await firstTurn(h);
-    expect([first.configDir, h.store.latestSession()?.accountId, typeof flag(first.argv, '--session-id')]).toStrictEqual([
-      w.dirOf(w.seeded[1]!), w.seeded[1]!.id, 'string',
+    // The claude that lists the models runs under the account too.
+    await h.session.engines.get('claude')?.listModels();
+    expect([first.configDir, h.store.latestSession()?.accountId, typeof flag(first.argv, '--session-id'), h.spawns().at(-1)?.configDir]).toStrictEqual([
+      w.dirOf(w.seeded[1]!), w.seeded[1]!.id, 'string', w.dirOf(w.seeded[1]!),
     ]);
   });
 

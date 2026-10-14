@@ -25,7 +25,7 @@ function launch(scenario: string, record: string): Launch {
   };
 }
 
-function start(scenario: string, asScript = false, env: Record<string, string> = {}) {
+function start(scenario: string, asScript = false, env: Record<string, string> = {}, refused: StreamEvent['type'] | null = null) {
   const record = join(tempDir('ide-fake-'), 'record.jsonl');
   const events: StreamEvent[] = [];
   const raw: unknown[] = [];
@@ -33,7 +33,11 @@ function start(scenario: string, asScript = false, env: Record<string, string> =
   const withEnv = { ...base, claude: { ...base.claude, env: { ...base.claude.env, ...env } } };
   // As `--claude <path>.mjs` runs it: the script itself is the command.
   const run = asScript ? { ...withEnv, claude: { ...withEnv.claude, command: FAKE_CLAUDE, args: [] } } : withEnv;
-  const transport = startSdkTransport(run, { event: (event) => events.push(event) }, (message) => raw.push(message));
+  const event = (next: StreamEvent): void => {
+    if (next.type === refused) throw new Error(`the session cannot take ${next.type}`);
+    events.push(next);
+  };
+  const transport = startSdkTransport(run, { event }, (message) => raw.push(message));
   // The session's sink refers to the transport the start returns, so nothing may reach it before.
   expect(events).toEqual([]);
   onTestFinished(async () => {
@@ -96,15 +100,20 @@ describe('startSdkTransport', () => {
     expect([exit.code, t.events.at(-1)?.type]).toEqual([1, 'result']);
   });
 
-  it("hands the session claude's messages as events, a reply's usage ahead of the reply, the context window of the model init names, and every message to the tap", async () => {
+  it("hands the session claude's messages as events, a reply's usage ahead of the reply, the context window of the model init names, and every message to the tap, past one the session fails on", async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => {
+      logged.mockRestore();
+    });
     // The result lists a subagent's model first; the turn ran on the model claude's init names.
     const scenario = join(tempDir('ide-scenario-'), 'usage.jsonl');
     writeFileSync(scenario, readFileSync(fixture('stream/usage.jsonl'), 'utf8').replace('"modelUsage":{', '"modelUsage":{"claude-opus-5-5":{"contextWindow":1000000},'));
-    const t = start(scenario);
+    const t = start(scenario, false, {}, 'init');
     t.transport.send(HI);
     await waitFor(() => t.events.some((e) => e.type === 'result'), 'the turn ended');
     const usages = t.events.flatMap((e) => (e.type === 'usage' ? [e.update] : []));
     const order = t.events.map((e) => e.type).filter((type) => type === 'usage' || type === 'assistant' || type === 'result');
+    expect(logged.mock.calls.map(([text, error]) => [text, (error as Error).message])).toEqual([['agent: could not read a message from claude', 'the session cannot take init']]);
     expect([usages, order, t.events.find((e) => e.type === 'assistant'), t.raw.some((m) => (m as { type?: unknown }).type === 'rate_limit_event')]).toEqual([
       [{ contextTokens: 96_010 }, { limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }] }, { contextWindow: 200_000 }],
       ['usage', 'assistant', 'assistant', 'usage', 'usage', 'result'],

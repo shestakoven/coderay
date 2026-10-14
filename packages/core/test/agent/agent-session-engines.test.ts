@@ -161,7 +161,9 @@ function oldChatWithoutModel(store: Store, root: string): void {
 }
 
 describe('the model of a new chat', () => {
-  it('starts nothing on a project with no chat and no default model until a model is chosen, then starts on that model', async () => {
+  it('starts nothing on a project with no chat and no default model it can run until a model is chosen, then starts on that model', async () => {
+    const unregistered = await harness({ engines: ['claude'], overrides: { defaultModel: { engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: null } } });
+    expect([unregistered.session.nextPick(), unregistered.store.listSessions()]).toEqual([null, []]);
     const h = await harness({ overrides: { defaultModel: undefined } });
     expect(() => h.session.send('hi')).toThrow('Choose a model for this chat first.');
     await expect(h.session.configure(null, 'high')).rejects.toMatchObject({ code: 'no-model' });

@@ -33,6 +33,8 @@ export async function claudeStatus(claude: ClaudeCommand, timeoutMs = VERSION_TI
     ({ stdout } = await run(claude.command, [...claude.args, '--version'], { env: claudeEnv(claude), timeout: timeoutMs }));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { engine: 'claude', state: 'missing', hint: 'Install Claude Code: claude is not on the PATH.' };
+    // execFile kills a claude that outlives the timeout and reports only the signal.
+    if ((error as { killed?: boolean }).killed) return { engine: 'claude', state: 'error', hint: `claude --version did not answer in ${timeoutMs / 1000} s.` };
     return { engine: 'claude', state: 'error', hint: `claude --version failed: ${(error as Error).message.split('\n')[0]}` };
   }
   const version = /\d+\.\d+\.\d+/.exec(stdout)?.[0];

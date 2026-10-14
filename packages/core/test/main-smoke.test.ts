@@ -71,14 +71,19 @@ describe('main.ts', { timeout: 90_000 }, () => {
     expect(await waitFor(() => (existsSync(seen) ? readFileSync(seen, 'utf8').trim() : ''), 'the claude to start')).toBe('unset unset');
   });
 
-  it('answers a request for the models with the state of each engine first, then the models', async () => {
-    const { messages, socket } = await startMain();
+  it('answers a request for the models without waiting for claude to tell its version, and the state of each engine once it has', async () => {
+    const dir = tempDir('main-version-');
+    const answer = join(dir, 'answer');
+    const claude = join(dir, 'claude');
+    writeFileSync(claude, `#!/bin/sh\nif [ "$1" = --version ]; then while [ ! -e '${answer}' ]; do sleep 0.05; done; fi\nexec '${FAKE_CLAUDE}' "$@"\n`, { mode: 0o755 });
+    const { messages, socket } = await startMain({ claude });
     socket.send(JSON.stringify({ type: 'models.list' }));
-    await waitFor(() => messages.some((m) => m.type === 'models.snapshot'), 'the models');
-    const answers = messages.filter((m) => m.type === 'engines.snapshot' || m.type === 'models.snapshot');
-    expect([answers.map((m) => m.type), answers[0]]).toEqual([
-      ['engines.snapshot', 'models.snapshot'],
-      { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }] },
+    const models = await waitFor(() => messages.find((m) => m.type === 'models.snapshot'), 'the models');
+    const early = messages.some((m) => m.type === 'engines.snapshot');
+    writeFileSync(answer, '');
+    const engines = await waitFor(() => messages.find((m) => m.type === 'engines.snapshot'), 'the engines');
+    expect([models, early, engines]).toEqual([
+      { type: 'models.snapshot', models: [] }, false, { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }] },
     ]);
   });
 

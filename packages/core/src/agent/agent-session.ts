@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs
 import { basename, join } from 'node:path';
 import {
   EMPTY_USAGE, ENGINE_CAPABILITIES, isClaudeEffort, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
-  type ChatImage, type ChatItem, type ChatPick, type ChatSummary, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
+  type ChatImage, type ChatItem, type ChatPick, type ChatSummary, type EngineId, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
 import { CANARY_MS } from '../gate/canary';
@@ -137,7 +137,8 @@ const MAX_STORED_BASE64 = Math.ceil(MAX_STORED_IMAGE_BYTES / 3) * 4;
 export class AgentSession {
   private readonly options: AgentSessionOptions;
   private readonly blobs: BlobStore;
-  private readonly engines: EngineRegistry;
+  /** The engines a chat can run on, whose status and models the core reports, under the active account. */
+  readonly engines: EngineRegistry;
   private readonly listeners = new Set<(message: SessionServerMessage) => void>();
   private readonly reportedUnknown = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
@@ -189,7 +190,12 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
-    this.engines = options.engines ?? new EngineRegistry([claudeEngine({ command: () => options.claude, cwd: options.root })]);
+    this.engines = options.engines ?? new EngineRegistry([claudeEngine({ command: () => this.activeClaude(), cwd: options.root })]);
+  }
+
+  private activeClaude(): ClaudeCommand {
+    const dir = this.options.accounts?.configDir(this.activeAccount()) ?? null;
+    return dir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: dir } };
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
@@ -837,10 +843,12 @@ export class AgentSession {
 
   /** What a new chat starts with: the open or previous chat's engine, model and effort, else the default model; null when nothing names one. */
   nextPick(): ChatPick | null {
-    // A chat of an engine this CodeRay does not know, or does not run, names nothing it can start.
+    // A chat, or a default model, of an engine this CodeRay does not know, or does not run, names nothing it can start.
+    const runs = (engine: EngineId): boolean => this.engines.get(engine) !== undefined;
     const chat = [this.session, this.previous].find((candidate): candidate is SessionRecord =>
-      candidate !== null && candidate.foreignEngine === undefined && this.engines.get(candidate.engine) !== undefined);
-    const from = chat ?? this.options.defaultModel ?? null;
+      candidate !== null && candidate.foreignEngine === undefined && runs(candidate.engine));
+    const fallback = this.options.defaultModel;
+    const from = chat ?? (fallback !== undefined && runs(fallback.engine) ? fallback : null);
     if (from === null) return null;
     // An earlier Claude chat with no model or effort ran on claude's defaults; the chat after it names them, as it always has.
     return from.engine === 'claude'

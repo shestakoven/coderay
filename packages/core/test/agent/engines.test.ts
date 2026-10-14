@@ -25,7 +25,7 @@ describe('claudeStatus', () => {
       { engine: 'claude', state: 'missing', hint: 'Install Claude Code: claude is not on the PATH.' },
       { engine: 'claude', state: 'error', hint: 'claude --version printed no version.' },
       { engine: 'claude', state: 'error', hint: failed },
-      { engine: 'claude', state: 'error', hint: failed },
+      { engine: 'claude', state: 'error', hint: 'claude --version did not answer in 0.3 s.' },
     ]);
   });
 });
