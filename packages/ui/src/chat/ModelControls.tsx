@@ -172,7 +172,7 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
   let index = -1;
   return (
     // A press anywhere in the menu but the search box leaves the focus in it, so the keys go on working.
-    <div className="model-menu" ref={root} data-testid="model-menu" onMouseDown={(event) => {
+    <div className="model-menu" role="dialog" aria-label="Choose a model" ref={root} data-testid="model-menu" onMouseDown={(event) => {
       if (event.target !== search.current) event.preventDefault();
     }}>
       <div className="model-search">

@@ -33,7 +33,8 @@ describe('ModelMenu', () => {
     expect([
       selected?.[2]?.includes('Sonnet 5.5'), selected?.[2]?.includes('<svg'), selected?.[2]?.includes('<span class="visually-hidden"> (current)</span>'),
       html.match(/class="model-check"><svg/g)?.length, html.match(/class="visually-hidden"/g)?.length, html.includes(`aria-activedescendant="${selected?.[1]}"`),
-    ]).toEqual([true, true, true, 1, 1, true]);
+      html.includes('<div class="model-menu" role="dialog" aria-label="Choose a model"'),
+    ]).toEqual([true, true, true, 1, 1, true, true]);
   });
 
   it('gives a model shown both among the recent ones and in its engine two options of their own, and starts on the one in its engine', () => {
