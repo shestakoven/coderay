@@ -108,7 +108,14 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
       gate.onDecision((record) => agent.recordDecision(record));
       agent.onUserMessage(() => plans.userMessage());
       // An ok result means the call ran without the hook's answer: a fail-open, which is not a denial.
-      agent.onToolResult((info) => gate.dropForTool(info.toolUseId, { record: info.status !== 'ok' }));
+      agent.onToolResult((info) => {
+        gate.dropForTool(info.toolUseId, { record: info.status !== 'ok' });
+        // A Codex propose_plan call can end before the user answers (its turn ended under it): the answer would reach nobody.
+        const engine = agent.engineOf();
+        if (info.tool === 'mcp__idecore__propose_plan' && engine !== null && engine !== 'claude') {
+          plans.withdrawPending("The agent's turn ended while the plan waited for an answer.");
+        }
+      });
       agent.onProcessExit(() => plans.withdrawPending("The agent's process ended while the plan waited for an answer."));
       // claude cancels its waiting propose_plan on Stop; Codex sends no notifications/cancelled, so the plan is withdrawn here.
       agent.onInterrupt(() => {

@@ -7,7 +7,22 @@ import { sent } from '../fake-codex/fake';
 import { fixture, waitFor } from '../helpers';
 import { AWAIT, build, HOLD_OPEN, INIT, type Built } from './harness';
 
-describe('Stop on Codex', () => {
+describe('A plan waiting for an answer in a Codex chat', () => {
+  it('is withdrawn when the turn ends with its propose_plan call still open, since its answer would reach nobody', async () => {
+    const proposing = JSON.stringify({
+      method: 'item/started',
+      params: { threadId: '$THREAD', turnId: '$TURN', item: { type: 'mcpToolCall', id: 'call-plan', server: 'idecore', tool: 'propose_plan', status: 'inProgress', arguments: {} } },
+    });
+    const b = await build({ scenario: [codexSay('m1', 'OK'), TURN, proposing], engine: 'codex' });
+    b.session.send('hi');
+    await closed(b, 1);
+    void b.rt.gate.plans.propose({ goal: 'Rework app', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ componentId: 'app', op: 'modify' }] }] });
+    await waitFor(() => b.rt.gate.plans.plans().some((proposed) => proposed.status === 'proposed'), 'the plan waits for an answer');
+    b.session.send('plan it');
+    await closed(b, 2);
+    expect(b.rt.gate.plans.plans().map((plan) => [plan.status, plan.feedback])).toEqual([['withdrawn', "The agent's turn ended while the plan waited for an answer."]]);
+  });
+
   it('withdraws the plan waiting for an answer when the user stops a Codex chat, as claude cancels its call itself', async () => {
     const b = await build({ scenario: fixture('codex/hang.jsonl'), engine: 'codex' });
     await b.send();
