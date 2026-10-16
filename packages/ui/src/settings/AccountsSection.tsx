@@ -289,6 +289,13 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
                   event.preventDefault();
                   submitCode();
                 }}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape') return;
+                  // Escape cancels the sign-in, not the whole Settings dialog.
+                  event.preventDefault();
+                  event.stopPropagation();
+                  cancel();
+                }}
               >
                 <input
                   ref={codeField}
