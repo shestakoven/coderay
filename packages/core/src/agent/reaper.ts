@@ -2,14 +2,15 @@ import { readdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { isRecord, parseJson } from '../json';
 import { writeFileNoFollow } from '../mcp/config';
-import { commandLine, descendants, isAlive, reaches, signal, signalGroup } from '../os-process';
+import { commandLine, descendants, groupMembers, isAlive, reaches, signal, signalGroup } from '../os-process';
 
-const PID_FILE = /^claude-\d+\.pid\.json$/;
+const PID_FILE = /^(?:claude|codex)-\d+\.pid\.json$/;
 const PRIVATE_FILE_MODE = 0o600;
 const POLL_MS = 50;
 
 interface ClaudeRecord {
   pid: number;
+  pgid: number;
   command: string;
   owner: number;
   ownerCommand: string;
@@ -25,17 +26,17 @@ function ownerCommandLine(owner: number): string {
 }
 
 // Command lines identify the processes, so a pid the system has since given to another program is never trusted.
-export function recordClaude(dir: string, pid: number, owner = process.pid): string | null {
+export function recordClaude(dir: string, pid: number, owner = process.pid, name: 'claude' | 'codex' = 'claude'): string | null {
   const command = commandLine(pid)?.trim();
   const ownerCommand = ownerCommandLine(owner);
   // A record without the owner's command line would take a live core for dead.
   if (!command || !ownerCommand) return null;
-  const file = join(dir, `claude-${pid}.pid.json`);
+  const file = join(dir, `${name}-${pid}.pid.json`);
   try {
-    writeFileNoFollow(file, JSON.stringify({ pid, command, owner, ownerCommand }), PRIVATE_FILE_MODE);
+    writeFileNoFollow(file, JSON.stringify({ pid, pgid: pid, command, owner, ownerCommand }), PRIVATE_FILE_MODE);
     return file;
   } catch (error) {
-    console.error('agent: could not write the pid file of claude', error);
+    console.error(`agent: could not write the pid file of ${name}`, error);
     return null;
   }
 }
@@ -68,6 +69,11 @@ export async function reapOrphans(dir: string, graceMs: number): Promise<number[
       if (!reaches(record.pid, process.pid)) orphans.push({ pid: record.pid, file });
       continue;
     }
+    // A dead leader's group still runs what it started (an app-server killed by SIGKILL leaves its shell commands); a live pid here was reused.
+    if (record && !isAlive(record.pgid) && groupMembers(record.pgid).length > 0 && !reaches(record.pgid, process.pid)) {
+      orphans.push({ pid: record.pgid, file });
+      continue;
+    }
     removePidFile(file);
   }
   // The file goes once its claude is stopped, so a core that dies meanwhile leaves the orphan to the next one.
@@ -88,7 +94,8 @@ function readRecord(file: string): ClaudeRecord | null {
     return null;
   }
   if (!isRecord(value) || typeof value.pid !== 'number' || typeof value.command !== 'string' || typeof value.owner !== 'number' || typeof value.ownerCommand !== 'string') return null;
-  return { pid: value.pid, command: value.command, owner: value.owner, ownerCommand: value.ownerCommand };
+  // A file written before records named their group: the leader's pid is its group's id.
+  return { pid: value.pid, pgid: typeof value.pgid === 'number' ? value.pgid : value.pid, command: value.command, owner: value.owner, ownerCommand: value.ownerCommand };
 }
 
 // claude's SIGTERM handler stops its tools; what is left after the grace time dies with the group, and children that left the group by name.

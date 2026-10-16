@@ -1,10 +1,10 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { reapOrphans, recordClaude } from '../../src/agent/reaper';
-import { commandLine, isAlive, signal } from '../../src/os-process';
+import { commandLine, groupMembers, isAlive, signal } from '../../src/os-process';
 import { FAKE_CLAUDE, readRecords, writePidRecord } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
@@ -121,5 +121,17 @@ describe('reapOrphans', () => {
     expect([[...(reaped ?? [])].sort(), readdirSync(dir)]).toEqual([[...orphans].sort(), []]);
     vi.useRealTimers();
     await waitFor(() => orphans.every((pid) => !isAlive(pid)), 'orphans stopped');
+  });
+
+  it('stops what a dead leader left running in its group, as a codex app-server killed by SIGKILL leaves its shell command', async () => {
+    const dir = tempDir('reaper-group-');
+    const leader = spawn(process.execPath, ['-e', "require('child_process').spawn('sleep', ['600'], { stdio: 'ignore' }).unref()"], { stdio: 'ignore', detached: true });
+    await new Promise((resolve) => leader.once('exit', resolve));
+    const left = await waitFor(() => groupMembers(leader.pid!)[0], 'the shell command left in the group');
+    onTestFinished(() => signal(left, 'SIGKILL'));
+    const file = writePidRecord(dir, leader.pid!, await deadPid(), 'node /gone/core/main.ts', 'codex app-server');
+    renameSync(file, join(dir, `codex-${leader.pid}.pid.json`));
+    await reapOrphans(dir, 200);
+    expect([await waitFor(() => !isAlive(left) && 'gone', 'the shell command stopped'), readdirSync(dir)]).toEqual(['gone', []]);
   });
 });

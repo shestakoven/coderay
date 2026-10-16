@@ -53,6 +53,11 @@ export function descendants(pid: number): number[] {
   return isProcessId(pid) ? treeOf(processTable(), pid) : [];
 }
 
+/** The processes still in a group, whether or not its leader runs. */
+export function groupMembers(pgid: number): number[] {
+  return isProcessId(pgid) ? processTable().filter((row) => row.pgid === pgid).map((row) => row.pid) : [];
+}
+
 // Whether signals to the tree and the group of `pid` would hit `target`. An unreadable process table counts as a hit: nothing is signalled on a guess.
 export function reaches(pid: number, target: number): boolean {
   if (!isProcessId(pid)) return false;
