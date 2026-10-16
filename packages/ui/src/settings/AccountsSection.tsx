@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import {
   API_KEY_PATTERN, ENGINE_NAMES, LOGIN_METHODS, type AccountLoginView, type ClientMessage, type EngineAccountsView, type EngineId, type LoginMethod,
 } from '@ide/protocol';
@@ -86,6 +86,13 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   const start = (method: LoginMethod, apiKey?: string): void =>
     send({ type: 'account.login.start', requestId: requestId(), engine, method, ...(apiKey === undefined ? {} : { apiKey }) });
   const cancel = (): void => send({ type: 'account.login.cancel', requestId: requestId() });
+  // Escape cancels the sign-in, not the whole Settings dialog.
+  const escapeCancels = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return;
+    event.preventDefault();
+    event.stopPropagation();
+    cancel();
+  };
   const remove = (id: string): void => {
     if (confirming !== id) setConfirming(id);
     else send({ type: 'account.remove', requestId: requestId(), engine, id });
@@ -251,7 +258,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
       {/* Said in text, not a tooltip: a disabled button takes no focus and shows no title to the keyboard. */}
       {!mine && elsewhere !== null && <p id={`${keyId}-why`} className="sw-field-help">Finish or cancel the {elsewhere} sign-in first.</p>}
       {mine && login.state === 'waiting' && login.method === 'device-code' && (
-        <div className="sw-login" role="group" aria-label="Device code sign-in">
+        <div className="sw-login" role="group" aria-label="Device code sign-in" onKeyDown={escapeCancels}>
           <div className="sw-login-row">
             <button ref={primary} type="button" className="sw-btn primary" disabled={login.url === null} data-landing={login.url !== null || undefined} onClick={() => open(login.url)}>
               Open the device page
@@ -273,7 +280,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
         </div>
       )}
       {mine && login.state === 'waiting' && login.method !== 'device-code' && (
-        <div className="sw-login">
+        <div className="sw-login" onKeyDown={escapeCancels}>
           <div className="sw-login-row">
             <button ref={primary} type="button" className="sw-btn primary" disabled={login.url === null} data-landing={login.url !== null || undefined} onClick={() => open(login.url)}>
               Open sign-in page
@@ -288,13 +295,6 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
                 onSubmit={(event) => {
                   event.preventDefault();
                   submitCode();
-                }}
-                onKeyDown={(event) => {
-                  if (event.key !== 'Escape') return;
-                  // Escape cancels the sign-in, not the whole Settings dialog.
-                  event.preventDefault();
-                  event.stopPropagation();
-                  cancel();
                 }}
               >
                 <input

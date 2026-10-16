@@ -841,7 +841,7 @@ test('Escape in the Claude sign-in code form cancels only the sign-in, and the n
   await expect(dialog).toBeHidden();
 });
 
-test("a Codex sign-in keeps the keyboard's focus on its current step, sends a key once with its engine and way, shows the key form again empty, Escape closes only that form, and search finds a Codex account", async ({ page }) => {
+test("a Codex sign-in keeps the keyboard's focus on its current step, Escape cancels only the device-code sign-in, sends a key once with its engine and way, shows the key form again empty, Escape closes only that form, and search finds a Codex account", async ({ page }) => {
   const stand = await standInAccounts(page, { claude: [], codex: [{ id: '3c1e8f5a-7d2b-4c6e-9a1f-2b3c4d5e6f70', email: 'work@example.com', plan: 'Plus', createdAt: 3 }] });
   await openApp(page);
   const dialog = await openSettings(page);
@@ -862,9 +862,9 @@ test("a Codex sign-in keeps the keyboard's focus on its current step, sends a ke
   await page.keyboard.press('Enter');
   await expect(cancel).toBeFocused();
   await step({ ...IDLE_LOGIN, state: 'waiting', engine: 'codex', method: 'device-code', url: 'https://auth.example.test/codex/device', userCode: 'ABCD-1234' }, codex.getByRole('button', { name: 'Open the device page' }));
-  await cancel.focus();
-  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
   await expect(device).toBeFocused();
+  await expect(dialog).toBeVisible();
 
   await useKey.focus();
   await page.keyboard.press('Enter');
