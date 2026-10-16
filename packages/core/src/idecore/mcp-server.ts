@@ -78,23 +78,25 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
   requireSecret(options.secret);
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
-  const buildServer = (): McpServer => {
+  const buildServer = (hints: boolean): McpServer => {
+    // Codex asks before a tool without readOnlyHint; idecore's tools change no project file. Claude's session gets none, as before.
+    const marked = <T extends object>(config: T): T => (hints ? { ...config, annotations: { readOnlyHint: true } } : config);
     const server = new McpServer({ name: 'idecore', version: '1.0.0' });
-    server.registerTool('propose_plan', { description: PROPOSE_DESCRIPTION, inputSchema: proposeInput }, async (input, extra) => {
+    server.registerTool('propose_plan', marked({ description: PROPOSE_DESCRIPTION, inputSchema: proposeInput }), async (input, extra) => {
       const outcome = await options.plans.propose(input, extra.signal);
       return outcome.ok ? result(outcome.value) : failure(outcome.error);
     });
-    server.registerTool('step', { description: STEP_DESCRIPTION, inputSchema: stepInput }, async (input) => {
+    server.registerTool('step', marked({ description: STEP_DESCRIPTION, inputSchema: stepInput }), async (input) => {
       const outcome = options.plans.step(input);
       return outcome.ok ? result({ ok: true }) : failure(outcome.error);
     });
     const { setTitle } = options;
     if (setTitle) {
-      server.registerTool('set_chat_title', { description: TITLE_DESCRIPTION, inputSchema: titleInput }, ({ title }) => result({ ok: setTitle(title) }));
+      server.registerTool('set_chat_title', marked({ description: TITLE_DESCRIPTION, inputSchema: titleInput }), ({ title }) => result({ ok: setTitle(title) }));
     }
     const { map } = options;
     if (map) {
-      server.registerTool('map_overview', { description: MAP_OVERVIEW_DESCRIPTION }, () => {
+      server.registerTool('map_overview', marked({ description: MAP_OVERVIEW_DESCRIPTION }), () => {
         const snapshot = map();
         if (!snapshot) return failure('The project map is not ready yet.');
         const owner = new Map(snapshot.files.map((file) => [file.path, file.componentId]));
@@ -108,7 +110,7 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
           id, name, summary, files: files.length, stale, dependsOn: [...(links.get(id) ?? [])],
         })));
       });
-      server.registerTool('map_component', { description: MAP_COMPONENT_DESCRIPTION, inputSchema: { id: z.string() } }, ({ id }) => {
+      server.registerTool('map_component', marked({ description: MAP_COMPONENT_DESCRIPTION, inputSchema: { id: z.string() } }), ({ id }) => {
         const snapshot = map();
         const component = snapshot?.components.find((item) => item.id === id);
         if (!snapshot || !component) return failure(`There is no component "${id}" on the map.`);
@@ -119,7 +121,7 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
     }
     const { search } = options;
     if (search) {
-      server.registerTool('search_code', { description: SEARCH_DESCRIPTION, inputSchema: searchInput }, async ({ query, limit }) => {
+      server.registerTool('search_code', marked({ description: SEARCH_DESCRIPTION, inputSchema: searchInput }), async ({ query, limit }) => {
         const outcome = await search(query, limit ?? DEFAULT_SEARCH_LIMIT);
         if (!outcome.ok) return failure(outcome.error);
         const files = new Map(options.map?.()?.files.map((file) => [file.path, file]));
@@ -163,7 +165,8 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
       created.onclose = () => {
         if (created.sessionId) transports.delete(created.sessionId);
       };
-      await buildServer().connect(created);
+      const hints = new URL(req.url ?? '/', 'http://localhost').searchParams.get('readOnlyHints') === '1';
+      await buildServer(hints).connect(created);
       transport = created;
     }
     await transport.handleRequest(req, res, body);
