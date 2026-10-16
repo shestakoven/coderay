@@ -119,6 +119,7 @@ async function play(current) {
       }
       if (result === WITHDRAWN) {
         notify('serverRequest/resolved', { threadId, requestId: id });
+        lastAnswer = null;
         continue;
       }
       record({ reply: { method: step.request, result } });

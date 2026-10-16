@@ -173,13 +173,15 @@ describe('the Codex transport', () => {
     await waitFor(() => results().length === 1, 'the first turn ended');
     transport.send(userMessage('edit', []));
     await waitFor(() => held, 'the patch held for the user');
-    // The gate's answer comes right after the withdrawal, while the turn still runs.
+    // At Stop the gate answers right after it; after codex's withdrawal the answer is judged while the turn still runs, before Stop ends it.
     if (stop) {
       transport.interrupt();
       release();
     } else {
       await waitFor(() => held?.aborted, 'codex withdrew the request');
       release();
+      await waitFor(() => withdrawn.length === 1, 'the gate answered');
+      await new Promise((resolve) => setImmediate(resolve));
       transport.interrupt();
     }
     await waitFor(() => results().length === 2, 'the turn ended');
