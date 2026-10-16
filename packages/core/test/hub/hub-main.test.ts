@@ -72,7 +72,7 @@ function killAllUnder(base: string): void {
 
 function startHubProcess(env: { base: string; home: string; bin: string }, port: number, projects: string[]) {
   const args = ['--import', 'tsx', MAIN, '--hub', ...projects.flatMap((root) => ['--project', root]),
-    '--ide-home', env.home, '--port', String(port), '--allow-origin', ORIGIN, '--claude', FAKE_CLAUDE];
+    '--ide-home', env.home, '--port', String(port), '--allow-origin', ORIGIN, '--claude', FAKE_CLAUDE, '--no-codex'];
   const child: ChildProcess = spawn(process.execPath, args, {
     cwd: REPO,
     env: {

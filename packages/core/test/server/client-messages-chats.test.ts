@@ -70,8 +70,8 @@ describe('parseClientMessage session.configure', () => {
     expect(bad.map((modelChoice) => parse({ type: 'session.configure', modelChoice, effort: null }))).toEqual(bad.map(() => null));
   });
 
-  it('rejects an effort that is not a known level', () => {
-    const bad = ['ultra', 'HIGH', '', 'default', 1, true, {}, ['high']];
+  it('rejects an effort that no engine names', () => {
+    const bad = ['HIGH', '', '-high', 'a'.repeat(33), 1, true, {}, ['high']];
     expect(bad.map((effort) => parse({ type: 'session.configure', modelChoice: null, effort }))).toEqual(bad.map(() => null));
   });
 
@@ -98,6 +98,13 @@ describe('parseClientMessage session.configure', () => {
       { type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
       null, null, null,
     ]);
+  });
+
+  it("takes an effort only another engine names when no model is given, and leaves the check against the chat's engine to the chat", () => {
+    expect([
+      parse({ type: 'session.configure', modelChoice: null, effort: 'ultra' }),
+      parse({ type: 'session.configure', modelChoice: null, effort: 'Ultra!' }),
+    ]).toEqual([{ type: 'session.configure', modelChoice: null, effort: 'ultra' }, null]);
   });
 });
 

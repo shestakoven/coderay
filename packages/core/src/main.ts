@@ -8,9 +8,13 @@ import {
   type ServerMessage,
 } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
-import { AccountError, claudeAccounts, type AccountStore } from './accounts/account-store';
+import { AccountError, AccountStore, claudeAccounts } from './accounts/account-store';
 import { claudeLogin } from './accounts/claude-login';
+import { codexLogin, codexLogout } from './accounts/codex-login';
 import { AgentSession } from './agent/agent-session';
+import { codexCommand } from './agent/codex/command';
+import { hideSecrets } from './agent/codex/secrets';
+import type { Engine } from './agent/engines/registry';
 import { createExecutionRuntime } from './execution/runtime';
 import { GitService } from './git/git-service';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
@@ -67,6 +71,8 @@ const { values } = parseArgs({
     'ide-home': { type: 'string' },
     'token-stdin': { type: 'boolean', default: false },
     claude: { type: 'string', default: 'claude' },
+    codex: { type: 'string', default: 'codex' },
+    'no-codex': { type: 'boolean', default: false },
     'no-map-mcp': { type: 'boolean', default: false },
     'no-agent-search': { type: 'boolean', default: false },
     hub: { type: 'boolean', default: false },
@@ -116,7 +122,7 @@ if (values.hub) {
       allowedOrigins: values['allow-origin'],
       home,
       projects: values.project.map((path) => resolve(path)),
-      child: { claude: values.claude, noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'] },
+      child: { claude: values.claude, codex: values['no-codex'] ? null : values.codex, noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'] },
     });
   } catch (error) {
     console.error(`CodeRay core failed to start: ${(error as Error).message}`);
@@ -194,10 +200,18 @@ try {
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
   let indexer: Indexer | undefined;
-  const accountStores: Partial<Record<EngineId, AccountStore>> = { claude: claudeAccounts(home, values.claude) };
+  // --no-codex: a core for tests and the e2e, which never run the real codex.
+  const codex = values['no-codex'] ? undefined : codexCommand(values.codex);
+  const accountStores: Partial<Record<EngineId, AccountStore>> = {
+    claude: claudeAccounts(home, values.claude),
+    ...(codex ? { codex: new AccountStore({ home, engine: 'codex', logout: codexLogout(() => codex) }) } : {}),
+  };
   const accounts = accountStores.claude!;
   const login = new AccountLogin({
-    engines: { claude: { store: accounts, flow: claudeLogin(values.claude) } },
+    engines: {
+      claude: { store: accounts, flow: claudeLogin(values.claude) },
+      ...(codex && accountStores.codex ? { codex: { store: accountStores.codex, flow: codexLogin(() => codex, runDir(home)) } } : {}),
+    },
     onChange: () => {
       try {
         server?.broadcast(settingsSnapshot());
@@ -235,6 +249,7 @@ try {
   const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
+    ...(codex ? { codex } : {}),
     accounts: accountStores,
     defaultModel: defaultModel(process.env.IDE_DEFAULT_MODEL),
     mcpServers: () => registry.sessionServers(),
@@ -357,23 +372,39 @@ try {
   let deployWatch: { close(): Promise<void> } | undefined;
   const progress = new ProgressReporter((current) => server?.broadcast({ type: 'map.progress', progress: current }));
 
-  let modelList: Promise<ModelInfo[]> | undefined;
-  const modelCatalog = (): Promise<ModelInfo[]> => {
-    if (modelList) return modelList;
-    const pending: Promise<ModelInfo[]> = Promise.all(agent.engines.all().map((engine) => engine.listModels())).then((lists) => {
-      const list = lists.flat();
-      if (list.length === 0 && modelList === pending) modelList = undefined;
-      return list;
-    });
-    modelList = pending;
+  // Each engine's list is kept once it names a model; one that failed or named none is asked again next time, without the others,
+  // and one engine that cannot list its models never empties the others' lists. A failure is logged once until the engine lists again.
+  const engineModels = new Map<EngineId, Promise<ModelInfo[]>>();
+  const unlisted = new Set<EngineId>();
+  const modelsOf = (engine: Engine): Promise<ModelInfo[]> => {
+    const known = engineModels.get(engine.id);
+    if (known) return known;
+    const forget = (): void => {
+      if (engineModels.get(engine.id) === pending) engineModels.delete(engine.id);
+    };
+    const pending: Promise<ModelInfo[]> = engine.listModels().then(
+      (list) => {
+        unlisted.delete(engine.id);
+        if (list.length === 0) forget();
+        return list;
+      },
+      (error: unknown) => {
+        forget();
+        if (!unlisted.has(engine.id)) console.error(`CodeRay core: could not list the ${ENGINE_NAMES[engine.id]} models (${hideSecrets((error as Error).message)})`);
+        unlisted.add(engine.id);
+        return [];
+      },
+    );
+    engineModels.set(engine.id, pending);
     return pending;
   };
+  const modelCatalog = async (): Promise<ModelInfo[]> => (await Promise.all(agent.engines.all().map(modelsOf))).flat();
   const engineStates = (): Promise<EngineStatus[]> => Promise.all(agent.engines.all().map((engine) => engine.status()));
   // An account change can sign an engine in or out and change its models, so every window gets both again, from the latest change only.
   let refreshes = 0;
   const refreshEngines = (): void => {
     const generation = ++refreshes;
-    modelList = undefined;
+    engineModels.clear();
     void engineStates()
       .then((engines) => { if (generation === refreshes) server?.broadcast({ type: 'engines.snapshot', engines }); })
       .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));

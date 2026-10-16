@@ -12,7 +12,7 @@ import { fixture, tempDir, waitFor, writeTree } from './helpers';
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 
-async function startMain(options: { claude?: string; env?: Record<string, string> } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
+async function startMain(options: { claude?: string; env?: Record<string, string>; codex?: string } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
   const base = tempDir('main-smoke-');
   const root = join(base, 'project');
   const bin = join(base, 'bin');
@@ -23,7 +23,8 @@ async function startMain(options: { claude?: string; env?: Record<string, string
   execFileSync('git', ['init', '-q'], { cwd: root });
   const child: ChildProcess = spawn(
     process.execPath,
-    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE],
+    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE,
+      ...(options.codex === undefined ? ['--no-codex'] : ['--codex', options.codex])],
     {
       cwd: REPO,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), IDE_DEFAULT_MODEL: 'sonnet', ...options.env },
@@ -149,6 +150,17 @@ describe('main.ts', { timeout: 90_000 }, () => {
       { accounts: [], activeId: null, engines: [{ engine: 'claude', accounts: [], activeId: null }], login: { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null } },
       { type: 'settings.result', requestId: 'r1', error: 'Codex has no accounts in this CodeRay.' },
       [['Model 1'], ['Model 3'], ['Model 3']], [['ready'], ['ready'], ['ready']],
+    ]);
+  });
+
+  it("reports Codex's state beside Claude's, and still lists Claude's models when codex cannot list its own", async () => {
+    const { messages, socket } = await startMain({ codex: '/nonexistent/codex' });
+    socket.send(JSON.stringify({ type: 'models.list' }));
+    const models = await waitFor(() => messages.find((m) => m.type === 'models.snapshot'), 'the models');
+    const engines = await waitFor(() => messages.find((m) => m.type === 'engines.snapshot'), 'the engines');
+    expect([models, engines]).toEqual([
+      { type: 'models.snapshot', models: [] },
+      { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }, { engine: 'codex', state: 'missing', hint: 'Install Codex: codex is not on the PATH.' }] },
     ]);
   });
 });

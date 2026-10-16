@@ -162,7 +162,7 @@ export async function startHub(names: string[]): Promise<Hub> {
   const { home, bin } = prepareHome(base);
   const hub = await spawnCore(
     base,
-    ['--hub', ...roots.flatMap((root) => ['--project', root]), '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    ['--hub', ...roots.flatMap((root) => ['--project', root]), '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, '--no-codex'],
     { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: stream('text-then-wait') },
   );
   const hubPid = hub.child.pid ?? -1;
@@ -194,7 +194,7 @@ export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, f
   const record = join(base, 'fake-claude-record.jsonl');
   const core = await spawnCore(
     base,
-    ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, '--no-codex'],
     { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario), ...env },
   );
   return {
@@ -217,7 +217,7 @@ export async function startLauncher(): Promise<Launcher> {
   const { home, bin } = prepareHome(base);
   const core = await spawnCore(
     base,
-    ['--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    ['--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, '--no-codex'],
     { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: stream('text-then-wait') },
   );
   return {
