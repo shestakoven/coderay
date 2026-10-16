@@ -51,7 +51,10 @@ describe('the Codex transport', () => {
     const second = run({ ...s.launch, resume: true, engineSessionId: threadId });
     second.transport.send(userMessage('again', []));
     await waitFor(() => second.results().length === 1, 'the resumed turn ended');
-    const config = { 'mcp_servers.node_repl.enabled': false, 'features.apps': false, 'features.plugins': false, 'shell_environment_policy.exclude': ['AWS_*', 'CODERAY_*'] };
+    const config = {
+      'mcp_servers.node_repl.enabled': false, 'features.apps': false, 'features.plugins': false, 'features.deferred_executor': false,
+      'shell_environment_policy.exclude': ['AWS_*', 'CODERAY_*'],
+    };
     expect([sent(s.records(), 'thread/start'), sent(s.records(), 'thread/resume'), sent(s.records(), 'turn/start'), s.records()[0]?.secrets]).toMatchObject([
       [{ ...POLICY, cwd: s.dir, developerInstructions: 'Writes go to the user.', model: 'gpt-6-luna', config }],
       [{ ...POLICY, threadId, excludeTurns: true, config }],

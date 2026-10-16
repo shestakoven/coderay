@@ -16,8 +16,9 @@ import { hideSecrets } from './secrets';
 // Sent on every thread/start, thread/resume and turn/start: a resume or a turn without them keeps or changes the policy of before.
 const THREAD_POLICY = { sandbox: 'read-only', approvalPolicy: 'on-request', approvalsReviewer: 'user' } as const;
 const TURN_POLICY = { sandboxPolicy: { type: 'readOnly', networkAccess: false }, approvalPolicy: 'on-request', approvalsReviewer: 'user' } as const;
-// Whatever the launch says: the user's apps and plugins bring servers and tools CodeRay does not own.
-const FEATURES_OFF = { 'features.apps': false, 'features.plugins': false } as const;
+// Whatever the launch says: the user's apps and plugins bring servers and tools CodeRay does not own, and the deferred executor
+// hands a tool call still running after about 160 s back to the model, which ends the turn while propose_plan waits for the user.
+const FEATURES_OFF = { 'features.apps': false, 'features.plugins': false, 'features.deferred_executor': false } as const;
 // The variables that carry CodeRay's MCP secrets in the app-server's environment, kept out of the model's shell commands.
 const SECRET_VARIABLES = 'CODERAY_*';
 // A server name a dotted config key can switch off.
