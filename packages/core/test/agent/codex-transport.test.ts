@@ -9,7 +9,7 @@ import { userMessage, type CodexLaunch, type GateCall } from '../../src/agent/tr
 import type { HookAnswer } from '../../src/gate/hook-gate';
 import { isAlive } from '../../src/os-process';
 import { codexRecords, fakeCodex, sent } from '../fake-codex/fake';
-import { tempDir, waitFor } from '../helpers';
+import { fixture, tempDir, waitFor } from '../helpers';
 
 const POLICY = { sandbox: 'read-only', approvalPolicy: 'on-request', approvalsReviewer: 'user' };
 const ALLOW: HookAnswer = { permissionDecision: 'allow', permissionDecisionReason: 'ok' };
@@ -40,27 +40,33 @@ function run(launch: CodexLaunch) {
 const replies = (s: ReturnType<typeof scene>) => s.records().flatMap((entry) => (entry.reply ? [entry.reply.result] : []));
 
 describe('the Codex transport', () => {
-  it("starts read-only with every write sent to the user, the user's own servers switched off and CodeRay's secrets kept from shell commands, and resumes the thread with the same policy", async () => {
+  it("starts read-only with every write sent to the user, the user's own servers switched off and CodeRay's secrets kept from shell commands, opens the thread only with the first message, and resumes it with the same policy and the model chosen meanwhile", async () => {
     const s = scene('multi-turn', {}, { FAKE_CODEX_CONFIG: '{"shell_environment_policy":{"exclude":["AWS_*"]}}' });
     const first = run(s.launch);
+    // A chat opened and never used leaves no thread in the user's Codex history.
+    await waitFor(() => sent(s.records(), 'config/read').length === 1, 'the checks done');
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    const unused = sent(s.records(), 'thread/start').length;
     first.transport.send(userMessage('hi', []));
     await waitFor(() => first.results().length === 1, 'the first turn ended');
     await first.transport.kill();
     const init = first.events.find((event) => event.type === 'init');
     const threadId = init?.type === 'init' ? init.sessionId : '';
     const second = run({ ...s.launch, resume: true, engineSessionId: threadId });
+    await second.transport.setModel('gpt-5.6-terra');
     second.transport.send(userMessage('again', []));
     await waitFor(() => second.results().length === 1, 'the resumed turn ended');
     const config = {
       'mcp_servers.node_repl.enabled': false, 'features.apps': false, 'features.plugins': false, 'features.deferred_executor': false,
       'shell_environment_policy.exclude': ['AWS_*', 'CODERAY_*'],
     };
-    expect([sent(s.records(), 'thread/start'), sent(s.records(), 'thread/resume'), sent(s.records(), 'turn/start'), s.records()[0]?.secrets]).toMatchObject([
+    expect([unused, sent(s.records(), 'thread/start'), sent(s.records(), 'thread/resume'), sent(s.records(), 'turn/start'), s.records()[0]?.secrets]).toMatchObject([
+      0,
       [{ ...POLICY, cwd: s.dir, developerInstructions: 'Writes go to the user.', model: 'gpt-6-luna', config }],
-      [{ ...POLICY, threadId, excludeTurns: true, config }],
+      [{ ...POLICY, threadId, excludeTurns: true, model: 'gpt-5.6-terra', config }],
       [
         { threadId, model: 'gpt-6-luna', effort: 'medium', sandboxPolicy: { type: 'readOnly', networkAccess: false }, approvalPolicy: 'on-request', approvalsReviewer: 'user', input: [{ type: 'text', text: 'hi', text_elements: [] }] },
-        { threadId, input: [{ type: 'text', text: 'again', text_elements: [] }] },
+        { threadId, model: 'gpt-5.6-terra', input: [{ type: 'text', text: 'again', text_elements: [] }] },
       ],
       ['CODERAY_IDECORE_TOKEN'],
     ]);
@@ -100,36 +106,18 @@ describe('the Codex transport', () => {
     expect(refused.type === 'refused' ? refused.reason : '').toMatch(reason);
   });
 
-  it('sends a message as a turn, a /skill of the project as a skill item, and a message during a turn as a steer', async () => {
+  it('sends a message as a turn, a /skill of the project as a skill item, and a message during a turn as a steer, its image as a data URL', async () => {
     const s = scene('hang');
     const { transport, events } = run(s.launch);
     const skills = await transport.skills();
     transport.send(userMessage('/probe-skill check the readme', []));
     await waitFor(() => events.some((event) => event.type === 'init'), 'the turn started');
-    transport.send(userMessage('also this', []));
+    transport.send(userMessage('also this', [{ mediaType: 'image/png', data: 'iVBORw0KGgo=' }]));
     await waitFor(() => sent(s.records(), 'turn/steer').length === 1, 'the steer');
     expect([skills, (sent(s.records(), 'turn/start')[0] as { input: unknown }).input, sent(s.records(), 'turn/steer')[0]]).toMatchObject([
       ['probe-skill'],
       [{ type: 'skill', name: 'probe-skill', path: join(s.dir, '.agents/skills/probe-skill/SKILL.md') }, { type: 'text', text: 'check the readme', text_elements: [] }],
-      { expectedTurnId: 'turn-1', input: [{ type: 'text', text: 'also this', text_elements: [] }] },
-    ]);
-  });
-
-  it("answers a patch's approval with the gate's verdict for each of its files, and declines without a gate", async () => {
-    const outcome = async (decide: CodexLaunch['decide']) => {
-      const s = scene('patch', decide ? { decide } : {});
-      const { transport, results } = run(s.launch);
-      transport.send(userMessage('ready?', []));
-      await waitFor(() => results().length === 1, 'the first turn ended');
-      transport.send(userMessage('edit', []));
-      await waitFor(() => results().length === 2, 'the patch turn ended');
-      return [replies(s), readFileSync(join(s.dir, 'src/other.ts'), 'utf8')];
-    };
-    const calls: GateCall[] = [];
-    expect([await outcome(async (call) => { calls.push(call); return ALLOW; }), await outcome(undefined), calls.map((call) => [call.tool_name, call.tool_use_id, (call.tool_input as { file_path: string }).file_path.endsWith('src/other.ts')])]).toEqual([
-      [[{ decision: 'accept' }], "export const other = 'hello';\n"],
-      [[{ decision: 'decline' }], "export const other = 'helo';\n"],
-      [['Edit', 'patch-1', true]],
+      { expectedTurnId: 'turn-1', input: [{ type: 'image', url: 'data:image/png;base64,iVBORw0KGgo=' }, { type: 'text', text: 'also this', text_elements: [] }] },
     ]);
   });
 
@@ -161,27 +149,21 @@ describe('the Codex transport', () => {
     expect([replies(s), asked]).toEqual([[{ permissions: {}, scope: 'turn' }, { error: { code: -32601, message: 'CodeRay does not handle applyPatchApproval.' } }], []]);
   });
 
-  it('leaves a held approval unanswered; Stop ends the turn, restarts the app-server and resumes the thread for the next message', async () => {
-    const s = scene('patch', { decide: (_call, signal) => new Promise((resolve) => signal.addEventListener('abort', () => resolve(null))) });
-    const { transport, results } = run(s.launch);
-    transport.send(userMessage('ready?', []));
-    await waitFor(() => results().length === 1, 'the first turn ended');
-    transport.send(userMessage('edit', []));
-    await waitFor(() => sent(s.records(), 'turn/start').length === 2, 'the patch turn started');
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    const before = transport.pid;
-    transport.interrupt();
-    transport.send(userMessage('again', []));
-    await waitFor(() => results().length === 3, 'the next message answered');
-    expect([results(), replies(s), sent(s.records(), 'thread/resume').length, transport.pid !== before, isAlive(before!)]).toEqual([
-      ['success', 'error_during_execution', 'success'], [], 1, true, false,
-    ]);
-  });
-
-  it('withdraws a held approval at Stop and sends codex nothing the gate allows after it', async () => {
+  it.each([
+    ['at Stop', true],
+    ['when codex stops waiting for the answer itself', false],
+  ])('withdraws a held approval %s and sends codex nothing the gate allows after it', async (_, stop) => {
+    const scenario = join(tempDir('codex-withdraw-'), 'patch.jsonl');
+    const lines = readFileSync(fixture('codex/patch.jsonl'), 'utf8').split('\n');
+    const at = lines.findIndex((line) => line.includes('"request":"item/fileChange/requestApproval"'));
+    // The turn goes on after codex withdraws the request: only the withdrawal, not the turn's end, can release the hold.
+    if (!stop) lines.splice(at, 1, lines[at]!.replace('"request":', '"withdrawMs":200,"request":'), JSON.stringify({ fake: 'sleep', ms: 60_000 }));
+    writeFileSync(scenario, lines.join('\n'));
+    let held: AbortSignal | null = null;
     let release = () => {};
     const withdrawn: boolean[] = [];
-    const s = scene('patch', { decide: async (_call, signal) => {
+    const s = scene(scenario, { decide: async (_call, signal) => {
+      held = signal;
       await new Promise<void>((resolve) => { release = resolve; });
       withdrawn.push(signal.aborted);
       return ALLOW;
@@ -190,49 +172,66 @@ describe('the Codex transport', () => {
     transport.send(userMessage('ready?', []));
     await waitFor(() => results().length === 1, 'the first turn ended');
     transport.send(userMessage('edit', []));
-    await waitFor(() => sent(s.records(), 'turn/start').length === 2, 'the patch turn started');
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    transport.interrupt();
-    release();
-    await waitFor(() => results().length === 2, 'the turn stopped');
+    await waitFor(() => held, 'the patch held for the user');
+    // The gate's answer comes right after the withdrawal, while the turn still runs.
+    if (stop) {
+      transport.interrupt();
+      release();
+    } else {
+      await waitFor(() => held?.aborted, 'codex withdrew the request');
+      release();
+      transport.interrupt();
+    }
+    await waitFor(() => results().length === 2, 'the turn ended');
     expect([results(), withdrawn, replies(s), readFileSync(join(s.dir, 'src/other.ts'), 'utf8')]).toEqual([['success', 'error_during_execution'], [true], [], "export const other = 'helo';\n"]);
   });
 
-  it("starts the next turn with a message whose steer lost the race with the turn's end", async () => {
+  it.each([
+    ["its steer lost the race with the turn's end", { FAKE_CODEX_SLOW: 'turn/steer' }, 1],
+    ['codex answered the first turn/start only after that turn ended', { FAKE_CODEX_TURN_REPLY: 'late' }, 0],
+  ])('starts the next turn with a message sent during a turn when %s', async (_, env, steers) => {
     const scenario = join(tempDir('codex-steer-'), 'steer.jsonl');
     writeFileSync(scenario, [{ fake: 'sleep', ms: 150 }, { fake: 'await-turn' }].map((line) => JSON.stringify(line)).join('\n'));
-    const s = scene(scenario, {}, { FAKE_CODEX_SLOW: 'turn/steer' });
+    const s = scene(scenario, {}, env);
     const { transport, events, results } = run(s.launch);
     transport.send(userMessage('first', []));
     await waitFor(() => events.some((event) => event.type === 'init'), 'the first turn started');
     transport.send(userMessage('second', []));
     await waitFor(() => results().length === 2, 'both turns ended');
     expect([results(), sent(s.records(), 'turn/steer').length, sent(s.records(), 'turn/start').map((params) => (params as { input: { text: string }[] }).input[0]?.text)]).toEqual([
-      ['success', 'success'], 1, ['first', 'second'],
+      ['success', 'success'], steers, ['first', 'second'],
     ]);
   });
 
-  it('ends a message whose thread codex keeps opening when Stop comes, within the settle time, with its app-server', async () => {
-    const s = scene('hang', {}, { FAKE_CODEX_SILENT: 'thread/start' });
-    const { transport, results } = run(s.launch);
+  it.each([
+    ['opening the thread of a message', 'thread/start', 0],
+    ['the turn it was asked to stop', 'turn/interrupt', 1],
+  ])('ends the turn on Stop within the settle time, with its app-server, though codex never finishes %s, and puts nothing codex asks after Stop to the gate', async (_, silent, turns) => {
+    const scenario = join(tempDir('codex-settle-'), 'ask-late.jsonl');
+    const ask = { request: 'item/commandExecution/requestApproval', params: { kind: 'command', threadId: '$THREAD', turnId: '$TURN', itemId: 'c1', command: 'touch f', cwd: '$CWD' } };
+    writeFileSync(scenario, [{ fake: 'sleep', ms: 1_000 }, ask, { fake: 'sleep', ms: 60_000 }].map((line) => JSON.stringify(line)).join('\n'));
+    const asked: string[] = [];
+    const s = scene(scenario, { decide: async (call) => { asked.push(call.tool_name); return DENY; } }, { FAKE_CODEX_SILENT: silent });
+    const { transport, events, results } = run(s.launch);
     transport.send(userMessage('first', []));
-    await waitFor(() => sent(s.records(), 'thread/start').length === 1, 'thread/start sent');
+    await waitFor(() => (turns === 0 ? sent(s.records(), 'thread/start').length === 1 : events.some((event) => event.type === 'init')), 'codex busy with the message');
     const before = transport.pid;
     const stopped = Date.now();
     transport.interrupt();
-    await waitFor(() => results().length === 1 && transport.pid !== before, 'the message ended and the app-server replaced');
-    expect([results(), Date.now() - stopped < 7_000, sent(s.records(), 'turn/start').length, isAlive(before!)]).toEqual([['error_during_execution'], true, 0, false]);
+    await waitFor(() => results().length === 1 && transport.pid !== before, 'the turn ended and the app-server replaced');
+    expect([results(), Date.now() - stopped < 7_000, sent(s.records(), 'turn/start').length, isAlive(before!), asked, replies(s)]).toEqual([['error_during_execution'], true, turns, false, [], []]);
   });
 
   it.each([
-    ['before its app-server is ready', null, [], 0],
-    ['while its thread opens', 'thread/start', [], 0],
-    ['while codex starts its turn', 'turn/start', ['first'], 1],
-  ])('ends a message on a Stop that comes %s, before codex named the turn, and lets the next message run', async (_, slow, stopped, interrupts) => {
+    ['before its app-server is ready', null, [], 0, {}],
+    ['while its thread opens', 'thread/start', [], 0, {}],
+    ['while codex starts its turn', 'turn/start', ['first'], 1, {}],
+    ['while codex starts its turn, which it names a while before the turn starts', 'turn/start', ['first'], 1, { FAKE_CODEX_TURN_STARTED_MS: '200' }],
+  ])('ends a message on a Stop that comes %s, before codex named the turn, and lets the next message run', async (_, slow, stopped, interrupts, env: Record<string, string>) => {
     // Every turn hangs, whether or not the stopped message reached a turn: the next one is still running when checked.
     const scenario = join(tempDir('codex-stop-'), 'hang-twice.jsonl');
     writeFileSync(scenario, [{ fake: 'sleep', ms: 60_000 }, { fake: 'await-turn' }, { fake: 'sleep', ms: 60_000 }].map((line) => JSON.stringify(line)).join('\n'));
-    const s = scene(scenario, {}, slow === null ? {} : { FAKE_CODEX_SLOW: slow });
+    const s = scene(scenario, {}, slow === null ? env : { ...env, FAKE_CODEX_SLOW: slow });
     const { transport, events, results } = run(s.launch);
     transport.send(userMessage('first', []));
     if (slow !== null) await waitFor(() => sent(s.records(), slow).length === 1, `${slow} sent`);

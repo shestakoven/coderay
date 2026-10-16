@@ -212,7 +212,7 @@ test("the model menu keeps its highlighted model as claude's list arrives, scrol
   await expect(page.getByRole('combobox', { name: 'Search models' })).toHaveValue('model 1');
 });
 
-test('a Codex chat: choosing GPT-6-Luna makes it a Codex chat that answers, and its header names Codex and how it guards writes', async ({ page }) => {
+test('a Codex chat: choosing GPT-6-Luna makes it a Codex chat that answers, its header names Codex and how it guards writes, and its row in the chat list names Codex', async ({ page }) => {
   core = await startCore('multi-turn', {}, 'tiny', 'multi-turn');
   await page.goto(core.url);
   await expect(page.getByText('core connected')).toBeVisible();
@@ -225,4 +225,6 @@ test('a Codex chat: choosing GPT-6-Luna makes it a Codex chat that answers, and 
   await expect(page.locator('.engine-chip')).toContainText('Codex');
   await expect(page.locator('.engine-protection')).toHaveText('OS sandbox + approvals');
   await expect(page.locator('.agent-view')).toHaveCount(0);
+  await page.locator('.chat-switcher-button').click();
+  await expect(page.getByRole('option').filter({ hasText: 'hi' }).locator('.chat-list-meta')).toContainText('Codex · GPT-6-Luna · ');
 });

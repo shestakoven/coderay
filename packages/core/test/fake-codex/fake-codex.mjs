@@ -43,7 +43,8 @@ function account() {
 const efforts = (names) => names.map((name) => ({ reasoningEffort: name, description: name }));
 const MODELS = [
   { id: 'gpt-6-luna', model: 'gpt-6-luna', displayName: 'GPT-6-Luna', description: 'Fast', hidden: false, isDefault: true, defaultReasoningEffort: 'medium', supportedReasoningEfforts: efforts(['low', 'medium', 'high', 'xhigh', 'max']) },
-  { id: 'gpt-5.6-terra', model: 'gpt-5.6-terra', displayName: 'GPT-5.6-Terra', description: 'Deep', hidden: false, isDefault: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: efforts(['low', 'medium', 'high', 'ultra']) },
+  // 'Turbo Max' is no effort CodeRay can send back: the list leaves it out.
+  { id: 'gpt-5.6-terra', model: 'gpt-5.6-terra', displayName: 'GPT-5.6-Terra', description: 'Deep', hidden: false, isDefault: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: efforts(['low', 'medium', 'high', 'ultra', 'Turbo Max']) },
   { id: 'codex-internal', model: 'codex-internal', displayName: 'Internal', description: 'Hidden', hidden: true, isDefault: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: efforts(['medium']) },
 ];
 const userServers = JSON.parse(env.FAKE_CODEX_USER_SERVERS ?? '{"node_repl":{"command":"node"}}');
@@ -56,6 +57,7 @@ let at = progress !== null && existsSync(progress) ? Number(readFileSync(progres
 const reached = () => {
   if (progress !== null) writeFileSync(progress, String(at));
 };
+let initialized = false;
 let threadId = null;
 let cwd = process.cwd();
 let turn = null;
@@ -68,6 +70,8 @@ const waiting = new Map();
 const sleepers = [];
 // A request an interrupt ended: codex records no reply for it.
 const UNANSWERED = Symbol('unanswered');
+// A request codex stopped waiting for on its own.
+const WITHDRAWN = Symbol('withdrawn');
 
 const fill = (line) => line.replaceAll('$THREAD', threadId ?? '').replaceAll('$TURN', turn?.id ?? '').replaceAll('$CWD', cwd);
 const sleep = (ms) => new Promise((resolve) => {
@@ -101,9 +105,20 @@ async function play(current) {
     } else if (step.request !== undefined) {
       const id = nextRequest++;
       send({ id, method: step.request, params: step.params });
+      if (step.withdrawMs !== undefined) {
+        setTimeout(() => {
+          const resolve = waiting.get(id);
+          waiting.delete(id);
+          resolve?.(WITHDRAWN);
+        }, step.withdrawMs);
+      }
       const result = await new Promise((resolve) => waiting.set(id, resolve));
       if (result === UNANSWERED) {
         current.unanswered.push(id);
+        continue;
+      }
+      if (result === WITHDRAWN) {
+        notify('serverRequest/resolved', { threadId, requestId: id });
         continue;
       }
       record({ reply: { method: step.request, result } });
@@ -148,11 +163,21 @@ function startThread(id, method, params) {
 
 function startTurn(id) {
   turns += 1;
-  turn = { id: `turn-${turns}`, interrupted: false, failed: false, error: null, unanswered: [] };
-  const shown = { id: turn.id, items: [], status: 'inProgress', error: null };
-  reply(id, { turn: shown });
-  notify('turn/started', { threadId, turn: shown });
-  void play(turn);
+  const current = { id: `turn-${turns}`, interrupted: false, failed: false, error: null, unanswered: [] };
+  turn = current;
+  const shown = { id: current.id, items: [], status: 'inProgress', error: null };
+  const answer = () => reply(id, { turn: shown });
+  const late = env.FAKE_CODEX_TURN_REPLY === 'late';
+  if (!late) answer();
+  const begin = () => {
+    notify('turn/started', { threadId, turn: shown });
+    void play(current).then(() => {
+      if (late) answer();
+    });
+  };
+  const delay = Number(env.FAKE_CODEX_TURN_STARTED_MS ?? 0);
+  if (delay > 0) setTimeout(begin, delay);
+  else begin();
 }
 
 function interrupt(id) {
@@ -199,7 +224,8 @@ function handle(id, method, params) {
   switch (method) {
     case 'initialize': return reply(id, { userAgent: env.FAKE_CODEX_USER_AGENT ?? `${params.clientInfo?.name}/${VERSION} (fake)`, codexHome: env.CODEX_HOME ?? join(homedir(), '.codex'), platformFamily: 'unix', platformOs: 'macos' });
     case 'account/read': return reply(id, { account: account(), requiresOpenaiAuth: true });
-    case 'model/list': return reply(id, { data: MODELS, nextCursor: null });
+    // Two pages, as codex pages a longer catalog.
+    case 'model/list': return reply(id, params.cursor === 'page-2' ? { data: MODELS.slice(1), nextCursor: null } : { data: MODELS.slice(0, 1), nextCursor: 'page-2' });
     case 'skills/list': {
       const dir = params.cwds?.[0] ?? cwd;
       return reply(id, { data: [{ cwd: dir, skills: [{ name: 'probe-skill', description: 'A skill of the project', path: join(dir, '.agents/skills/probe-skill/SKILL.md'), scope: 'repo', enabled: true, pluginId: null }], errors: [] }] });
@@ -256,7 +282,10 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
   record({ in: { method: message.method, params: message.params ?? null } });
+  if (message.method === 'initialized') initialized = true;
   if (message.id === undefined) return;
+  // The handshake the verification runs used comes first: initialize, then the initialized notification.
+  if (message.method !== 'initialize' && !initialized) return send({ id: message.id, error: { code: -32002, message: `fake-codex is not initialized: ${message.method}` } });
   if (message.method === env.FAKE_CODEX_SILENT) return;
   if (message.method === env.FAKE_CODEX_CRASH) {
     // A pipe is written asynchronously on macOS: exiting at once could lose the line.

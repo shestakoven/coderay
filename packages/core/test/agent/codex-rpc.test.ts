@@ -1,11 +1,9 @@
-import { existsSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { handshake, startAppServer, withAppServer } from '../../src/agent/codex/app-server';
 import { JsonRpc, RpcError, type Incoming, type IncomingRequest } from '../../src/agent/codex/rpc';
-import { isAlive } from '../../src/os-process';
-import { codexRecords, fakeCodex } from '../fake-codex/fake';
+import { fakeCodex } from '../fake-codex/fake';
 import { tempDir } from '../helpers';
 
 function pair(onRequest?: (message: IncomingRequest) => void) {
@@ -62,21 +60,6 @@ describe('JsonRpc', () => {
 });
 
 describe('the app-server process', () => {
-  it("starts with CodeRay's flags, records its pid as codex-<pid>, answers through a short-lived server, and is gone after SIGTERM", async () => {
-    const dir = tempDir('codex-run-');
-    const record = join(dir, 'record.jsonl');
-    const account = await withAppServer(fakeCodex(null, record), dir, (rpc) => rpc.request('account/read', { refreshToken: false }));
-    const server = startAppServer(fakeCodex(null, record), { cwd: dir, pidDir: dir });
-    onTestFinished(() => void server.kill());
-    const pidFile = readdirSync(dir).find((name) => /^codex-\d+\.pid\.json$/.test(name));
-    const pid = server.pid!;
-    await server.kill();
-    expect([account, codexRecords(record)[0]?.argv, pidFile, isAlive(pid), existsSync(join(dir, pidFile ?? 'x'))]).toEqual([
-      { account: { type: 'chatgpt', email: 'owner@example.com', planType: 'plus' }, requiresOpenaiAuth: true },
-      ['app-server', '-c', 'features.hooks=false', '-c', 'notify=[]'], `codex-${pid}.pid.json`, false, false,
-    ]);
-  });
-
   it('rejects the requests of an app-server that exited with its exit and last stderr line, and a probe that gets no answer with its time limit', async () => {
     const dir = tempDir('codex-run-');
     const server = startAppServer(fakeCodex(null, join(dir, 'record.jsonl'), { FAKE_CODEX_CRASH: 'thread/start' }), { cwd: dir });

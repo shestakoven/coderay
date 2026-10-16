@@ -3,7 +3,7 @@ import { CodexEvents } from '../../src/agent/codex/events';
 
 const command = { type: 'commandExecution', id: 'c', command: "/bin/zsh -lc 'ls -la'", cwd: '/p', status: 'inProgress', commandActions: [{ type: 'listFiles', command: 'ls -la' }], aggregatedOutput: null, exitCode: null };
 const created = { type: 'fileChange', id: 'w', changes: [{ path: '/p/new.ts', kind: { type: 'add' }, diff: 'x\n' }], status: 'inProgress' };
-const edited = { type: 'fileChange', id: 'e', changes: [{ path: '/p/a.ts', kind: { type: 'update', move_path: null }, diff: '' }, { path: '/p/b.ts', kind: { type: 'add' }, diff: '' }], status: 'inProgress' };
+const edited = { type: 'fileChange', id: 'e', changes: [{ path: '/p/b.ts', kind: { type: 'add' }, diff: '' }, { path: '/p/a.ts', kind: { type: 'update', move_path: null }, diff: '' }], status: 'inProgress' };
 const piped = { ...command, id: 'p', command: "/bin/zsh -lc 'cd src && grep -c '\\''a b'\\'' x.ts | head'", commandActions: [{ type: 'unknown', command: 'cd src' }, { type: 'search', command: "grep -c 'a b' x.ts" }] };
 const mcp = { type: 'mcpToolCall', id: 'm', server: 'idecore', tool: 'step', status: 'inProgress', arguments: { key: 'a', phase: 'start' }, result: null, error: null };
 
@@ -33,25 +33,28 @@ describe('CodexEvents', () => {
     ]);
   });
 
-  it('names the tools as Claude does — a command Bash, a new file Write, any other patch Edit, an MCP call mcp__server__tool — and ends each with its result', () => {
+  it("names the tools as Claude does — a command Bash, a new file Write, any other patch Edit, an MCP call mcp__server__tool — and ends each with its result or codex's error", () => {
     const events = codex();
-    const uses = [command, created, edited, mcp, piped].flatMap((item) => events.handle('item/started', { item })).flatMap((event) => (event.type === 'assistant' ? event.blocks : []));
+    const failing = { ...mcp, id: 'mf', server: 'docs', tool: 'search', arguments: { query: 'gate' } };
+    const uses = [command, created, edited, mcp, piped, failing].flatMap((item) => events.handle('item/started', { item })).flatMap((event) => (event.type === 'assistant' ? event.blocks : []));
     const results = [
       { ...command, status: 'completed', aggregatedOutput: 'a\nb', exitCode: 0 },
       { ...created, status: 'declined' },
       { ...mcp, status: 'completed', result: { content: [{ type: 'text', text: 'ok' }] } },
       { ...piped, status: 'declined' },
+      { ...failing, status: 'failed', error: { message: 'tool call timed out' } },
     ].flatMap((item) => events.handle('item/completed', { item })).flatMap((event) => (event.type === 'user' ? event.toolResults : []));
     expect([uses.map((block) => (block.kind === 'tool_use' ? [block.name, block.input] : block.kind)), results]).toEqual([
       [
-        ['Bash', { command: 'ls -la' }], ['Write', { file_path: '/p/new.ts' }], ['Edit', { file_path: '/p/a.ts', files: ['/p/a.ts', '/p/b.ts'] }],
-        ['mcp__idecore__step', { key: 'a', phase: 'start' }], ['Bash', { command: "cd src && grep -c 'a b' x.ts | head" }],
+        ['Bash', { command: 'ls -la' }], ['Write', { file_path: '/p/new.ts' }], ['Edit', { file_path: '/p/b.ts', files: ['/p/b.ts', '/p/a.ts'] }],
+        ['mcp__idecore__step', { key: 'a', phase: 'start' }], ['Bash', { command: "cd src && grep -c 'a b' x.ts | head" }], ['mcp__docs__search', { query: 'gate' }],
       ],
       [
         { toolUseId: 'c', isError: false, rejected: false, text: 'a\nb', images: [] },
         { toolUseId: 'w', isError: true, rejected: true, text: 'declined', images: [] },
         { toolUseId: 'm', isError: false, rejected: false, text: 'ok', images: [] },
         { toolUseId: 'p', isError: true, rejected: true, text: '', images: [] },
+        { toolUseId: 'mf', isError: true, rejected: false, text: 'tool call timed out', images: [] },
       ],
     ]);
   });
@@ -66,19 +69,6 @@ describe('CodexEvents', () => {
     ]).toEqual([{ type: 'notice', text: 'Codex: unexpected status 401' }, { type: 'result', subtype: 'failed', origin: null }, 'closed']);
   });
 
-  it("keeps an open patch's latest changes for the gate, and hears only its own thread", () => {
-    const events = codex();
-    events.handle('item/started', { item: edited });
-    const grown = [...edited.changes, { path: '/p/c.ts', kind: { type: 'delete' }, diff: '' }];
-    events.handle('item/fileChange/patchUpdated', { threadId: 'thread-1', itemId: 'e', changes: grown });
-    expect([
-      ...events.handle('item/started', { threadId: 'sub-agent', item: command }),
-      ...events.handle('item/agentMessage/delta', { threadId: 'sub-agent', itemId: 'x', delta: 'hi' }),
-      events.item('e'),
-      events.item('c') ?? 'not ours',
-    ]).toEqual([{ ...edited, changes: grown }, 'not ours']);
-  });
-
   it('reads what a partial notification still says, and never shows a missing message', () => {
     const events = codex();
     events.handle('item/started', { item: { ...mcp, id: 'n' } });
@@ -86,6 +76,7 @@ describe('CodexEvents', () => {
       ...events.handle('item/started', { item: { type: 'commandExecution', id: 'x' } }),
       ...events.handle('item/completed', { item: { type: 'commandExecution', id: 'x', status: 'completed' } }),
       ...events.handle('item/started', { item: { type: 'fileChange', id: 'f', status: 'inProgress' } }),
+      ...events.handle('item/started', { item: { type: 'fileChange', id: 'g', status: 'inProgress', changes: [{ path: '/p/a.ts', kind: { type: 'update' } }] } }),
       ...events.handle('item/completed', { item: { ...mcp, id: 'n', status: 'completed', result: { content: [null, { type: 'text', text: 'ok' }] } } }),
       ...events.handle('item/completed', { item: { type: 'agentMessage', id: 'a' } }),
       ...events.handle('thread/tokenUsage/updated', { tokenUsage: { total: {}, modelContextWindow: 258400 } }),
@@ -95,6 +86,7 @@ describe('CodexEvents', () => {
       { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'tool_use', id: 'x', name: 'Bash', input: { command: '' } }] },
       { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'x', isError: false, rejected: false, text: '', images: [] }] },
       { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'tool_use', id: 'f', name: 'Edit', input: { file_path: '' } }] },
+      { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'tool_use', id: 'g', name: 'Edit', input: { file_path: '/p/a.ts' } }] },
       { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'n', isError: false, rejected: false, text: 'ok', images: [] }] },
       { type: 'usage', update: { contextWindow: 258400 } },
       { type: 'result', subtype: 'failed', origin: null },

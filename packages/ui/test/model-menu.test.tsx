@@ -125,12 +125,18 @@ describe('ChatPanel', () => {
     ]);
   });
 
-  it('names the engine and how it guards writes in the header, calls a refused Codex chat refused, and offers no terminal for Codex', () => {
+  it('names the engine and how it guards writes in the header, calls a refused Codex chat refused, ends a failed or crashed turn in its words, and offers no terminal for Codex', () => {
+    const ended = (id: string, resultSubtype: string, seq: number) => ({
+      turn: { id, kind: 'user' as const, openedAt: seq, startedAt: seq, closedAt: seq, resultSubtype },
+      item: { id: `m${seq}`, seq, turnId: id, parentToolUseId: null, kind: 'message' as const, role: 'user' as const, text: 'hi', ts: seq },
+    });
+    const turns = [ended('t1', 'failed', 1), ended('t2', 'crashed', 2)];
     const header = (engine: EngineId) => {
       const session: SessionView = { id: 's', engine, engineSessionId: 'c', status: 'refused', model: null, modelChoice: engine === 'codex' ? 'codex:gpt-6-luna' : 'sonnet', effort: 'medium', cliVersion: null, permissionMode: null, startedAt: 1 };
+      const chat = { ...initialChatState, session, turns: Object.fromEntries(turns.map(({ turn }) => [turn.id, turn])), items: Object.fromEntries(turns.map(({ item }) => [item.id, item])) };
       const html = renderToStaticMarkup(
         <ChatPanel
-          chat={{ ...initialChatState, session }} chats={{ activeId: 's', sessions: [], models: [], engines: [] }} send={() => true} onClearFilter={() => undefined}
+          chat={chat} chats={{ activeId: 's', sessions: [], models: [], engines: [] }} send={() => true} onClearFilter={() => undefined}
           onDismissError={() => undefined} prompts={[]} promptAnchored={false} onAnswerPrompt={() => undefined} onFocusTargets={() => undefined} dialog={null}
           view="chat" onView={() => undefined} terminal={null} images={new ImageStore(() => true)} imagesLive={false}
         />,
@@ -138,12 +144,13 @@ describe('ChatPanel', () => {
       return [
         /class="engine-chip"[^>]*>([^<]*)<span class="engine-protection">([^<]*)</.exec(html)?.slice(1),
         /class="chat-status refused"[^>]*><i class="status-dot"><\/i>([^<]*)</.exec(html)?.[1],
+        [...html.matchAll(/<div class="turn-end">([^<]*)<\/div>/g)].map((match) => match[1]),
         html.includes('Terminal</button>'),
       ];
     };
     expect([header('claude'), header('codex')]).toEqual([
-      [['Claude', 'Hook'], 'hook off', true],
-      [['Codex', 'OS sandbox + approvals'], 'refused', false],
+      [['Claude', 'Hook'], 'hook off', ['failed', 'ended: claude exited'], true],
+      [['Codex', 'OS sandbox + approvals'], 'refused', ['failed', 'ended: codex exited'], false],
     ]);
   });
 

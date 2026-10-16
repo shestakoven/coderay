@@ -12,7 +12,8 @@ import { tempDir, waitFor } from '../helpers';
 function setup(env: Record<string, string> = {}) {
   const home = tempDir('ide-codex-login-');
   const record = join(home, 'record.jsonl');
-  const codex = fakeCodex(null, record, env);
+  // Keys in the core's environment would sign codex in instead of the account's home.
+  const codex = fakeCodex(null, record, { OPENAI_API_KEY: 'sk-from-the-shell', CODEX_API_KEY: 'from-the-shell', ...env });
   const store = new AccountStore({ home, engine: 'codex', logout: codexLogout(() => codex) });
   const views: AccountLoginView[] = [];
   const pidDir = join(home, 'run');
@@ -27,7 +28,7 @@ describe('Codex sign-in', () => {
     ['device-code', 'device-code', null, {}, { type: 'chatgptDeviceCode' }, 'https://auth.example.test/codex/device', 'ABCD-1234', { email: 'new@example.com', plan: 'Plus' }],
     ['api-key', 'api-key', 'sk-test-key-123', {}, { type: 'apiKey', apiKey: 'sk-test-key-123' }, null, null, { email: 'API key' }],
     ['api-key that codex stores without saying so', 'api-key', 'sk-test-key-123', { FAKE_CODEX_LOGIN: 'silent' }, { type: 'apiKey', apiKey: 'sk-test-key-123' }, null, null, { email: 'API key' }],
-  ] as const)('signs a new account in with %s, in its own home and file store, and names it from codex', async (_, method, key, env, params, url, userCode, named) => {
+  ] as const)("signs a new account in with %s, in its own home and file store and without the keys of the core's environment, and names it from codex", async (_, method, key, env, params, url, userCode, named) => {
     const { store, views, login, records } = setup(env);
     login.start('codex', method, key);
     await waitFor(() => store.list().accounts.length === 1, 'the account saved');
@@ -35,8 +36,8 @@ describe('Codex sign-in', () => {
     const started = records().find((entry) => entry.argv !== undefined)!;
     expect([
       sent(records(), 'account/login/start'), views.find((view) => view.url !== null)?.url ?? null, views.find((view) => view.userCode !== null)?.userCode ?? null,
-      { email: account.email, ...(account.plan ? { plan: account.plan } : {}) }, started.codexHome, started.argv?.slice(1), login.view().state, isAlive(started.pid!),
-    ]).toEqual([[params], url, userCode, named, store.homeDir(account.id), ['-c', 'cli_auth_credentials_store="file"', '-c', 'features.hooks=false', '-c', 'notify=[]'], 'idle', false]);
+      { email: account.email, ...(account.plan ? { plan: account.plan } : {}) }, started.codexHome, started.argv?.slice(1), started.credentials, login.view().state, isAlive(started.pid!),
+    ]).toEqual([[params], url, userCode, named, store.homeDir(account.id), ['-c', 'cli_auth_credentials_store="file"', '-c', 'features.hooks=false', '-c', 'notify=[]'], [], 'idle', false]);
   });
 
   it.each([

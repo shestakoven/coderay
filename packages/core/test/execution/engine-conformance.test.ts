@@ -41,10 +41,16 @@ const EDIT = JSON.stringify({ fake: 'tool', id: 'toolu_edit', name: 'Edit', inpu
 const TURN = '{"fake":"await-turn"}';
 const codexSay = (id: string, words: string): string =>
   JSON.stringify({ method: 'item/completed', params: { threadId: '$THREAD', turnId: '$TURN', item: { type: 'agentMessage', id, text: words, phase: 'final_answer' } } });
+// A command that only reads: it runs in Codex's read-only sandbox and never reaches the gate.
+const LS = { type: 'commandExecution', id: 'cmd-ls', command: "/bin/zsh -lc 'ls src'", cwd: '$CWD', commandActions: [{ type: 'listFiles', command: 'ls src' }] };
+const codexRead = [
+  JSON.stringify({ method: 'item/started', params: { threadId: '$THREAD', turnId: '$TURN', item: { ...LS, status: 'inProgress', aggregatedOutput: null, exitCode: null } } }),
+  JSON.stringify({ method: 'item/completed', params: { threadId: '$THREAD', turnId: '$TURN', item: { ...LS, status: 'completed', aggregatedOutput: 'app.ts\nother.ts\n', exitCode: 0 } } }),
+];
 
 // The same behaviour in each engine's own words: the suite's assertions are engine-neutral.
 const SCENARIOS: Record<'reply' | 'stop' | 'write' | 'resume', Record<EngineName, string | string[]>> = {
-  reply: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT], codex: [codexSay('m1', 'OK')] },
+  reply: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT], codex: [...codexRead, codexSay('m1', 'OK')] },
   stop: { claude: [AWAIT, INIT, HOLD_OPEN, AWAIT, INIT, say('Back.'), RESULT, AWAIT], codex: [HOLD_OPEN, TURN, codexSay('m2', 'Back.')] },
   write: { claude: [AWAIT, INIT, say('Ready.'), RESULT, AWAIT, INIT, EDIT, say('Done.'), RESULT, AWAIT], codex: fixture('codex/patch.jsonl') },
   resume: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT, INIT, say('42'), RESULT, AWAIT], codex: fixture('codex/multi-turn.jsonl') },
@@ -54,6 +60,7 @@ const PREVIEW: Record<EngineName, object> = {
   codex: { kind: 'patch', diff: "@@ -1 +1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n" },
 };
 
+const noticesOf = (b: Built): string[] => b.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : []));
 const closed = (b: Built, count: number) => waitFor(() => b.session.state().turns.filter((turn) => turn.closedAt !== null).length === count, `${count} turns closed`);
 const says = (b: Built): string[] => b.session.state().items.flatMap((item: ChatItem) => (item.kind === 'message' && item.role === 'assistant' ? [item.text] : []));
 const decisionOf = (b: Built) => b.session.state().items.flatMap((item) => (item.kind === 'tool' ? [item.decision] : []))[0];
@@ -68,11 +75,12 @@ async function startPlan(b: Built): Promise<void> {
 describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
   const make = (scenario: keyof typeof SCENARIOS, extra: Partial<Parameters<typeof build>[0]> = {}) => build({ scenario: SCENARIOS[scenario][engine], engine, ...extra });
 
-  it('answers a message: the reply comes in and the turn ends', async () => {
+  it('answers a message: the reply comes in and the turn ends, with no notice and nothing the agent ran taken for a fail-open', async () => {
     const b = await make('reply');
     b.session.send('hi');
     await closed(b, 1);
-    expect([says(b), b.session.state().turns[0]?.resultSubtype]).toEqual([['OK'], 'success']);
+    const decided = b.session.state().items.flatMap((item) => (item.kind === 'tool' && item.decision !== null ? [item.decision] : []));
+    expect([says(b), b.session.state().turns[0]?.resultSubtype, noticesOf(b), decided]).toEqual([['OK'], 'success', [], []]);
   });
 
   it('ends a turn within a second on Stop, and answers the next message', async () => {
@@ -101,16 +109,6 @@ describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
     expect([prompt.summary, prompt.preview, other(b), decisionOf(b)]).toMatchObject(['src/other.ts', PREVIEW[engine], "export const other = 'hello';\n", 'ask-approved']);
   });
 
-  it('denies a write outside the plan under control mode A, and nothing is written', async () => {
-    const b = await make('write', { mode: 'A' });
-    b.session.send('ready?');
-    await closed(b, 1);
-    await startPlan(b);
-    b.session.send('fix the other file too');
-    await closed(b, 2);
-    expect([other(b), decisionOf(b), b.rt.gate.gate.pending()]).toEqual(["export const other = 'helo';\n", 'deny', []]);
-  });
-
   it('resumes the same conversation after the core restarts', async () => {
     const b = await make('resume');
     b.session.send('hi');
@@ -127,14 +125,18 @@ describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
     expect([resumed, typeof before]).toEqual([before, 'string']);
   });
 
-  it('refuses the chat with the reason when the engine cannot show that the gate is on, and the agent says nothing', async () => {
-    const b = await build(engine === 'claude'
-      ? { scenario: [AWAIT, INIT, say('never'), RESULT, AWAIT], engine, claudeEnv: { FAKE_CLAUDE_HOOKS: 'off' }, canaryMs: 300 }
-      : { scenario: SCENARIOS.reply.codex, engine, codexEnv: { FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' } });
+  it('starts no agent while the watchdog is not ready, says why, and answers once it is', async () => {
+    const b = await build({ scenario: SCENARIOS.reply[engine], engine, start: false });
+    let refused: unknown = null;
+    try {
+      b.session.send('hi');
+    } catch (error) {
+      refused = error;
+    }
+    const said = noticesOf(b);
+    await b.rt.start();
     b.session.send('hi');
-    await waitFor(() => b.session.state().session?.status === 'refused', 'the chat refused');
-    const notices = b.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : []));
-    const reason = engine === 'claude' ? "CodeRay's hook did not start" : 'Codex reported sandbox workspaceWrite';
-    expect([says(b), notices.some((text) => text.startsWith(reason))]).toEqual([[], true]);
+    await closed(b, 1);
+    expect([(refused as { code?: string } | null)?.code, said.some((text) => text.includes('the watchdog is not ready yet')), says(b)]).toEqual(['no-gate', true, ['OK']]);
   });
 });

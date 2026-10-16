@@ -53,7 +53,7 @@ describe('elicitationCall', () => {
   it('links an elicitation to the latest open call of its server with the same arguments, and to nothing for another kind of request', () => {
     const call = (id: string, server: string, args: Record<string, string>): McpToolCallItem =>
       ({ type: 'mcpToolCall', id, server, tool: 'write_note', status: 'inProgress', arguments: args, result: null, error: null });
-    const calls = [call('m1', 'notes', { text: 'hi' }), call('m2', 'other', { text: 'hi' }), call('m3', 'notes', { text: 'hi' }), call('m4', 'notes', { text: 'bye' })];
+    const calls = [call('m1', 'notes', { text: 'hi' }), call('m3', 'notes', { text: 'hi' }), call('m2', 'other', { text: 'hi' }), call('m4', 'notes', { text: 'bye' })];
     const ask = (kind: string) => ({ threadId: 't', turnId: 'u', serverName: 'notes', message: '', _meta: { codex_approval_kind: kind, tool_params: { text: 'hi' } } });
     expect([elicitationCall(ask('mcp_tool_call'), calls, '/p'), elicitationCall(ask('other'), calls, '/p')]).toEqual([
       { tool_name: 'mcp__notes__write_note', tool_input: { text: 'hi' }, tool_use_id: 'm3', cwd: '/p' }, null,
