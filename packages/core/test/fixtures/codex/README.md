@@ -1,0 +1,16 @@
+# Scenarios for the fake codex app-server
+
+`test/fake-codex/fake-codex.mjs` answers CodeRay's requests itself (initialize, account/read, model/list, skills/list, config/read, thread/start, thread/resume, turn/start, turn/steer, turn/interrupt, account/login/start, account/login/cancel, account/logout) and replays one of these files during turns. Shapes are trimmed from the recorded transcripts of codex-cli 0.160.0 in `recorded/` (sanitized copies of the 2026-10-13 verification runs; `docs/spike/2026-10-13-codex-verified.md`). Every line is one of:
+
+| Line | Effect |
+|---|---|
+| `{"method": …, "params": …}` | A notification, sent as is. |
+| `{"request": "<method>", "params": …}` | A server request with a fresh numeric id; the fake waits for the reply, records it as `{ reply: { method, result } }`, sends `serverRequest/resolved` and keeps its `decision` or `action` for `when`. An interrupt stops the wait with no reply recorded, and `serverRequest/resolved` follows the turn's `turn/completed` (the order 0.160.0 uses: `recorded/p03-gate-patchAccept.jsonl`, `recorded/p03-gate-patchNoAnswer.jsonl`). |
+| `{"fake": "await-turn"}` | Ends this turn's lines: the fake sends `turn/completed` (`completed`, or `interrupted` after `turn/interrupt`) and plays the next lines at the next `turn/start`. Lines before the first `await-turn` play during the first turn. |
+| `{"fake": "sleep", "ms": N}` | Waits; an interrupt ends the wait. |
+| `{"fake": "write", "path", "content"}` | Writes a file under the thread's `cwd` (stands for a patch or command that ran). |
+| `{"fake": "spawn-sleeper"}` | Starts a `sleep 600` child, records `{ sleeperPid }`; SIGTERM of the fake kills it (as the real app-server's SIGTERM ends its shell commands). |
+| `{"fake": "fail", "message"}` | Ends the turn `failed` with that error. |
+| `"when": "accept"\|"decline"` | The line plays only if the last reply's `decision` or `action` was that. |
+
+`$THREAD`, `$TURN` and `$CWD` are replaced by the thread id, the turn id and the thread's working directory. Environment: `FAKE_CODEX_SCENARIO` (this file), `FAKE_CODEX_RECORD` (one JSON line per start and per client message: `{ pid, argv, codexHome, credentials, secrets }`, `{ in: { method, params } }`), `FAKE_CODEX_VERSION` (default `0.160.0`), `FAKE_CODEX_ACCOUNT=none` (signed out), `FAKE_CODEX_ECHO_SANDBOX=workspace-write` (a wrong policy echo), `FAKE_CODEX_USER_SERVERS` (JSON of the user's `mcp_servers`, default `{"node_repl":{"command":"node"}}`), `FAKE_CODEX_EXTRA_SERVER` (a server that starts although nobody configured it), `FAKE_CODEX_LOGIN` (`ok`, `fail`, `hang`, `silent`: the account is stored without `account/login/completed`), `FAKE_CODEX_EMAIL`. Under `CODEX_HOME` the account is `auth.json` in it, which a login writes and a logout removes; without `CODEX_HOME` the fake is a signed-in System account and refuses to sign in or out.

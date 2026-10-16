@@ -1,0 +1,3 @@
+{"fake":"sleep","ms":60000}
+{"fake":"await-turn"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"Back.","phase":"final_answer"}}}
