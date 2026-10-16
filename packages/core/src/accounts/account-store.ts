@@ -36,10 +36,12 @@ const isAccount = (value: unknown): value is AccountView =>
 /** The account as an engine's header and the chat's notices name it. */
 export const accountName = (account: AccountView): string => (account.plan ? `${account.email} · ${account.plan}` : account.email);
 
-export function accountEnv(dir: string): NodeJS.ProcessEnv {
-  const env: NodeJS.ProcessEnv = { ...process.env, CLAUDE_CONFIG_DIR: dir };
+/** The environment of claude's own commands for an account: pointed at its home, without the core's credentials, which would answer for it. */
+export function accountEnv(home: SignedHome): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...process.env, ...home.env };
   // claude refuses to start inside another Claude Code session, which is where this core runs when an agent launches it.
   delete env.CLAUDECODE;
+  for (const name of home.unset) delete env[name];
   return env;
 }
 
@@ -173,13 +175,13 @@ export class AccountStore {
 }
 
 export function claudeAccounts(home: string, claude: string): AccountStore {
-  return new AccountStore({ home, engine: 'claude', logout: (account) => claudeLogout(claude, account.dir) });
+  return new AccountStore({ home, engine: 'claude', logout: (account) => claudeLogout(claude, account) });
 }
 
 // Logging out first drops the credentials claude keeps outside the directory, such as the macOS keychain item.
-function claudeLogout(claude: string, dir: string): Promise<void> {
+function claudeLogout(claude: string, account: SignedHome): Promise<void> {
   return new Promise((done) => {
-    const child = execFile(claude, ['auth', 'logout'], { env: accountEnv(dir), timeout: LOGOUT_TIMEOUT_MS }, () => done());
+    const child = execFile(claude, ['auth', 'logout'], { env: accountEnv(account), timeout: LOGOUT_TIMEOUT_MS }, () => done());
     child.stdin?.end();
   });
 }

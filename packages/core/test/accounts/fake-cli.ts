@@ -23,6 +23,7 @@ export interface CliRecord {
   configDir?: string | null;
   configDirExists?: boolean;
   claudecode?: string | null;
+  credentialVars?: string[];
   pid?: number;
   helperPid?: number;
 }

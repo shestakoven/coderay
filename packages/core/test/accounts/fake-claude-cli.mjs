@@ -13,6 +13,7 @@ const record = (entry) => appendFileSync(config.record, `${JSON.stringify(entry)
 record({
   command, args, configDir, configDirExists: configDir !== null && existsSync(configDir),
   claudecode: process.env.CLAUDECODE ?? null, pid: process.pid,
+  credentialVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'].filter((name) => name in process.env),
 });
 
 const exit = (code) => process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));

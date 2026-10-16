@@ -134,6 +134,19 @@ describe('AccountLogin.submitCode', () => {
     expect([accounts.activeId(), accounts.activeEnv()]).toStrictEqual([null, {}]);
   });
 
+  it("keeps the core's Anthropic credentials from claude's sign-in, its status check and the account's sign-out", async () => {
+    for (const name of ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN']) withEnv(name, `fake-${name}`);
+    const { login, code, cli, accounts, waiting, settled } = setup();
+    login.start('claude', 'browser');
+    await waiting();
+    login.submitCode(code);
+    await settled('idle');
+    await accounts.remove(accounts.list().accounts[0]!.id);
+    expect(cli.records().filter((entry) => entry.command !== undefined).map((entry) => [entry.command, entry.credentialVars])).toStrictEqual([
+      ['auth login', []], ['auth status', []], ['auth logout', []],
+    ]);
+  });
+
   it('keeps the account dir at mode 0700 after it is registered', async () => {
     const { login, code, accounts, waiting, settled } = setup();
     login.start('claude', 'browser');

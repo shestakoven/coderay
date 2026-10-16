@@ -20,7 +20,7 @@ export function claudeLogin(claude: string): LoginFlow {
   return {
     start(home, _method, _secret, report) {
       // Detached so that cancelling stops claude's whole process group.
-      const child = spawn(claude, ['auth', 'login'], { env: accountEnv(home.dir), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      const child = spawn(claude, ['auth', 'login'], { env: accountEnv(home), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       let output = '';
       let shown = false;
       let over = false;
@@ -54,7 +54,7 @@ export function claudeLogin(claude: string): LoginFlow {
           return;
         }
         report({ kind: 'checking' });
-        const status = execFile(claude, ['auth', 'status', '--json'], { env: accountEnv(home.dir), timeout: STATUS_TIMEOUT_MS }, (_error, stdout) => {
+        const status = execFile(claude, ['auth', 'status', '--json'], { env: accountEnv(home), timeout: STATUS_TIMEOUT_MS }, (_error, stdout) => {
           if (over) return;
           over = true;
           // A signed-out claude exits with code 1 but still prints its status.
