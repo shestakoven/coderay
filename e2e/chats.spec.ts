@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { startCore, type Core } from './core';
-import { chatAgents, chooseModel } from './helpers';
+import { chatAgents, chooseModel, sendMessage } from './helpers';
 
 let core: Core | undefined;
 
@@ -210,4 +210,19 @@ test("the model menu keeps its highlighted model as claude's list arrives, scrol
   await menu.locator('.model-foot').click();
   await page.keyboard.type('model 1');
   await expect(page.getByRole('combobox', { name: 'Search models' })).toHaveValue('model 1');
+});
+
+test('a Codex chat: choosing GPT-6-Luna makes it a Codex chat that answers, and its header names Codex and how it guards writes', async ({ page }) => {
+  core = await startCore('multi-turn', {}, 'tiny', 'multi-turn');
+  await page.goto(core.url);
+  await expect(page.getByText('core connected')).toBeVisible();
+  await page.locator('.model-button').click();
+  await expect(page.getByTestId('model-menu').locator('.model-engine')).toHaveText(['Claude', 'Codex']);
+  await page.keyboard.press('Escape');
+  await chooseModel(page, 'luna');
+  await sendMessage(page, 'hi');
+  await expect(page.locator('.msg.assistant').last()).toHaveText('OK');
+  await expect(page.locator('.engine-chip')).toContainText('Codex');
+  await expect(page.locator('.engine-protection')).toHaveText('OS sandbox + approvals');
+  await expect(page.locator('.agent-view')).toHaveCount(0);
 });

@@ -165,7 +165,7 @@ describe('main.ts', { timeout: 90_000 }, () => {
     ]);
   });
 
-  it("sends Claude's models without waiting for a codex slow to list its own, and every window both once codex has", async () => {
+  it("sends Claude's models without waiting for a codex slow to list its own, saying codex's are coming, and every window both once codex has", async () => {
     const dir = tempDir('main-slow-codex-');
     mkdirSync(join(dir, 'home'));
     const claude = join(dir, 'claude');
@@ -177,12 +177,12 @@ describe('main.ts', { timeout: 90_000 }, () => {
       'exec cat > /dev/null',
     ].join('\n'), { mode: 0o755 });
     const { messages, socket } = await startMain({ claude, codex: FAKE_CODEX, env: { HOME: join(dir, 'home'), FAKE_CODEX_SLOW: 'model/list', FAKE_CODEX_SLOW_MS: '8000' } });
-    const models = () => messages.flatMap((m) => (m.type === 'models.snapshot' ? [m.models.map((model) => model.name)] : []));
+    const models = () => messages.flatMap((m) => (m.type === 'models.snapshot' ? [[m.models.map((model) => model.name), m.pending]] : []));
     const asked = Date.now();
     socket.send(JSON.stringify({ type: 'models.list' }));
     await waitFor(() => models().length === 1, "Claude's models");
     const waited = Date.now() - asked;
     await waitFor(() => models().length === 2, 'the Codex models', 20_000);
-    expect([models(), waited < 6_000]).toEqual([[['Sonnet'], ['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra']], true]);
+    expect([models(), waited < 6_000]).toEqual([[[['Sonnet'], ['codex']], [['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra'], undefined]], true]);
   });
 });

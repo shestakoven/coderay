@@ -63,10 +63,10 @@ function defaultModel(value: string | undefined): ChatPick | undefined {
 }
 
 /**
- * Every engine's answer; or, once `ms` have passed and some engines have answered, theirs, with `late` bringing every answer
- * when the slow ones come. With none answered by then it waits for all, as an empty first answer would tell nothing.
+ * Every engine's answer; or, once `ms` have passed and some engines have answered, theirs, with `waiting` naming the others' places
+ * and `late` bringing every answer when the slow ones come. With none answered by then it waits for all, as an empty first answer would tell nothing.
  */
-async function answeredBy<T>(answers: Promise<T>[], ms: number): Promise<{ answered: T[]; late: Promise<T[]> | null }> {
+async function answeredBy<T>(answers: Promise<T>[], ms: number): Promise<{ answered: T[]; waiting: number[]; late: Promise<T[]> | null }> {
   const all = Promise.all(answers);
   const known: ({ value: T } | null)[] = answers.map(() => null);
   answers.forEach((answer, at) => void answer.then((value) => { known[at] = { value }; }, () => {}));
@@ -74,12 +74,13 @@ async function answeredBy<T>(answers: Promise<T>[], ms: number): Promise<{ answe
   const expired = new Promise<null>((resolveExpired) => { timer = setTimeout(resolveExpired, ms, null); });
   try {
     const every = await Promise.race([all, expired]);
-    if (every !== null) return { answered: every, late: null };
+    if (every !== null) return { answered: every, waiting: [], late: null };
   } finally {
     clearTimeout(timer);
   }
   const answered = known.flatMap((entry) => (entry ? [entry.value] : []));
-  return answered.length === 0 ? { answered: await all, late: null } : { answered, late: all };
+  const waiting = known.flatMap((entry, at) => (entry ? [] : [at]));
+  return answered.length === 0 ? { answered: await all, waiting: [], late: null } : { answered, waiting, late: all };
 }
 
 const { values } = parseArgs({
@@ -433,9 +434,10 @@ try {
         return rest?.then((engines) => late({ type: 'engines.snapshot', engines }));
       })
       .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
-    void answeredBy(agent.engines.all().map(modelsOf), SLOW_ENGINE_MS)
-      .then(({ answered, late: rest }) => {
-        first({ type: 'models.snapshot', models: answered.flat() });
+    const engines = agent.engines.all();
+    void answeredBy(engines.map(modelsOf), SLOW_ENGINE_MS)
+      .then(({ answered, waiting, late: rest }) => {
+        first({ type: 'models.snapshot', models: answered.flat(), ...(waiting.length === 0 ? {} : { pending: waiting.map((at) => engines[at]!.id) }) });
         return rest?.then((lists) => late({ type: 'models.snapshot', models: lists.flat() }));
       })
       .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));

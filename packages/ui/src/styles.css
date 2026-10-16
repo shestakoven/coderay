@@ -392,7 +392,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-switcher-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-new { padding: 2px 8px; background: transparent; border-color: transparent; color: var(--muted); border-radius: 6px; }
 .chat-new:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
-.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: 300px; max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: min(300px, 100cqi); max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
 .chat-rename { flex: 1; min-width: 0; padding: 5px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: var(--r-1); font: inherit; outline: 0; }
 .chat-list-empty { padding: 8px; }
 .chat-list-row { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; border-radius: var(--r-1); }
@@ -408,7 +408,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-delete-all:hover, .chat-delete-all.confirm { background: var(--raised); }
 .chat-delete-all.confirm { color: var(--error); }
 .chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-list-meta { font-size: calc(11px * var(--fs-scale, 1)); }
+.chat-list-meta { overflow: hidden; font-size: calc(11px * var(--fs-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .model-controls { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; }
 .model-controls select { flex: none; appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 6px; height: 28px; padding: 0 8px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; }
 .model-controls select:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
@@ -676,7 +676,7 @@ button:not(:disabled):hover { border-color: var(--accent); }
 
 /* Chat header at narrow widths */
 .chat-header .chat-status { flex: none; }
-.chat-switcher { flex: 1 1 0; }
+.chat-switcher { flex: 1 1 auto; }
 .chat-switcher-button { max-width: 100%; }
 .chat-header .spacer { flex: 0 0 0; }
 
@@ -855,3 +855,13 @@ button:not(:disabled):hover { border-color: var(--accent); }
 button.close-project { margin-right: auto; color: var(--fg); }
 .close-project:hover:not(:disabled) { text-decoration: underline; }
 @media (max-width: 800px) { .start-body { grid-template-columns: minmax(0, 520px); gap: 32px; padding-top: 6vh; } }
+/* The caption gives way first (any share of the shrink, even 1/64 px, would cut the chat's title); the engine's name is the chip's minimum. */
+.engine-chip { display: inline-grid; grid-template-columns: auto minmax(0, max-content); flex: 0 100000 auto; padding: 1px 7px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); line-height: 16px; white-space: nowrap; }
+.engine-protection { overflow: hidden; text-overflow: ellipsis; }
+.engine-protection::before { content: '·'; margin: 0 0.4em; }
+.model-state.loading { color: var(--muted); }
+.model-state.loading::before { content: '⟳' / ''; display: inline-block; margin-right: 4px; animation: bg-spin 1.6s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .model-state.loading::before { animation: none; } }
+/* A narrow chat header shows the agent view's icons without their words, which stay the buttons' names. */
+.chat-header { container: chat-header / inline-size; }
+@container chat-header (max-width: 420px) { .chat-header .agent-view button { gap: 0; font-size: 0; } }

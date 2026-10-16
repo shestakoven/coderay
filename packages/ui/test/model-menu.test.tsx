@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ChatPick } from '@ide/protocol';
+import type { ChatPick, EngineId, SessionView } from '@ide/protocol';
 import { initialChatState } from '../src/chat/chat-state';
 import { ChatPanel } from '../src/chat/ChatPanel';
 import { ImageStore } from '../src/chat/image-store';
@@ -61,6 +61,15 @@ describe('ModelMenu', () => {
     const groupNames = [...html.matchAll(/class="model-group-head" id="[^"]+"[^>]*>(.*?)<\/div>/g)].map((match) => match[1]!.replace(/<[^>]+>/g, ''));
     expect([texts(html, 'model-account'), groupNames.map((name) => name.startsWith('Codex, account work@example.com · Plus'))]).toEqual([['work@example.com · Plus'], [false, true, false]]);
   });
+
+  it('keeps the header of an engine whose models are still coming and says so, while nothing or its name is typed', () => {
+    const noCodex = THREE_ENGINES.filter((model) => model.engine !== 'codex');
+    const html = (initialQuery: string) => renderToStaticMarkup(
+      <ModelMenu models={noCodex} engines={[]} pending={['codex']} current={SONNET} started={false} recent={[]} initialQuery={initialQuery} onChoose={() => undefined} onClose={() => undefined} />,
+    );
+    expect([texts(html(''), 'model-engine'), texts(html(''), 'model-state loading'), texts(html('codex'), 'model-engine'), texts(html('son'), 'model-engine')])
+      .toEqual([['Claude', 'Codex', 'opencode'], ['loading models'], ['Codex'], ['Claude']]);
+  });
 });
 
 describe('ModelControls', () => {
@@ -101,6 +110,28 @@ describe('ChatPanel', () => {
     expect([composer(null), composer(undefined)]).toEqual([
       ['Choose a model to start the agent', 'Choose a model first', true, 'Choose a model first'],
       ['Message the agent (Enter sends, Shift+Enter adds a line)', 'Send (Enter)', false, 'Claude Code&#x27;s own terminal interface: every slash command works'],
+    ]);
+  });
+
+  it('names the engine and how it guards writes in the header, calls a refused Codex chat refused, and offers no terminal for Codex', () => {
+    const header = (engine: EngineId) => {
+      const session: SessionView = { id: 's', engine, engineSessionId: 'c', status: 'refused', model: null, modelChoice: engine === 'codex' ? 'codex:gpt-6-luna' : 'sonnet', effort: 'medium', cliVersion: null, permissionMode: null, startedAt: 1 };
+      const html = renderToStaticMarkup(
+        <ChatPanel
+          chat={{ ...initialChatState, session }} chats={{ activeId: 's', sessions: [], models: [], engines: [] }} send={() => true} onClearFilter={() => undefined}
+          onDismissError={() => undefined} prompts={[]} promptAnchored={false} onAnswerPrompt={() => undefined} onFocusTargets={() => undefined} dialog={null}
+          view="chat" onView={() => undefined} terminal={null} images={new ImageStore(() => true)} imagesLive={false}
+        />,
+      );
+      return [
+        /class="engine-chip"[^>]*>([^<]*)<span class="engine-protection">([^<]*)</.exec(html)?.slice(1),
+        /class="chat-status refused"[^>]*><i class="status-dot"><\/i>([^<]*)</.exec(html)?.[1],
+        html.includes('Terminal</button>'),
+      ];
+    };
+    expect([header('claude'), header('codex')]).toEqual([
+      [['Claude', 'Hook'], 'hook off', true],
+      [['Codex', 'OS sandbox + approvals'], 'refused', false],
     ]);
   });
 });

@@ -5,6 +5,7 @@ import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '..');
 const FAKE_CLAUDE = join(REPO, 'packages/core/test/fake-claude/fake-claude.mjs');
+const FAKE_CODEX = join(REPO, 'packages/core/test/fake-codex/fake-codex.mjs');
 export const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
 const stream = (scenario: string): string => join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`);
 
@@ -185,7 +186,7 @@ export async function startHub(names: string[]): Promise<Hub> {
   };
 }
 
-export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, fixture = 'tiny'): Promise<Core> {
+export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, fixture = 'tiny', codex: string | null = null): Promise<Core> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
   const root = join(base, 'project');
   cpSync(join(REPO, 'e2e/fixtures', fixture), root, { recursive: true });
@@ -194,8 +195,12 @@ export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, f
   const record = join(base, 'fake-claude-record.jsonl');
   const core = await spawnCore(
     base,
-    ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, '--no-codex'],
-    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario), ...env },
+    ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, ...(codex === null ? ['--no-codex'] : ['--codex', FAKE_CODEX])],
+    {
+      PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario),
+      ...(codex === null ? {} : { FAKE_CODEX_SCENARIO: join(REPO, 'packages/core/test/fixtures/codex', `${codex}.jsonl`), FAKE_CODEX_RECORD: join(base, 'fake-codex-record.jsonl') }),
+      ...env,
+    },
   );
   return {
     url: core.url,

@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { ChatPick, ClientMessage, EngineState, EngineStatus, ModelInfo } from '@ide/protocol';
+import type { ChatPick, ClientMessage, EngineId, EngineState, EngineStatus, ModelInfo } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
 import { storage } from '../layout/dom';
 import { useDismiss } from '../project/use-dismiss';
@@ -16,10 +16,12 @@ const STATE_LABEL: Record<Exclude<EngineState, 'ready'>, string> = { missing: 'n
 const marked = (text: string, query: string): ReactNode =>
   matchSpans(text, query).map((span, index) => (span.hit ? <u key={index}>{span.text}</u> : <Fragment key={index}>{span.text}</Fragment>));
 
-export function ModelControls({ current, models, engines, started, enabled, send, onMenu, onChosen }: {
+export function ModelControls({ current, models, engines, pending, started, enabled, send, onMenu, onChosen }: {
   current: ChatPick | null;
   models: ModelInfo[];
   engines: EngineStatus[];
+  /** The engines whose models are still coming. */
+  pending?: readonly EngineId[];
   started: boolean;
   enabled: boolean;
   send: (message: ClientMessage) => boolean;
@@ -99,7 +101,7 @@ export function ModelControls({ current, models, engines, started, enabled, send
         <span className="model-button-label">{label}</span>
         <Icon name="chevron-down" size={14} />
       </button>
-      {open && <ModelMenu models={catalog} engines={engines} current={current} started={started} recent={recent} initialQuery={open.query} onChoose={choose} onClose={close} />}
+      {open && <ModelMenu models={catalog} engines={engines} pending={pending} current={current} started={started} recent={recent} initialQuery={open.query} onChoose={choose} onClose={close} />}
       {current !== null && efforts.length > 0 && (
         <select
           aria-label="Effort"
@@ -116,9 +118,10 @@ export function ModelControls({ current, models, engines, started, enabled, send
   );
 }
 
-export function ModelMenu({ models, engines, current, started, recent, initialQuery, onChoose, onClose }: {
+export function ModelMenu({ models, engines, pending, current, started, recent, initialQuery, onChoose, onClose }: {
   models: ModelInfo[];
   engines: EngineStatus[];
+  pending?: readonly EngineId[];
   current: ChatPick | null;
   started: boolean;
   recent: string[];
@@ -129,7 +132,7 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
   const [query, setQuery] = useState(initialQuery);
   const engine = current?.engine ?? null;
   const currentModel = current?.modelChoice ?? null;
-  const groups = useMemo(() => pickerGroups({ models, engines, engine, current: currentModel, started, query, recent }), [models, engines, engine, currentModel, started, query, recent]);
+  const groups = useMemo(() => pickerGroups({ models, engines, engine, current: currentModel, started, query, recent, pending }), [models, engines, engine, currentModel, started, query, recent, pending]);
   const rows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
   const keys = useMemo(() => rowKeys(groups), [groups]);
   // By key, not place: claude's list can replace the built-in one under an open menu, and Enter must take the row the user sees.
@@ -212,6 +215,7 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
                   </>
                 )}
                 {group.status && group.status.state !== 'ready' && <span className={`model-state ${group.status.state}`}>{STATE_LABEL[group.status.state]}</span>}
+                {group.loading && <span className="model-state loading">loading models</span>}
                 {group.status?.hint && <span className="model-hint">{group.status.hint}</span>}
               </div>
               <div role="group" aria-labelledby={`${id}-${group.id}`}>
