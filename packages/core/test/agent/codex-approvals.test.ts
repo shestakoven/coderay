@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { approvalReply, commandCall, elicitationCall, elicitationReply, judge, NO_PERMISSIONS, patchCalls } from '../../src/agent/codex/approvals';
-import type { FileUpdateChange, McpToolCallItem } from '../../src/agent/codex/protocol';
+import { approvalReply, commandCall, elicitationCall, elicitationReply, fileChangeCalls, judge, NO_PERMISSIONS, patchCalls } from '../../src/agent/codex/approvals';
+import type { FileUpdateChange, McpToolCallItem, ThreadItem } from '../../src/agent/codex/protocol';
 import type { GateCall } from '../../src/agent/transport';
 import type { HookAnswer } from '../../src/gate/hook-gate';
 
@@ -17,8 +17,22 @@ describe('patchCalls', () => {
       { tool_name: 'Bash', tool_input: { command: "rm -- '/p/it'\\''s.ts'" }, tool_use_id: 'p1', cwd: '/p' },
       { tool_name: 'Bash', tool_input: { command: "mv -- '/p/old.ts' '/p/new name.ts'" }, tool_use_id: 'p1', cwd: '/p' },
     ]);
+    expect(patchCalls('p2', [{ path: '/p/a.ts', kind: { type: 'update', move_path: '/p/b.ts' }, diff: '-a\n+b\n' }], '/p')).toEqual([
+      { tool_name: 'Bash', tool_input: { command: "mv -- '/p/a.ts' '/p/b.ts'" }, tool_use_id: 'p2', cwd: '/p' },
+      { tool_name: 'Edit', tool_input: { file_path: '/p/b.ts', diff: '-a\n+b\n' }, tool_use_id: 'p2', cwd: '/p' },
+    ]);
+    const edit: FileUpdateChange = { path: '/p/a.ts', kind: { type: 'update', move_path: null }, diff: '' };
     const unknown = { path: '/p/b.ts', kind: { type: 'rename', to: '/p/c.ts' }, diff: '' } as unknown as FileUpdateChange;
-    expect(patchCalls('p2', [{ path: '/p/a.ts', kind: { type: 'update', move_path: null }, diff: '' }, unknown], '/p')).toEqual([]);
+    const unreadable: FileUpdateChange[] = [unknown, { ...edit, path: 'a.ts' }, { ...edit, kind: { type: 'update', move_path: '~/b.ts' } }];
+    expect(unreadable.map((change) => patchCalls('p3', [edit, change], '/p'))).toEqual([[], [], []]);
+  });
+
+  it('judges an approval by its open patch, and declines one that asks for a writable root or has no patch', () => {
+    const changes: FileUpdateChange[] = [{ path: '/p/a.ts', kind: { type: 'add' }, diff: 'a' }];
+    const item: ThreadItem = { type: 'fileChange', id: 'p1', status: 'inProgress', changes };
+    const ask = (extra: object) => ({ threadId: 't', turnId: 'u', itemId: 'p1', grantRoot: null, ...extra });
+    expect([fileChangeCalls(ask({}), item, '/p'), fileChangeCalls(ask({ grantRoot: '/' }), item, '/p'), fileChangeCalls(ask({ itemId: 'p2' }), item, '/p'), fileChangeCalls(ask({}), undefined, '/p')])
+      .toEqual([patchCalls('p1', changes, '/p'), [], [], []]);
   });
 });
 
@@ -28,6 +42,10 @@ describe('commandCall', () => {
     const bash = (cwd: string) => ({ tool_name: 'Bash', tool_input: { command: 'echo x > f', description: 'May I?' }, tool_use_id: 'c1', cwd });
     expect([ask({}), ask({ cwd: '/q' }), ask({ kind: 'writeStdin' }), ask({ command: null })]).toEqual([bash('/p'), bash('/q'), null, null]);
     expect([ask({ cwd: '' }), ask({ cwd: 'sub' })]).toEqual([bash('/p'), bash('/p/sub')]);
+    const wrapped = (command: string) => commandCall({ kind: 'command', threadId: 't', turnId: 'u', itemId: 'c1', command }, '/p')?.tool_input.command ?? null;
+    const read = ["/bin/zsh -lc 'echo x > f'", "/usr/bin/env FOO='a b' bash -c 'echo x > f'", 'tar -cf out.tar src'];
+    const unread = ["/opt/homebrew/bin/fish -lc 'echo x > f'", "pwsh -c 'echo x > f'", "/bin/ZSH -lc 'echo x > f'", "env -i fish -c 'echo x > f'", "FOO=1 nu -c 'echo x > f'"];
+    expect([...read, ...unread].map(wrapped)).toEqual([...read, ...unread.map(() => null)]);
   });
 });
 
@@ -63,7 +81,17 @@ describe('judge', () => {
       await judge([call('f')], decide({}), signal),
       asked,
     ]).toEqual(['accept', 'decline', 'decline', 'decline', null, ['a', 'b', 'c', 'f']]);
-    expect(await judge([call('g')], async () => Promise.reject(new Error('store closed')), signal)).toBe('decline');
+    const stop = new AbortController();
+    const allowThenStop = async () => {
+      stop.abort();
+      return answer('allow');
+    };
+    expect([
+      await judge([call('g')], async () => Promise.reject(new Error('store closed')), signal),
+      await judge([call('h')], async () => undefined as unknown as HookAnswer, signal),
+      await judge([call('i')], allowThenStop, stop.signal),
+      await judge([call('j')], async () => Promise.reject(new Error('aborted')), stop.signal),
+    ]).toEqual(['decline', 'decline', null, null]);
   });
 });
 

@@ -79,6 +79,7 @@ export interface CommandExecutionRequestApprovalParams {
   kind: CommandExecutionApprovalKind; threadId: string; turnId: string; itemId: string; approvalId?: string | null;
   command?: string | null; cwd?: string | null; reason?: string | null; networkApprovalContext?: NetworkApprovalContext | null;
 }
+export interface FileChangeRequestApprovalParams { threadId: string; turnId: string; itemId: string; reason?: string | null; grantRoot?: string | null }
 // What CodeRay answers a request for more permissions: none granted, for this turn only.
 export interface PermissionsRequestApprovalResponse { permissions: Record<string, never>; scope: 'turn' }
 export interface McpServerElicitationRequestParams {

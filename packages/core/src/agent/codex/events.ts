@@ -31,7 +31,7 @@ export function limitWindow(window: RateLimitWindow | null): LimitWindow | null 
 }
 
 /** The one shell word `text` spells, or null when it is not exactly one word. */
-function shellWord(text: string): string | null {
+export function shellWord(text: string): string | null {
   let word = '';
   for (let i = 0; i < text.length; i++) {
     const char = text.charAt(i);
