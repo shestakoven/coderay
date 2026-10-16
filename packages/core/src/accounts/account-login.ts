@@ -73,7 +73,7 @@ export class AccountLogin {
       target.store.discardDir(id);
       throw error;
     }
-    attempt.timer = setTimeout(() => this.fail(attempt, 'The sign-in timed out after 10 minutes.'), this.options.timeoutMs ?? LOGIN_TIMEOUT_MS);
+    this.arm(attempt);
     this.set({ state: 'waiting', engine, method, url: null, userCode: null, error: null });
     for (const update of early) this.report(attempt, update);
   }
@@ -92,9 +92,12 @@ export class AccountLogin {
   private report(attempt: Attempt, update: FlowUpdate): void {
     if (this.attempt !== attempt) return;
     if (update.kind === 'waiting') {
+      // A flow that waits for the user again after a check gets its full time once more.
+      if (attempt.timer === undefined) this.arm(attempt);
       this.set({ ...this.current, state: 'waiting', url: update.url, userCode: update.userCode, error: null });
     } else if (update.kind === 'checking') {
       clearTimeout(attempt.timer);
+      attempt.timer = undefined;
       this.set({ ...this.current, state: 'checking', url: null, userCode: null, error: null });
     } else if (update.kind === 'failed') {
       this.fail(attempt, update.error);
@@ -109,6 +112,10 @@ export class AccountLogin {
       this.attempt = null;
       this.set(IDLE);
     }
+  }
+
+  private arm(attempt: Attempt): void {
+    attempt.timer = setTimeout(() => this.fail(attempt, 'The sign-in timed out after 10 minutes.'), this.options.timeoutMs ?? LOGIN_TIMEOUT_MS);
   }
 
   private fail(attempt: Attempt, error: string): void {

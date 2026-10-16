@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, rmdirSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SignedHome } from '../../src/accounts/account-homes';
@@ -302,6 +302,15 @@ describe('AccountStore per engine', () => {
     symlinkSync(join(home, 'gone.tmp'), `${path}.${process.pid}.tmp`);
     expect(() => store().setActive(seeded[0]!.id)).toThrow(/symbolic link/);
     const left = readdirSync(home).sort();
+    mkdirSync(`${path}.${process.pid}.tmp`);
+    let blocked: unknown;
+    try {
+      store().setActive(seeded[0]!.id);
+    } catch (error) {
+      blocked = error;
+    } finally {
+      rmdirSync(`${path}.${process.pid}.tmp`);
+    }
     chmodSync(home, 0o500);
     let denied: unknown;
     try {
@@ -311,8 +320,9 @@ describe('AccountStore per engine', () => {
     } finally {
       chmodSync(home, 0o700);
     }
-    expect([unreadable, dangling, readFileSync(path, 'utf8'), left, (denied as NodeJS.ErrnoException | undefined)?.code]).toStrictEqual([
-      before, true, before, ['accounts.json', 'claude-accounts'], 'EACCES',
+    const failure = (error: unknown) => [(error as NodeJS.ErrnoException | undefined)?.code, (error as NodeJS.ErrnoException | undefined)?.syscall];
+    expect([unreadable, dangling, readFileSync(path, 'utf8'), left, failure(blocked), failure(denied)]).toStrictEqual([
+      before, true, before, ['accounts.json', 'claude-accounts'], ['EISDIR', 'open'], ['EACCES', 'open'],
     ]);
   });
 });

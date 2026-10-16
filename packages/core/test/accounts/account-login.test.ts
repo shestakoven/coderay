@@ -386,6 +386,27 @@ describe('AccountLogin for every engine', () => {
     expect([login.view().state, claudeOnly.view().state, existsSync(join(home, 'claude-accounts')), readdirSync(join(home, 'codex-accounts'))]).toStrictEqual(['idle', 'idle', false, []]);
   });
 
+  it('gives a sign-in no time limit while the flow checks, and its full time again when it waits for the user once more', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = tempDir('ide-login-home-');
+    const codexFlow = scripted();
+    const login = new AccountLogin({ engines: { codex: { store: new AccountStore({ home, engine: 'codex', logout: async () => {} }), flow: codexFlow.flow } }, timeoutMs: 1_000, onChange: () => {} });
+    onTestFinished(() => login.cancel());
+    login.start('codex', 'device-code');
+    codexFlow.report({ kind: 'waiting', url: 'https://auth.example.test/codex/device', userCode: 'ABCD-1234' });
+    vi.advanceTimersByTime(900);
+    codexFlow.report({ kind: 'checking' });
+    vi.advanceTimersByTime(5_000);
+    codexFlow.report({ kind: 'waiting', url: 'https://auth.example.test/codex/device', userCode: 'EFGH-5678' });
+    vi.advanceTimersByTime(999);
+    const before = login.view().state;
+    vi.advanceTimersByTime(1);
+    expect([before, login.view().state, login.view().error]).toStrictEqual(['waiting', 'error', 'The sign-in timed out after 10 minutes.']);
+  });
+
   it('hears a flow that reports inside start only once its run, timer and view are in place, and forgets a flow that throws', () => {
     vi.useFakeTimers();
     onTestFinished(() => {
