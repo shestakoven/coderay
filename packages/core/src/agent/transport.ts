@@ -48,7 +48,7 @@ export interface CodexLaunch extends LaunchBase {
   codex: CodexCommand;
   /** The MCP servers CodeRay defines (idecore first among them). */
   servers: string[];
-  /** Thread config: CodeRay's MCP servers, features off. */
+  /** CodeRay's MCP servers as thread config. */
   config: Record<string, JsonValue>;
   /** The secrets `config` names by variable. */
   env: Record<string, string>;

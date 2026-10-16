@@ -1,11 +1,13 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { formatModelId, isEffortFor, parseModelId, type EngineStatus, type ModelInfo } from '@ide/protocol';
+import { ENGINE_CAPABILITIES, formatModelId, isEffortFor, parseModelId, type EngineStatus, type ModelInfo } from '@ide/protocol';
 import type { AccountHome } from '../../accounts/account-homes';
 import { withAppServer } from '../codex/app-server';
 import { codexEnv, type CodexCommand } from '../codex/command';
 import type { GetAccountResponse, ModelListResponse } from '../codex/protocol';
+import { startCodexTransport } from '../codex/transport';
 import { isOlderVersion, MIN_CODEX_VERSION } from '../tools';
+import type { Engine } from './registry';
 
 const run = promisify(execFile);
 const VERSION_TIMEOUT_MS = 10_000;
@@ -55,4 +57,30 @@ export function codexModels(codex: CodexCommand, cwd: string): Promise<ModelInfo
     } while (cursor !== null);
     return models;
   });
+}
+
+export interface CodexEngineOptions {
+  /** codex under the active Codex account. */
+  command: () => CodexCommand;
+  cwd: string;
+  signedOut: () => string;
+  /** The active account's name, or null while Codex has no account of CodeRay's. */
+  account?: () => string | null;
+}
+
+export function codexEngine(options: CodexEngineOptions): Engine {
+  return {
+    id: 'codex',
+    capabilities: ENGINE_CAPABILITIES.codex,
+    status: async () => {
+      const status = await codexStatus(options.command(), options.cwd, options.signedOut());
+      const account = options.account?.() ?? null;
+      return account === null ? status : { ...status, account };
+    },
+    listModels: () => codexModels(options.command(), options.cwd),
+    start: (launch, sink) => {
+      if (!('codex' in launch)) throw new Error(`The Codex engine cannot start a ${launch.engine} chat.`);
+      return startCodexTransport(launch, sink);
+    },
+  };
 }

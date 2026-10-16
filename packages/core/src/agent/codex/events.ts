@@ -122,6 +122,8 @@ export class CodexEvents {
   private skills: string[] = [];
   private readonly servers = new Map<string, string>();
   private readonly open = new Map<string, ThreadItem>();
+  // MCP calls CodeRay declined: codex reports them failed, the session reads them as refused.
+  private readonly rejected = new Set<string>();
   // codex reports an error it gave up on, then fails the turn with the same message: the user reads it once.
   private lastError: string | null = null;
 
@@ -145,6 +147,11 @@ export class CodexEvents {
 
   mcpCalls(): McpToolCallItem[] {
     return [...this.open.values()].filter((item): item is McpToolCallItem => item.type === 'mcpToolCall');
+  }
+
+  /** The gate declined this open call: its result reads as refused. */
+  reject(itemId: string): void {
+    if (this.open.has(itemId)) this.rejected.add(itemId);
   }
 
   handle(method: string, params: unknown): StreamEvent[] {
@@ -206,12 +213,14 @@ export class CodexEvents {
     if (!this.open.has(item.id)) return [];
     const result = toolResult(item);
     this.open.delete(item.id);
-    return result ? [{ type: 'user', parentToolUseId: null, toolResults: [result] }] : [];
+    const rejected = this.rejected.delete(item.id);
+    return result ? [{ type: 'user', parentToolUseId: null, toolResults: [rejected ? { ...result, rejected } : result] }] : [];
   }
 
   // Interrupted commands and MCP calls never complete: the turn's end closes them (the tracker marks them unfinished).
   private ended(turn: Turn): StreamEvent[] {
     this.open.clear();
+    this.rejected.clear();
     const said = this.lastError;
     this.lastError = null;
     const message = isRecord(turn.error) && typeof turn.error.message === 'string' ? turn.error.message : null;

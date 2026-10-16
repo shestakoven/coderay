@@ -47,6 +47,7 @@ const MODELS = [
   { id: 'codex-internal', model: 'codex-internal', displayName: 'Internal', description: 'Hidden', hidden: true, isDefault: false, defaultReasoningEffort: 'medium', supportedReasoningEfforts: efforts(['medium']) },
 ];
 const userServers = JSON.parse(env.FAKE_CODEX_USER_SERVERS ?? '{"node_repl":{"command":"node"}}');
+const userConfig = JSON.parse(env.FAKE_CODEX_CONFIG ?? '{}');
 const steps = env.FAKE_CODEX_SCENARIO ? readFileSync(env.FAKE_CODEX_SCENARIO, 'utf8').split('\n').filter((line) => line.trim() !== '') : [];
 
 let at = 0;
@@ -128,6 +129,7 @@ function startThread(id, method, params) {
   reply(id, {
     thread: { id: threadId, cliVersion: VERSION, path: null }, model: params.model ?? 'gpt-6-luna',
     approvalPolicy: params.approvalPolicy ?? 'on-request', approvalsReviewer: params.approvalsReviewer ?? 'user', sandbox, reasoningEffort: 'medium',
+    multiAgentMode: 'explicitRequestOnly', ...JSON.parse(env.FAKE_CODEX_ECHO ?? '{}'),
   });
   const configured = Object.keys(config).flatMap((key) => /^mcp_servers\.([^.]+)\.(?:url|command)$/.exec(key)?.[1] ?? []);
   const user = Object.keys(userServers).filter((name) => config[`mcp_servers.${name}.enabled`] !== false);
@@ -194,7 +196,7 @@ function handle(id, method, params) {
       const dir = params.cwds?.[0] ?? cwd;
       return reply(id, { data: [{ cwd: dir, skills: [{ name: 'probe-skill', description: 'A skill of the project', path: join(dir, '.agents/skills/probe-skill/SKILL.md'), scope: 'repo', enabled: true, pluginId: null }], errors: [] }] });
     }
-    case 'config/read': return reply(id, { config: { mcp_servers: userServers }, origins: {}, layers: null });
+    case 'config/read': return reply(id, { config: { ...userConfig, mcp_servers: userServers }, origins: {}, layers: null });
     case 'thread/start':
     case 'thread/resume': return startThread(id, method, params);
     case 'turn/start': return startTurn(id);
@@ -229,13 +231,19 @@ process.stdin.on('end', shutdown);
 createInterface({ input: process.stdin }).on('line', (line) => {
   const message = JSON.parse(line);
   if (message.method === undefined) {
+    const result = message.error === undefined ? (message.result ?? null) : { error: message.error };
     const resolve = waiting.get(message.id);
     if (resolve) {
       waiting.delete(message.id);
-      resolve(message.result ?? null);
+      resolve(result);
+    } else {
+      record({ reply: { method: null, result } });
     }
     return;
   }
   record({ in: { method: message.method, params: message.params ?? null } });
-  if (message.id !== undefined) handle(message.id, message.method, message.params ?? {});
+  if (message.id === undefined) return;
+  // A slow answer leaves the client waiting for it, as codex does while it starts a thread or a turn.
+  if (message.method === env.FAKE_CODEX_SLOW) setTimeout(() => handle(message.id, message.method, message.params ?? {}), 300);
+  else handle(message.id, message.method, message.params ?? {});
 });
