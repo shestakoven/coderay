@@ -90,7 +90,7 @@ async function play(current) {
       record({ sleeperPid: child.pid });
     } else if (step.fake === 'exit') process.exit(step.code ?? 1);
     else if (step.fake === 'fail') {
-      current.error = { message: step.message };
+      current.error = { message: step.message, codexErrorInfo: step.codexErrorInfo ?? null, additionalDetails: null };
       current.failed = true;
     } else if (step.request !== undefined) {
       const id = nextRequest++;
@@ -179,7 +179,7 @@ function login(id, params) {
     return finish(null, { type: 'apiKey' });
   }
   if (params.type === 'chatgpt') {
-    reply(id, { type: 'chatgpt', loginId: 'login-1', authUrl: 'https://auth.example.test/oauth/authorize?state=FAKESTATE' });
+    reply(id, { type: 'chatgpt', loginId: 'login-1', authUrl: env.FAKE_CODEX_AUTH_URL ?? 'https://auth.example.test/oauth/authorize?state=FAKESTATE' });
     return finish('login-1', chatgpt);
   }
   if (params.type === 'chatgptDeviceCode') {
@@ -209,10 +209,12 @@ function handle(id, method, params) {
     case 'account/login/start': return login(id, params);
     case 'account/login/cancel':
       clearTimeout(loginTimer);
-      // codex 0.160.0 goes on writing its state into its home, even after that directory was removed under it.
-      if (ownHome) mkdirSync(join(env.CODEX_HOME, '.tmp'), { recursive: true });
-      reply(id, {});
-      return notify('account/login/completed', { loginId: params.loginId ?? null, success: false, error: 'Login was cancelled.' });
+      // codex 0.160.0 goes on writing its state into its home, even after that directory was removed under it: a while after the cancel.
+      return setTimeout(() => {
+        if (ownHome) mkdirSync(join(env.CODEX_HOME, '.tmp'), { recursive: true });
+        reply(id, {});
+        notify('account/login/completed', { loginId: params.loginId ?? null, success: false, error: 'Login server error: Login was not completed' });
+      }, 100);
     case 'account/logout':
       if (!ownHome) return refuse(id, 'fake-codex signs out only under CODEX_HOME');
       rmSync(authFile, { force: true });

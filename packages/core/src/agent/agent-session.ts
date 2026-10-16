@@ -19,7 +19,7 @@ import { claudeUnder, KILL_GRACE_MS, startClaude, type ClaudeCommand, type Proce
 import { codexUnder, type CodexCommand } from './codex/command';
 import { codexMcp } from './codex/mcp';
 import { claudeEngine } from './engines/claude';
-import { codexEngine, signedOutHint } from './engines/codex';
+import { codexEngine, keyRejectedHint, signedOutHint } from './engines/codex';
 import { EngineRegistry } from './engines/registry';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
@@ -1143,7 +1143,7 @@ export class AgentSession {
       // The transport switches codex's apps and plugins off and keeps these secrets out of the model's shell, whatever the launch says.
       servers: mcp.names, config: mcp.config, env: mcp.env,
       developerInstructions: codexInstructions(gate?.systemPrompt(CODEX_PROMPT_NAMES) ?? null),
-      signedOutHint: signedOutHint(home),
+      signedOutHint: signedOutHint(home), keyRejectedHint: keyRejectedHint(home),
       ...(gate?.decide ? { decide: (call: GateCall, signal: AbortSignal) => gate.decide!(call, signal) } : {}),
       killGraceMs: this.options.killGraceMs, pidDir: runDir(this.options.home),
     };

@@ -54,6 +54,8 @@ export interface CodexLaunch extends LaunchBase {
   env: Record<string, string>;
   developerInstructions: string;
   signedOutHint: string;
+  /** What a turn that OpenAI refused the account's API key for tells the user. */
+  keyRejectedHint: string;
 }
 
 export type Launch = ClaudeLaunch | CodexLaunch;

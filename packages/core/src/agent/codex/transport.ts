@@ -11,6 +11,7 @@ import type {
   JsonValue, McpServerElicitationRequestParams, RequestId, SkillMetadata, SkillsListResponse, ThreadStartResponse, TurnStartResponse, UserInput,
 } from './protocol';
 import { RpcError, type Incoming, type IncomingRequest } from './rpc';
+import { hideSecrets } from './secrets';
 
 // Sent on every thread/start, thread/resume and turn/start: a resume or a turn without them keeps or changes the policy of before.
 const THREAD_POLICY = { sandbox: 'read-only', approvalPolicy: 'on-request', approvalsReviewer: 'user' } as const;
@@ -277,13 +278,26 @@ class CodexTransport implements AgentTransport {
     // A sub-agent's turns run on the same app-server: only the chat's own thread starts and ends its turns.
     const turn = isRecord(params) && params.threadId === this.threadId && isRecord(params.turn) && typeof params.turn.id === 'string' ? params.turn.id : null;
     if (method === 'turn/started' && turn !== null) this.turnId = turn;
-    // codex stores an API key unchecked: a 401 is how a wrong key shows.
-    if (method === 'turn/completed' && turn !== null && this.apiKey && isRecord(params) && isRecord(params.turn) && params.turn.status === 'failed' && /\b401\b/.test(JSON.stringify(params.turn.error))) {
-      this.emit([{ type: 'notice', text: 'OpenAI rejected the key of this Codex account: remove it in Settings → Accounts and add it again.' }]);
+    const events = this.events.handle(method, params);
+    // After codex's own words, before the turn ends.
+    if (method === 'turn/completed' && turn !== null && this.keyRejected(params)) {
+      const end = events.findIndex((event) => event.type === 'result');
+      events.splice(end === -1 ? events.length : end, 0, { type: 'notice', text: this.launch.keyRejectedHint });
     }
-    this.emit(this.events.handle(method, params));
+    this.emit(events);
     if (method === 'turn/completed' && turn !== null) this.turnEnded(turn);
     else if (method === 'turn/started' && turn !== null) this.stopIfRequested();
+  }
+
+  // codex stores an API key unchecked: a 401 is how a wrong key shows. Its error class first, the words when it has none.
+  private keyRejected(params: unknown): boolean {
+    if (!this.apiKey || !isRecord(params) || !isRecord(params.turn) || params.turn.status !== 'failed' || !isRecord(params.turn.error)) return false;
+    const { codexErrorInfo: info, message } = params.turn.error;
+    if (info === 'unauthorized') return true;
+    const status = isRecord(info) ? Object.values(info).find(isRecord)?.httpStatusCode : undefined;
+    if (typeof status === 'number') return status === 401;
+    if (typeof info === 'string' && info !== 'other') return false;
+    return typeof message === 'string' && /\b401\b/.test(message);
   }
 
   // A thread or turn codex is still starting is stopped once it has an id, or with its app-server when codex keeps it waiting.
@@ -498,7 +512,11 @@ class CodexTransport implements AgentTransport {
   }
 
   private emit(events: StreamEvent[]): void {
-    for (const event of events) this.sink.event(event);
+    for (const event of events) {
+      if (event.type === 'notice') this.sink.event({ ...event, text: hideSecrets(event.text) });
+      else if (event.type === 'refused') this.sink.event({ ...event, reason: hideSecrets(event.reason) });
+      else this.sink.event(event);
+    }
   }
 
   private inputOf(message: UserMessage): UserInput[] {

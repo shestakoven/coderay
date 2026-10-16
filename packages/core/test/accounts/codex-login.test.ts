@@ -15,18 +15,20 @@ function setup(env: Record<string, string> = {}) {
   const codex = fakeCodex(null, record, env);
   const store = new AccountStore({ home, engine: 'codex', logout: codexLogout(() => codex) });
   const views: AccountLoginView[] = [];
-  const login = new AccountLogin({ engines: { codex: { store, flow: codexLogin(() => codex) } }, now: () => 5, onChange: () => views.push(login.view()) });
+  const pidDir = join(home, 'run');
+  const login = new AccountLogin({ engines: { codex: { store, flow: codexLogin(() => codex, pidDir) } }, now: () => 5, onChange: () => views.push(login.view()) });
   onTestFinished(() => login.cancel());
-  return { home, record, store, views, login, records: () => codexRecords(record) };
+  return { home, record, store, views, login, pidDir, records: () => codexRecords(record) };
 }
 
 describe('Codex sign-in', () => {
   it.each([
-    ['browser', null, { type: 'chatgpt' }, 'https://auth.example.test/oauth/authorize?state=FAKESTATE', null, { email: 'new@example.com', plan: 'Plus' }],
-    ['device-code', null, { type: 'chatgptDeviceCode' }, 'https://auth.example.test/codex/device', 'ABCD-1234', { email: 'new@example.com', plan: 'Plus' }],
-    ['api-key', 'sk-test-key-123', { type: 'apiKey', apiKey: 'sk-test-key-123' }, null, null, { email: 'API key' }],
-  ] as const)('signs a new account in with %s, in its own home and file store, and names it from codex', async (method, key, params, url, userCode, named) => {
-    const { store, views, login, records } = setup();
+    ['browser', 'browser', null, {}, { type: 'chatgpt' }, 'https://auth.example.test/oauth/authorize?state=FAKESTATE', null, { email: 'new@example.com', plan: 'Plus' }],
+    ['device-code', 'device-code', null, {}, { type: 'chatgptDeviceCode' }, 'https://auth.example.test/codex/device', 'ABCD-1234', { email: 'new@example.com', plan: 'Plus' }],
+    ['api-key', 'api-key', 'sk-test-key-123', {}, { type: 'apiKey', apiKey: 'sk-test-key-123' }, null, null, { email: 'API key' }],
+    ['api-key that codex stores without saying so', 'api-key', 'sk-test-key-123', { FAKE_CODEX_LOGIN: 'silent' }, { type: 'apiKey', apiKey: 'sk-test-key-123' }, null, null, { email: 'API key' }],
+  ] as const)('signs a new account in with %s, in its own home and file store, and names it from codex', async (_, method, key, env, params, url, userCode, named) => {
+    const { store, views, login, records } = setup(env);
     login.start('codex', method, key);
     await waitFor(() => store.list().accounts.length === 1, 'the account saved');
     const account = store.list().accounts[0]!;
@@ -38,23 +40,27 @@ describe('Codex sign-in', () => {
   });
 
   it.each([
-    ['browser', null, 'Login was not completed.', 'Login was not completed.'],
-    ['api-key', 'sk-test-key-123', 'Key sk-test-key-123 refused, see https://auth.example.test/help?key=sk-test-key-123#top', 'Key … refused, see https://auth.example.test/help'],
-  ] as const)("reports codex's own reason for a failed %s sign-in without the key or a URL's query, keeps no account and leaves no directory", async (method, key, reason, shown) => {
-    const { home, store, login } = setup({ FAKE_CODEX_LOGIN: 'fail', FAKE_CODEX_LOGIN_ERROR: reason });
+    ['codex did not complete it', 'browser', null, { FAKE_CODEX_LOGIN_ERROR: 'Login was not completed.' }, 'Login was not completed.'],
+    ["codex's words repeat the key", 'api-key', 'sk-test-key-123', { FAKE_CODEX_LOGIN_ERROR: 'Key sk-test-key-123 (sk-test************0123, Bearer abc.def=) refused, see https://auth.example.test/help?key=sk-test-key-123#top' },
+      'Key … ([key hidden], [key hidden]) refused, see https://auth.example.test/help'],
+    ['another sign-in took over', 'browser', null, { FAKE_CODEX_LOGIN_ERROR: 'Login server error: Login cancelled' }, 'Another Codex sign-in on this computer took over; start again.'],
+    ['its page is no web address', 'browser', null, { FAKE_CODEX_AUTH_URL: 'file:///etc/passwd' }, 'Codex started a sign-in CodeRay cannot show.'],
+  ] as const)("says why a sign-in failed (%s) without the key or a URL's query, keeps no account and leaves no directory", async (_, method, key, env, shown) => {
+    const { home, store, login } = setup({ FAKE_CODEX_LOGIN: 'fail', ...env });
     login.start('codex', method, key);
     const failed = await waitFor(() => login.view().state === 'error' && login.view(), 'the sign-in failed');
     expect([failed.error, store.list().accounts, readdirSync(join(home, 'codex-accounts'))]).toEqual([shown, [], []]);
   });
 
-  it('cancels a waiting sign-in through codex, stops its app-server and removes what codex wrote into the home meanwhile', async () => {
-    const { home, login, records } = setup({ FAKE_CODEX_LOGIN: 'hang' });
+  it('cancels a waiting sign-in through codex, stops its app-server and its pid file, and removes what codex wrote into the home meanwhile', async () => {
+    const { home, pidDir, login, records } = setup({ FAKE_CODEX_LOGIN: 'hang' });
     login.start('codex', 'browser');
     await waitFor(() => login.view().url !== null, 'the sign-in page');
     const pid = records().find((entry) => entry.pid !== undefined)!.pid!;
+    const recorded = readdirSync(pidDir);
     login.cancel();
     await waitFor(() => !isAlive(pid) && readdirSync(join(home, 'codex-accounts')).length === 0, 'the app-server stopped and its home gone');
-    expect(sent(records(), 'account/login/cancel')).toEqual([{ loginId: 'login-1' }]);
+    expect([sent(records(), 'account/login/cancel'), recorded, readdirSync(pidDir)]).toEqual([[{ loginId: 'login-1' }], [`codex-${pid}.pid.json`], []]);
   });
 
   it('signs a Codex account out through codex before its directory goes', async () => {

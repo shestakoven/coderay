@@ -12,6 +12,8 @@ export type FlowUpdate =
 export interface FlowRun {
   submitCode?(code: string): void;
   cancel(): void;
+  /** Settles once the engine's process has stopped; until then it can write into the account's directory. */
+  stopped?: Promise<unknown>;
 }
 
 /** One engine's way of signing a new account's home in. It reports only after `start` returns, and never logs the URL, the code or the key. */
@@ -128,7 +130,16 @@ export class AccountLogin {
     this.attempt = null;
     clearTimeout(attempt.timer);
     attempt.run?.cancel();
+    this.removeDir(attempt);
+    // codex writes its state into its home until it stops, even into one removed under it: what it left goes then.
+    const again = (): void => this.removeDir(attempt);
+    void attempt.run?.stopped?.then(again, again);
+  }
+
+  // Only a directory under the engine's accounts that no saved account owns.
+  private removeDir(attempt: Attempt): void {
     try {
+      if (attempt.store.list().accounts.some((account) => account.id === attempt.id)) return;
       attempt.store.discardDir(attempt.id);
     } catch (error) {
       console.error('accounts: could not remove an unfinished sign-in directory', error);

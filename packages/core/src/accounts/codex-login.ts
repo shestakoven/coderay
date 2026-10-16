@@ -1,4 +1,3 @@
-import { rmSync } from 'node:fs';
 import type { LoginMethod } from '@ide/protocol';
 import { isRecord } from '../json';
 import type { ProcessExit } from '../agent/claude-process';
@@ -6,6 +5,7 @@ import { handshake, startAppServer, withAppServer } from '../agent/codex/app-ser
 import { codexUnder, type CodexCommand } from '../agent/codex/command';
 import type { AccountLoginCompletedNotification, LoginAccountResponse } from '../agent/codex/protocol';
 import type { Incoming } from '../agent/codex/rpc';
+import { hideSecrets } from '../agent/codex/secrets';
 import type { LoginFlow } from './account-login';
 import type { SignedHome } from './account-homes';
 
@@ -39,7 +39,15 @@ function nameOf(answer: unknown): Named | null {
 
 // codex's words can repeat the key, the code or the sign-in URL it was given or showed: what the user reads keeps none of them.
 function scrub(text: string, hidden: readonly string[]): string {
-  return hidden.reduce((out, value) => (value.length < 4 ? out : out.replaceAll(value, '…')), text.replace(URL_TAIL, '$1'));
+  return hideSecrets(hidden.reduce((out, value) => (value.length < 4 ? out : out.replaceAll(value, '…')), text.replace(URL_TAIL, '$1')));
+}
+
+// codex 0.160.0 cancels a waiting browser sign-in when another one starts (its page server has one port), with these words.
+const TAKEN_OVER = /\bLogin cancelled\b/;
+
+function reasonOf(error: unknown): string {
+  if (typeof error !== 'string' || error === '') return 'The sign-in did not finish.';
+  return TAKEN_OVER.test(error) ? 'Another Codex sign-in on this computer took over; start again.' : error;
 }
 
 function stopped(exit: ProcessExit): string {
@@ -53,8 +61,11 @@ function loginParams(method: LoginMethod, secret: string | null): object {
   return { type: method === 'device-code' ? 'chatgptDeviceCode' : 'chatgpt' };
 }
 
-/** A short-lived app-server in the new account's home runs codex's own sign-in: ChatGPT in the browser, a device code, or an API key. */
-export function codexLogin(command: () => CodexCommand): LoginFlow {
+/**
+ * A short-lived app-server in the new account's home runs codex's own sign-in: ChatGPT in the browser, a device code, or an API key.
+ * `pidDir` is where its pid file goes, for the reaper of a core that dies without stopping it.
+ */
+export function codexLogin(command: () => CodexCommand, pidDir?: string): LoginFlow {
   return {
     start(home, method, secret, report) {
       const hidden = secret === null ? [] : [secret];
@@ -69,8 +80,11 @@ export function codexLogin(command: () => CodexCommand): LoginFlow {
       function fail(error: string): void {
         if (over) return;
         over = true;
-        report({ kind: 'failed', error: scrub(error, hidden) });
-        void server.kill();
+        try {
+          void server.kill();
+        } finally {
+          report({ kind: 'failed', error: scrub(error, hidden) });
+        }
       }
 
       function showChecking(): void {
@@ -98,23 +112,14 @@ export function codexLogin(command: () => CodexCommand): LoginFlow {
         if (over || name !== 'account/login/completed' || !isRecord(params)) return;
         const done = params as Partial<AccountLoginCompletedNotification>;
         if (typeof done.loginId === 'string' && loginId !== null && done.loginId !== loginId) return;
-        if (done.success !== true) return fail(typeof done.error === 'string' && done.error !== '' ? done.error : 'The sign-in did not finish.');
+        if (done.success !== true) return fail(reasonOf(done.error));
         check();
       }
 
-      const server = startAppServer(codexUnder(command(), home), { cwd: home.dir, onNotification: heard });
+      const server = startAppServer(codexUnder(command(), home), { cwd: home.dir, pidDir, onNotification: heard });
       void server.exited.then((exit) => {
-        if (named !== null && !cancelled) {
-          report({ kind: 'done', ...named });
-          return;
-        }
-        // codex goes on writing its state into its home, even after the directory was removed under it: an unsaved one goes once codex has stopped.
-        try {
-          rmSync(home.dir, { recursive: true, force: true });
-        } catch (error) {
-          console.error('accounts: could not remove an unfinished Codex sign-in directory', error);
-        }
-        fail(stopped(exit));
+        if (named !== null && !cancelled) report({ kind: 'done', ...named });
+        else fail(stopped(exit));
       });
       void (async () => {
         try {
@@ -140,6 +145,7 @@ export function codexLogin(command: () => CodexCommand): LoginFlow {
         }
       })();
       return {
+        stopped: server.exited,
         cancel() {
           cancelled = true;
           if (over) return;
@@ -159,7 +165,7 @@ export function codexLogout(command: () => CodexCommand): (home: SignedHome) => 
     try {
       await withAppServer(codexUnder(command(), home), home.dir, (rpc) => rpc.request('account/logout', {}));
     } catch (error) {
-      console.error('accounts: codex could not sign the account out; its directory goes all the same', error);
+      console.error(`accounts: codex could not sign the account out (${hideSecrets((error as Error).message)}); its directory goes all the same`);
     }
   };
 }

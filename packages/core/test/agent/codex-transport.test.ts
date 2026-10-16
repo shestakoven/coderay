@@ -1,7 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
+import { accountHome, SYSTEM_HOME } from '../../src/accounts/account-homes';
 import { startCodexTransport } from '../../src/agent/codex/transport';
+import { keyRejectedHint } from '../../src/agent/engines/codex';
 import type { StreamEvent } from '../../src/agent/stream';
 import { userMessage, type CodexLaunch, type GateCall } from '../../src/agent/transport';
 import type { HookAnswer } from '../../src/gate/hook-gate';
@@ -22,7 +24,7 @@ function scene(scenario: string, overrides: Partial<CodexLaunch> = {}, env: Reco
     engine: 'codex', cwd: dir, engineSessionId: 'unused', resume: false, model: 'gpt-6-luna', effort: 'medium',
     codex: fakeCodex(scenario, record, env), servers: ['idecore'],
     config: { 'mcp_servers.idecore.url': 'http://127.0.0.1:9/mcp?readOnlyHints=1' },
-    env: { CODERAY_IDECORE_TOKEN: 'secret' }, developerInstructions: 'Writes go to the user.', signedOutHint: 'Sign in.', ...overrides,
+    env: { CODERAY_IDECORE_TOKEN: 'secret' }, developerInstructions: 'Writes go to the user.', signedOutHint: 'Sign in.', keyRejectedHint: 'Replace the key.', ...overrides,
   };
   return { dir, record, launch, records: () => codexRecords(record) };
 }
@@ -83,7 +85,7 @@ describe('the Codex transport', () => {
     ['its policy echo lets the model start sub-agents on its own', { FAKE_CODEX_ECHO: '{"multiAgentMode":"proactive"}' }, /sub-agents "proactive"/, {}],
     ['the account is signed out', { FAKE_CODEX_ACCOUNT: 'none' }, /^Sign in\.$/, {}],
     ['codex is older than 0.160', { FAKE_CODEX_VERSION: '0.159.9' }, /^codex 0\.159\.9 is older than 0\.160\.0/, {}],
-    ['codex does not say its version', { FAKE_CODEX_USER_AGENT: 'codex (fake)' }, /^CodeRay cannot read Codex version in "codex \(fake\)"/, {}],
+    ['codex does not say its version, in words with a key', { FAKE_CODEX_USER_AGENT: 'codex (fake; sk-proj-abcdefghijklmnopqrstuvwx)' }, /^CodeRay cannot read Codex version in "codex \(fake; \[key hidden\]\)"/, {}],
     ['an MCP server CodeRay did not configure starts', { FAKE_CODEX_EXTRA_SERVER: 'surprise' }, /\(surprise\)/, {}],
     ["the user's Codex configuration defines a server named as one of CodeRay's", { FAKE_CODEX_USER_SERVERS: '{"idecore":{"command":"x"}}' }, /named "idecore"/, {}],
     ["the user's Codex configuration names a server CodeRay cannot switch off by name", { FAKE_CODEX_USER_SERVERS: '{"my.server":{"command":"x"}}' }, /named "my\.server", which CodeRay cannot switch off: rename yours/, {}],
@@ -265,21 +267,27 @@ describe('the Codex transport', () => {
   });
 
   it.each([
-    ['an API-key account fails with 401', { type: 'apiKey' }, 'unexpected status 401 Unauthorized: Incorrect API key provided', true],
-    ['an API-key account fails otherwise', { type: 'apiKey' }, 'unexpected status 503 Service Unavailable', false],
-    ['a ChatGPT account fails with 401', { type: 'chatgpt', email: 'work@example.com', planType: 'plus' }, 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header', false],
-  ])('says the key was rejected only when a turn of %s', async (_, account, reason, rejected) => {
+    ["an API-key account of CodeRay's fails with 401, its masked key in codex's words", { type: 'apiKey' }, { httpConnectionFailed: { httpStatusCode: 401 } },
+      'unexpected status 401 Unauthorized: Incorrect API key provided: sk-dummy********************0000. You can find your API key at https://platform.openai.com/account/api-keys.',
+      'Codex: unexpected status 401 Unauthorized: Incorrect API key provided: [key hidden]. You can find your API key at https://platform.openai.com/account/api-keys.',
+      accountHome('codex', '/accounts/a'), ['OpenAI rejected the key of this Codex account: remove it in Settings → Accounts and add it again.']],
+    ["the System API key fails as unauthorized, codex's words without 401", { type: 'apiKey' }, 'unauthorized', 'Your session token eyJhbGciOiJI.eyJzdWIiOiIx.c2lnbmF0dXJl was revoked.',
+      'Codex: Your session token [key hidden] was revoked.', SYSTEM_HOME,
+      ['OpenAI rejected the API key Codex is signed in with: run codex login with a valid key, or add an account in Settings → Accounts.']],
+    ['an API-key account fails with an unclassified 401', { type: 'apiKey' }, null, 'unexpected status 401 Unauthorized', 'Codex: unexpected status 401 Unauthorized', null, ['Replace the key.']],
+    ['an API-key account hits its usage limit, though its words say 401', { type: 'apiKey' }, 'usageLimitExceeded', 'usage limit reached (401 requests)', 'Codex: usage limit reached (401 requests)', null, []],
+    ['an API-key account fails otherwise, though its words say 401', { type: 'apiKey' }, { responseStreamDisconnected: { httpStatusCode: 503 } }, 'unexpected status 503 (retry 401)', 'Codex: unexpected status 503 (retry 401)', null, []],
+    ['a ChatGPT account fails with 401', { type: 'chatgpt', email: 'work@example.com', planType: 'plus' }, { httpConnectionFailed: { httpStatusCode: 401 } }, 'unexpected status 401 Unauthorized', 'Codex: unexpected status 401 Unauthorized', null, []],
+  ])('tells why when a turn of %s, after its words and before the turn ends', async (_, account, codexErrorInfo, reason, said, hintHome, told) => {
     const home = tempDir('codex-key-home-');
     writeFileSync(join(home, 'auth.json'), JSON.stringify(account));
     // codex reports the error it gave up on, then fails the turn with the same words: the user reads them once, then why.
-    const steps = [{ method: 'error', params: { error: { message: reason, codexErrorInfo: null, additionalDetails: null }, willRetry: false, threadId: '$THREAD', turnId: '$TURN' } }, { fake: 'fail', message: reason }];
+    const steps = [{ method: 'error', params: { error: { message: reason, codexErrorInfo, additionalDetails: null }, willRetry: false, threadId: '$THREAD', turnId: '$TURN' } }, { fake: 'fail', message: reason, codexErrorInfo }];
     writeFileSync(join(home, 'failed.jsonl'), steps.map((step) => JSON.stringify(step)).join('\n'));
-    const s = scene(join(home, 'failed.jsonl'));
+    const s = scene(join(home, 'failed.jsonl'), hintHome === null ? {} : { keyRejectedHint: keyRejectedHint(hintHome) });
     const { transport, events, results } = run({ ...s.launch, codex: { ...s.launch.codex, env: { ...s.launch.codex.env, CODEX_HOME: home } } });
     transport.send(userMessage('hi', []));
     await waitFor(() => results().length === 1, 'the turn failed');
-    expect(events.flatMap((event) => (event.type === 'notice' ? [event.text] : []))).toEqual([
-      `Codex: ${reason}`, ...(rejected ? ['OpenAI rejected the key of this Codex account: remove it in Settings → Accounts and add it again.'] : []),
-    ]);
+    expect(events.flatMap((event) => (event.type === 'notice' ? [event.text] : event.type === 'result' ? ['(turn ended)'] : []))).toEqual([said, ...told, '(turn ended)']);
   });
 });

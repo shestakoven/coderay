@@ -19,6 +19,12 @@ export function signedOutHint(home: AccountHome): string {
     : 'This Codex account is signed out: remove it in Settings → Accounts and add it again.';
 }
 
+export function keyRejectedHint(home: AccountHome): string {
+  return home.dir === null
+    ? 'OpenAI rejected the API key Codex is signed in with: run codex login with a valid key, or add an account in Settings → Accounts.'
+    : 'OpenAI rejected the key of this Codex account: remove it in Settings → Accounts and add it again.';
+}
+
 /** Whether codex can run a chat under the given account: found, not older than the verified version, and signed in. */
 export async function codexStatus(codex: CodexCommand, cwd: string, signedOut: string, timeoutMs = VERSION_TIMEOUT_MS): Promise<EngineStatus> {
   let stdout: string;
