@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import {
   API_KEY_PATTERN, ENGINE_NAMES, LOGIN_METHODS, type AccountLoginView, type ClientMessage, type EngineAccountsView, type EngineId, type LoginMethod,
 } from '@ide/protocol';
@@ -28,6 +28,15 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   const began = useRef<LoginMethod | null>(null);
   const primary = useRef<HTMLButtonElement>(null);
   const codeInput = useRef<HTMLInputElement>(null);
+  // A field's flag goes with the field, so one shown again, empty, never keeps a Submit enabled or an error from before.
+  const codeField = useCallback((input: HTMLInputElement | null) => {
+    codeInput.current = input;
+    if (input === null) setHasCode(false);
+  }, []);
+  const keyField = useCallback((input: HTMLInputElement | null) => {
+    keyInput.current = input;
+    if (input === null) setKey('empty');
+  }, []);
   const cancelButton = useRef<HTMLButtonElement>(null);
   const name = ENGINE_NAMES[engine];
   // A login view without an engine comes from a core before engine-scoped accounts: it is Claude's.
@@ -209,7 +218,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
           <label className="sw-field-help" htmlFor={keyId}>Paste an OpenAI API key. CodeRay keeps it in this account's {name} home and never shows it again.</label>
           <div className="sw-login-row">
             <input
-              ref={keyInput}
+              ref={keyField}
               id={keyId}
               className="sw-code"
               type="password"
@@ -282,7 +291,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
                 }}
               >
                 <input
-                  ref={codeInput}
+                  ref={codeField}
                   className="account-code sw-code"
                   data-landing={login.url === null || undefined}
                   onChange={(event) => setHasCode(event.target.value.trim() !== '')}
