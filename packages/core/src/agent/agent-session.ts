@@ -39,7 +39,7 @@ export interface SessionGate {
 // A session runs under the Claude account it started with: claude looks --resume transcripts up in that account's config directory.
 export interface SessionAccounts {
   activeId(): string | null;
-  configDir(id: string | null): string | null;
+  homeDir(id: string | null): string | null;
   label(id: string | null): string;
 }
 
@@ -194,7 +194,7 @@ export class AgentSession {
   }
 
   private activeClaude(): ClaudeCommand {
-    const dir = this.options.accounts?.configDir(this.activeAccount()) ?? null;
+    const dir = this.options.accounts?.homeDir(this.activeAccount()) ?? null;
     return dir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: dir } };
   }
 
@@ -986,7 +986,7 @@ export class AgentSession {
   }
 
   private transcriptsDir(session: SessionRecord): string {
-    const configDir = this.options.accounts?.configDir(session.accountId) ?? null;
+    const configDir = this.options.accounts?.homeDir(session.accountId) ?? null;
     return this.options.transcriptsDir ?? (configDir === null ? defaultTranscriptsDir() : join(configDir, 'projects'));
   }
 
@@ -1027,7 +1027,7 @@ export class AgentSession {
     const configPath = this.configPath(session.id);
     rmSync(configPath, { force: true });
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
-    const accountDir = this.options.accounts?.configDir(session.accountId) ?? null;
+    const accountDir = this.options.accounts?.homeDir(session.accountId) ?? null;
     const claude = accountDir === null
       ? this.options.claude
       : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir }, unset: [...(this.options.claude.unset ?? []), ...ACCOUNT_KEYS] };

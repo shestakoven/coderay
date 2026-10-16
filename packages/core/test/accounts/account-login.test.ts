@@ -4,7 +4,7 @@ import { basename, dirname, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { AccountLoginView } from '@ide/protocol';
 import { AccountLogin } from '../../src/accounts/account-login';
-import { AccountStore } from '../../src/accounts/account-store';
+import { claudeAccounts, type AccountStore } from '../../src/accounts/account-store';
 import { isAlive } from '../../src/os-process';
 import { tempDir, waitFor } from '../helpers';
 import { accountsDir, accountsFile, fakeCli, filesUnder, mode, withEnv, type FakeCliConfig } from './fake-cli';
@@ -21,7 +21,7 @@ function setup(config: FakeCliConfig = {}, { timeoutMs, outcome = 'ok' }: { time
   const url = `https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code&state=URLSENTINEL${randomUUID().slice(0, 8)}`;
   const code = `CODESENTINEL-${randomUUID()}`;
   const cli = fakeCli({ url, email: EMAIL, codes: outcome === 'invalid' ? {} : { [code]: outcome }, ...config });
-  const accounts = new AccountStore({ home, claude: cli.command });
+  const accounts = claudeAccounts(home, cli.command);
   const views: AccountLoginView[] = [];
   const login = new AccountLogin({
     accounts, claude: cli.command, now: () => 4242, ...(timeoutMs === undefined ? {} : { timeoutMs }),
@@ -106,7 +106,7 @@ describe('AccountLogin.submitCode', () => {
     login.submitCode(code);
     await settled('idle');
     const id = basename(loginRecord()?.configDir ?? '');
-    expect([accounts.list().accounts, accounts.configDir(id), login.view()]).toStrictEqual([
+    expect([accounts.list().accounts, accounts.homeDir(id), login.view()]).toStrictEqual([
       [{ id, email: EMAIL, createdAt: 4242 }], loginRecord()?.configDir, claudeView({ state: 'idle', url: null, error: null }),
     ]);
   });
@@ -129,7 +129,7 @@ describe('AccountLogin.submitCode', () => {
     await waiting();
     login.submitCode(code);
     await settled('idle');
-    expect([accounts.activeId(), accounts.claudeEnv()]).toStrictEqual([null, {}]);
+    expect([accounts.activeId(), accounts.activeEnv()]).toStrictEqual([null, {}]);
   });
 
   it('keeps the account dir at mode 0700 after it is registered', async () => {
@@ -138,7 +138,7 @@ describe('AccountLogin.submitCode', () => {
     await waiting();
     login.submitCode(code);
     await settled('idle');
-    expect(mode(accounts.configDir(accounts.list().accounts[0]!.id) ?? '')).toBe(0o700);
+    expect(mode(accounts.homeDir(accounts.list().accounts[0]!.id) ?? '')).toBe(0o700);
   });
 });
 

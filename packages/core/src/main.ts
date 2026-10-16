@@ -5,7 +5,7 @@ import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { AGENT_TERMINAL_ID, parseModelId, type ChatPick, type ClientMessage, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
-import { AccountStore } from './accounts/account-store';
+import { claudeAccounts } from './accounts/account-store';
 import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
 import { GitService } from './git/git-service';
@@ -190,7 +190,7 @@ try {
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
   let indexer: Indexer | undefined;
-  const accounts = new AccountStore({ home, claude: values.claude });
+  const accounts = claudeAccounts(home, values.claude);
   const login = new AccountLogin({
     accounts, claude: values.claude,
     onChange: () => {
@@ -201,7 +201,7 @@ try {
       }
     },
   });
-  const models = createModelProvider(home, () => accounts.claudeEnv());
+  const models = createModelProvider(home, () => accounts.activeEnv());
   let languageAdapters: LanguageAdapter[] = [];
   const rt = createExecutionRuntime({
     root, home, store,
@@ -225,7 +225,7 @@ try {
   const registry = new McpRegistry({
     home, root, builtins: () => ({ idecore: rt.gate.mcpEntry() }),
     expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
-    claudeJsonPath: () => claudeJsonPath(accounts.configDir(accounts.activeId())),
+    claudeJsonPath: () => claudeJsonPath(accounts.homeDir(accounts.activeId())),
   });
   const agent = new AgentSession({
     root, home, store,

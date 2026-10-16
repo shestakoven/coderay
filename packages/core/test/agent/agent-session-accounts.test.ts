@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem } from '@ide/protocol';
-import { AccountStore } from '../../src/accounts/account-store';
+import { claudeAccounts, type AccountStore } from '../../src/accounts/account-store';
 import { AgentSession, SessionError } from '../../src/agent/agent-session';
 import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
@@ -33,7 +33,7 @@ function world(active: number | null): World {
   const home = tempDir('ide-home-');
   const root = tempDir('ide-root-');
   const seeded = seedAccounts(home, ['a@example.com', 'b@example.com'], active);
-  const accounts = new AccountStore({ home, claude: fakeCli().command });
+  const accounts = claudeAccounts(home, fakeCli().command);
   return { home, root, seeded, accounts, dirOf: (account) => join(accountsDir(home), account.id) };
 }
 
