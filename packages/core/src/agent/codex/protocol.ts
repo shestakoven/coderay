@@ -66,6 +66,7 @@ export type ThreadItem =
   | { type: 'userMessage'; id: string }
   | { type: 'commandExecution'; id: string; command: string; cwd: string; status: ItemStatus; commandActions: { type: string; command: string }[]; aggregatedOutput: string | null; exitCode: number | null }
   | { type: 'fileChange'; id: string; changes: FileUpdateChange[]; status: ItemStatus }
+  | { type: 'webSearch'; id: string; query: string; action: { type: string; query?: string; url?: string } | null }
   | McpToolCallItem;
 
 export interface TokenUsageBreakdown { totalTokens: number; inputTokens: number; cachedInputTokens: number; outputTokens: number; reasoningOutputTokens: number }

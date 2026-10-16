@@ -13,9 +13,13 @@ const IGNORED = new Set([
   'remoteControl/status/changed', 'hook/started', 'hook/completed', 'warning', 'configWarning', 'deprecationNotice', 'thread/goal/cleared',
   'item/reasoning/summaryTextDelta', 'item/reasoning/summaryPartAdded', 'item/reasoning/textDelta',
   'item/commandExecution/outputDelta', 'item/fileChange/outputDelta', 'item/mcpToolCall/progress',
+  // Codex's own to-do list and plan items (CodeRay's plan is the one the agent proposes), its name for the thread, a compaction
+  // (the context meter shows its effect) and a changed skill file (the chat lists its skills when it starts, as Claude's does).
+  'turn/plan/updated', 'item/plan/delta', 'thread/name/updated', 'thread/compacted', 'skills/changed',
 ]);
-// Items that are not tool calls and need no row of their own: the user's message, the reply (its deltas and completion), the reasoning.
-const QUIET_ITEMS = new Set(['userMessage', 'agentMessage', 'reasoning']);
+// Items that need no row of their own: the user's message, the reply (its deltas and completion), the reasoning, Codex's plan, a compaction;
+// a web search gets its row once it knows what it searched.
+const QUIET_ITEMS = new Set(['userMessage', 'agentMessage', 'reasoning', 'plan', 'contextCompaction', 'webSearch']);
 // codex runs a command as `<shell> -lc <script>`, the script quoted as one shell word.
 const WRAPPED = /^\S+ -lc (.+)$/s;
 const DOUBLE_QUOTED_ESCAPES = '$`"\\\n';
@@ -97,6 +101,18 @@ function toolResult(item: ThreadItem): ToolResultBlock | null {
   }
   return null;
 }
+
+// A search reads only and never reaches the gate: its row comes complete, with what it searched for or the page it opened.
+function webSearch(item: Extract<ThreadItem, { type: 'webSearch' }>): StreamEvent[] {
+  const action: Record<string, unknown> = isRecord(item.action) ? item.action : {};
+  const query = [item.query, action.query, action.url].find((value) => typeof value === 'string' && value !== '') ?? '';
+  return [
+    { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'tool_use', id: item.id, name: 'WebSearch', input: { query } }] },
+    { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: item.id, isError: false, rejected: false, text: '', images: [] }] },
+  ];
+}
+
+const words = (value: unknown): string => (typeof value === 'string' ? value.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase() : 'no reason given');
 
 function rateLimits(snapshot: unknown): LimitWindow[] {
   if (!isRecord(snapshot)) return [];
@@ -188,6 +204,10 @@ export class CodexEvents {
       case 'mcpServer/startupStatus/updated':
         if (typeof params.name === 'string' && typeof params.status === 'string') this.servers.set(params.name, SERVER_STATES[params.status] ?? params.status);
         return [];
+      case 'model/rerouted':
+        return typeof params.fromModel === 'string' && typeof params.toModel === 'string'
+          ? [{ type: 'notice', text: `Codex: ${params.toModel} answers this turn instead of ${params.fromModel} (${words(params.reason)}).` }]
+          : [];
       case 'error': {
         const error = isRecord(params.error) ? params.error : {};
         if (params.willRetry === true || typeof error.message !== 'string') return [];
@@ -207,6 +227,7 @@ export class CodexEvents {
   }
 
   private completed(item: ThreadItem): StreamEvent[] {
+    if (item.type === 'webSearch') return webSearch(item);
     if (item.type === 'agentMessage') {
       return typeof item.text === 'string' && item.text.trim() !== '' ? [{ type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'text', text: item.text }] }] : [];
     }

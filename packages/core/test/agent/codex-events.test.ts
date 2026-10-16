@@ -117,20 +117,27 @@ describe('CodexEvents', () => {
     ]);
   });
 
-  it('leaves retried errors to codex, tells the user once about one it gave up on, ignores what CodeRay does not show, and names what it does not know', () => {
+  it('leaves retried errors to codex, tells the user once about one it gave up on and about a rerouted turn, shows a web search once it ran, ignores what CodeRay does not show, and names what it does not know', () => {
     const events = codex();
     expect([
       ...events.handle('error', { error: { message: 'Reconnecting... 1/5' }, willRetry: true }),
       ...events.handle('error', { error: { message: 'stream disconnected' }, willRetry: false }),
       ...events.handle('turn/completed', { turn: { id: 't', status: 'failed', error: { message: 'stream disconnected' } } }),
+      ...events.handle('model/rerouted', { fromModel: 'gpt-6-luna', toModel: 'gpt-5.6-terra', reason: 'highRiskCyberActivity' }),
+      ...events.handle('item/started', { item: { type: 'webSearch', id: 'ws', query: '', action: null } }),
+      ...events.handle('item/completed', { item: { type: 'webSearch', id: 'ws', query: '', action: { type: 'search', query: 'codex app-server' } } }),
       ...events.handle('turn/diff/updated', { diff: '' }),
       ...events.handle('item/plan/delta', { delta: 'x' }),
-      ...events.handle('item/started', { item: { type: 'webSearch', id: 'ws' } }),
+      ...events.handle('thread/compacted', { turnId: 't' }),
+      ...events.handle('item/started', { item: { type: 'contextCompaction', id: 'cc' } }),
+      ...events.handle('item/started', { item: { type: 'imageGeneration', id: 'ig' } }),
     ]).toEqual([
       { type: 'notice', text: 'Codex: stream disconnected' },
       { type: 'result', subtype: 'failed', origin: null },
-      { type: 'unknown', label: 'item/plan/delta' },
-      { type: 'unknown', label: 'item/webSearch' },
+      { type: 'notice', text: 'Codex: gpt-5.6-terra answers this turn instead of gpt-6-luna (high risk cyber activity).' },
+      { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'tool_use', id: 'ws', name: 'WebSearch', input: { query: 'codex app-server' } }] },
+      { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'ws', isError: false, rejected: false, text: '', images: [] }] },
+      { type: 'unknown', label: 'item/imageGeneration' },
     ]);
   });
 });
