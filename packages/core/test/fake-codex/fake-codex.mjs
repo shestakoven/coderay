@@ -258,6 +258,6 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     return;
   }
   // A slow answer leaves the client waiting for it, as codex does while it starts a thread or a turn.
-  if (message.method === env.FAKE_CODEX_SLOW) setTimeout(() => handle(message.id, message.method, message.params ?? {}), 300);
+  if (message.method === env.FAKE_CODEX_SLOW) setTimeout(() => handle(message.id, message.method, message.params ?? {}), Number(env.FAKE_CODEX_SLOW_MS ?? 300));
   else handle(message.id, message.method, message.params ?? {});
 });

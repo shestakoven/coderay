@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
-  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage, type EngineAccountsView, type EngineId, type EngineStatus, type MapSnapshot, type ModelInfo,
+  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage, type EngineAccountsView, type EngineId, type MapSnapshot, type ModelInfo,
   type ServerMessage,
 } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
@@ -62,6 +62,26 @@ function defaultModel(value: string | undefined): ChatPick | undefined {
   return ref && value ? { engine: ref.engine, modelChoice: value, effort: null } : undefined;
 }
 
+/**
+ * Every engine's answer; or, once `ms` have passed and some engines have answered, theirs, with `late` bringing every answer
+ * when the slow ones come. With none answered by then it waits for all, as an empty first answer would tell nothing.
+ */
+async function answeredBy<T>(answers: Promise<T>[], ms: number): Promise<{ answered: T[]; late: Promise<T[]> | null }> {
+  const all = Promise.all(answers);
+  const known: ({ value: T } | null)[] = answers.map(() => null);
+  answers.forEach((answer, at) => void answer.then((value) => { known[at] = { value }; }, () => {}));
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<null>((resolveExpired) => { timer = setTimeout(resolveExpired, ms, null); });
+  try {
+    const every = await Promise.race([all, expired]);
+    if (every !== null) return { answered: every, late: null };
+  } finally {
+    clearTimeout(timer);
+  }
+  const answered = known.flatMap((entry) => (entry ? [entry.value] : []));
+  return answered.length === 0 ? { answered: await all, late: null } : { answered, late: all };
+}
+
 const { values } = parseArgs({
   options: {
     project: { type: 'string', multiple: true, default: [] },
@@ -83,6 +103,7 @@ const exitWithParent = values['exit-with-parent'];
 const HUB_OWNS_PROJECTS = 'This core runs inside CodeRay hub: open and close projects through the hub.';
 const PARENT_GONE_DEADLINE_MS = 10_000;
 const SHUTDOWN_DEADLINE_MS = 30_000;
+const SLOW_ENGINE_MS = 3_000;
 
 const port = Number(values.port);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -398,19 +419,34 @@ try {
     engineModels.set(engine.id, pending);
     return pending;
   };
-  const modelCatalog = async (): Promise<ModelInfo[]> => (await Promise.all(agent.engines.all().map(modelsOf))).flat();
-  const engineStates = (): Promise<EngineStatus[]> => Promise.all(agent.engines.all().map((engine) => engine.status()));
-  // An account change can sign an engine in or out and change its models, so every window gets both again, from the latest change only.
   let refreshes = 0;
+  // The engines and the models each go out once every engine has answered, or after SLOW_ENGINE_MS with the engines that have, so a
+  // slow engine (a codex that hangs) never holds Claude's back; the full list follows to every window unless a later change sent newer.
+  const sendEngines = (first: (message: ServerMessage) => void): void => {
+    const generation = refreshes;
+    const late = (message: ServerMessage): void => {
+      if (generation === refreshes) server?.broadcast(message);
+    };
+    void answeredBy(agent.engines.all().map((engine) => engine.status()), SLOW_ENGINE_MS)
+      .then(({ answered, late: rest }) => {
+        first({ type: 'engines.snapshot', engines: answered });
+        return rest?.then((engines) => late({ type: 'engines.snapshot', engines }));
+      })
+      .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
+    void answeredBy(agent.engines.all().map(modelsOf), SLOW_ENGINE_MS)
+      .then(({ answered, late: rest }) => {
+        first({ type: 'models.snapshot', models: answered.flat() });
+        return rest?.then((lists) => late({ type: 'models.snapshot', models: lists.flat() }));
+      })
+      .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));
+  };
+  // An account change can sign an engine in or out and change its models, so every window gets both again, from the latest change only.
   const refreshEngines = (): void => {
     const generation = ++refreshes;
     engineModels.clear();
-    void engineStates()
-      .then((engines) => { if (generation === refreshes) server?.broadcast({ type: 'engines.snapshot', engines }); })
-      .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
-    void modelCatalog()
-      .then((models) => { if (generation === refreshes) server?.broadcast({ type: 'models.snapshot', models }); })
-      .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));
+    sendEngines((message) => {
+      if (generation === refreshes) server?.broadcast(message);
+    });
   };
 
   const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
@@ -446,10 +482,7 @@ try {
         return;
       case 'models.list':
         // The status check runs claude each time; the cached models never wait for it.
-        void engineStates()
-          .then((engines) => reply({ type: 'engines.snapshot', engines }))
-          .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
-        reply({ type: 'models.snapshot', models: await modelCatalog() });
+        sendEngines(reply);
         return;
       case 'session.switch':
         await watching;
