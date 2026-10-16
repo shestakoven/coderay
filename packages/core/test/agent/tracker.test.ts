@@ -115,11 +115,12 @@ describe('TurnTracker', () => {
 
   it('records tool results as ok, error or rejected', () => {
     const { tools } = run(tracker(), [
-      'go', init, toolUse('a'), toolUse('b'), toolUse('c'),
+      'go', init, toolUse('a'), toolUse('b'), toolUse('c'), toolUse('d'),
       toolResult('a', 'fine'), toolResult('b', 'boom', true),
       toolResult('c', "The user doesn't want to proceed with this tool use. The tool use was rejected", true),
+      { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'd', isError: true, rejected: true, text: 'declined', images: [] }] },
     ]);
-    expect(tools.map((t) => [t.toolUseId, t.status])).toEqual([['a', 'ok'], ['b', 'error'], ['c', 'rejected']]);
+    expect(tools.map((t) => [t.toolUseId, t.status])).toEqual([['a', 'ok'], ['b', 'error'], ['c', 'rejected'], ['d', 'rejected']]);
   });
 
   it("closes a turn's tool calls that got no result when the turn ends", () => {

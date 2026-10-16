@@ -334,7 +334,7 @@ export class TurnTracker {
   private toolResults(results: ToolResultBlock[]): Change[] {
     const changes: Change[] = [];
     for (const result of results) {
-      const status = result.text.trimStart().startsWith(REJECTED) ? 'rejected' : result.isError ? 'error' : 'ok';
+      const status = result.rejected === true || result.text.trimStart().startsWith(REJECTED) ? 'rejected' : result.isError ? 'error' : 'ok';
       changes.push(...this.endTool(result.toolUseId, status));
     }
     return changes;
