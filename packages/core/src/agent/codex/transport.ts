@@ -224,7 +224,8 @@ class CodexTransport implements AgentTransport {
   private async loadSkills(server: AppServer): Promise<void> {
     try {
       const answer = await server.rpc.request<SkillsListResponse>('skills/list', { cwds: [this.launch.cwd] });
-      this.skillList = answer.data.flatMap((entry) => entry.skills).filter((skill) => skill.enabled);
+      const enabled = answer.data.flatMap((entry) => entry.skills).filter((skill) => skill.enabled);
+      this.skillList = enabled.filter((skill, index) => enabled.findIndex((other) => other.name === skill.name) === index);
     } catch (error) {
       if (this.current(server)) console.error('codex: could not list the skills', error);
     }

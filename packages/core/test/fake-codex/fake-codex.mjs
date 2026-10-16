@@ -229,7 +229,11 @@ function handle(id, method, params) {
     case 'model/list': return reply(id, params.cursor === 'page-2' ? { data: MODELS.slice(1), nextCursor: null } : { data: MODELS.slice(0, 1), nextCursor: 'page-2' });
     case 'skills/list': {
       const dir = params.cwds?.[0] ?? cwd;
-      return reply(id, { data: [{ cwd: dir, skills: [{ name: 'probe-skill', description: 'A skill of the project', path: join(dir, '.agents/skills/probe-skill/SKILL.md'), scope: 'repo', enabled: true, pluginId: null }], errors: [] }] });
+      // codex lists a name once per skills directory that has it, as a user's ~/.agents/skills and ~/.codex/skills both may.
+      return reply(id, { data: [{ cwd: dir, skills: [
+        { name: 'probe-skill', description: 'A skill of the project', path: join(dir, '.agents/skills/probe-skill/SKILL.md'), scope: 'repo', enabled: true, pluginId: null },
+        { name: 'probe-skill', description: 'The same name in the user\'s skills', path: join(env.CODEX_HOME ?? join(homedir(), '.codex'), 'skills/probe-skill/SKILL.md'), scope: 'user', enabled: true, pluginId: null },
+      ], errors: [] }] });
     }
     case 'config/read': return reply(id, { config: { ...userConfig, mcp_servers: userServers }, origins: {}, layers: null });
     case 'thread/start':
