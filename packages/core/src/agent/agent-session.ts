@@ -23,7 +23,7 @@ import { reapOrphans } from './reaper';
 import { type StreamEvent, type ToolResultBlock } from './stream';
 import { CLAUDE_PROMPT_NAMES, type PromptNames } from './system-prompt';
 import { TranscriptTail } from './transcript-tail';
-import { gateArgs, userMessage, type AgentTransport, type ControlResponse, type GateLaunch, type Launch, type TransportSink, type UserMessage } from './transport';
+import { gateArgs, userMessage, type AgentTransport, type ClaudeLaunch, type ControlResponse, type GateLaunch, type TransportSink, type UserMessage } from './transport';
 import { mergeLimits, type UsageUpdate } from './usage';
 import { DISALLOWED_TOOLS, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
@@ -1040,7 +1040,7 @@ export class AgentSession {
   }
 
   // Claude's part of a launch: the MCP config and the gate's settings it starts with; null when the settings could not be written.
-  private prepareClaude(session: SessionRecord): Launch | null {
+  private prepareClaude(session: SessionRecord): ClaudeLaunch | null {
     const files = this.launchFiles(session);
     if (!files) return null;
     return {

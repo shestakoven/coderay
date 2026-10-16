@@ -1,6 +1,8 @@
 import type { ChatImage, EffortLevel, EngineId, ImageMediaType } from '@ide/protocol';
 import type { HookAnswer } from '../gate/hook-gate';
 import type { ClaudeCommand, ProcessExit } from './claude-process';
+import type { CodexCommand } from './codex/command';
+import type { JsonValue } from './codex/protocol';
 import type { PermissionAnswer } from './prompts';
 import type { StreamEvent } from './stream';
 
@@ -40,7 +42,21 @@ export interface ClaudeLaunch extends LaunchBase {
   gate: GateLaunch | null;
 }
 
-export type Launch = ClaudeLaunch;
+/** Codex's launch: its command under the chat's account, the thread config and instructions AgentSession prepares for it. */
+export interface CodexLaunch extends LaunchBase {
+  engine: 'codex';
+  codex: CodexCommand;
+  /** The MCP servers CodeRay defines (idecore first among them). */
+  servers: string[];
+  /** Thread config: CodeRay's MCP servers, features off. */
+  config: Record<string, JsonValue>;
+  /** The secrets `config` names by variable. */
+  env: Record<string, string>;
+  developerInstructions: string;
+  signedOutHint: string;
+}
+
+export type Launch = ClaudeLaunch | CodexLaunch;
 
 type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: ImageMediaType; data: string } };
 type TextBlock = { type: 'text'; text: string };

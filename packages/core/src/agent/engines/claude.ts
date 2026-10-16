@@ -28,7 +28,10 @@ export function claudeEngine(options: ClaudeEngineOptions): Engine {
       return account === null ? status : { ...status, account };
     },
     listModels: () => fetchModels(options.command(), options.cwd),
-    start: (launch, sink) => startSdkTransport(launch, sink),
+    start: (launch, sink) => {
+      if (!('claude' in launch)) throw new Error(`The Claude engine cannot start a ${launch.engine} chat.`);
+      return startSdkTransport(launch, sink);
+    },
   };
 }
 

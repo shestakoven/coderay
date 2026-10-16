@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { startSdkTransport } from '../../src/agent/sdk-transport';
 import type { StreamEvent } from '../../src/agent/stream';
-import type { Launch } from '../../src/agent/transport';
+import type { ClaudeLaunch } from '../../src/agent/transport';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
@@ -16,7 +16,7 @@ vi.hoisted(() => {
 const SESSION = '0b6f5a52-7c43-4c43-9a43-5d1d0c0e5a11';
 const HI = { type: 'user' as const, message: { role: 'user' as const, content: 'hi' }, parent_tool_use_id: null };
 
-function launch(scenario: string, record: string): Launch {
+function launch(scenario: string, record: string): ClaudeLaunch {
   const mcpConfigPath = join(tempDir('ide-mcp-'), 'mcp.json');
   writeFileSync(mcpConfigPath, '{"mcpServers":{}}');
   return {
