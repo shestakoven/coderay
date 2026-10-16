@@ -160,7 +160,7 @@ describe('main.ts', { timeout: 90_000 }, () => {
     const models = await waitFor(() => messages.find((m) => m.type === 'models.snapshot'), 'the models');
     const engines = await waitFor(() => messages.find((m) => m.type === 'engines.snapshot'), 'the engines');
     expect([models, engines]).toEqual([
-      { type: 'models.snapshot', models: [] },
+      { type: 'models.snapshot', models: [], failed: ['codex'] },
       { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }, { engine: 'codex', state: 'missing', hint: 'Install Codex: codex is not on the PATH.' }] },
     ]);
   });

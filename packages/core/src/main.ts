@@ -435,10 +435,14 @@ try {
       })
       .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
     const engines = agent.engines.all();
+    const modelsSnapshot = (lists: ModelInfo[][], pending: EngineId[]): ServerMessage => {
+      const failed = engines.filter((engine) => !pending.includes(engine.id) && unlisted.has(engine.id)).map((engine) => engine.id);
+      return { type: 'models.snapshot', models: lists.flat(), ...(pending.length === 0 ? {} : { pending }), ...(failed.length === 0 ? {} : { failed }) };
+    };
     void answeredBy(engines.map(modelsOf), SLOW_ENGINE_MS)
       .then(({ answered, waiting, late: rest }) => {
-        first({ type: 'models.snapshot', models: answered.flat(), ...(waiting.length === 0 ? {} : { pending: waiting.map((at) => engines[at]!.id) }) });
-        return rest?.then((lists) => late({ type: 'models.snapshot', models: lists.flat() }));
+        first(modelsSnapshot(answered, waiting.map((at) => engines[at]!.id)));
+        return rest?.then((lists) => late(modelsSnapshot(lists, [])));
       })
       .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));
   };

@@ -213,8 +213,8 @@ export type SessionServerMessage =
   | { type: 'session.patch'; patch: SessionPatch }
   | { type: 'session.delta'; text: string }
   | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[]; next?: ChatPick | null }
-  /** `pending` names the engines whose models are still coming: a later snapshot brings them. */
-  | { type: 'models.snapshot'; models: ModelInfo[]; pending?: EngineId[] }
+  /** `pending` names the engines whose models are still coming (a later snapshot brings them), `failed` those that could not list theirs. */
+  | { type: 'models.snapshot'; models: ModelInfo[]; pending?: EngineId[]; failed?: EngineId[] }
   | { type: 'engines.snapshot'; engines: EngineStatus[] }
   | { type: 'image.data'; key: string; image: ImageRef; data: string }
   | { type: 'image.failed'; key: string; reason: ImageFailure }
