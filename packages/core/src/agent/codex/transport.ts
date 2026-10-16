@@ -19,6 +19,8 @@ const TURN_POLICY = { sandboxPolicy: { type: 'readOnly', networkAccess: false },
 const FEATURES_OFF = { 'features.apps': false, 'features.plugins': false } as const;
 // The variables that carry CodeRay's MCP secrets in the app-server's environment, kept out of the model's shell commands.
 const SECRET_VARIABLES = 'CODERAY_*';
+// A server name a dotted config key can switch off.
+const SERVER_NAME = /^[A-Za-z0-9_-]+$/;
 // Stop ends a turn that never says it ended after this long.
 const INTERRUPT_SETTLE_MS = 5_000;
 const NOT_HANDLED = -32601;
@@ -44,11 +46,15 @@ export function startCodexTransport(launch: CodexLaunch, sink: TransportSink): A
 /** Why the echo of thread/start or thread/resume is not the policy CodeRay asked for; null when it is. */
 function policyProblem(answer: ThreadStartResponse): string | null {
   if (!isRecord(answer) || !isRecord(answer.thread) || typeof answer.thread.id !== 'string') return 'Codex opened no thread it could name, so the chat was not started.';
-  const sandbox = isRecord(answer.sandbox) ? answer.sandbox.type : undefined;
+  const echoed: Record<string, unknown> = isRecord(answer.sandbox) ? answer.sandbox : {};
+  const sandbox = echoed.type;
+  // Every recorded 0.160.0 echo says networkAccess false; one that leaves it out says nothing more.
+  const network = echoed.networkAccess;
+  const offline = network === undefined || network === false;
   // A sub-agent only when the user asks for one: the mode every recorded 0.160.0 echo reports.
   const agents = answer.multiAgentMode ?? 'explicitRequestOnly';
-  if (sandbox === 'readOnly' && answer.approvalPolicy === 'on-request' && answer.approvalsReviewer === 'user' && agents === 'explicitRequestOnly') return null;
-  return `Codex reported sandbox ${String(sandbox)}, approvals ${JSON.stringify(answer.approvalPolicy)} by ${String(answer.approvalsReviewer)} and sub-agents ${JSON.stringify(agents)}, not read-only with every write sent to CodeRay, so the chat was not started.`;
+  if (sandbox === 'readOnly' && offline && answer.approvalPolicy === 'on-request' && answer.approvalsReviewer === 'user' && agents === 'explicitRequestOnly') return null;
+  return `Codex reported sandbox ${String(sandbox)}${offline ? '' : ` with network access ${JSON.stringify(network)}`}, approvals ${JSON.stringify(answer.approvalPolicy)} by ${String(answer.approvalsReviewer)} and sub-agents ${JSON.stringify(agents)}, not read-only with every write sent to CodeRay, so the chat was not started.`;
 }
 
 interface Pending { message: UserMessage; stop: number }
@@ -118,7 +124,7 @@ class CodexTransport implements AgentTransport {
     this.stops += 1;
     // Codex has not named the turn yet: one being started is stopped as soon as it has an id; with none in flight the turn ends here.
     if (this.turnId !== null) this.stopTurn(this.turnId);
-    else if (this.starting) this.stopRequested = true;
+    else if (this.starting) this.deferStop();
     else this.emit([INTERRUPTED]);
   }
 
@@ -172,7 +178,8 @@ class CodexTransport implements AgentTransport {
       const hello = await handshake(server.rpc);
       const version = VERSION.exec(hello.userAgent)?.[1];
       if (!this.current(server)) return;
-      if (version !== undefined && isOlderVersion(version, MIN_CODEX_VERSION)) return this.refuse(`codex ${version} is older than ${MIN_CODEX_VERSION}, the version CodeRay was verified with: update Codex to run it in CodeRay.`);
+      if (version === undefined) return this.refuse(`CodeRay cannot read Codex version in ${JSON.stringify(hello.userAgent)}, so it cannot tell it is ${MIN_CODEX_VERSION} or newer: update Codex to run it in CodeRay.`);
+      if (isOlderVersion(version, MIN_CODEX_VERSION)) return this.refuse(`codex ${version} is older than ${MIN_CODEX_VERSION}, the version CodeRay was verified with: update Codex to run it in CodeRay.`);
       void this.loadSkills(server);
       const account = await server.rpc.request<GetAccountResponse>('account/read', { refreshToken: false });
       if (!this.current(server)) return;
@@ -198,6 +205,8 @@ class CodexTransport implements AgentTransport {
     const servers = isRecord(effective.mcp_servers) ? Object.keys(effective.mcp_servers) : [];
     const clash = servers.find((name) => this.ours.has(name));
     if (clash !== undefined) return `Your Codex configuration defines an MCP server named "${clash}", as CodeRay does: rename yours to run Codex in CodeRay.`;
+    const odd = servers.find((name) => !SERVER_NAME.test(name));
+    if (odd !== undefined) return `Your Codex configuration defines an MCP server named ${JSON.stringify(odd)}, which CodeRay cannot switch off: rename yours to run Codex in CodeRay.`;
     const policy = isRecord(effective.shell_environment_policy) ? effective.shell_environment_policy : {};
     const excluded = Array.isArray(policy.exclude) ? policy.exclude.filter((pattern): pattern is string => typeof pattern === 'string') : [];
     return {
@@ -271,10 +280,26 @@ class CodexTransport implements AgentTransport {
     else if (method === 'turn/started' && turn !== null) this.stopIfRequested();
   }
 
+  // A thread or turn codex is still starting is stopped once it has an id, or with its app-server when codex keeps it waiting.
+  private deferStop(): void {
+    this.stopRequested = true;
+    clearTimeout(this.interruptTimer);
+    const server = this.server;
+    this.interruptTimer = setTimeout(() => {
+      if (!this.stopRequested || this.server !== server) return;
+      this.stopRequested = false;
+      this.emit([INTERRUPTED]);
+      void this.restart();
+    }, INTERRUPT_SETTLE_MS);
+  }
+
   private stopTurn(turnId: string): void {
     this.interrupting = true;
     // Stop replaces this app-server: a message sent meanwhile waits for the next one.
     this.ready = false;
+    // A held approval stays unanswered: nothing the gate says after Stop reaches codex.
+    this.abortRequests();
+    clearTimeout(this.interruptTimer);
     const server = this.server;
     void server.rpc.request('turn/interrupt', { threadId: this.threadId, turnId }).catch(() => {});
     this.interruptTimer = setTimeout(() => {
@@ -286,8 +311,13 @@ class CodexTransport implements AgentTransport {
 
   private stopIfRequested(): void {
     if (!this.stopRequested || this.turnId === null) return;
-    this.stopRequested = false;
+    this.settleDeferredStop();
     this.stopTurn(this.turnId);
+  }
+
+  private settleDeferredStop(): void {
+    this.stopRequested = false;
+    clearTimeout(this.interruptTimer);
   }
 
   private turnEnded(turnId: string): void {
@@ -338,7 +368,7 @@ class CodexTransport implements AgentTransport {
     try {
       started = await this.deliver(server, pending);
     } catch (error) {
-      this.stopRequested = false;
+      if (this.stopRequested) this.settleDeferredStop();
       if (this.current(server)) this.emit([{ type: 'notice', text: `Codex did not take the message: ${(error as Error).message}` }, { type: 'result', subtype: 'failed', origin: null }]);
       return;
     } finally {
@@ -346,7 +376,7 @@ class CodexTransport implements AgentTransport {
     }
     // A Stop that came while the message was on its way gets its result: the turn it started is stopped, or the message ends here.
     const requested = this.stopRequested;
-    this.stopRequested = false;
+    if (requested) this.settleDeferredStop();
     if (!requested || !this.current(server)) return;
     if (this.turnId !== null) this.stopTurn(this.turnId);
     else if (started === null || !this.endedTurns.has(started)) this.emit([INTERRUPTED]);
@@ -385,21 +415,33 @@ class CodexTransport implements AgentTransport {
       server.rpc.fail(id, NOT_HANDLED, `CodeRay does not handle ${method}.`);
       return;
     }
+    // Stop under way, a refusal or an app-server being replaced: codex ends the request with its turn, and the user is not asked.
+    if (!this.answerable(server)) return;
     const controller = new AbortController();
     this.requests.set(id, controller);
+    const decide = this.launch.decide;
+    let denied = false;
     try {
       const calls = this.gateCalls(method, params);
-      // An app-server being replaced, or a chat refused, runs nothing more: every call it asks about is declined.
-      const verdict = await judge(calls, this.current(server) ? this.launch.decide : undefined, controller.signal);
-      if (verdict === null || controller.signal.aborted || this.server !== server) return;
-      if (verdict === 'decline' && method === 'mcpServer/elicitation/request' && calls[0]) this.events.reject(calls[0].tool_use_id);
+      const verdict = await judge(calls, decide && (async (call, signal) => {
+        const answer = await decide(call, signal);
+        if (answer !== null && answer.permissionDecision !== 'allow') denied = true;
+        return answer;
+      }), controller.signal);
+      if (verdict === null || controller.signal.aborted || !this.answerable(server)) return;
+      // Only the gate's own no makes a declined MCP call read as refused; no gate or a failure is not the user's answer.
+      if (verdict === 'decline' && denied && method === 'mcpServer/elicitation/request' && calls[0]) this.events.reject(calls[0].tool_use_id);
       server.rpc.reply(id, reply(verdict));
     } catch (error) {
       console.error(`codex: could not judge a ${method} request; declined it`, error);
-      if (!controller.signal.aborted && this.server === server) server.rpc.reply(id, reply('decline'));
+      if (!controller.signal.aborted && this.answerable(server)) server.rpc.reply(id, reply('decline'));
     } finally {
       if (this.requests.get(id) === controller) this.requests.delete(id);
     }
+  }
+
+  private answerable(server: AppServer): boolean {
+    return this.current(server) && !this.interrupting;
   }
 
   // The calls a gated request asks about; none (so a decline) when it cannot be read.

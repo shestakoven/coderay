@@ -75,16 +75,20 @@ describe('the Codex transport', () => {
   });
 
   it.each([
-    ['its policy echo is not read-only', { FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' }, /^Codex reported sandbox workspaceWrite/],
-    ['its policy echo runs commands without asking', { FAKE_CODEX_ECHO: '{"approvalPolicy":"never"}' }, /approvals "never"/],
-    ['its policy echo sends approvals to a reviewer other than the user', { FAKE_CODEX_ECHO: '{"approvalsReviewer":"auto_review"}' }, /by auto_review/],
-    ['its policy echo lets the model start sub-agents on its own', { FAKE_CODEX_ECHO: '{"multiAgentMode":"proactive"}' }, /sub-agents "proactive"/],
-    ['the account is signed out', { FAKE_CODEX_ACCOUNT: 'none' }, /^Sign in\.$/],
-    ['codex is older than 0.160', { FAKE_CODEX_VERSION: '0.159.9' }, /^codex 0\.159\.9 is older than 0\.160\.0/],
-    ['an MCP server CodeRay did not configure starts', { FAKE_CODEX_EXTRA_SERVER: 'surprise' }, /\(surprise\)/],
-    ["the user's Codex configuration defines a server named as one of CodeRay's", { FAKE_CODEX_USER_SERVERS: '{"idecore":{"command":"x"}}' }, /named "idecore"/],
-  ])('refuses the chat when %s, with the reason, and stops its app-server', async (_, env, reason) => {
-    const { transport, events } = run(scene('multi-turn', {}, env).launch);
+    ['its policy echo is not read-only', { FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' }, /^Codex reported sandbox workspaceWrite/, {}],
+    ['its policy echo gives the sandbox network access', { FAKE_CODEX_ECHO: '{"sandbox":{"type":"readOnly","networkAccess":true}}' }, /sandbox readOnly with network access true,/, {}],
+    ['its policy echo runs commands without asking', { FAKE_CODEX_ECHO: '{"approvalPolicy":"never"}' }, /approvals "never"/, {}],
+    ['its policy echo sends approvals to a reviewer other than the user', { FAKE_CODEX_ECHO: '{"approvalsReviewer":"auto_review"}' }, /by auto_review/, {}],
+    ['the echo of a resumed thread sends approvals to another reviewer', { FAKE_CODEX_ECHO: '{"approvalsReviewer":"auto_review"}' }, /by auto_review/, { resume: true, engineSessionId: 'thread-old' }],
+    ['its policy echo lets the model start sub-agents on its own', { FAKE_CODEX_ECHO: '{"multiAgentMode":"proactive"}' }, /sub-agents "proactive"/, {}],
+    ['the account is signed out', { FAKE_CODEX_ACCOUNT: 'none' }, /^Sign in\.$/, {}],
+    ['codex is older than 0.160', { FAKE_CODEX_VERSION: '0.159.9' }, /^codex 0\.159\.9 is older than 0\.160\.0/, {}],
+    ['codex does not say its version', { FAKE_CODEX_USER_AGENT: 'codex (fake)' }, /^CodeRay cannot read Codex version in "codex \(fake\)"/, {}],
+    ['an MCP server CodeRay did not configure starts', { FAKE_CODEX_EXTRA_SERVER: 'surprise' }, /\(surprise\)/, {}],
+    ["the user's Codex configuration defines a server named as one of CodeRay's", { FAKE_CODEX_USER_SERVERS: '{"idecore":{"command":"x"}}' }, /named "idecore"/, {}],
+    ["the user's Codex configuration names a server CodeRay cannot switch off by name", { FAKE_CODEX_USER_SERVERS: '{"my.server":{"command":"x"}}' }, /named "my\.server", which CodeRay cannot switch off: rename yours/, {}],
+  ])('refuses the chat when %s, with the reason, and stops its app-server', async (_, env, reason, overrides: Partial<CodexLaunch>) => {
+    const { transport, events } = run(scene('multi-turn', overrides, env).launch);
     transport.send(userMessage('hi', []));
     const refused = await waitFor(() => events.find((event) => event.type === 'refused'), 'the refusal');
     await transport.exited;
@@ -125,16 +129,17 @@ describe('the Codex transport', () => {
   });
 
   it.each([
-    ['an escalated shell command', 'shell', 'Bash', { decision: 'decline' }],
-    ["an MCP tool's elicitation", 'elicitation', 'mcp__notes__write_note', { action: 'decline', content: null, _meta: null }],
-  ])('asks the gate about %s, and the call it denies ends rejected', async (_, scenario, tool, reply) => {
+    ['an escalated shell command', 'shell', true, ['Bash'], { decision: 'decline' }, true],
+    ["an MCP tool's elicitation", 'elicitation', true, ['mcp__notes__write_note'], { action: 'decline', content: null, _meta: null }, true],
+    ["an MCP tool's elicitation with no gate", 'elicitation', false, [], { action: 'decline', content: null, _meta: null }, false],
+  ])('declines %s, and the call ends rejected only when the gate denied it', async (_, scenario, gate, tools, reply, refused) => {
     const asked: string[] = [];
-    const s = scene(scenario, { decide: async (call) => { asked.push(call.tool_name); return DENY; } });
+    const s = scene(scenario, gate ? { decide: async (call) => { asked.push(call.tool_name); return DENY; } } : {});
     const { transport, events, results } = run(s.launch);
     transport.send(userMessage('go', []));
     await waitFor(() => results().length === 1, 'the turn ended');
     const rejected = events.flatMap((event) => (event.type === 'user' ? event.toolResults.map((result) => result.rejected) : []));
-    expect([asked, replies(s), rejected]).toEqual([[tool], [reply], [true]]);
+    expect([asked, replies(s), rejected]).toEqual([tools, [reply], [refused]]);
   });
 
   it('grants no extra permissions and answers any other request of the app-server with an error, never asking the gate', async () => {
@@ -166,6 +171,52 @@ describe('the Codex transport', () => {
     expect([results(), replies(s), sent(s.records(), 'thread/resume').length, transport.pid !== before, isAlive(before!)]).toEqual([
       ['success', 'error_during_execution', 'success'], [], 1, true, false,
     ]);
+  });
+
+  it('withdraws a held approval at Stop and sends codex nothing the gate allows after it', async () => {
+    let release = () => {};
+    const withdrawn: boolean[] = [];
+    const s = scene('patch', { decide: async (_call, signal) => {
+      await new Promise<void>((resolve) => { release = resolve; });
+      withdrawn.push(signal.aborted);
+      return ALLOW;
+    } });
+    const { transport, results } = run(s.launch);
+    transport.send(userMessage('ready?', []));
+    await waitFor(() => results().length === 1, 'the first turn ended');
+    transport.send(userMessage('edit', []));
+    await waitFor(() => sent(s.records(), 'turn/start').length === 2, 'the patch turn started');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    transport.interrupt();
+    release();
+    await waitFor(() => results().length === 2, 'the turn stopped');
+    expect([results(), withdrawn, replies(s), readFileSync(join(s.dir, 'src/other.ts'), 'utf8')]).toEqual([['success', 'error_during_execution'], [true], [], "export const other = 'helo';\n"]);
+  });
+
+  it("starts the next turn with a message whose steer lost the race with the turn's end", async () => {
+    const scenario = join(tempDir('codex-steer-'), 'steer.jsonl');
+    writeFileSync(scenario, [{ fake: 'sleep', ms: 150 }, { fake: 'await-turn' }].map((line) => JSON.stringify(line)).join('\n'));
+    const s = scene(scenario, {}, { FAKE_CODEX_SLOW: 'turn/steer' });
+    const { transport, events, results } = run(s.launch);
+    transport.send(userMessage('first', []));
+    await waitFor(() => events.some((event) => event.type === 'init'), 'the first turn started');
+    transport.send(userMessage('second', []));
+    await waitFor(() => results().length === 2, 'both turns ended');
+    expect([results(), sent(s.records(), 'turn/steer').length, sent(s.records(), 'turn/start').map((params) => (params as { input: { text: string }[] }).input[0]?.text)]).toEqual([
+      ['success', 'success'], 1, ['first', 'second'],
+    ]);
+  });
+
+  it('ends a message whose thread codex keeps opening when Stop comes, within the settle time, with its app-server', async () => {
+    const s = scene('hang', {}, { FAKE_CODEX_SILENT: 'thread/start' });
+    const { transport, results } = run(s.launch);
+    transport.send(userMessage('first', []));
+    await waitFor(() => sent(s.records(), 'thread/start').length === 1, 'thread/start sent');
+    const before = transport.pid;
+    const stopped = Date.now();
+    transport.interrupt();
+    await waitFor(() => results().length === 1 && transport.pid !== before, 'the message ended and the app-server replaced');
+    expect([results(), Date.now() - stopped < 7_000, sent(s.records(), 'turn/start').length, isAlive(before!)]).toEqual([['error_during_execution'], true, 0, false]);
   });
 
   it.each([

@@ -190,7 +190,7 @@ function login(id, params) {
 
 function handle(id, method, params) {
   switch (method) {
-    case 'initialize': return reply(id, { userAgent: `${params.clientInfo?.name}/${VERSION} (fake)`, codexHome: env.CODEX_HOME ?? join(homedir(), '.codex'), platformFamily: 'unix', platformOs: 'macos' });
+    case 'initialize': return reply(id, { userAgent: env.FAKE_CODEX_USER_AGENT ?? `${params.clientInfo?.name}/${VERSION} (fake)`, codexHome: env.CODEX_HOME ?? join(homedir(), '.codex'), platformFamily: 'unix', platformOs: 'macos' });
     case 'account/read': return reply(id, { account: account(), requiresOpenaiAuth: true });
     case 'model/list': return reply(id, { data: MODELS, nextCursor: null });
     case 'skills/list': {
@@ -201,7 +201,9 @@ function handle(id, method, params) {
     case 'thread/start':
     case 'thread/resume': return startThread(id, method, params);
     case 'turn/start': return startTurn(id);
-    case 'turn/steer': return reply(id, { turnId: turn?.id ?? null });
+    case 'turn/steer':
+      if (turn === null || params.expectedTurnId !== turn.id) return send({ id, error: { code: -32600, message: `no active turn ${params.expectedTurnId} to steer` } });
+      return reply(id, { turnId: turn.id });
     case 'turn/interrupt': return interrupt(id);
     case 'account/login/start': return login(id, params);
     case 'account/login/cancel':
@@ -244,6 +246,7 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   }
   record({ in: { method: message.method, params: message.params ?? null } });
   if (message.id === undefined) return;
+  if (message.method === env.FAKE_CODEX_SILENT) return;
   if (message.method === env.FAKE_CODEX_CRASH) {
     // A pipe is written asynchronously on macOS: exiting at once could lose the line.
     process.stderr.write(`Error: fake-codex crashed on ${message.method}\n`, () => process.exit(1));
