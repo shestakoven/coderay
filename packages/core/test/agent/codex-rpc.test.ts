@@ -79,14 +79,14 @@ describe('the app-server process', () => {
 
   it('rejects the requests of an app-server that exited with its exit and last stderr line, and a probe that gets no answer with its time limit', async () => {
     const dir = tempDir('codex-run-');
-    const server = startAppServer(fakeCodex(null, join(dir, 'record.jsonl')), { cwd: dir });
+    const server = startAppServer(fakeCodex(null, join(dir, 'record.jsonl'), { FAKE_CODEX_CRASH: 'thread/start' }), { cwd: dir });
     onTestFinished(() => void server.kill());
     await handshake(server.rpc);
-    const waiting = await server.rpc.request('thread/start', { cwd: dir, config: { 'mcp_servers.ghost.enabled': false } }).catch(reason);
+    const waiting = await server.rpc.request('thread/start', { cwd: dir }).catch(reason);
     const later = await server.rpc.request('thread/start', { cwd: dir }).catch(reason);
     const silent = { command: process.execPath, args: ['-e', 'setInterval(() => {}, 1000)'] };
     const probe = await withAppServer(silent, dir, (rpc) => rpc.request('account/read', {}), 300).catch(reason);
-    const exited = 'codex app-server exited (code 1): Error: MCP server ghost is not defined';
+    const exited = 'codex app-server exited (code 1): Error: fake-codex crashed on thread/start';
     expect([waiting, later, probe]).toEqual([exited, exited, 'codex app-server did not answer in 0.3 s.']);
   });
 });

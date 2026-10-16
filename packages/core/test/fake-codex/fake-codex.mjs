@@ -114,12 +114,13 @@ function startThread(id, method, params) {
   const config = params.config ?? {};
   for (const [key, value] of Object.entries(config)) {
     const name = /^mcp_servers\.([^.]+)\.enabled$/.exec(key)?.[1];
-    // The real app-server stops at start when a server nobody defines is switched off by name.
+    // codex-cli 0.160.0 refuses a thread that switches off a server nobody defines.
     if (name !== undefined && value === false && !Object.hasOwn(userServers, name)) {
-      // A pipe is written asynchronously on macOS: exiting at once could lose the line.
-      process.stderr.write(`Error: MCP server ${name} is not defined\n`, () => process.exit(1));
-      return;
+      return send({ id, error: { code: -32600, message: `failed to load configuration: invalid transport\nin \`mcp_servers.${name}\`\n` } });
     }
+  }
+  if (method === 'thread/resume' && env.FAKE_CODEX_RESUME_ERROR !== undefined) {
+    return send({ id, error: { code: -32600, message: env.FAKE_CODEX_RESUME_ERROR.replaceAll('$THREAD', params.threadId) } });
   }
   cwd = params.cwd ?? cwd;
   threadId = method === 'thread/resume' ? params.threadId : `thread-${process.pid}`;
@@ -243,6 +244,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   }
   record({ in: { method: message.method, params: message.params ?? null } });
   if (message.id === undefined) return;
+  if (message.method === env.FAKE_CODEX_CRASH) {
+    // A pipe is written asynchronously on macOS: exiting at once could lose the line.
+    process.stderr.write(`Error: fake-codex crashed on ${message.method}\n`, () => process.exit(1));
+    return;
+  }
   // A slow answer leaves the client waiting for it, as codex does while it starts a thread or a turn.
   if (message.method === env.FAKE_CODEX_SLOW) setTimeout(() => handle(message.id, message.method, message.params ?? {}), 300);
   else handle(message.id, message.method, message.params ?? {});

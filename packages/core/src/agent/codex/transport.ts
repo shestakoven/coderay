@@ -10,7 +10,7 @@ import type {
   ApprovalResponse, CommandExecutionRequestApprovalParams, ConfigReadResponse, ElicitationResponse, FileChangeRequestApprovalParams, GetAccountResponse,
   JsonValue, McpServerElicitationRequestParams, RequestId, SkillMetadata, SkillsListResponse, ThreadStartResponse, TurnStartResponse, UserInput,
 } from './protocol';
-import type { Incoming, IncomingRequest } from './rpc';
+import { RpcError, type Incoming, type IncomingRequest } from './rpc';
 
 // Sent on every thread/start, thread/resume and turn/start: a resume or a turn without them keeps or changes the policy of before.
 const THREAD_POLICY = { sandbox: 'read-only', approvalPolicy: 'on-request', approvalsReviewer: 'user' } as const;
@@ -25,6 +25,8 @@ const NOT_HANDLED = -32601;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
 // Codex's userAgent: "<client>/<version> (…)".
 const VERSION = /\/(\d+\.\d+\.\d+)/;
+// What 0.160.0 answers a resume of a thread it keeps no record of: one that never ran a turn, or one the user deleted.
+const NO_ROLLOUT = /^no rollout found for thread id /;
 const INTERRUPTED: StreamEvent = { type: 'result', subtype: 'error_during_execution', origin: null };
 
 type Reply = (verdict: 'accept' | 'decline') => ApprovalResponse | ElicitationResponse;
@@ -229,10 +231,7 @@ class CodexTransport implements AgentTransport {
 
   private async open(server: AppServer): Promise<boolean> {
     const params = { ...this.threadParams, ...(this.model === null ? {} : { model: this.model }), ...THREAD_POLICY };
-    // A resume answers with the thread's whole history unless told not to; the chat has it already.
-    const answer = this.threadId === null
-      ? await server.rpc.request<ThreadStartResponse>('thread/start', params)
-      : await server.rpc.request<ThreadStartResponse>('thread/resume', { ...params, threadId: this.threadId, excludeTurns: true });
+    const answer = this.threadId === null ? await server.rpc.request<ThreadStartResponse>('thread/start', params) : await this.resume(server, params);
     if (!this.current(server)) return false;
     const wrong = policyProblem(answer);
     if (wrong !== null) {
@@ -242,6 +241,17 @@ class CodexTransport implements AgentTransport {
     this.threadId = answer.thread.id;
     this.events.thread(answer.thread.id, this.model ?? answer.model, answer.thread.cliVersion);
     return true;
+  }
+
+  private async resume(server: AppServer, params: object): Promise<ThreadStartResponse> {
+    try {
+      // A resume answers with the thread's whole history unless told not to; the chat has it already.
+      return await server.rpc.request<ThreadStartResponse>('thread/resume', { ...params, threadId: this.threadId, excludeTurns: true });
+    } catch (error) {
+      if (!(error instanceof RpcError) || !NO_ROLLOUT.test(error.message) || !this.current(server)) throw error;
+      this.emit([{ type: 'notice', text: `Codex has no record of this chat's thread ${this.threadId}, so the chat goes on in a new thread, without what was said before.` }]);
+      return server.rpc.request<ThreadStartResponse>('thread/start', params);
+    }
   }
 
   private notification(server: AppServer, { method, params }: Incoming): void {

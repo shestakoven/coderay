@@ -62,6 +62,19 @@ describe('the Codex transport', () => {
   });
 
   it.each([
+    ['has no record of it', 'no rollout found for thread id $THREAD', 1, "Codex has no record of this chat's thread thread-gone, so the chat goes on in a new thread, without what was said before.", 'success'],
+    ['cannot resume it for another reason', 'thread thread-gone is archived', 0, 'Codex did not take the message: thread thread-gone is archived', 'failed'],
+  ])("goes on in a new thread only when codex %s, and says so", async (_, error, starts, notice, result) => {
+    const s = scene('multi-turn', { resume: true, engineSessionId: 'thread-gone' }, { FAKE_CODEX_RESUME_ERROR: error });
+    const { transport, events, results } = run(s.launch);
+    transport.send(userMessage('hi', []));
+    await waitFor(() => results().length === 1, 'the turn ended');
+    expect([sent(s.records(), 'thread/resume').length, sent(s.records(), 'thread/start').length, events.filter((event) => event.type === 'notice'), results()]).toEqual([
+      1, starts, [{ type: 'notice', text: notice }], [result],
+    ]);
+  });
+
+  it.each([
     ['its policy echo is not read-only', { FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' }, /^Codex reported sandbox workspaceWrite/],
     ['its policy echo runs commands without asking', { FAKE_CODEX_ECHO: '{"approvalPolicy":"never"}' }, /approvals "never"/],
     ['its policy echo sends approvals to a reviewer other than the user', { FAKE_CODEX_ECHO: '{"approvalsReviewer":"auto_review"}' }, /by auto_review/],
