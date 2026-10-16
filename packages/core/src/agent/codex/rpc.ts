@@ -4,11 +4,14 @@ import { isRecord, parseJson } from '../../json';
 import type { RequestId } from './protocol';
 
 export class RpcError extends Error {
+  override readonly name = 'RpcError';
   readonly code: number;
+  readonly data: unknown;
 
-  constructor(code: number, message: string) {
+  constructor(code: number, message: string, data?: unknown) {
     super(message);
     this.code = code;
+    this.data = data;
   }
 }
 
@@ -34,10 +37,11 @@ interface Pending {
 }
 
 const REQUEST_TIMEOUT_MS = 60_000;
+const INTERNAL_ERROR = -32603;
 
 const isId = (value: unknown): value is RequestId => typeof value === 'string' || typeof value === 'number';
 
-/** JSON-RPC over the app-server's stdio, one JSON object per line. */
+/** JSON-RPC over the app-server's stdio, one JSON object per line. Its owner ends it with the reason the app-server stopped. */
 export class JsonRpc {
   private readonly output: Writable;
   private readonly handlers: RpcHandlers;
@@ -49,14 +53,13 @@ export class JsonRpc {
     this.output = output;
     this.handlers = handlers;
     createInterface({ input }).on('line', (line) => this.receive(line));
-    input.once('close', () => this.end(new Error('The app-server closed its output.')));
-    input.once('end', () => this.end(new Error('The app-server closed its output.')));
-    // A write after the app-server exited fails with EPIPE; the exit itself is reported elsewhere.
+    // A write after the app-server exited fails with EPIPE; the exit itself is reported through `end`.
     output.on('error', () => {});
   }
 
   request<T>(method: string, params: unknown, timeoutMs = REQUEST_TIMEOUT_MS): Promise<T> {
     if (this.ended) return Promise.reject(this.ended);
+    if (!this.output.writable) return Promise.reject(new Error(`The app-server no longer reads its input: ${method} was not sent.`));
     const id = this.nextId++;
     return new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
@@ -80,6 +83,7 @@ export class JsonRpc {
     this.write({ id, error: { code, message } });
   }
 
+  /** Rejects every request still waiting, and every later one, with `reason`; the first reason given stays. */
   end(reason: Error): void {
     if (this.ended) return;
     this.ended = reason;
@@ -99,22 +103,26 @@ export class JsonRpc {
   private receive(line: string): void {
     const message = parseJson(line);
     if (!isRecord(message)) return;
-    try {
-      if (typeof message.method === 'string') {
-        if (isId(message.id)) this.handlers.request({ id: message.id, method: message.method, params: message.params });
-        else this.handlers.notification({ method: message.method, params: message.params });
-        return;
+    if (typeof message.method === 'string') {
+      const { method, params } = message;
+      const id = isId(message.id) ? message.id : null;
+      try {
+        if (id === null) this.handlers.notification({ method, params });
+        else this.handlers.request({ id, method, params });
+      } catch (error) {
+        console.error(`codex: could not handle ${method} from the app-server`, error);
+        // The app-server waits for every request it makes: an answer that grants nothing, never silence.
+        if (id !== null) this.fail(id, INTERNAL_ERROR, `CodeRay could not handle ${method}.`);
       }
-      if (!isId(message.id)) return;
-      const pending = this.pending.get(message.id);
-      if (!pending) return;
-      this.pending.delete(message.id);
-      clearTimeout(pending.timer);
-      const error = message.error;
-      if (isRecord(error)) pending.reject(new RpcError(typeof error.code === 'number' ? error.code : 0, typeof error.message === 'string' ? error.message : 'error'));
-      else pending.resolve(message.result);
-    } catch (error) {
-      console.error('codex: could not handle a message from the app-server', error);
+      return;
     }
+    if (!isId(message.id)) return;
+    const pending = this.pending.get(message.id);
+    if (!pending) return;
+    this.pending.delete(message.id);
+    clearTimeout(pending.timer);
+    const error = message.error;
+    if (isRecord(error)) pending.reject(new RpcError(typeof error.code === 'number' ? error.code : 0, typeof error.message === 'string' ? error.message : 'error', error.data));
+    else pending.resolve(message.result);
   }
 }

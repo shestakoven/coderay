@@ -36,6 +36,7 @@ export function startAppServer(command: CodexCommand, options: AppServerOptions)
     notification: (message) => options.onNotification?.(message),
     request: (message) => (options.onRequest ? options.onRequest(message) : rpc.fail(message.id, NOT_HANDLED, `CodeRay does not handle ${message.method}.`)),
   });
+  // Its stdout closes before the exit is reported: the requests still waiting get the exit's reason and stderr, not a closed pipe.
   void spawned.exited.then((exit) => {
     const last = exit.stderr.trim().split('\n').at(-1);
     rpc.end(new Error(`codex app-server exited (${exit.error ?? exit.signal ?? `code ${exit.code}`})${last ? `: ${last}` : ''}`));
@@ -52,7 +53,10 @@ export async function handshake(rpc: JsonRpc): Promise<InitializeResponse> {
 /** A short-lived app-server for one question (status, models, sign-out), stopped afterwards whatever happens. */
 export async function withAppServer<T>(command: CodexCommand, cwd: string, ask: (rpc: JsonRpc) => Promise<T>, timeoutMs = PROBE_TIMEOUT_MS): Promise<T> {
   const server = startAppServer(command, { cwd });
-  const timer = setTimeout(() => void server.kill(), timeoutMs);
+  const timer = setTimeout(() => {
+    server.rpc.end(new Error(`codex app-server did not answer in ${timeoutMs / 1000} s.`));
+    void server.kill();
+  }, timeoutMs);
   try {
     await handshake(server.rpc);
     return await ask(server.rpc);
