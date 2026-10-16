@@ -430,6 +430,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .model-state.missing, .model-state.error { color: var(--error); border-color: rgba(247, 84, 100, 0.5); }
 .model-state.old, .model-state.signed-out { color: var(--warn); border-color: rgba(242, 197, 92, 0.45); }
 .model-hint { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-account { min-width: 0; overflow: hidden; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .model-row { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--r-1); cursor: pointer; }
 .model-row.sel { background: var(--selection); }
 .model-check { display: grid; flex: none; place-items: center; width: 14px; color: var(--accent-hover); }

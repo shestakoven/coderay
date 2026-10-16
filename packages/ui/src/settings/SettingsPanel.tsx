@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import type { ClientMessage, McpServerState, PolicyLevel, SettingsView } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
+import { ACCOUNT_BLOCKS, engineAccounts } from './accounts';
 import { AccountsSection } from './AccountsSection';
 import { APPEARANCE_BLOCKS, AppearanceBlock } from './AppearanceBlocks';
 import { applyAppearance, loadAppearance, saveAppearance, systemReducesMotion, type Appearance } from './appearance';
@@ -141,13 +142,18 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
 
   const searching = query.trim() !== '';
   const hasClaudeRows = settings !== null && claudeRows(settings, sessionServers).length > 0;
+  const engineLists = settings ? engineAccounts(settings.accounts) : [];
+  const listOf = (id: BlockId) => engineLists.find((list) => list.engine === ACCOUNT_BLOCKS[id]);
+  // A block shows when it has something to show: Claude Code's servers when there are any, an engine's accounts when the core runs it.
+  const shown = (id: BlockId): boolean => (id === 'claude-code-servers' ? hasClaudeRows : ACCOUNT_BLOCKS[id] === undefined || listOf(id) !== undefined);
   const matched = useMemo(() => matchBlocks(query, {
     'mcp-servers': (settings?.servers ?? []).map((server) => server.name),
     'claude-code-servers': (settings?.claudeCodeServers ?? []).map((server) => server.name),
-    accounts: (settings?.accounts.engines ?? []).flatMap((engine) => engine.accounts.map((account) => account.email)),
-  }).filter((block) => block.id !== 'claude-code-servers' || hasClaudeRows), [query, settings, hasClaudeRows]);
+    accounts: (listOf('accounts')?.accounts ?? []).map((account) => account.email),
+    'accounts-codex': (listOf('accounts-codex')?.accounts ?? []).map((account) => account.email),
+  }).filter((block) => shown(block.id)), [query, settings, hasClaudeRows]);
   const counts = countByCategory(matched);
-  const visible: BlockId[] = searching ? matched.map((block) => block.id) : blocksOf(category).map((block) => block.id).filter((id) => id !== 'claude-code-servers' || hasClaudeRows);
+  const visible: BlockId[] = searching ? matched.map((block) => block.id) : blocksOf(category).map((block) => block.id).filter(shown);
   const showsPolicy = visible.some((id) => POLICY_BLOCKS.includes(id));
   const page = categoryOf(category);
 
@@ -162,13 +168,16 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
       if (!policyView || !drafts) return null;
       return <PolicyBlock key={id} id={id} view={policyView} drafts={drafts} scope={scope} onScope={setScope} />;
     }
-    if (id === 'accounts') {
+    if (ACCOUNT_BLOCKS[id] !== undefined) {
       const block = BLOCKS.find((candidate) => candidate.id === id)!;
+      const list = listOf(id);
       return (
         <Setting key={id} id={id} title={block.title} help={block.help}>
-          {settings && (
+          {settings && list && (
             <AccountsSection
-              view={settings.accounts}
+              engine={list.engine}
+              view={list}
+              login={settings.accounts.login}
               busy={busy}
               onRequest={(message) => run(message, { okText: message.type === 'account.select' ? 'Account switched' : message.type === 'account.remove' ? 'Account removed' : undefined })}
             />

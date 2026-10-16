@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { AccountLoginView, AccountsView, AccountView } from '@ide/protocol';
+import type { AccountLoginView, AccountView, EngineAccountsView, EngineId } from '@ide/protocol';
 import { AccountsSection } from '../src/settings/AccountsSection';
 
 interface Element {
@@ -44,10 +44,11 @@ const URL = 'https://claude.com/cai/oauth/authorize?code=true&client_id=c&state=
 const idle: AccountLoginView = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
 const claudeLogin = (login: Pick<AccountLoginView, 'state' | 'url' | 'error'>): AccountLoginView => ({ ...login, engine: 'claude', method: 'browser', userCode: null });
 
-function render(view: { accounts?: AccountView[]; activeId?: string | null; login?: AccountLoginView } = {}, busy = false): Element {
-  const { accounts = [A, B], activeId = null, login = idle } = view;
-  const full: AccountsView = { engines: [{ engine: 'claude', accounts, activeId }], login };
-  return parse(renderToStaticMarkup(<AccountsSection view={full} busy={busy} onRequest={() => undefined} />));
+function render(view: { accounts?: AccountView[]; activeId?: string | null; login?: Partial<AccountLoginView> } = {}, busy = false): Element {
+  const { login = {}, ...list } = view;
+  return parse(renderToStaticMarkup(
+    <AccountsSection engine="claude" view={{ engine: 'claude', accounts: [A, B], activeId: null, ...list }} login={{ ...idle, ...login }} busy={busy} onRequest={() => undefined} />,
+  ));
 }
 
 interface Row {
@@ -160,5 +161,42 @@ describe('AccountsSection sign-in', () => {
   it('shows the error message of a failed sign-in', () => {
     const root = render({ login: claudeLogin({ state: 'error', url: null, error: 'Claude did not report a signed-in account.' }) });
     expect(textOf(root)).toContain('Claude did not report a signed-in account.');
+  });
+});
+
+const WORK = { id: '3c1e8f5a-7d2b-4c6e-9a1f-2b3c4d5e6f70', email: 'work@example.com', plan: 'Plus', createdAt: 3 };
+
+function renderEngine(engine: EngineId, view: Partial<EngineAccountsView> = {}, login: AccountLoginView = idle): Element {
+  return parse(renderToStaticMarkup(<AccountsSection engine={engine} view={{ engine, accounts: [], activeId: null, ...view }} login={login} busy={false} onRequest={() => undefined} />));
+}
+
+describe('AccountsSection per engine', () => {
+  it("names the engine in its account group and in System's note, and shows an account's plan beside its e-mail", () => {
+    const root = renderEngine('codex', { accounts: [WORK], activeId: WORK.id });
+    expect([all(root, (element) => element.attrs.role === 'radiogroup')[0]?.attrs['aria-label'], rows(root).map((row) => row.text)]).toStrictEqual([
+      'Codex account', ["System codex's own sign-in (codex login)", 'work@example.com Plus active Remove'],
+    ]);
+  });
+
+  it("offers each of the engine's ways to sign in, the first one as the primary", () => {
+    const ways = (engine: EngineId) => all(renderEngine(engine), (element) => element.tag === 'button' && (element.attrs.class ?? '').includes('account-add'))
+      .map((button) => [textOf(button), !(button.attrs.class ?? '').includes('ghost')]);
+    expect([ways('claude'), ways('codex')]).toStrictEqual([
+      [['Add account', true]], [['Sign in with ChatGPT', true], ['Use a device code', false], ['Use an API key', false]],
+    ]);
+  });
+
+  it('shows the code to enter, with a copy button, and never the page address as text, while a device-code sign-in waits', () => {
+    const root = renderEngine('codex', {}, { state: 'waiting', engine: 'codex', method: 'device-code', url: 'https://auth.example.test/codex/device?s=SECRET', userCode: 'ABCD-1234', error: null });
+    expect([buttons(root, 'Open the device page').map(isDisabled), textOf(root).includes('ABCD-1234'), buttons(root, 'Copy').length, textOf(root).includes('SECRET'), buttons(root, 'Cancel').length])
+      .toStrictEqual([[false], true, 1, false, 1]);
+  });
+
+  it('keeps adding an account closed while another engine signs in and says which sign-in to finish, but not once that sign-in failed', () => {
+    const add = (state: AccountLoginView['state']) => {
+      const root = renderEngine('claude', {}, { state, engine: 'codex', method: 'browser', url: null, userCode: null, error: state === 'error' ? 'Sign-in failed.' : null });
+      return [buttons(root, 'Add account').map(isDisabled), textOf(root).includes('Finish or cancel the Codex sign-in first.')];
+    };
+    expect([add('waiting'), add('error')]).toStrictEqual([[[true], true], [[false], false]]);
   });
 });

@@ -390,3 +390,7 @@
 .sw-code::placeholder { font-family: var(--font-ui); color: var(--muted); }
 .sw-code:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--accent); }
 .sw-login .sw-error { margin: 0; flex: 1; }
+.sw-login-row { flex-wrap: wrap; }
+.sw-user-code { padding: 4px 10px; border-radius: var(--r-1); background: var(--bg); color: var(--fg); font: 600 calc(16px * var(--fs-scale, 1)) / 1.3 var(--font-mono); letter-spacing: 0.12em; user-select: all; }
+.sw-accounts > .sw-field-help { margin: -6px 0 0; }
+.sw-code[aria-invalid='true']:focus-visible { box-shadow: 0 0 0 2px var(--error); }

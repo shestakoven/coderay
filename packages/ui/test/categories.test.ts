@@ -26,7 +26,7 @@ describe('settings categories', () => {
     ['agent', ['mode', 'auto-approve']],
     ['mcp', ['mcp-servers', 'claude-code-servers']],
     ['paths', ['guarded', 'harness', 'outside-allowed']],
-    ['accounts', ['accounts']],
+    ['accounts', ['accounts', 'accounts-codex']],
     ['appearance', ['density', 'font-size', 'reduced-motion', 'canvas-dots']],
   ] as const)('gives the %s category its blocks in page order', (id, expected) => {
     expect(ids(blocksOf(id))).toEqual(expected);
@@ -101,7 +101,7 @@ describe('countByCategory', () => {
   });
 
   it('counts the blocks of every category', () => {
-    expect(countByCategory(BLOCKS)).toEqual({ agent: 2, mcp: 2, paths: 3, accounts: 1, appearance: 4 });
+    expect(countByCategory(BLOCKS)).toEqual({ agent: 2, mcp: 2, paths: 3, accounts: 2, appearance: 4 });
   });
 
   it('counts a search result per category with zeros for the rest', () => {

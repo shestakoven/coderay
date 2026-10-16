@@ -230,7 +230,8 @@ describe('Settings workspace', () => {
   });
 
   it.each(CATEGORIES.map((category) => category.id))('shows only the settings of the %s category', (id) => {
-    expect(settingTitles(parse(render(claude, claudeSession, id)))).toEqual(blocksOf(id).map((block) => block.title));
+    // The fixture's core runs Claude alone, so Codex's accounts block stays hidden.
+    expect(settingTitles(parse(render(claude, claudeSession, id)))).toEqual(blocksOf(id).filter((block) => block.id !== 'accounts-codex').map((block) => block.title));
   });
 
   const modeGroup = (root: Element): Element[] => {

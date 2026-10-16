@@ -205,6 +205,12 @@ export function ModelMenu({ models, engines, current, started, recent, initialQu
             <div key={group.id} className="model-group" role="presentation">
               <div className="model-group-head" id={`${id}-${group.id}`} aria-hidden="true">
                 <span className="model-engine">{group.title}</span>
+                {group.status?.account && (
+                  <>
+                    <span className="visually-hidden">, account </span>
+                    <span className="model-account" title={`${group.title} runs under ${group.status.account}`}>{group.status.account}</span>
+                  </>
+                )}
                 {group.status && group.status.state !== 'ready' && <span className={`model-state ${group.status.state}`}>{STATE_LABEL[group.status.state]}</span>}
                 {group.status?.hint && <span className="model-hint">{group.status.hint}</span>}
               </div>

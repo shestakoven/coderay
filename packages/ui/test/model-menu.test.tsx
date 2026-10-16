@@ -54,6 +54,12 @@ describe('ModelMenu', () => {
     expect([texts(nothing, 'model-empty'), texts(codex, 'model-empty'), texts(codex, 'model-hint'), nothing.includes('aria-activedescendant'), heads(codex), heads(menu(false))])
       .toEqual([['No model matches “zzz”'], [''], ['Sign in: run codex login'], false, [true], [true, true, true]]);
   });
+
+  it("names the account each engine runs under in its header, and nothing for an engine with no account of CodeRay's", () => {
+    const engines = ENGINE_STATES.map((status) => (status.engine === 'codex' ? { ...status, account: 'work@example.com · Plus' } : status));
+    const html = renderToStaticMarkup(<ModelMenu models={THREE_ENGINES} engines={engines} current={SONNET} started={false} recent={[]} initialQuery="" onChoose={() => undefined} onClose={() => undefined} />);
+    expect(texts(html, 'model-account')).toEqual(['work@example.com · Plus']);
+  });
 });
 
 describe('ModelControls', () => {
