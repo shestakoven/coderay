@@ -15,11 +15,14 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   onRequest: (message: ClientMessage & { requestId: string }) => void;
 }) {
   const [confirming, setConfirming] = useState<string | null>(null);
-  const [code, setCode] = useState('');
+  // The code and the key stay out of React state: a controlled input writes its value into the DOM's value attribute.
+  const [hasCode, setHasCode] = useState(false);
   const [keyForm, setKeyForm] = useState(false);
-  const [key, setKey] = useState('');
-  const [copied, setCopied] = useState(false);
+  const [key, setKey] = useState<'empty' | 'ok' | 'bad'>('empty');
+  const [copy, setCopy] = useState<'idle' | 'done' | 'failed'>('idle');
+  const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const keyId = useId();
+  const keyInput = useRef<HTMLInputElement>(null);
   const section = useRef<HTMLDivElement>(null);
   const lastFocus = useRef<{ element: HTMLElement; inList: boolean } | null>(null);
   const began = useRef<LoginMethod | null>(null);
@@ -33,8 +36,6 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   // Only a running sign-in blocks the others; a failed one waits for its Retry or Dismiss without holding them up.
   const running = login.state === 'waiting' || login.state === 'checking';
   const elsewhere = running && loginEngine !== null && !mine ? ENGINE_NAMES[loginEngine] : null;
-  const keyValue = key.trim();
-  const keyBad = keyValue !== '' && !API_KEY_PATTERN.test(keyValue);
   useEffect(() => {
     // The page button stays disabled until the engine gives its address: the focus waits on the code field or Cancel, then moves to it.
     if (!mine || login.state !== 'waiting' || login.url === null) return;
@@ -45,7 +46,10 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
       if (!section.current?.contains(event.target as Node)) lastFocus.current = null;
     };
     document.addEventListener('focusin', leave);
-    return () => document.removeEventListener('focusin', leave);
+    return () => {
+      document.removeEventListener('focusin', leave);
+      clearTimeout(copyTimer.current);
+    };
   }, []);
   useEffect(() => {
     // A control disabled by a request in flight, or gone with its step, drops the focus to <body>: it comes back here once a control can take it.
@@ -78,25 +82,32 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
     else send({ type: 'account.remove', requestId: requestId(), engine, id });
   };
   const closeKey = (): void => {
+    if (keyInput.current) keyInput.current.value = '';
     setKeyForm(false);
-    setKey('');
+    setKey('empty');
   };
   const submitKey = (): void => {
+    const value = keyInput.current?.value.trim() ?? '';
     // The core answers a malformed key with an error no request waits for, so the form checks the key first.
-    if (keyValue === '' || keyBad) return;
-    start('api-key', keyValue);
+    if (!API_KEY_PATTERN.test(value)) return;
+    start('api-key', value);
     closeKey();
   };
   const submitCode = (): void => {
-    if (code.trim() === '') return;
-    send({ type: 'account.login.code', requestId: requestId(), code: code.trim() });
-    setCode('');
+    const value = codeInput.current?.value.trim() ?? '';
+    if (value === '') return;
+    send({ type: 'account.login.code', requestId: requestId(), code: value });
+    codeInput.current!.value = '';
+    setHasCode(false);
   };
   const copyCode = (): void => {
-    void navigator.clipboard?.writeText(login.userCode ?? '').then(() => {
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    });
+    const settle = (result: 'done' | 'failed'): void => {
+      clearTimeout(copyTimer.current);
+      setCopy(result);
+      copyTimer.current = setTimeout(() => setCopy('idle'), 1500);
+    };
+    if (!navigator.clipboard) return settle('failed');
+    navigator.clipboard.writeText(login.userCode ?? '').then(() => settle('done'), () => settle('failed'));
   };
   const open = (url: string | null): void => {
     if (url) window.open(url, '_blank', 'noopener');
@@ -178,8 +189,6 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
               </button>
             ))}
           </div>
-          {/* Said in text, not a tooltip: a disabled button takes no focus and shows no title to the keyboard. */}
-          {elsewhere !== null && <p id={`${keyId}-why`} className="sw-field-help">Finish or cancel the {elsewhere} sign-in first.</p>}
         </>
       )}
       {keyForm && !mine && (
@@ -189,35 +198,49 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
             event.preventDefault();
             submitKey();
           }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            // Escape closes the key form, not the whole Settings dialog.
+            event.preventDefault();
+            event.stopPropagation();
+            closeKey();
+          }}
         >
           <label className="sw-field-help" htmlFor={keyId}>Paste an OpenAI API key. CodeRay keeps it in this account's {name} home and never shows it again.</label>
           <div className="sw-login-row">
             <input
+              ref={keyInput}
               id={keyId}
               className="sw-code"
               type="password"
               data-landing
-              autoComplete="off"
+              autoComplete="new-password"
+              data-lpignore="true"
+              data-1p-ignore
               spellCheck={false}
               placeholder="sk-…"
-              value={key}
-              aria-invalid={keyBad}
-              aria-describedby={keyBad ? `${keyId}-bad` : undefined}
-              onChange={(event) => setKey(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== 'Escape') return;
-                // Escape closes the key form, not the whole Settings dialog.
-                event.preventDefault();
-                event.stopPropagation();
-                closeKey();
+              aria-invalid={key === 'bad'}
+              aria-describedby={key === 'bad' ? `${keyId}-bad` : undefined}
+              onChange={(event) => {
+                const value = event.target.value.trim();
+                setKey(value === '' ? 'empty' : API_KEY_PATTERN.test(value) ? 'ok' : 'bad');
               }}
             />
-            <button type="submit" className="sw-btn primary" disabled={busy || keyValue === '' || keyBad}>Add key</button>
+            <button
+              type="submit"
+              className="sw-btn primary"
+              disabled={busy || elsewhere !== null || key !== 'ok'}
+              aria-describedby={elsewhere !== null ? `${keyId}-why` : undefined}
+            >
+              Add key
+            </button>
             <button type="button" className="sw-btn ghost" onClick={closeKey}>Cancel</button>
           </div>
-          {keyBad && <p id={`${keyId}-bad`} className="sw-error">That is not an API key: one line without spaces, at most 512 characters.</p>}
+          {key === 'bad' && <p id={`${keyId}-bad`} className="sw-error">That is not an API key: one line without spaces, at most 512 characters.</p>}
         </form>
       )}
+      {/* Said in text, not a tooltip: a disabled button takes no focus and shows no title to the keyboard. */}
+      {!mine && elsewhere !== null && <p id={`${keyId}-why`} className="sw-field-help">Finish or cancel the {elsewhere} sign-in first.</p>}
       {mine && login.state === 'waiting' && login.method === 'device-code' && (
         <div className="sw-login" role="group" aria-label="Device code sign-in">
           <div className="sw-login-row">
@@ -228,9 +251,9 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
           </div>
           {login.userCode !== null && (
             <div className="sw-login-row">
-              <code className="sw-user-code" aria-label="One-time code">{login.userCode}</code>
+              <code className="sw-user-code">{login.userCode}</code>
               <button type="button" className="sw-btn ghost" title="Copy the code" onClick={copyCode}>
-                <Icon name={copied ? 'check' : 'copy'} size={14} /> {copied ? 'Copied' : 'Copy'}
+                <Icon name={copy === 'done' ? 'check' : copy === 'failed' ? 'alert' : 'copy'} size={14} /> {copy === 'done' ? 'Copied' : copy === 'failed' ? 'Copy failed' : 'Copy'}
               </button>
             </div>
           )}
@@ -262,14 +285,13 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
                   ref={codeInput}
                   className="account-code sw-code"
                   data-landing={login.url === null || undefined}
-                  value={code}
-                  onChange={(event) => setCode(event.target.value)}
+                  onChange={(event) => setHasCode(event.target.value.trim() !== '')}
                   placeholder="Code from the sign-in page"
                   aria-label="Sign-in code"
                   autoComplete="off"
                   spellCheck={false}
                 />
-                <button type="submit" className="sw-btn primary" disabled={busy || code.trim() === ''}>Submit</button>
+                <button type="submit" className="sw-btn primary" disabled={busy || !hasCode}>Submit</button>
                 <button type="button" className="sw-btn ghost" onClick={cancel}>Cancel</button>
               </form>
             </>
@@ -285,8 +307,8 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
       )}
       {mine && login.state === 'checking' && (
         <div className="sw-login sw-login-row">
-          <span className="muted" role="status"><Spinner /> Checking account…</span>
-          <button type="button" className="sw-btn ghost" data-landing onClick={cancel}>Cancel</button>
+          <span className="muted" aria-hidden="true"><Spinner /> Checking account…</span>
+          <button type="button" className="sw-btn ghost" data-landing aria-describedby={`${keyId}-status`} onClick={cancel}>Cancel</button>
         </div>
       )}
       {mine && login.state === 'error' && (
@@ -296,6 +318,8 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
           <button type="button" className="sw-btn ghost" onClick={cancel}>Dismiss</button>
         </div>
       )}
+      {/* Mounted before its text changes, so a screen reader announces the change. */}
+      <span id={`${keyId}-status`} className="visually-hidden" role="status">{mine && login.state === 'checking' ? 'Checking account…' : ''}</span>
     </div>
   );
 }

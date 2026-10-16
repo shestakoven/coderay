@@ -720,7 +720,7 @@ test('the accounts page shows the system account as the active one', async ({ pa
   await expect(accounts.getByRole('button', { name: /Add account/ })).toBeVisible();
 });
 
-test("a sign-in keeps the keyboard's focus on its current step and gives it back where it began, and Escape closes only the key form", async ({ page }) => {
+test("a sign-in keeps the keyboard's focus on its current step and gives it back where it began, Escape closes only the key form, and the key and the code never reach the page's markup", async ({ page }) => {
   // The page talks to a stand-in for the core's accounts: Claude and Codex, each step answered the way the core answers it, state first.
   const idle = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
   const account = { id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 };
@@ -769,21 +769,39 @@ test("a sign-in keeps the keyboard's focus on its current step and gives it back
   await expect(codex.getByText('Finish or cancel the Claude sign-in first.')).toBeVisible();
   await step({ ...idle, state: 'waiting', engine: 'claude', method: 'browser', url: 'https://claude.com/oauth?state=s' }, accounts.getByRole('button', { name: 'Open sign-in page' }));
   await page.keyboard.press('Tab');
-  await page.keyboard.type('code#1');
+  await page.keyboard.type('CODE-SECRET-7');
+  // A controlled input would copy what is typed into the DOM's value attribute.
+  expect((await dialog.evaluate((element) => element.outerHTML)).includes('CODE-SECRET-7')).toBe(false);
   await page.keyboard.press('Enter');
   await expect(accounts.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await expect(accounts.getByRole('button', { name: 'Cancel' })).toHaveAccessibleDescription('Checking account…');
   await step({ ...idle, state: 'error', engine: 'claude', method: 'browser', error: 'The sign-in timed out after 10 minutes.' }, accounts.getByRole('button', { name: 'Retry' }));
   await expect(codex.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled();
   await page.keyboard.press('Tab');
   await page.keyboard.press('Enter');
   await expect(accounts.getByRole('button', { name: 'Add account' })).toBeFocused();
 
-  await codex.getByRole('button', { name: 'Use an API key' }).focus();
+  const useKey = codex.getByRole('button', { name: 'Use an API key' });
+  const addKey = codex.getByRole('button', { name: 'Add key' });
+  const keyField = codex.getByLabel(/^Paste an OpenAI API key/);
+  await useKey.focus();
   await page.keyboard.press('Enter');
-  await page.keyboard.type('sk not a key');
-  await expect(codex.getByRole('button', { name: 'Add key' })).toBeDisabled();
+  await page.keyboard.type('sk-proj-SECRET42');
+  expect([await keyField.getAttribute('value'), (await dialog.evaluate((element) => element.outerHTML)).includes('SECRET42')]).toEqual([null, false]);
+  await expect(addKey).toBeEnabled();
+  await step({ ...idle, state: 'waiting', engine: 'claude', method: 'browser' }, keyField);
+  await expect(addKey).toBeDisabled();
+  await expect(codex.getByText('Finish or cancel the Claude sign-in first.')).toBeVisible();
+  await step(idle, keyField);
+  await page.keyboard.type(' x');
+  await expect(addKey).toBeDisabled();
+  await page.keyboard.press('Tab');
+  await expect(codex.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.keyboard.press('Escape');
-  await expect(codex.getByRole('button', { name: 'Use an API key' })).toBeFocused();
+  await expect(useKey).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Escape');
+  await expect(useKey).toBeFocused();
 
   await accounts.getByRole('button', { name: 'Remove' }).focus();
   await page.keyboard.press('Enter');
