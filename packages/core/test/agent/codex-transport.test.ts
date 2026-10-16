@@ -263,4 +263,23 @@ describe('the Codex transport', () => {
     await waitFor(() => results().length === 1 && transport.pid !== before, 'the turn stopped and the app-server replaced');
     expect(await waitFor(() => !isAlive(sleeper) && 'gone', 'the shell command gone')).toBe('gone');
   });
+
+  it.each([
+    ['an API-key account fails with 401', { type: 'apiKey' }, 'unexpected status 401 Unauthorized: Incorrect API key provided', true],
+    ['an API-key account fails otherwise', { type: 'apiKey' }, 'unexpected status 503 Service Unavailable', false],
+    ['a ChatGPT account fails with 401', { type: 'chatgpt', email: 'work@example.com', planType: 'plus' }, 'unexpected status 401 Unauthorized: Missing bearer or basic authentication in header', false],
+  ])('says the key was rejected only when a turn of %s', async (_, account, reason, rejected) => {
+    const home = tempDir('codex-key-home-');
+    writeFileSync(join(home, 'auth.json'), JSON.stringify(account));
+    // codex reports the error it gave up on, then fails the turn with the same words: the user reads them once, then why.
+    const steps = [{ method: 'error', params: { error: { message: reason, codexErrorInfo: null, additionalDetails: null }, willRetry: false, threadId: '$THREAD', turnId: '$TURN' } }, { fake: 'fail', message: reason }];
+    writeFileSync(join(home, 'failed.jsonl'), steps.map((step) => JSON.stringify(step)).join('\n'));
+    const s = scene(join(home, 'failed.jsonl'));
+    const { transport, events, results } = run({ ...s.launch, codex: { ...s.launch.codex, env: { ...s.launch.codex.env, CODEX_HOME: home } } });
+    transport.send(userMessage('hi', []));
+    await waitFor(() => results().length === 1, 'the turn failed');
+    expect(events.flatMap((event) => (event.type === 'notice' ? [event.text] : []))).toEqual([
+      `Codex: ${reason}`, ...(rejected ? ['OpenAI rejected the key of this Codex account: remove it in Settings → Accounts and add it again.'] : []),
+    ]);
+  });
 });

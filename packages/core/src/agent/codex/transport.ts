@@ -93,6 +93,7 @@ class CodexTransport implements AgentTransport {
   private stops = 0;
   private starting = false;
   private stopRequested = false;
+  private apiKey = false;
 
   constructor(launch: CodexLaunch, sink: TransportSink) {
     this.launch = launch;
@@ -184,6 +185,7 @@ class CodexTransport implements AgentTransport {
       const account = await server.rpc.request<GetAccountResponse>('account/read', { refreshToken: false });
       if (!this.current(server)) return;
       if (!isRecord(account) || !isRecord(account.account)) return this.refuse(this.launch.signedOutHint);
+      this.apiKey = account.account.type === 'apiKey';
       const answer = await server.rpc.request<ConfigReadResponse>('config/read', { cwd: this.launch.cwd, includeLayers: false });
       if (!this.current(server)) return;
       const config = this.threadConfig(isRecord(answer) && isRecord(answer.config) ? answer.config : {});
@@ -275,6 +277,10 @@ class CodexTransport implements AgentTransport {
     // A sub-agent's turns run on the same app-server: only the chat's own thread starts and ends its turns.
     const turn = isRecord(params) && params.threadId === this.threadId && isRecord(params.turn) && typeof params.turn.id === 'string' ? params.turn.id : null;
     if (method === 'turn/started' && turn !== null) this.turnId = turn;
+    // codex stores an API key unchecked: a 401 is how a wrong key shows.
+    if (method === 'turn/completed' && turn !== null && this.apiKey && isRecord(params) && isRecord(params.turn) && params.turn.status === 'failed' && /\b401\b/.test(JSON.stringify(params.turn.error))) {
+      this.emit([{ type: 'notice', text: 'OpenAI rejected the key of this Codex account: remove it in Settings → Accounts and add it again.' }]);
+    }
     this.emit(this.events.handle(method, params));
     if (method === 'turn/completed' && turn !== null) this.turnEnded(turn);
     else if (method === 'turn/started' && turn !== null) this.stopIfRequested();

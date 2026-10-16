@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // Stands in for `codex app-server`: answers CodeRay's requests and replays a scenario (test/fixtures/codex/README.md).
 import { spawn } from 'node:child_process';
-import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -166,7 +166,7 @@ function login(id, params) {
   const finish = (loginId, saved) => {
     loginTimer = setTimeout(() => {
       if (outcome === 'hang') return;
-      if (outcome === 'fail') return notify('account/login/completed', { loginId, success: false, error: 'Login was not completed.' });
+      if (outcome === 'fail') return notify('account/login/completed', { loginId, success: false, error: env.FAKE_CODEX_LOGIN_ERROR ?? 'Login was not completed.' });
       writeFileSync(authFile, JSON.stringify(saved));
       if (outcome === 'silent') return;
       notify('account/login/completed', { loginId, success: true, error: null });
@@ -209,6 +209,8 @@ function handle(id, method, params) {
     case 'account/login/start': return login(id, params);
     case 'account/login/cancel':
       clearTimeout(loginTimer);
+      // codex 0.160.0 goes on writing its state into its home, even after that directory was removed under it.
+      if (ownHome) mkdirSync(join(env.CODEX_HOME, '.tmp'), { recursive: true });
       reply(id, {});
       return notify('account/login/completed', { loginId: params.loginId ?? null, success: false, error: 'Login was cancelled.' });
     case 'account/logout':
