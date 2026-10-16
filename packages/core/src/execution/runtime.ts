@@ -159,6 +159,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     },
     watchdog,
     record: (record) => session?.recordDecision(record),
+    sandboxed: () => session?.sandboxed() ?? false,
   });
 
   let policyKey = '';
@@ -350,12 +351,16 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     }
   });
 
+  const check = (): void => {
+    if (failure !== null) throw new Error(`the watchdog is unavailable (${failure}), so the agent was not started`);
+    if (!ready) throw new Error('the watchdog is not ready yet, so the agent was not started');
+    syncHold();
+  };
   const sessionGate: SessionGate = {
     ...gate.sessionGate,
+    check,
     write(id, events) {
-      if (failure !== null) throw new Error(`the watchdog is unavailable (${failure}), so the agent was not started`);
-      if (!ready) throw new Error('the watchdog is not ready yet, so the agent was not started');
-      syncHold();
+      check();
       return gate.sessionGate.write(id, events);
     },
   };

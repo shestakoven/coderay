@@ -100,6 +100,8 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
       remove: (id) => removeGateFiles(runDir(options.home), base(id)),
       systemPrompt: (names) => systemPrompt(options.components(), options.map !== undefined, options.search !== undefined, names),
       canary,
+      check: () => {},
+      decide: (call, signal) => gate.evaluate(call, signal),
     },
     attach(agent) {
       session = agent;
@@ -108,6 +110,10 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
       // An ok result means the call ran without the hook's answer: a fail-open, which is not a denial.
       agent.onToolResult((info) => gate.dropForTool(info.toolUseId, { record: info.status !== 'ok' }));
       agent.onProcessExit(() => plans.withdrawPending("The agent's process ended while the plan waited for an answer."));
+      // claude cancels its waiting propose_plan on Stop; Codex sends no notifications/cancelled, so the plan is withdrawn here.
+      agent.onInterrupt(() => {
+        if (agent.engineOf() !== 'claude') plans.withdrawPending('The user stopped the agent while the plan waited for an answer.');
+      });
       agent.onProcessExit(() => gate.dropAll());
     },
     close: () => idecore.close(),

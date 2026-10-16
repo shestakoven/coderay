@@ -88,7 +88,8 @@ async function play(current) {
       const child = spawn('sleep', ['600'], { stdio: 'ignore', detached: true });
       sleepers.push(child.pid);
       record({ sleeperPid: child.pid });
-    } else if (step.fake === 'fail') {
+    } else if (step.fake === 'exit') process.exit(step.code ?? 1);
+    else if (step.fake === 'fail') {
       current.error = { message: step.message };
       current.failed = true;
     } else if (step.request !== undefined) {

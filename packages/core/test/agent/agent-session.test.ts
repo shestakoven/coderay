@@ -661,7 +661,7 @@ describe('AgentSession', () => {
   });
 
   it('writes the MCP servers into a config only the user can read and deletes it when the session ends', async () => {
-    const servers = { docs: { type: 'http', url: 'http://127.0.0.1:1/mcp' } };
+    const servers = { docs: { type: 'http' as const, url: 'http://127.0.0.1:1/mcp' } };
     const h = await harness('multi-turn', { mcpServers: () => servers });
     h.session.send('hi');
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');

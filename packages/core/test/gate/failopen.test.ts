@@ -233,3 +233,20 @@ describe('FailOpenDetector', () => {
     error.mockRestore();
   });
 });
+
+describe('FailOpenDetector on an engine with a hard sandbox', () => {
+  it('records and raises nothing for a call that ran without the gate inside a hard sandbox, and does both outside one', async () => {
+    const run = async (sandboxed: boolean): Promise<number[]> => {
+      const record = vi.fn();
+      const raiseFailOpen = vi.fn();
+      const detector = new FailOpenDetector({
+        gate: { hasCall: () => 'none', dropForTool: () => {} }, ledger: { windowOf: () => undefined }, changes: { reattribute: async () => [], humanIn: () => [] },
+        watchdog: { raiseFailOpen, isPending: () => false }, record, sandboxed: () => sandboxed,
+      } as unknown as ConstructorParameters<typeof FailOpenDetector>[0]);
+      detector.toolEnded(end({}));
+      await sleepMs(50);
+      return [record.mock.calls.length, raiseFailOpen.mock.calls.length];
+    };
+    expect([await run(true), await run(false)]).toEqual([[0, 0], [1, 1]]);
+  });
+});

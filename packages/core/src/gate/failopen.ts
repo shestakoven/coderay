@@ -18,6 +18,8 @@ export interface FailOpenOptions {
   record: (record: ToolDecisionRecord) => void;
   exempt?: ReadonlySet<string>;
   now?: () => number;
+  /** The chat's engine runs its calls in an OS sandbox: a call the gate never saw could not write. */
+  sandboxed?: () => boolean;
 }
 
 export class FailOpenDetector {
@@ -27,6 +29,7 @@ export class FailOpenDetector {
 
   toolEnded(e: ToolEndInfo): void {
     try {
+      if (this.o.sandboxed?.()) return;
       if (e.status !== 'ok' || (this.o.exempt ?? NO_HOOK_TOOLS).has(e.tool)) return;
       const seen = this.o.gate.hasCall(e.toolUseId);
       if (seen === 'decided' || this.reported.has(e.toolUseId)) return;

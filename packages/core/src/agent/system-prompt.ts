@@ -50,3 +50,19 @@ export function systemPrompt(components: { id: string; name: string }[], mapTool
     ...more,
   ].join('\n');
 }
+
+export const CODEX_PROMPT_NAMES: PromptNames = {
+  idecore: (tool) => `mcp__idecore__${tool}`,
+  writeTools: 'apply_patch',
+  exploreTools: 'rg, find or other exploratory shell command',
+};
+
+/** Without these lines Codex does not even try to write in its read-only sandbox, so no write ever reaches CodeRay's gate. */
+export const CODEX_APPROVALS = [
+  'Your sandbox is read-only on purpose: every write is routed to the user for approval, so do not refuse to write.',
+  'Change files with apply_patch as usual; the user approves each patch.',
+  'For a shell command that writes, moves or deletes files, request escalation (sandbox_permissions: require_escalated) with a one-line justification; the user approves each one.',
+  "When a write is rejected, stop and wait for the user's next message: the reason is shown to the user, not to you.",
+].join(' ');
+
+export const codexInstructions = (prompt: string | null): string => (prompt === null ? CODEX_APPROVALS : `${prompt}\n\n${CODEX_APPROVALS}`);
