@@ -1,6 +1,7 @@
-// Opt-in re-check of the Codex engine on the real binary (`pnpm engines:smoke [--codex <path>] [--model <id>] [--only <name>]`), and the
+// Opt-in re-check of the Codex engine on the real binary (`pnpm engines:smoke [--codex <path>] [--model <id>] [--only <name>] [--dry-run]`), and the
 // re-verification when the pinned version moves. Runs under the System account in a scratch project and deletes the threads it made.
 // Never part of `pnpm check`. PASS and FAIL check what CodeRay relies on; INFO records what codex does where CodeRay holds either way.
+// --dry-run asks the model nothing: it checks the cleanup's guard and the diagnostics tap, and says what the cleanup would delete.
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -10,7 +11,7 @@ import { parseArgs } from 'node:util';
 import { accountHome, SYSTEM_HOME } from '../src/accounts/account-homes';
 import { APP_SERVER_FLAGS, handshake, startAppServer, withAppServer, type AppServer } from '../src/agent/codex/app-server';
 import { approvalReply, elicitationReply, NO_PERMISSIONS } from '../src/agent/codex/approvals';
-import { codexCommand, codexEnv, codexUnder } from '../src/agent/codex/command';
+import { codexCommand, codexEnv, codexUnder, type CodexCommand } from '../src/agent/codex/command';
 import { codexMcp } from '../src/agent/codex/mcp';
 import type { ConfigReadResponse, JsonValue, ThreadStartResponse } from '../src/agent/codex/protocol';
 import { hideSecrets } from '../src/agent/codex/secrets';
@@ -24,7 +25,7 @@ import type { HookAnswer } from '../src/gate/hook-gate';
 import { isRecord } from '../src/json';
 import { isAlive } from '../src/os-process';
 
-const { values } = parseArgs({ options: { codex: { type: 'string', default: 'codex' }, model: { type: 'string', default: 'gpt-6-luna' }, only: { type: 'string' } } });
+const { values } = parseArgs({ options: { codex: { type: 'string', default: 'codex' }, model: { type: 'string', default: 'gpt-6-luna' }, only: { type: 'string' }, 'dry-run': { type: 'boolean', default: false } } });
 const codex = codexCommand(values.codex);
 const model = values.model;
 const allow: HookAnswer = { permissionDecision: 'allow', permissionDecisionReason: 'smoke' };
@@ -68,6 +69,33 @@ createInterface({ input: process.stdin }).on('line', (line) => {
 process.stdin.on('end', () => process.exit(0));
 `);
 const marker = (name: string): string => join(aux, `${name}.started`);
+// codex behind a tap that records its notifications for a failing check: never its answers, which carry the user's configuration.
+const tap = join(aux, 'codex-tap.mjs');
+writeFileSync(tap, `
+import { spawn } from 'node:child_process';
+import { appendFileSync } from 'node:fs';
+import { createInterface } from 'node:readline';
+const [command, ...args] = JSON.parse(process.env.SMOKE_TAP_CODEX);
+const child = spawn(command, [...args, ...process.argv.slice(2)], { stdio: ['pipe', 'pipe', 'inherit'] });
+process.stdin.pipe(child.stdin);
+const SAID = new Set(['warning', 'configWarning', 'deprecationNotice', 'error', 'model/rerouted', 'item/mcpToolCall/progress']);
+createInterface({ input: child.stdout }).on('line', (line) => {
+  process.stdout.write(line + '\\n');
+  let message;
+  try {
+    message = JSON.parse(line);
+  } catch {
+    return;
+  }
+  if (typeof message.method !== 'string' || message.id !== undefined || /[Dd]elta$/.test(message.method)) return;
+  const item = message.params?.item;
+  const detail = SAID.has(message.method) ? message.params : item ? { type: item.type, status: item.status, server: item.server, tool: item.tool } : undefined;
+  appendFileSync(process.env.SMOKE_TAP_LOG, JSON.stringify({ at: Date.now(), method: message.method, detail }) + '\\n', { mode: 0o600 });
+});
+process.on('SIGTERM', () => child.kill('SIGTERM'));
+child.on('exit', (code) => process.exit(code ?? 1));
+`);
+const tapped = (log: string): CodexCommand => ({ ...codexCommand(tap), env: { SMOKE_TAP_LOG: log, SMOKE_TAP_CODEX: JSON.stringify([codex.command, ...codex.args]) } });
 const toml = (value: string): string => JSON.stringify(value);
 // The project's own Codex configuration names a server: it must never start in a CodeRay chat.
 mkdirSync(join(project, '.codex'));
@@ -164,11 +192,11 @@ interface Run {
 const pick = <T extends StreamEvent['type']>(events: StreamEvent[], type: T): Extract<StreamEvent, { type: T }>[] =>
   events.filter((event): event is Extract<StreamEvent, { type: T }> => event.type === type);
 
-function start(decide: Decide): Run {
+function start(decide: Decide, command: CodexCommand = codex): Run {
   const events: StreamEvent[] = [];
   const asked: GateCall[] = [];
   const launch: CodexLaunch = {
-    engine: 'codex', cwd: project, engineSessionId: '', resume: false, model, effort: 'low', codex, pidDir: aux, servers: rendered.names,
+    engine: 'codex', cwd: project, engineSessionId: '', resume: false, model, effort: 'low', codex: command, pidDir: aux, servers: rendered.names,
     config: rendered.config, env: { ...rendered.env, SMOKE_PROBE: '1' }, developerInstructions: CODEX_APPROVALS,
     signedOutHint: signedOutHint(SYSTEM_HOME), keyRejectedHint: keyRejectedHint(SYSTEM_HOME),
     decide: async (call, signal) => {
@@ -280,6 +308,23 @@ async function quietConfig(): Promise<Record<string, JsonValue>> {
   return { 'features.apps': false, 'features.plugins': false, 'features.deferred_executor': false, ...Object.fromEntries(servers.map((name) => [`mcp_servers.${name}.enabled`, false])) };
 }
 
+// What a failing turn leaves before the cleanup deletes it: codex's items, and the notifications the transport does not turn into events.
+async function explain(threadId: string | undefined, wire: string): Promise<void> {
+  type Turns = { thread: { turns?: { items?: Record<string, unknown>[] }[] } };
+  const answer = threadId === undefined ? new Error('no thread') : await withAppServer(codex, project, (rpc) => rpc.request<Turns>('thread/read', { threadId, includeTurns: true })).catch((error: Error) => error);
+  const item = (entry: Record<string, unknown>): string => {
+    const error = isRecord(entry.error) ? ` ${String(entry.error.message)}` : '';
+    const words = typeof entry.text === 'string' ? ` (${String(entry.phase)}) ${entry.text.slice(0, 100)}` : '';
+    const tool = typeof entry.tool === 'string' ? ` ${String(entry.server)}/${entry.tool} ${String(entry.status)} ${String(entry.durationMs)} ms` : '';
+    return `${String(entry.type)}${tool}${error}${words}`;
+  };
+  note(`the failing turn's items: ${answer instanceof Error ? `could not be read (${answer.message})` : (answer.thread.turns ?? []).flatMap((turn) => turn.items ?? []).map(item).join(' | ') || 'none'}`);
+  const lines = (existsSync(wire) ? readFileSync(wire, 'utf8').split('\n') : []).filter((line) => line !== '').map((line) => JSON.parse(line) as { at: number; method: string; detail?: unknown });
+  const first = lines[0]?.at ?? 0;
+  const shown = lines.filter((line) => !/^(thread\/tokenUsage|account\/rateLimits)\//.test(line.method));
+  note(`its notifications: ${shown.map((line) => `+${((line.at - first) / 1000).toFixed(1)} s ${line.method}${line.detail === undefined ? '' : ` ${JSON.stringify(line.detail).slice(0, 160)}`}`).join(' | ') || 'none recorded'}`);
+}
+
 interface Item { name: string; check?: () => Promise<string | null>; fact?: () => Promise<string> }
 
 const items: Item[] = [
@@ -368,12 +413,15 @@ const items: Item[] = [
     return r.refused() ?? (['mcp__idecore__ping', 'mcp__smoke__write_note'].every((name) => called.includes(name)) ? null : `called: ${called.join(', ') || 'nothing'}; said: ${r.said().slice(0, 160)}`);
   } },
   { name: "a blocking idecore call outlives codex's 300 s tool limit and its deferred executor's 160 s", check: async () => {
-    const r = start(async () => deny);
+    const wire = join(aux, 'blocking-wire.jsonl');
+    const r = start(async () => deny, tapped(wire));
     r.send('Call the idecore MCP tool wait_for_user once and report its answer.');
     await ended(r, 1, BLOCKING_MS + 120_000);
     await r.kill();
     const said = r.said();
-    return r.refused() ?? (blockingAnswered && said.toLowerCase().includes('approved') && r.asked.length === 0 ? null : `answered: ${blockingAnswered}, ${r.asked.length} asked, said: ${said.slice(0, 120)}`);
+    const problem = r.refused() ?? (blockingAnswered && said.toLowerCase().includes('approved') && r.asked.length === 0 ? null : `answered: ${blockingAnswered}, ${r.asked.length} asked, said: ${said.slice(0, 120)}`);
+    if (problem !== null) await explain(r.threadIds()[0], wire);
+    return problem;
   } },
   { name: 'Stop while a write waits for the user', check: async () => {
     let held = false;
@@ -581,27 +629,45 @@ const items: Item[] = [
   } },
 ];
 
-async function deleteThreads(): Promise<string> {
+interface Listed { id: string; cwd?: unknown }
+
+// The threads the cleanup may delete: those the smoke saw, and those codex lists with the scratch project as their own cwd. Never one
+// that codex's cwd filter merely returned: a version that drops or renames the filter would list the user's whole history.
+function ours(listed: Listed[], seen: Set<string>): { ids: string[]; byCwd: number; foreign: number } {
+  const own = (cwd: unknown): boolean => typeof cwd === 'string' && roots.some((root) => cwd === root || cwd.startsWith(`${root}/`));
+  const byCwd = listed.filter((thread) => own(thread.cwd)).map((thread) => thread.id);
+  const ids = [...new Set([...seen, ...byCwd])];
+  return { ids, byCwd: byCwd.length, foreign: listed.filter((thread) => !ids.includes(thread.id)).length };
+}
+
+async function deleteThreads(dryRun = false): Promise<string> {
   return withAppServer(codex, project, async (rpc) => {
-    const list = async (): Promise<string[]> => {
-      const ids: string[] = [];
+    const list = async (): Promise<Listed[]> => {
+      const found: Listed[] = [];
       for (const archived of [false, true]) {
         let cursor: string | null = null;
         do {
-          const page: { data: { id: string }[]; nextCursor: string | null } = await rpc.request('thread/list', { cwd: roots, archived, sourceKinds: SOURCES, limit: 100, cursor });
-          ids.push(...page.data.map((thread) => thread.id));
+          const page: { data: Listed[]; nextCursor: string | null } = await rpc.request('thread/list', { cwd: roots, archived, sourceKinds: SOURCES, limit: 100, cursor });
+          found.push(...page.data.map((thread) => ({ id: thread.id, cwd: thread.cwd })));
           cursor = page.nextCursor;
         } while (cursor !== null);
       }
-      return ids;
+      return found;
     };
-    const ids = [...new Set([...threads, ...(await list())])];
+    const listed = await list();
+    const { ids, byCwd, foreign } = ours(listed, threads);
+    if (foreign > 0) {
+      failed += 1;
+      say(`FAIL cleanup: codex listed ${foreign} thread(s) of other projects for the scratch project; only the smoke's own are deleted`);
+    }
+    const found = `${listed.length} listed for the scratch project, ${byCwd} of them with its cwd`;
+    if (dryRun) return `dry run: would delete ${ids.length} thread(s) (${found})`;
     const paths = await Promise.all(ids.map((threadId) => rpc.request<ThreadStartResponse>('thread/read', { threadId }).then((answer) => answer.thread.path, () => null)));
     const failures = (await Promise.all(ids.map((threadId) => rpc.request('thread/delete', { threadId }).then(() => null, (error: Error) => error.message.split('\n')[0] ?? '')))).filter((failure) => failure !== null);
-    const listed = (await list()).length;
+    const left = ours(await list(), new Set()).ids.length;
     const kept = paths.filter((path) => path !== null && existsSync(path)).length;
-    const failed = failures.length === 0 ? '' : ` (not deleted: ${count(failures)})`;
-    return `${ids.length - failures.length} of ${ids.length} threads deleted${failed}; ${listed} still listed for the project; ${kept} of ${paths.filter((path) => path !== null).length} rollout files left`;
+    const notDeleted = failures.length === 0 ? '' : ` (not deleted: ${count(failures)})`;
+    return `${ids.length - failures.length} of ${ids.length} threads deleted${notDeleted} (${found}); ${left} still listed for the project; ${kept} of ${paths.filter((path) => path !== null).length} rollout files left`;
   }, 120_000);
 }
 
@@ -625,6 +691,24 @@ if (state.state !== 'ready') {
   process.exit(1);
 }
 process.once('SIGINT', () => void finish(130));
+if (values['dry-run']) {
+  const sample = ours([{ id: 'own', cwd: roots[0] }, { id: 'own-resolved', cwd: `${roots[1]}/sub` }, { id: 'seen', cwd: '/elsewhere' }, { id: 'other', cwd: '/elsewhere' }, { id: 'no-cwd' }], new Set(['seen']));
+  const guarded = sample.ids.join(',') === 'seen,own,own-resolved' && sample.byCwd === 2 && sample.foreign === 2;
+  if (!guarded) failed += 1;
+  say(`${guarded ? 'PASS' : 'FAIL'} the cleanup deletes only threads the smoke saw or whose own cwd is the scratch project${guarded ? '' : `: kept ${sample.ids.join(', ')}, ${sample.foreign} foreign`}`);
+  const wire = join(aux, 'tap-check.jsonl');
+  await withAppServer(tapped(wire), project, () => pause(1_000)).catch(() => undefined);
+  const heard = existsSync(wire) ? readFileSync(wire, 'utf8').split('\n').filter((line) => line !== '').length : 0;
+  if (heard === 0) failed += 1;
+  say(`${heard > 0 ? 'PASS' : 'FAIL'} the diagnostics tap records codex's notifications (${heard} on a handshake)`);
+  await explain(undefined, wire);
+  for (const line of pending.splice(0)) say(`INFO what a failing blocking check would add: ${line}`);
+  say(await deleteThreads(true).catch((error: Error) => `the cleanup could not list the threads: ${error.message}`));
+  mcp.close();
+  rmSync(aux, { recursive: true, force: true });
+  rmSync(project, { recursive: true, force: true });
+  process.exit(failed === 0 ? 0 : 1);
+}
 quiet = await quietConfig();
 for (const item of items.filter((candidate) => values.only === undefined || candidate.name.includes(values.only))) {
   const at = Date.now();
