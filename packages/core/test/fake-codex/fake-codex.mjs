@@ -50,7 +50,12 @@ const userServers = JSON.parse(env.FAKE_CODEX_USER_SERVERS ?? '{"node_repl":{"co
 const userConfig = JSON.parse(env.FAKE_CODEX_CONFIG ?? '{}');
 const steps = env.FAKE_CODEX_SCENARIO ? readFileSync(env.FAKE_CODEX_SCENARIO, 'utf8').split('\n').filter((line) => line.trim() !== '') : [];
 
-let at = 0;
+// Stop restarts the app-server: the next fake goes on from the line the last one reached, kept beside the record.
+const progress = env.FAKE_CODEX_RECORD ? `${env.FAKE_CODEX_RECORD}.at` : null;
+let at = progress !== null && existsSync(progress) ? Number(readFileSync(progress, 'utf8')) : 0;
+const reached = () => {
+  if (progress !== null) writeFileSync(progress, String(at));
+};
 let threadId = null;
 let cwd = process.cwd();
 let turn = null;
@@ -79,6 +84,7 @@ async function play(current) {
   while (at < steps.length) {
     const step = JSON.parse(fill(steps[at]));
     at += 1;
+    reached();
     if (step.fake === 'await-turn') break;
     if (current.interrupted || (step.when !== undefined && step.when !== lastAnswer)) continue;
     if (step.fake === 'sleep') await sleep(step.ms);

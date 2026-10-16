@@ -226,7 +226,10 @@ describe('the Codex transport', () => {
     ['while its thread opens', 'thread/start', [], 0],
     ['while codex starts its turn', 'turn/start', ['first'], 1],
   ])('ends a message on a Stop that comes %s, before codex named the turn, and lets the next message run', async (_, slow, stopped, interrupts) => {
-    const s = scene('hang', {}, slow === null ? {} : { FAKE_CODEX_SLOW: slow });
+    // Every turn hangs, whether or not the stopped message reached a turn: the next one is still running when checked.
+    const scenario = join(tempDir('codex-stop-'), 'hang-twice.jsonl');
+    writeFileSync(scenario, [{ fake: 'sleep', ms: 60_000 }, { fake: 'await-turn' }, { fake: 'sleep', ms: 60_000 }].map((line) => JSON.stringify(line)).join('\n'));
+    const s = scene(scenario, {}, slow === null ? {} : { FAKE_CODEX_SLOW: slow });
     const { transport, events, results } = run(s.launch);
     transport.send(userMessage('first', []));
     if (slow !== null) await waitFor(() => sent(s.records(), slow).length === 1, `${slow} sent`);

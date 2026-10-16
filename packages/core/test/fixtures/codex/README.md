@@ -6,7 +6,7 @@
 |---|---|
 | `{"method": …, "params": …}` | A notification, sent as is. |
 | `{"request": "<method>", "params": …}` | A server request with a fresh numeric id; the fake waits for the reply, records it as `{ reply: { method, result } }` (an error reply as `result: { error }`), sends `serverRequest/resolved` and keeps its `decision` or `action` for `when`. A reply to a request no longer waited for is recorded with `method: null`. An interrupt stops the wait with no reply recorded, and `serverRequest/resolved` follows the turn's `turn/completed` (the order 0.160.0 uses: `recorded/p03-gate-patchAccept.jsonl`, `recorded/p03-gate-patchNoAnswer.jsonl`). |
-| `{"fake": "await-turn"}` | Ends this turn's lines: the fake sends `turn/completed` (`completed`, or `interrupted` after `turn/interrupt`) and plays the next lines at the next `turn/start`. Lines before the first `await-turn` play during the first turn. |
+| `{"fake": "await-turn"}` | Ends this turn's lines: the fake sends `turn/completed` (`completed`, or `interrupted` after `turn/interrupt`) and plays the next lines at the next `turn/start`. Lines before the first `await-turn` play during the first turn. A fake started again with the same `FAKE_CODEX_RECORD` (a Stop restarts the app-server) goes on from the line the previous one reached. |
 | `{"fake": "sleep", "ms": N}` | Waits; an interrupt ends the wait. |
 | `{"fake": "write", "path", "content"}` | Writes a file under the thread's `cwd` (stands for a patch or command that ran). |
 | `{"fake": "spawn-sleeper"}` | Starts a `sleep 600` child in a process group of its own (as codex starts a shell command), records `{ sleeperPid }`; SIGTERM of the fake kills it (as the real app-server's SIGTERM ends its shell commands). |

@@ -1,6 +1,11 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { ChatItem } from '@ide/protocol';
+import { argValue } from '../fake-claude/fake';
+import { sent } from '../fake-codex/fake';
 import { fixture, waitFor } from '../helpers';
-import { build } from './harness';
+import { AWAIT, build, HOLD_OPEN, INIT, type Built } from './harness';
 
 describe('Stop on Codex', () => {
   it('withdraws the plan waiting for an answer when the user stops a Codex chat, as claude cancels its call itself', async () => {
@@ -11,5 +16,110 @@ describe('Stop on Codex', () => {
     await waitFor(() => b.rt.gate.plans.plans().some((proposed) => proposed.status === 'proposed'), 'the plan waits for an answer');
     b.session.stop();
     expect(await plan).toMatchObject({ ok: true, value: { status: 'rejected' } });
+  });
+});
+
+type EngineName = 'claude' | 'codex';
+const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"$SESSION"}';
+const say = (words: string): string => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: words }] }, parent_tool_use_id: null, session_id: '$SESSION' });
+const EDIT = JSON.stringify({ fake: 'tool', id: 'toolu_edit', name: 'Edit', input: { file_path: '$CWD/src/other.ts', old_string: 'helo', new_string: 'hello' }, result: 'The file was updated.', apply: true });
+const TURN = '{"fake":"await-turn"}';
+const codexSay = (id: string, words: string): string =>
+  JSON.stringify({ method: 'item/completed', params: { threadId: '$THREAD', turnId: '$TURN', item: { type: 'agentMessage', id, text: words, phase: 'final_answer' } } });
+
+// The same behaviour in each engine's own words: the suite's assertions are engine-neutral.
+const SCENARIOS: Record<'reply' | 'stop' | 'write' | 'resume', Record<EngineName, string | string[]>> = {
+  reply: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT], codex: [codexSay('m1', 'OK')] },
+  stop: { claude: [AWAIT, INIT, HOLD_OPEN, AWAIT, INIT, say('Back.'), RESULT, AWAIT], codex: [HOLD_OPEN, TURN, codexSay('m2', 'Back.')] },
+  write: { claude: [AWAIT, INIT, say('Ready.'), RESULT, AWAIT, INIT, EDIT, say('Done.'), RESULT, AWAIT], codex: fixture('codex/patch.jsonl') },
+  resume: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT, INIT, say('42'), RESULT, AWAIT], codex: fixture('codex/multi-turn.jsonl') },
+};
+const PREVIEW: Record<EngineName, object> = {
+  claude: { kind: 'edit', oldString: 'helo', newString: 'hello' },
+  codex: { kind: 'patch', diff: "@@ -1 +1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n" },
+};
+
+const closed = (b: Built, count: number) => waitFor(() => b.session.state().turns.filter((turn) => turn.closedAt !== null).length === count, `${count} turns closed`);
+const says = (b: Built): string[] => b.session.state().items.flatMap((item: ChatItem) => (item.kind === 'message' && item.role === 'assistant' ? [item.text] : []));
+const decisionOf = (b: Built) => b.session.state().items.flatMap((item) => (item.kind === 'tool' ? [item.decision] : []))[0];
+const other = (b: Built): string => readFileSync(join(b.root, 'src/other.ts'), 'utf8');
+const conversation = (b: Built): string | undefined => b.store.session(b.session.sessionId()!)?.engineSessionId;
+
+async function startPlan(b: Built): Promise<void> {
+  const outcome = await b.rt.gate.plans.propose({ goal: 'Fix the greeting', steps: [{ key: 'edit', title: 'Fix the greeting', rationale: 'typo', targets: [{ path: 'src/app.ts', op: 'modify' }] }] });
+  expect([outcome, b.rt.gate.plans.step({ key: 'edit', phase: 'start' })]).toMatchObject([{ ok: true, value: { status: 'approved' } }, { ok: true }]);
+}
+
+describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
+  const make = (scenario: keyof typeof SCENARIOS, extra: Partial<Parameters<typeof build>[0]> = {}) => build({ scenario: SCENARIOS[scenario][engine], engine, ...extra });
+
+  it('answers a message: the reply comes in and the turn ends', async () => {
+    const b = await make('reply');
+    b.session.send('hi');
+    await closed(b, 1);
+    expect([says(b), b.session.state().turns[0]?.resultSubtype]).toEqual([['OK'], 'success']);
+  });
+
+  it('ends a turn within a second on Stop, and answers the next message', async () => {
+    const b = await make('stop');
+    await b.send();
+    await waitFor(() => b.session.state().turns.some((turn) => turn.startedAt !== null), 'the turn started');
+    const before = conversation(b);
+    const at = Date.now();
+    b.session.stop();
+    await closed(b, 1);
+    const took = Date.now() - at;
+    b.session.send('again');
+    await closed(b, 2);
+    expect([b.session.state().turns[0]?.resultSubtype, took < 1000, says(b), conversation(b)]).toEqual(['error_during_execution', true, ['Back.'], before]);
+  });
+
+  it('holds a write outside the approved plan for the user, showing what it changes, and lets it land once allowed', async () => {
+    const b = await make('write', { mode: 'B' });
+    b.session.send('ready?');
+    await closed(b, 1);
+    await startPlan(b);
+    b.session.send('fix the other file too');
+    const prompt = await waitFor(() => b.rt.gate.gate.pending()[0], 'the write waits for the user');
+    b.rt.gate.gate.answer(prompt.id, 'allow-once');
+    await closed(b, 2);
+    expect([prompt.summary, prompt.preview, other(b), decisionOf(b)]).toMatchObject(['src/other.ts', PREVIEW[engine], "export const other = 'hello';\n", 'ask-approved']);
+  });
+
+  it('denies a write outside the plan under control mode A, and nothing is written', async () => {
+    const b = await make('write', { mode: 'A' });
+    b.session.send('ready?');
+    await closed(b, 1);
+    await startPlan(b);
+    b.session.send('fix the other file too');
+    await closed(b, 2);
+    expect([other(b), decisionOf(b), b.rt.gate.gate.pending()]).toEqual(["export const other = 'helo';\n", 'deny', []]);
+  });
+
+  it('resumes the same conversation after the core restarts', async () => {
+    const b = await make('resume');
+    b.session.send('hi');
+    await closed(b, 1);
+    const before = conversation(b);
+    await b.session.close();
+    await b.rt.close();
+    const again = await build({ scenario: SCENARIOS.resume[engine], engine, from: b });
+    again.session.send('again');
+    await closed(again, 2);
+    const resumed = engine === 'claude'
+      ? argValue(again.records().findLast((record) => record.argv !== undefined)?.argv, '--resume')
+      : (sent(again.codexRecords(), 'thread/resume')[0] as { threadId?: string } | undefined)?.threadId;
+    expect([resumed, typeof before]).toEqual([before, 'string']);
+  });
+
+  it('refuses the chat with the reason when the engine cannot show that the gate is on, and the agent says nothing', async () => {
+    const b = await build(engine === 'claude'
+      ? { scenario: [AWAIT, INIT, say('never'), RESULT, AWAIT], engine, claudeEnv: { FAKE_CLAUDE_HOOKS: 'off' }, canaryMs: 300 }
+      : { scenario: SCENARIOS.reply.codex, engine, codexEnv: { FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' } });
+    b.session.send('hi');
+    await waitFor(() => b.session.state().session?.status === 'refused', 'the chat refused');
+    const notices = b.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : []));
+    const reason = engine === 'claude' ? "CodeRay's hook did not start" : 'Codex reported sandbox workspaceWrite';
+    expect([says(b), notices.some((text) => text.startsWith(reason))]).toEqual([[], true]);
   });
 });
