@@ -6,6 +6,7 @@ import { parseArgs } from 'node:util';
 import { AGENT_TERMINAL_ID, parseModelId, type ChatPick, type ClientMessage, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
 import { claudeAccounts } from './accounts/account-store';
+import { claudeLogin } from './accounts/claude-login';
 import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
 import { GitService } from './git/git-service';
@@ -192,7 +193,7 @@ try {
   let indexer: Indexer | undefined;
   const accounts = claudeAccounts(home, values.claude);
   const login = new AccountLogin({
-    accounts, claude: values.claude,
+    engines: { claude: { store: accounts, flow: claudeLogin(values.claude) } },
     onChange: () => {
       try {
         server?.broadcast(settingsSnapshot());
@@ -302,7 +303,7 @@ try {
         policy.confirmExternalEdits(message.hashes);
         return;
       case 'account.login.start':
-        login.start();
+        login.start(message.engine ?? 'claude', message.method ?? 'browser', message.apiKey ?? null);
         return;
       case 'account.login.code':
         login.submitCode(message.code);
