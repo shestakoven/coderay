@@ -79,8 +79,8 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
   const buildServer = (hints: boolean): McpServer => {
-    // Codex asks before a tool without readOnlyHint; idecore's tools change no project file. Claude's session gets none, as before.
-    const marked = <T extends object>(config: T): T => (hints ? { ...config, annotations: { readOnlyHint: true } } : config);
+    // Codex asks before a tool without readOnlyHint; idecore's tools change no project file. Claude's session gets none.
+    const marked = <T extends object>(config: T): T => (hints ? { ...config, annotations: { ...(config as { annotations?: object }).annotations, readOnlyHint: true } } : config);
     const server = new McpServer({ name: 'idecore', version: '1.0.0' });
     server.registerTool('propose_plan', marked({ description: PROPOSE_DESCRIPTION, inputSchema: proposeInput }), async (input, extra) => {
       const outcome = await options.plans.propose(input, extra.signal);
