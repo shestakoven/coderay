@@ -3,8 +3,9 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChatItem } from '@ide/protocol';
-import { claudeAccounts, type AccountStore } from '../../src/accounts/account-store';
-import { AgentSession, SessionError } from '../../src/agent/agent-session';
+import type { EngineId } from '@ide/protocol';
+import { AccountStore, claudeAccounts } from '../../src/accounts/account-store';
+import { AgentSession, SessionError, type SessionAccounts } from '../../src/agent/agent-session';
 import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
@@ -37,10 +38,10 @@ function world(active: number | null): World {
   return { home, root, seeded, accounts, dirOf: (account) => join(accountsDir(home), account.id) };
 }
 
-async function harness(w: World, scenario = 'multi-turn'): Promise<Harness> {
+async function harness(w: World, scenario = 'multi-turn', others: Partial<Record<EngineId, SessionAccounts>> = {}): Promise<Harness> {
   const store = openStore(projectDir(w.home, w.root));
   const recordFile = join(w.home, `record-${randomUUID()}.jsonl`);
-  const session = new AgentSession({ root: w.root, home: w.home, store, claude: fakeClaude(scenario, recordFile), accounts: w.accounts, defaultModel: SONNET });
+  const session = new AgentSession({ root: w.root, home: w.home, store, claude: fakeClaude(scenario, recordFile), accounts: { claude: w.accounts, ...others }, defaultModel: SONNET });
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -204,14 +205,14 @@ describe('AgentSession.changeAccount', () => {
     const w = world(0);
     const h = await busy(w);
     const change = vi.fn(() => w.accounts.setActive(w.seeded[1]!.id));
-    await expect(h.session.changeAccount(change)).rejects.toThrow(new SessionError('busy-account'));
+    await expect(h.session.changeAccount('claude', change)).rejects.toThrow(new SessionError('busy-account'));
     expect([change.mock.calls.length, w.accounts.activeId(), isAlive(h.spawns()[0]!.pid), h.session.isIdle()]).toStrictEqual([0, w.seeded[0]!.id, true, false]);
   });
 
   it('refuses to remove an account while the agent is working, and the account stays', async () => {
     const w = world(0);
     const h = await busy(w);
-    await expect(h.session.changeAccount(() => w.accounts.remove(w.seeded[0]!.id))).rejects.toThrow(new SessionError('busy-account'));
+    await expect(h.session.changeAccount('claude', () => w.accounts.remove(w.seeded[0]!.id))).rejects.toThrow(new SessionError('busy-account'));
     expect([w.accounts.list().accounts.map((account) => account.id), existsSync(w.dirOf(w.seeded[0]!))]).toStrictEqual([
       [w.seeded[0]!.id, w.seeded[1]!.id], true,
     ]);
@@ -222,7 +223,7 @@ describe('AgentSession.changeAccount', () => {
     const h = await harness(w);
     const first = await firstTurn(h);
     expect(isAlive(first.pid)).toBe(true);
-    await h.session.changeAccount(() => w.accounts.setActive(w.seeded[1]!.id));
+    await h.session.changeAccount('claude', () => w.accounts.setActive(w.seeded[1]!.id));
     expect(w.accounts.activeId()).toBe(w.seeded[1]!.id);
     await waitFor(() => !isAlive(first.pid), 'idle claude stopped');
   });
@@ -231,7 +232,7 @@ describe('AgentSession.changeAccount', () => {
     const w = world(0);
     const h = await harness(w);
     const first = await firstTurn(h);
-    await h.session.changeAccount(() => w.accounts.setActive(w.seeded[1]!.id));
+    await h.session.changeAccount('claude', () => w.accounts.setActive(w.seeded[1]!.id));
     const second = await nextSpawn(h);
     expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
@@ -242,8 +243,52 @@ describe('AgentSession.changeAccount', () => {
     const w = world(0);
     const h = await harness(w);
     await firstTurn(h);
-    await h.session.changeAccount(() => w.accounts.remove(w.seeded[0]!.id));
+    await h.session.changeAccount('claude', () => w.accounts.remove(w.seeded[0]!.id));
     const second = await nextSpawn(h);
     expect([w.accounts.activeId(), second.configDir, hasArg(second.argv, '--resume')]).toStrictEqual([null, null, false]);
+  });
+});
+
+describe('AgentSession accounts per engine', () => {
+  it('lists the models under the active account without the credential variables, as a chat runs', async () => {
+    const w = world(1);
+    withEnv('ANTHROPIC_API_KEY', 'not-a-real-key');
+    const h = await harness(w);
+    await h.session.engines.get('claude')!.listModels();
+    expect(h.spawns().map((spawn) => [spawn.configDir, spawn.credentials])).toEqual([[w.dirOf(w.seeded[1]!), []]]);
+  });
+
+  it("names the active account beside the engine state once the engine has accounts, and only then", async () => {
+    const w = world(1);
+    const h = await harness(w);
+    const named = await h.session.engines.get('claude')!.status();
+    await h.session.changeAccount('claude', async () => {
+      await w.accounts.remove(w.seeded[0]!.id);
+      await w.accounts.remove(w.seeded[1]!.id);
+    });
+    expect([named.account, (await h.session.engines.get('claude')!.status()).account]).toEqual(['b@example.com', undefined]);
+  });
+
+  it("switches another engine's account while a Claude chat works, and leaves the Claude agent running", async () => {
+    const w = world(0);
+    const codex = new AccountStore({ home: w.home, engine: 'codex', logout: async () => {} });
+    const h = await harness(w, 'text-then-wait', { codex });
+    h.session.send('go');
+    await waitFor(() => h.session.hasOpenTurn() && h.spawns().length === 1, 'turn open');
+    await h.session.changeAccount('codex', () => codex.setActive(null));
+    expect([h.session.hasOpenTurn(), isAlive(h.spawns()[0]!.pid)]).toEqual([true, true]);
+  });
+
+  it('goes on under the active account with a fresh conversation and today\'s switch notice when the account a chat ran under was removed', async () => {
+    const w = world(0);
+    const h = await harness(w);
+    const first = await firstTurn(h);
+    await h.session.changeAccount('claude', () => w.accounts.remove(w.seeded[0]!.id));
+    h.session.send('again');
+    await waitFor(() => closedTurns(h) === 2, 'second turn closed');
+    const last = h.spawns().at(-1)!;
+    expect([itemTexts(h.session.state().items).filter((text) => text.startsWith('Switched to account')), last.configDir, flag(last.argv, '--session-id') === flag(first.argv, '--session-id')]).toEqual([
+      ['Switched to account System; Claude starts a fresh conversation.'], null, false,
+    ]);
   });
 });

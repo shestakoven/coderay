@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  EMPTY_USAGE, ENGINE_CAPABILITIES, isClaudeEffort, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
+  EMPTY_USAGE, ENGINE_CAPABILITIES, ENGINE_NAMES, isClaudeEffort, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
   type ChatImage, type ChatItem, type ChatPick, type ChatSummary, type EngineId, type ImageRef, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
   type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
+import { SYSTEM_HOME, type AccountHome } from '../accounts/account-homes';
 import { CANARY_MS } from '../gate/canary';
 import type { TerminalLaunch } from '../terminal/terminal-service';
 import { defaultTranscriptsDir, largest, recoverTranscript, transcriptPath, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
@@ -13,7 +14,7 @@ import { projectDir, runDir } from '../home';
 import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
 import { commandLine, forceKill, isAlive, reaches, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
-import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
+import { claudeUnder, KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
 import { claudeEngine } from './engines/claude';
 import { EngineRegistry } from './engines/registry';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
@@ -36,11 +37,12 @@ export interface SessionGate {
   canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
 }
 
-// A session runs under the Claude account it started with: claude looks --resume transcripts up in that account's config directory.
+// A chat runs under the account its engine had active when it started: claude looks --resume transcripts up in that account's directory.
 export interface SessionAccounts {
   activeId(): string | null;
-  homeDir(id: string | null): string | null;
+  home(id: string | null): AccountHome;
   label(id: string | null): string;
+  activeLabel(): string | null;
 }
 
 export interface AgentSessionOptions {
@@ -48,7 +50,7 @@ export interface AgentSessionOptions {
   home: string;
   store: Store;
   claude: ClaudeCommand;
-  accounts?: SessionAccounts;
+  accounts?: Partial<Record<EngineId, SessionAccounts>>;
   mcpServers?: () => McpServers;
   killGraceMs?: number;
   gate?: SessionGate;
@@ -122,8 +124,6 @@ interface PendingPrompt {
   body: PromptBody;
 }
 
-// An IDE account signs claude in through its own config directory; credentials from the core's environment would win over that login.
-const ACCOUNT_KEYS = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
 const RUN_DIR_MODE = 0o700;
 const DENIED = new Set(['deny', 'ask-denied']);
 const INTERRUPT_KEYS = new Set(['\x1b', '\x03']);
@@ -190,12 +190,17 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
-    this.engines = options.engines ?? new EngineRegistry([claudeEngine({ command: () => this.activeClaude(), cwd: options.root })]);
+    this.engines = options.engines ?? new EngineRegistry([
+      claudeEngine({ command: () => this.activeClaude(), cwd: options.root, account: () => this.options.accounts?.claude?.activeLabel() ?? null }),
+    ]);
   }
 
   private activeClaude(): ClaudeCommand {
-    const dir = this.options.accounts?.homeDir(this.activeAccount()) ?? null;
-    return dir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: dir } };
+    return claudeUnder(this.options.claude, this.accountHome('claude', this.activeAccount('claude')));
+  }
+
+  private accountHome(engine: EngineId, id: string | null): AccountHome {
+    return this.options.accounts?.[engine]?.home(id) ?? SYSTEM_HOME;
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
@@ -786,12 +791,13 @@ export class AgentSession {
     return { engine, modelChoice, effort };
   }
 
-  // An idle claude still runs under the previous account, so it is stopped and the next message starts one under the new account.
-  async changeAccount(change: () => void | Promise<void>): Promise<void> {
+  // An idle agent still runs under the previous account, so it is stopped and the next message starts one under the new account.
+  async changeAccount(engine: EngineId, change: () => void | Promise<void>): Promise<void> {
     if (this.terminating) throw new SessionError('restarting');
-    if (!this.isIdle()) throw new SessionError('busy-account');
+    const affected = this.session?.engine === engine;
+    if (affected && !this.isIdle()) throw new SessionError('busy-account');
     await change();
-    if (this.transport && this.isIdle() && this.session?.accountId !== this.activeAccount()) await this.restart();
+    if (affected && this.transport && this.isIdle() && this.session?.accountId !== this.activeAccount(engine)) await this.restart();
   }
 
   async close(): Promise<void> {
@@ -799,8 +805,8 @@ export class AgentSession {
     await this.terminate('close');
   }
 
-  private activeAccount(): string | null {
-    return this.options.accounts?.activeId() ?? null;
+  private activeAccount(engine: EngineId): string | null {
+    return this.options.accounts?.[engine]?.activeId() ?? null;
   }
 
   // A chat of an engine this CodeRay does not know is kept, never run: claude would resume that engine's conversation id.
@@ -834,7 +840,7 @@ export class AgentSession {
     const session: SessionRecord = {
       id: randomUUID(), engine: chosen.engine, engineSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
       modelChoice: chosen.modelChoice, effort: chosen.effort, cliVersion: null,
-      pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(),
+      pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(chosen.engine),
     };
     this.persist(() => this.options.store.saveSession(session));
     this.setActive(session.id);
@@ -986,7 +992,7 @@ export class AgentSession {
   }
 
   private transcriptsDir(session: SessionRecord): string {
-    const configDir = this.options.accounts?.homeDir(session.accountId) ?? null;
+    const configDir = this.accountHome('claude', session.accountId).dir;
     return this.options.transcriptsDir ?? (configDir === null ? defaultTranscriptsDir() : join(configDir, 'projects'));
   }
 
@@ -1000,12 +1006,14 @@ export class AgentSession {
   }
 
   private syncAccount(): void {
-    if (!this.session) return;
-    const accountId = this.activeAccount();
-    if (this.session.accountId === accountId) return;
-    const resumable = this.session.conversationStarted;
+    const session = this.session;
+    if (!session) return;
+    const accountId = this.activeAccount(session.engine);
+    if (session.accountId === accountId) return;
     this.update({ accountId, engineSessionId: randomUUID(), conversationStarted: false });
-    if (resumable) this.apply(this.tracker.notice(`Switched to account ${this.options.accounts?.label(accountId) ?? 'System'}; Claude starts a fresh conversation.`));
+    if (!session.conversationStarted) return;
+    const label = this.options.accounts?.[session.engine]?.label(accountId) ?? 'System';
+    this.apply(this.tracker.notice(`Switched to account ${label}; ${ENGINE_NAMES[session.engine]} starts a fresh conversation.`));
   }
 
   // Writes the MCP config and the gate's hook settings claude starts with; null when the hook settings could not be written.
@@ -1027,10 +1035,7 @@ export class AgentSession {
     const configPath = this.configPath(session.id);
     rmSync(configPath, { force: true });
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
-    const accountDir = this.options.accounts?.homeDir(session.accountId) ?? null;
-    const claude = accountDir === null
-      ? this.options.claude
-      : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir }, unset: [...(this.options.claude.unset ?? []), ...ACCOUNT_KEYS] };
+    const claude = claudeUnder(this.options.claude, this.accountHome('claude', session.accountId));
     return { claude, configPath, gate };
   }
 

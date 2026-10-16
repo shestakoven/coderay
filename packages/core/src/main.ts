@@ -3,9 +3,12 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { AGENT_TERMINAL_ID, parseModelId, type ChatPick, type ClientMessage, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
+import {
+  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage, type EngineAccountsView, type EngineId, type EngineStatus, type MapSnapshot, type ModelInfo,
+  type ServerMessage,
+} from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
-import { claudeAccounts } from './accounts/account-store';
+import { AccountError, claudeAccounts, type AccountStore } from './accounts/account-store';
 import { claudeLogin } from './accounts/claude-login';
 import { AgentSession } from './agent/agent-session';
 import { createExecutionRuntime } from './execution/runtime';
@@ -191,7 +194,8 @@ try {
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
   let indexer: Indexer | undefined;
-  const accounts = claudeAccounts(home, values.claude);
+  const accountStores: Partial<Record<EngineId, AccountStore>> = { claude: claudeAccounts(home, values.claude) };
+  const accounts = accountStores.claude!;
   const login = new AccountLogin({
     engines: { claude: { store: accounts, flow: claudeLogin(values.claude) } },
     onChange: () => {
@@ -231,7 +235,7 @@ try {
   const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
-    accounts,
+    accounts: accountStores,
     defaultModel: defaultModel(process.env.IDE_DEFAULT_MODEL),
     mcpServers: () => registry.sessionServers(),
     ...rt.sessionOptions,
@@ -267,9 +271,18 @@ try {
     }
   })();
 
+  const accountViews = (): EngineAccountsView[] => agent.engines.all().flatMap((engine) => {
+    const store = accountStores[engine.id];
+    return store ? [{ engine: engine.id, ...store.list() }] : [];
+  });
+  const accountsOf = (engine: EngineId): AccountStore => {
+    const store = accountStores[engine];
+    if (!store) throw new AccountError(`${ENGINE_NAMES[engine]} has no accounts in this CodeRay.`);
+    return store;
+  };
   const settingsSnapshot = (): ServerMessage => ({
     type: 'settings.snapshot',
-    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), engines: [{ engine: 'claude', ...accounts.list() }], login: login.view() } },
+    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), engines: accountViews(), login: login.view() } },
   });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
@@ -311,14 +324,18 @@ try {
       case 'account.login.cancel':
         login.cancel();
         return;
-      case 'account.select':
-        await agent.changeAccount(() => accounts.setActive(message.id));
-        modelList = undefined;
+      case 'account.select': {
+        const engine = message.engine ?? 'claude';
+        await agent.changeAccount(engine, () => accountsOf(engine).setActive(message.id));
+        refreshEngines();
         return;
-      case 'account.remove':
-        await agent.changeAccount(() => accounts.remove(message.id));
-        modelList = undefined;
+      }
+      case 'account.remove': {
+        const engine = message.engine ?? 'claude';
+        await agent.changeAccount(engine, () => accountsOf(engine).remove(message.id));
+        refreshEngines();
         return;
+      }
     }
   };
 
@@ -340,6 +357,19 @@ try {
     return modelList;
   };
   const engineStates = (): Promise<EngineStatus[]> => Promise.all(agent.engines.all().map((engine) => engine.status()));
+  // An account change can sign an engine in or out and change what it lists, so every window gets both again.
+  // Only the latest change's answers go out: a slow check from an earlier switch must not overwrite a newer one.
+  let refreshes = 0;
+  const refreshEngines = (): void => {
+    const generation = ++refreshes;
+    modelList = undefined;
+    void engineStates()
+      .then((engines) => { if (generation === refreshes) server?.broadcast({ type: 'engines.snapshot', engines }); })
+      .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
+    void modelCatalog()
+      .then((models) => { if (generation === refreshes) server?.broadcast({ type: 'models.snapshot', models }); })
+      .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));
+  };
 
   const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {

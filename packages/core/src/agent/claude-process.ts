@@ -1,6 +1,7 @@
 import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
+import type { AccountHome } from '../accounts/account-homes';
 import { forceKill, signal } from '../os-process';
 import { recordClaude, removePidFile } from './reaper';
 
@@ -48,6 +49,11 @@ export function claudeEnv(command: ClaudeCommand): NodeJS.ProcessEnv {
   delete env.CLAUDE_CODE_ENTRYPOINT;
   for (const name of command.unset ?? []) delete env[name];
   return env;
+}
+
+/** claude under an account: pointed at the account's config directory, without the credentials that would win over its sign-in. */
+export function claudeUnder(base: ClaudeCommand, home: AccountHome): ClaudeCommand {
+  return home.dir === null ? base : { ...base, env: { ...base.env, ...home.env }, unset: [...(base.unset ?? []), ...home.unset] };
 }
 
 export function spawnClaude(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, options: ClaudeProcessOptions = {}): SpawnedClaude {

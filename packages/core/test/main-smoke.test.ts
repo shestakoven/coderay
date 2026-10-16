@@ -104,4 +104,12 @@ describe('main.ts', { timeout: 90_000 }, () => {
       { next: { engine: 'claude', modelChoice: 'opus', effort: 'medium' } },
     ]);
   });
+
+  it('sends every window the engines and the models again after an account switch, without being asked', async () => {
+    const { messages, socket } = await startMain();
+    await waitFor(() => messages.find((m) => m.type === 'history.snapshot'), 'the history snapshot');
+    socket.send(JSON.stringify({ type: 'account.select', requestId: 'r1', engine: 'claude', id: null }));
+    await waitFor(() => messages.some((m) => m.type === 'engines.snapshot') && messages.some((m) => m.type === 'models.snapshot'), 'the engines and the models');
+    expect(messages.find((m) => m.type === 'settings.result')).toMatchObject({ requestId: 'r1', error: null });
+  });
 });

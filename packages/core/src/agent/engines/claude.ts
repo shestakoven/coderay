@@ -14,13 +14,19 @@ export interface ClaudeEngineOptions {
   /** The claude the core runs, under the active account. */
   command: () => ClaudeCommand;
   cwd: string;
+  /** The active account's name, or null while Claude has no account of CodeRay's. */
+  account?: () => string | null;
 }
 
 export function claudeEngine(options: ClaudeEngineOptions): Engine {
   return {
     id: 'claude',
     capabilities: ENGINE_CAPABILITIES.claude,
-    status: () => claudeStatus(options.command()),
+    status: async () => {
+      const status = await claudeStatus(options.command());
+      const account = options.account?.() ?? null;
+      return account === null ? status : { ...status, account };
+    },
     listModels: () => fetchModels(options.command(), options.cwd),
     start: (launch, sink) => startSdkTransport(launch, sink),
   };
