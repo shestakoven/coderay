@@ -268,3 +268,14 @@ describe('Settings workspace', () => {
     expect(switches.map((element) => [element.attrs['aria-label'], element.attrs['aria-checked']])).toEqual([['Reduce motion', 'false'], ['Dots on the map', 'true']]);
   });
 });
+
+describe('Settings: accounts', () => {
+  it("shows the accounts and the running sign-in of a core from before engine-scoped accounts as Claude's", () => {
+    const account = { id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 };
+    const older = { ...claude, accounts: { accounts: [account], activeId: account.id, login: { state: 'waiting', url: 'https://claude.com/oauth', error: null } } };
+    const root = parse(render(older as unknown as SettingsView, claudeSession, 'accounts'));
+    const section = settingSection(root, 'Claude accounts');
+    expect([settingTitles(root), textOf(section).includes('a@example.com active'), all(section, (element) => element.tag === 'button' && textOf(element) === 'Open sign-in page').length])
+      .toEqual([['Claude accounts'], true, 1]);
+  });
+});

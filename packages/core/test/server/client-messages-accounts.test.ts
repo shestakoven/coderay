@@ -33,6 +33,7 @@ describe('parseClientMessage account requests', () => {
       { type: 'account.login.start', requestId: 'r2', engine: 'codex', method: 'api-key', apiKey: 'sk-proj-AbC_123-xyz' },
       { type: 'account.select', requestId: 'r3', engine: 'codex', id },
       { type: 'account.remove', requestId: 'r4', engine: 'codex', id },
+      { type: 'account.login.start', requestId: 'r5', engine: 'codex', method: 'api-key', apiKey: 'k'.repeat(512) },
     ];
     expect(messages.map(parse)).toEqual(messages);
   });
@@ -44,6 +45,10 @@ describe('parseClientMessage account requests', () => {
     ['the API-key way without a key', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key' }],
     ['a key with a space', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key', apiKey: 'sk x' }],
     ['a key of 513 characters', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key', apiKey: 'k'.repeat(513) }],
+    ['an empty key', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key', apiKey: '' }],
+    ['a key given as a number', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key', apiKey: 1234 }],
+    ['a way given as a list', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: ['browser'] }],
+    ['the API-key way without an engine, which makes it Claude\'s', { type: 'account.login.start', requestId: 'r', method: 'api-key', apiKey: 'sk-x' }],
     ['a choice for an unknown engine', { type: 'account.select', requestId: 'r', engine: 'gemini', id: null }],
     ['a removal for an engine given as a number', { type: 'account.remove', requestId: 'r', engine: 1, id }],
   ])('rejects %s', (_, message) => {

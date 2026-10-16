@@ -313,19 +313,18 @@ describe('AccountLogin keeps the sign-in secrets off disk and out of logs', () =
 });
 
 describe('AccountLogin for every engine', () => {
-  interface Scripted { flow: LoginFlow; started: { home: SignedHome; method: LoginMethod; secret: string | null }[]; report: (update: FlowUpdate) => void; cancelled: () => number }
+  interface Scripted { flow: LoginFlow; started: { home: SignedHome; method: LoginMethod; secret: string | null }[]; report: (update: FlowUpdate) => void }
 
   function scripted(): Scripted {
     let report: (update: FlowUpdate) => void = () => {};
-    let cancelled = 0;
     const started: Scripted['started'] = [];
     return {
-      started, cancelled: () => cancelled, report: (update) => report(update),
-      flow: { start: (home, method, secret, sink) => { started.push({ home, method, secret }); report = sink; return { cancel: () => { cancelled += 1; } }; } },
+      started, report: (update) => report(update),
+      flow: { start: (home, method, secret, sink) => { started.push({ home, method, secret }); report = sink; return { cancel: () => {} }; } },
     };
   }
 
-  function two(timeoutMs?: number) {
+  function two() {
     const home = tempDir('ide-login-home-');
     const claude = claudeAccounts(home, fakeCli().command);
     const codex = new AccountStore({ home, engine: 'codex', logout: async () => {} });
@@ -333,7 +332,7 @@ describe('AccountLogin for every engine', () => {
     const views: AccountLoginView[] = [];
     const login = new AccountLogin({
       engines: { claude: { store: claude, flow: scripted().flow }, codex: { store: codex, flow: codexFlow.flow } },
-      now: () => 9, ...(timeoutMs === undefined ? {} : { timeoutMs }), onChange: () => views.push(login.view()),
+      now: () => 9, onChange: () => views.push(login.view()),
     });
     onTestFinished(() => login.cancel());
     return { home, claude, codex, codexFlow, views, login };
@@ -357,20 +356,46 @@ describe('AccountLogin for every engine', () => {
     ]);
   });
 
-  it('refuses a second sign-in of any engine while one runs, and a way the engine does not offer', () => {
-    const { login } = two();
+  it('refuses a second sign-in of any engine while one runs, a way the engine does not offer and an engine without accounts, and makes no directory for a refused one', () => {
+    const { home, claude, login } = two();
     login.start('codex', 'api-key', 'sk-test');
     expect(() => login.start('claude', 'browser')).toThrow('A sign-in is already running; finish or cancel it first.');
     login.cancel();
     expect(() => login.start('claude', 'api-key', 'sk-test')).toThrow('CodeRay cannot sign Claude in that way.');
+    const claudeOnly = new AccountLogin({ engines: { claude: { store: claude, flow: scripted().flow } }, onChange: () => {} });
+    expect(() => claudeOnly.start('codex', 'browser')).toThrow('CodeRay cannot sign Codex in that way.');
+    expect([login.view().state, claudeOnly.view().state, existsSync(join(home, 'claude-accounts')), readdirSync(join(home, 'codex-accounts'))]).toStrictEqual(['idle', 'idle', false, []]);
   });
 
-  it("times out a sign-in of any engine, says so for that engine, stops its flow and removes the half-made account's directory", async () => {
-    const { home, codexFlow, login } = two(30);
+  it('hears a flow that reports inside start only once its run, timer and view are in place, and forgets a flow that throws', () => {
+    vi.useFakeTimers();
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const home = tempDir('ide-login-home-');
+    const steps: (FlowUpdate | 'throw')[] = [
+      { kind: 'failed', error: 'codex is not installed.' }, 'throw', { kind: 'waiting', url: 'https://auth.example.test/codex/device', userCode: 'WXYZ-9876' },
+    ];
+    let cancelled = 0;
+    const flow: LoginFlow = {
+      start: (_home, _method, _secret, report) => {
+        const step = steps.shift()!;
+        if (step === 'throw') throw new Error('codex crashed.');
+        report(step);
+        return { cancel: () => { cancelled += 1; } };
+      },
+    };
+    const login = new AccountLogin({ engines: { codex: { store: new AccountStore({ home, engine: 'codex', logout: async () => {} }), flow } }, onChange: () => {} });
+    onTestFinished(() => login.cancel());
+    const failed = { state: 'error', engine: 'codex', method: 'browser', url: null, userCode: null, error: 'codex is not installed.' };
     login.start('codex', 'browser');
-    const failed = await waitFor(() => login.view().state === 'error' && login.view(), 'the sign-in timed out');
-    expect([failed, codexFlow.cancelled(), readdirSync(join(home, 'codex-accounts'))]).toStrictEqual([
-      { state: 'error', engine: 'codex', method: 'browser', url: null, userCode: null, error: 'The sign-in timed out after 10 minutes.' }, 1, [],
+    const reported = [login.view(), cancelled, vi.getTimerCount(), readdirSync(join(home, 'codex-accounts'))];
+    expect(() => login.start('codex', 'device-code')).toThrow('codex crashed.');
+    const thrown = [login.view(), readdirSync(join(home, 'codex-accounts'))];
+    login.start('codex', 'device-code');
+    expect([reported, thrown, login.view()]).toStrictEqual([
+      [failed, 1, 0, []], [failed, []],
+      { state: 'waiting', engine: 'codex', method: 'device-code', url: 'https://auth.example.test/codex/device', userCode: 'WXYZ-9876', error: null },
     ]);
   });
 });

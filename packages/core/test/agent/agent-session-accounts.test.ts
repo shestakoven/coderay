@@ -268,14 +268,18 @@ describe('AgentSession accounts per engine', () => {
     expect([named.account, (await h.session.engines.get('claude')!.status()).account]).toEqual(['b@example.com', undefined]);
   });
 
-  it("switches another engine's account while a Claude chat works, and leaves the Claude agent running", async () => {
+  it("switches another engine's account while a Claude chat works or idles, and leaves the Claude agent running", async () => {
     const w = world(0);
     const codex = new AccountStore({ home: w.home, engine: 'codex', logout: async () => {} });
-    const h = await harness(w, 'text-then-wait', { codex });
-    h.session.send('go');
-    await waitFor(() => h.session.hasOpenTurn() && h.spawns().length === 1, 'turn open');
+    const h = await harness(w, 'interrupt-bash', { codex });
+    h.session.send('run it');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'the agent working');
     await h.session.changeAccount('codex', () => codex.setActive(null));
-    expect([h.session.hasOpenTurn(), isAlive(h.spawns()[0]!.pid)]).toEqual([true, true]);
+    const working = [h.session.hasOpenTurn(), isAlive(h.spawns()[0]!.pid)];
+    h.session.stop();
+    await waitFor(() => h.session.isIdle(), 'turn stopped');
+    await h.session.changeAccount('codex', () => codex.setActive(null));
+    expect([working, isAlive(h.spawns()[0]!.pid), h.spawns().length]).toEqual([[true, true], true, 1]);
   });
 
   it('goes on under the active account with a fresh conversation and today\'s switch notice when the account a chat ran under was removed', async () => {

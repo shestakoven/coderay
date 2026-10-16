@@ -55,10 +55,11 @@ describe('ModelMenu', () => {
       .toEqual([['No model matches “zzz”'], [''], ['Sign in: run codex login'], false, [true], [true, true, true]]);
   });
 
-  it("names the account each engine runs under in its header, and nothing for an engine with no account of CodeRay's", () => {
+  it("names the account each engine runs under in its header and in its group's name for a screen reader, and nothing for an engine with no account of CodeRay's", () => {
     const engines = ENGINE_STATES.map((status) => (status.engine === 'codex' ? { ...status, account: 'work@example.com · Plus' } : status));
     const html = renderToStaticMarkup(<ModelMenu models={THREE_ENGINES} engines={engines} current={SONNET} started={false} recent={[]} initialQuery="" onChoose={() => undefined} onClose={() => undefined} />);
-    expect(texts(html, 'model-account')).toEqual(['work@example.com · Plus']);
+    const groupNames = [...html.matchAll(/class="model-group-head" id="[^"]+"[^>]*>(.*?)<\/div>/g)].map((match) => match[1]!.replace(/<[^>]+>/g, ''));
+    expect([texts(html, 'model-account'), groupNames.map((name) => name.startsWith('Codex, account work@example.com · Plus'))]).toEqual([['work@example.com · Plus'], [false, true, false]]);
   });
 });
 

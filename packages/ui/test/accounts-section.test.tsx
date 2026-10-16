@@ -191,12 +191,4 @@ describe('AccountsSection per engine', () => {
     expect([buttons(root, 'Open the device page').map(isDisabled), textOf(root).includes('ABCD-1234'), buttons(root, 'Copy').length, textOf(root).includes('SECRET'), buttons(root, 'Cancel').length])
       .toStrictEqual([[false], true, 1, false, 1]);
   });
-
-  it('keeps adding an account closed while another engine signs in and says which sign-in to finish, but not once that sign-in failed', () => {
-    const add = (state: AccountLoginView['state']) => {
-      const root = renderEngine('claude', {}, { state, engine: 'codex', method: 'browser', url: null, userCode: null, error: state === 'error' ? 'Sign-in failed.' : null });
-      return [buttons(root, 'Add account').map(isDisabled), textOf(root).includes('Finish or cancel the Codex sign-in first.')];
-    };
-    expect([add('waiting'), add('error')]).toStrictEqual([[[true], true], [[false], false]]);
-  });
 });

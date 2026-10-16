@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { WebSocket } from 'ws';
 import type { ServerMessage } from '@ide/protocol';
+import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE } from './fake-claude/fake';
 import { fixture, tempDir, waitFor, writeTree } from './helpers';
 
@@ -105,11 +106,49 @@ describe('main.ts', { timeout: 90_000 }, () => {
     ]);
   });
 
-  it('sends every window the engines and the models again after an account switch, without being asked', async () => {
-    const { messages, socket } = await startMain();
-    await waitFor(() => messages.find((m) => m.type === 'history.snapshot'), 'the history snapshot');
-    socket.send(JSON.stringify({ type: 'account.select', requestId: 'r1', engine: 'claude', id: null }));
-    await waitFor(() => messages.some((m) => m.type === 'engines.snapshot') && messages.some((m) => m.type === 'models.snapshot'), 'the engines and the models');
-    expect(messages.find((m) => m.type === 'settings.result')).toMatchObject({ requestId: 'r1', error: null });
+  it("sends every window the engines and the models of the latest account change only, keeps Claude's accounts at the top of the settings for older windows, and refuses an engine without accounts", async () => {
+    const dir = tempDir('main-accounts-');
+    const claude = join(dir, 'claude');
+    // Counts the version checks and the model listings; the second of each answers only once released, the way a slow earlier change would.
+    const hold = (file: string, answer: string): string => `if [ $n = 2 ]; then echo $$ > '${dir}/${file}'; while [ ! -e '${dir}/release' ]; do sleep 0.02; done; ${answer}; fi`;
+    const count = (file: string): string => `n=$(( $(cat '${dir}/${file}' 2>/dev/null || echo 0) + 1 )); echo $n > '${dir}/${file}'`;
+    writeFileSync(claude, [
+      '#!/bin/sh',
+      'if [ "$1" = --version ]; then',
+      count('versions'),
+      hold('held-version', "echo '1.0.0 (Claude Code)'; exit 0"),
+      "echo '2.1.296 (Claude Code)'; exit 0",
+      'fi',
+      count('listings'),
+      'read -r request',
+      `models="[{\\"value\\":\\"m$n\\",\\"displayName\\":\\"Model $n\\"}]"`,
+      hold('held-listing', "models='[]'"),
+      'printf \'{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":%s}}}\\n\' "$models"',
+      'exec cat > /dev/null',
+    ].join('\n'), { mode: 0o755 });
+    onTestFinished(() => writeFileSync(join(dir, 'release'), ''));
+    const { messages, socket } = await startMain({ claude });
+    const send = (message: object): void => socket.send(JSON.stringify(message));
+    const models = () => messages.flatMap((m) => (m.type === 'models.snapshot' ? [m.models.map((model) => model.name)] : []));
+    const engines = () => messages.flatMap((m) => (m.type === 'engines.snapshot' ? [m.engines.map((engine) => engine.state)] : []));
+    const held = (): number[] => ['held-listing', 'held-version'].map((file) => (existsSync(join(dir, file)) ? Number(readFileSync(join(dir, file), 'utf8')) : 0));
+    const settings = await waitFor(() => messages.find((m) => m.type === 'settings.snapshot'), 'the settings');
+    send({ type: 'account.select', requestId: 'r1', engine: 'codex', id: null });
+    const refused = await waitFor(() => messages.find((m) => m.type === 'settings.result' && m.requestId === 'r1'), 'the refusal');
+    send({ type: 'models.list' });
+    await waitFor(() => models().length === 1 && engines().length === 1, 'the engines and the models');
+    send({ type: 'account.select', requestId: 'r2', engine: 'claude', id: null });
+    const pids = await waitFor(() => held().every((pid) => pid > 0) && held(), 'the checks of the earlier change');
+    send({ type: 'account.select', requestId: 'r3', engine: 'claude', id: null });
+    await waitFor(() => models().length === 2 && engines().length === 2, 'the engines and the models of the later change');
+    writeFileSync(join(dir, 'release'), '');
+    await waitFor(() => pids.every((pid) => !isAlive(pid)), 'the checks of the earlier change to end');
+    send({ type: 'models.list' });
+    await waitFor(() => models().length === 3 && engines().length === 3, 'the engines and the models again');
+    expect([settings.type === 'settings.snapshot' && settings.settings.accounts, refused, models(), engines()]).toEqual([
+      { accounts: [], activeId: null, engines: [{ engine: 'claude', accounts: [], activeId: null }], login: { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null } },
+      { type: 'settings.result', requestId: 'r1', error: 'Codex has no accounts in this CodeRay.' },
+      [['Model 1'], ['Model 3'], ['Model 3']], [['ready'], ['ready'], ['ready']],
+    ]);
   });
 });

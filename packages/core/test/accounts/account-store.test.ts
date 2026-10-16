@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { AccountStore, claudeAccounts } from '../../src/accounts/account-store';
+import type { SignedHome } from '../../src/accounts/account-homes';
+import { AccountError, AccountStore, claudeAccounts } from '../../src/accounts/account-store';
 import { tempDir } from '../helpers';
 import { accountsDir, accountsFile, fakeCli, mode, seedAccounts } from './fake-cli';
 
@@ -210,29 +211,22 @@ describe('AccountStore refuses ids that are not uuids', () => {
   });
 });
 
-const codexStore = (home: string, logout: (dir: string) => void = () => {}) =>
-  new AccountStore({ home, engine: 'codex', logout: async (account) => logout(account.dir) });
+const codexStore = (home: string, logout: (account: SignedHome) => void = () => {}) =>
+  new AccountStore({ home, engine: 'codex', logout: async (account) => logout(account) });
 const PLUS = (id: string) => ({ id, email: 'work@example.com', plan: 'Plus', createdAt: 7 });
 
 describe('AccountStore per engine', () => {
-  it("reads the accounts.json of a CodeRay before engines as Claude's, and Codex as having none", () => {
-    const { home, seeded, store } = setup(['a@example.com', 'b@example.com'], 0);
-    expect([store().list(), codexStore(home).list()]).toStrictEqual([
-      { accounts: seeded.map(({ id, email }, at) => ({ id, email, createdAt: 1000 + at })), activeId: seeded[0]!.id },
-      { accounts: [], activeId: null },
-    ]);
-  });
-
   it("keeps Claude's accounts at the top level and every other engine's beside them, whichever engine writes, and keeps keys it does not know", () => {
     const { home, seeded, store } = setup(['a@example.com'], null);
     const file = () => JSON.parse(readFileSync(accountsFile(home), 'utf8')) as Record<string, unknown>;
-    writeFileSync(accountsFile(home), JSON.stringify({ ...file(), opencode: { accounts: [], activeId: null, later: true } }));
+    const claude = { id: seeded[0]!.id, email: 'a@example.com', createdAt: 1000, label: 'a later CodeRay' };
+    writeFileSync(accountsFile(home), JSON.stringify({ accounts: [claude], activeId: null, opencode: { accounts: [], activeId: null, later: true } }));
     const codexId = randomUUID();
     codexStore(home).add(PLUS(codexId));
     codexStore(home).setActive(codexId);
     store().setActive(seeded[0]!.id);
     expect(file()).toStrictEqual({
-      accounts: [{ id: seeded[0]!.id, email: 'a@example.com', createdAt: 1000 }], activeId: seeded[0]!.id,
+      accounts: [claude], activeId: seeded[0]!.id,
       opencode: { accounts: [], activeId: null, later: true },
       codex: { accounts: [PLUS(codexId)], activeId: codexId },
     });
@@ -263,14 +257,14 @@ describe('AccountStore per engine', () => {
 
   it("removes an account through its own engine's sign-out and leaves the other engine's accounts alone", async () => {
     const { home, seeded, store } = setup(['a@example.com'], 0);
-    const signedOut: string[] = [];
-    const codex = codexStore(home, (dir) => signedOut.push(dir));
+    const signedOut: SignedHome['env'][] = [];
+    const codex = codexStore(home, (account) => signedOut.push(account.env));
     const id = randomUUID();
     codex.add(PLUS(id));
     codex.createDir(id);
     await codex.remove(id);
     expect([signedOut, existsSync(join(home, 'codex-accounts', id)), codex.list(), store().list().accounts.map((account) => account.id)]).toStrictEqual([
-      [join(home, 'codex-accounts', id)], false, { accounts: [], activeId: null }, [seeded[0]!.id],
+      [{ CODEX_HOME: join(home, 'codex-accounts', id) }], false, { accounts: [], activeId: null }, [seeded[0]!.id],
     ]);
   });
 
@@ -287,5 +281,29 @@ describe('AccountStore per engine', () => {
       closeSync(reader);
     }
     expect([seen, readdirSync(home).sort()]).toStrictEqual([before, ['accounts.json', 'claude-accounts']]);
+  });
+
+  it('never writes over an accounts.json it cannot read, and leaves nothing beside it when a write fails', () => {
+    const { home, seeded, store } = setup(['a@example.com'], null);
+    const path = accountsFile(home);
+    writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(path, 'utf8')), codex: { accounts: [PLUS(randomUUID())], activeId: null }, later: true }));
+    const before = readFileSync(path, 'utf8');
+    chmodSync(path, 0o000);
+    expect(store().list()).toStrictEqual({ accounts: [], activeId: null });
+    expect(() => store().setActive(null)).toThrow(AccountError);
+    chmodSync(path, 0o600);
+    const unreadable = readFileSync(path, 'utf8');
+    unlinkSync(path);
+    symlinkSync(join(home, 'gone.json'), path);
+    expect(() => codexStore(home).add(PLUS(randomUUID()))).toThrow(AccountError);
+    const dangling = lstatSync(path).isSymbolicLink();
+    unlinkSync(path);
+    writeFileSync(path, before);
+    const kept = join(victim(home), 'keep.txt');
+    symlinkSync(kept, `${path}.${process.pid}.tmp`);
+    expect(() => store().setActive(seeded[0]!.id)).toThrow(/symbolic link/);
+    expect([unreadable, dangling, readFileSync(path, 'utf8'), readFileSync(kept, 'utf8'), readdirSync(home).sort()]).toStrictEqual([
+      before, true, before, 'keep', ['accounts.json', 'claude-accounts', 'victim'],
+    ]);
   });
 });
