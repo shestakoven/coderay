@@ -1,4 +1,5 @@
 import type { ChatImage, EffortLevel, EngineId, ImageMediaType } from '@ide/protocol';
+import type { HookAnswer } from '../gate/hook-gate';
 import type { ClaudeCommand, ProcessExit } from './claude-process';
 import type { PermissionAnswer } from './prompts';
 import type { StreamEvent } from './stream';
@@ -6,6 +7,14 @@ import type { StreamEvent } from './stream';
 export interface GateLaunch {
   settingsPath: string;
   appendSystemPrompt: string;
+}
+
+/** A call that may write, in claude's PreToolUse hook input shape, for the gate to decide. */
+export interface GateCall {
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id: string;
+  cwd: string;
 }
 
 /** What every engine starts a chat's agent with. */
@@ -18,6 +27,8 @@ export interface LaunchBase {
   effort: string | null;
   killGraceMs?: number;
   pidDir?: string;
+  /** The gate, for engines whose writes reach it as requests rather than through claude's hook; null when the call went away first. */
+  decide?: (call: GateCall, signal: AbortSignal) => Promise<HookAnswer | null>;
 }
 
 /** Claude's launch: the MCP config and the gate's settings AgentSession writes for it, and claude's own flags. */

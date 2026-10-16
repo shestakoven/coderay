@@ -546,13 +546,22 @@ describe('HookGate', () => {
     expect(await pending()).toMatchObject({ tool: 'BrandNewTool', targets: [], canExpand: false, preview: { kind: 'input' } });
   });
 
-  it('judges a 5 MB Write and caps its preview', async () => {
-    const { root, call, approve, pending } = await setup();
+  it("judges a 5 MB Write and a 5 MB Codex edit and caps their previews, and shows claude's strings over a stray diff", async () => {
+    const { root, call, approve, pending, gate } = await setup();
     await approve();
-    void call('Write', { file_path: join(root, 'src/other.ts'), content: 'x'.repeat(5_000_000) });
+    const file = join(root, 'src/other.ts');
+    void call('Write', { file_path: file, content: 'x'.repeat(5_000_000) });
     const prompt = await pending();
     expect(prompt.preview).toMatchObject({ kind: 'write', truncated: true });
     expect(prompt.preview.kind === 'write' ? prompt.preview.content.length : 0).toBe(20_000);
+    gate.answer(prompt.id, 'deny');
+    void call('Edit', { file_path: file, diff: `@@ -1 +1 @@\n-a\n+${'x'.repeat(5_000_000)}\n` }, undefined, 'toolu_2');
+    const patch = await pending();
+    expect(patch.preview).toMatchObject({ kind: 'patch', path: file, truncated: true });
+    expect(patch.preview.kind === 'patch' ? patch.preview.diff.length : 0).toBe(20_000);
+    gate.answer(patch.id, 'deny');
+    void call('Edit', { file_path: file, old_string: 'a', new_string: 'b', diff: '+c' }, undefined, 'toolu_3');
+    expect((await pending()).preview).toMatchObject({ kind: 'edit', oldString: 'a', newString: 'b' });
   });
 
   it('judges each file that mv moves into a directory', async () => {

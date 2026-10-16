@@ -595,6 +595,11 @@ function preview(input: HookInput): GatePreview {
     const after = cut(record.new_string);
     return { kind: 'edit', path, oldString: before.text, newString: after.text, truncated: before.truncated || after.truncated };
   }
+  // A Codex edit comes as its diff; after claude's strings, so a stray diff field never hides what an Edit replaces.
+  if (input.toolName === 'Edit' && typeof record.diff === 'string') {
+    const diff = cut(record.diff);
+    return { kind: 'patch', path, diff: diff.text, truncated: diff.truncated };
+  }
   if (typeof record.command === 'string') {
     const command = cut(record.command);
     return { kind: 'command', command: command.text, truncated: command.truncated };

@@ -81,6 +81,9 @@ export interface CommandExecutionRequestApprovalParams {
 }
 // What CodeRay answers a request for more permissions: none granted, for this turn only.
 export interface PermissionsRequestApprovalResponse { permissions: Record<string, never>; scope: 'turn' }
-export interface McpServerElicitationRequestParams { threadId: string; turnId: string; serverName: string; message: string; _meta: { codex_approval_kind?: string; tool_params?: JsonValue } | null }
+export interface McpServerElicitationRequestParams {
+  threadId: string; turnId: string | null; serverName: string; mode?: 'form' | 'openai/form' | 'openaiForm' | 'url'; message: string;
+  _meta: { codex_approval_kind?: string; tool_params?: JsonValue } | null;
+}
 export interface ApprovalResponse { decision: 'accept' | 'decline' }
 export interface ElicitationResponse { action: 'accept' | 'decline'; content: JsonValue; _meta: null }
