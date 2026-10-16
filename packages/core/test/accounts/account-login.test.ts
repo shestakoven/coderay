@@ -18,7 +18,7 @@ const claudeView = (view: Pick<AccountLoginView, 'state' | 'url' | 'error'>): Ac
 
 type CodeOutcome = 'ok' | 'signed-out' | 'invalid';
 
-function setup(config: FakeCliConfig = {}, { timeoutMs, outcome = 'ok' }: { timeoutMs?: number; outcome?: CodeOutcome } = {}) {
+function setup(config: FakeCliConfig = {}, { outcome = 'ok' }: { outcome?: CodeOutcome } = {}) {
   const home = tempDir('ide-login-home-');
   const url = `https://claude.com/cai/oauth/authorize?code=true&client_id=9d1c250a&response_type=code&state=URLSENTINEL${randomUUID().slice(0, 8)}`;
   const code = `CODESENTINEL-${randomUUID()}`;
@@ -26,7 +26,7 @@ function setup(config: FakeCliConfig = {}, { timeoutMs, outcome = 'ok' }: { time
   const accounts = claudeAccounts(home, cli.command);
   const views: AccountLoginView[] = [];
   const login = new AccountLogin({
-    engines: { claude: { store: accounts, flow: claudeLogin(cli.command) } }, now: () => 4242, ...(timeoutMs === undefined ? {} : { timeoutMs }),
+    engines: { claude: { store: accounts, flow: claudeLogin(cli.command) } }, now: () => 4242,
     onChange: () => views.push(login.view()),
   });
   onTestFinished(() => {
@@ -182,10 +182,16 @@ describe('AccountLogin failures', () => {
   });
 
   it('gives up after the timeout, stops claude and discards the attempt', async () => {
-    const { home, login, accounts, loginRecord, helperPid, waiting, settled } = setup({}, { timeoutMs: 800 });
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    onTestFinished(() => {
+      vi.useRealTimers();
+    });
+    const { home, login, accounts, loginRecord, helperPid } = setup();
     login.start('claude', 'browser');
-    await waiting();
-    expectFailed(home, accounts, await settled('error'));
+    await vi.waitFor(() => expect(login.view().url).not.toBeNull(), { timeout: 10_000, interval: 20 });
+    vi.advanceTimersByTime(10 * 60_000);
+    vi.useRealTimers();
+    expectFailed(home, accounts, login.view());
     const pids = [loginRecord()?.pid ?? -1, helperPid() ?? -1];
     await waitFor(() => pids.every((pid) => !isAlive(pid)), 'claude and its helper stopped');
   });

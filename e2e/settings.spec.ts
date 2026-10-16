@@ -763,7 +763,7 @@ async function standInAccounts(page: Page, lists: { claude: object[]; codex: obj
   };
 }
 
-test("a Claude sign-in keeps the keyboard's focus on its current step and gives it back where it began, shows its code field again empty, and keeps the code out of the page's markup", async ({ page }) => {
+test("a Claude sign-in keeps the keyboard's focus on its current step and gives it back where it began, shows its code field again empty, keeps the code out of the page's markup, and search finds a Claude account", async ({ page }) => {
   const stand = await standInAccounts(page, { claude: [{ id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 }], codex: [] });
   await openApp(page);
   const dialog = await openSettings(page);
@@ -804,6 +804,11 @@ test("a Claude sign-in keeps the keyboard's focus on its current step and gives 
   await page.keyboard.press('Enter');
   await expect(accounts.getByRole('button', { name: 'Add account' })).toBeFocused();
 
+  const search = dialog.getByRole('textbox', { name: 'Search settings' });
+  await search.fill('a@example.com');
+  await expect(accounts).toBeVisible();
+  await expect(setting(dialog, 'Codex accounts')).toHaveCount(0);
+  await search.fill('');
   await accounts.getByRole('button', { name: 'Remove' }).focus();
   await page.keyboard.press('Enter');
   await page.keyboard.press('Enter');
