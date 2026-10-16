@@ -83,7 +83,8 @@ async function play(current) {
     if (step.fake === 'sleep') await sleep(step.ms);
     else if (step.fake === 'write') writeFileSync(join(cwd, step.path), step.content);
     else if (step.fake === 'spawn-sleeper') {
-      const child = spawn('sleep', ['600'], { stdio: 'ignore' });
+      // In a group of its own, as codex starts a shell command.
+      const child = spawn('sleep', ['600'], { stdio: 'ignore', detached: true });
       sleepers.push(child.pid);
       record({ sleeperPid: child.pid });
     } else if (step.fake === 'fail') {
@@ -114,8 +115,9 @@ function startThread(id, method, params) {
     const name = /^mcp_servers\.([^.]+)\.enabled$/.exec(key)?.[1];
     // The real app-server stops at start when a server nobody defines is switched off by name.
     if (name !== undefined && value === false && !Object.hasOwn(userServers, name)) {
-      process.stderr.write(`Error: MCP server ${name} is not defined\n`);
-      process.exit(1);
+      // A pipe is written asynchronously on macOS: exiting at once could lose the line.
+      process.stderr.write(`Error: MCP server ${name} is not defined\n`, () => process.exit(1));
+      return;
     }
   }
   cwd = params.cwd ?? cwd;
