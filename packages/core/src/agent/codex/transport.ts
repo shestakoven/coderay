@@ -165,8 +165,10 @@ class CodexTransport implements AgentTransport {
     this.opening = null;
     this.endedTurns.clear();
     void server.exited.then((exit) => {
-      // A restart after Stop replaces the app-server on purpose; any other exit ends the chat's agent.
-      if (this.server === server && this.restarting === null) this.end(exit);
+      // A restart after Stop replaces the app-server on purpose; any other exit ends the chat's agent, and a codex that could not be spawned refuses it.
+      if (this.server !== server || this.restarting !== null) return;
+      if (exit.error !== null) this.refuse(`Codex did not start: ${exit.error}`);
+      this.end(exit);
     });
     void this.boot(server);
   }

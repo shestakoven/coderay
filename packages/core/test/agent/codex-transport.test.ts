@@ -92,6 +92,7 @@ describe('the Codex transport', () => {
     ['its policy echo sends approvals to a reviewer other than the user', { FAKE_CODEX_ECHO: '{"approvalsReviewer":"auto_review"}' }, /by auto_review/, {}],
     ['the echo of a resumed thread sends approvals to another reviewer', { FAKE_CODEX_ECHO: '{"approvalsReviewer":"auto_review"}' }, /by auto_review/, { resume: true, engineSessionId: 'thread-old' }],
     ['its policy echo lets the model start sub-agents on its own', { FAKE_CODEX_ECHO: '{"multiAgentMode":"proactive"}' }, /sub-agents "proactive"/, {}],
+    ['codex cannot be started', {}, /^Codex did not start: spawn \/nonexistent\/codex ENOENT$/, { codex: { command: '/nonexistent/codex', args: [] } }],
     ['the account is signed out', { FAKE_CODEX_ACCOUNT: 'none' }, /^Sign in\.$/, {}],
     ['codex is older than 0.160', { FAKE_CODEX_VERSION: '0.159.9' }, /^codex 0\.159\.9 is older than 0\.160\.0/, {}],
     ['codex does not say its version, in words with a key', { FAKE_CODEX_USER_AGENT: 'codex (fake; sk-proj-abcdefghijklmnopqrstuvwx)' }, /^CodeRay cannot read Codex version in "codex \(fake; \[key hidden\]\)"/, {}],
