@@ -299,11 +299,20 @@ describe('AccountStore per engine', () => {
     const dangling = lstatSync(path).isSymbolicLink();
     unlinkSync(path);
     writeFileSync(path, before);
-    const kept = join(victim(home), 'keep.txt');
-    symlinkSync(kept, `${path}.${process.pid}.tmp`);
+    symlinkSync(join(home, 'gone.tmp'), `${path}.${process.pid}.tmp`);
     expect(() => store().setActive(seeded[0]!.id)).toThrow(/symbolic link/);
-    expect([unreadable, dangling, readFileSync(path, 'utf8'), readFileSync(kept, 'utf8'), readdirSync(home).sort()]).toStrictEqual([
-      before, true, before, 'keep', ['accounts.json', 'claude-accounts', 'victim'],
+    const left = readdirSync(home).sort();
+    chmodSync(home, 0o500);
+    let denied: unknown;
+    try {
+      store().setActive(seeded[0]!.id);
+    } catch (error) {
+      denied = error;
+    } finally {
+      chmodSync(home, 0o700);
+    }
+    expect([unreadable, dangling, readFileSync(path, 'utf8'), left, (denied as NodeJS.ErrnoException | undefined)?.code]).toStrictEqual([
+      before, true, before, ['accounts.json', 'claude-accounts'], 'EACCES',
     ]);
   });
 });

@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, unlinkSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { AccountView } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
@@ -161,7 +161,12 @@ export class AccountStore {
       writeFileNoFollow(temp, `${JSON.stringify(next, null, 2)}\n`, FILE_MODE);
       renameSync(temp, this.path);
     } catch (error) {
-      rmSync(temp, { force: true });
+      // rmSync leaves a dangling link at the temp path in place; unlink removes it.
+      try {
+        unlinkSync(temp);
+      } catch (cleanup) {
+        if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT') throw cleanup;
+      }
       throw error;
     }
   }
