@@ -86,7 +86,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   const start = (method: LoginMethod, apiKey?: string): void =>
     send({ type: 'account.login.start', requestId: requestId(), engine, method, ...(apiKey === undefined ? {} : { apiKey }) });
   const cancel = (): void => send({ type: 'account.login.cancel', requestId: requestId() });
-  // Escape cancels the sign-in, not the whole Settings dialog.
+  // Escape cancels a sign-in that waits or is checked, not the whole Settings dialog.
   const escapeCancels = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return;
     event.preventDefault();
@@ -322,7 +322,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
         </div>
       )}
       {mine && login.state === 'checking' && (
-        <div className="sw-login sw-login-row">
+        <div className="sw-login sw-login-row" onKeyDown={escapeCancels}>
           <span className="muted" aria-hidden="true"><Spinner /> Checking account…</span>
           <button type="button" className="sw-btn ghost" data-landing aria-describedby={`${keyId}-status`} onClick={cancel}>Cancel</button>
         </div>

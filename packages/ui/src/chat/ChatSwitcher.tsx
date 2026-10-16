@@ -10,6 +10,8 @@ export interface ChatList {
   engines: EngineStatus[];
   /** The engines whose models are still coming; absent from a core that waits for every engine. */
   pending?: EngineId[];
+  /** The engines that could not list their models. */
+  failed?: EngineId[];
   /** What a new chat starts with; null when a model must be chosen first, absent from a core older than the engines. */
   next?: ChatPick | null;
 }

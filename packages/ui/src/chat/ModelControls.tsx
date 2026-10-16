@@ -16,12 +16,14 @@ const STATE_LABEL: Record<Exclude<EngineState, 'ready'>, string> = { missing: 'n
 const marked = (text: string, query: string): ReactNode =>
   matchSpans(text, query).map((span, index) => (span.hit ? <u key={index}>{span.text}</u> : <Fragment key={index}>{span.text}</Fragment>));
 
-export function ModelControls({ current, models, engines, pending, started, enabled, send, onMenu, onChosen }: {
+export function ModelControls({ current, models, engines, pending, failed, started, enabled, send, onMenu, onChosen }: {
   current: ChatPick | null;
   models: ModelInfo[];
   engines: EngineStatus[];
   /** The engines whose models are still coming. */
   pending?: readonly EngineId[];
+  /** The engines that could not list their models. */
+  failed?: readonly EngineId[];
   started: boolean;
   enabled: boolean;
   send: (message: ClientMessage) => boolean;
@@ -101,7 +103,7 @@ export function ModelControls({ current, models, engines, pending, started, enab
         <span className="model-button-label">{label}</span>
         <Icon name="chevron-down" size={14} />
       </button>
-      {open && <ModelMenu models={catalog} engines={engines} pending={pending} current={current} started={started} recent={recent} initialQuery={open.query} onChoose={choose} onClose={close} />}
+      {open && <ModelMenu models={catalog} engines={engines} pending={pending} failed={failed} onRetry={() => send({ type: 'models.list' })} current={current} started={started} recent={recent} initialQuery={open.query} onChoose={choose} onClose={close} />}
       {current !== null && efforts.length > 0 && (
         <select
           aria-label="Effort"
@@ -118,10 +120,13 @@ export function ModelControls({ current, models, engines, pending, started, enab
   );
 }
 
-export function ModelMenu({ models, engines, pending, current, started, recent, initialQuery, onChoose, onClose }: {
+export function ModelMenu({ models, engines, pending, failed, onRetry, current, started, recent, initialQuery, onChoose, onClose }: {
   models: ModelInfo[];
   engines: EngineStatus[];
   pending?: readonly EngineId[];
+  failed?: readonly EngineId[];
+  /** Asks the core for every engine's models again. */
+  onRetry?: () => void;
   current: ChatPick | null;
   started: boolean;
   recent: string[];
@@ -132,7 +137,13 @@ export function ModelMenu({ models, engines, pending, current, started, recent, 
   const [query, setQuery] = useState(initialQuery);
   const engine = current?.engine ?? null;
   const currentModel = current?.modelChoice ?? null;
-  const groups = useMemo(() => pickerGroups({ models, engines, engine, current: currentModel, started, query, recent, pending }), [models, engines, engine, currentModel, started, query, recent, pending]);
+  const all = useMemo(() => pickerGroups({ models, engines, engine, current: currentModel, started, query, recent, pending, failed }), [models, engines, engine, currentModel, started, query, recent, pending, failed]);
+  // An engine that listed nothing has no options: it stands outside the list, where its Retry can be a button.
+  const groups = useMemo(() => all.filter((group) => !group.failed || group.rows.length > 0), [all]);
+  const unlisted = useMemo(() => all.filter((group) => group.failed && group.rows.length === 0), [all]);
+  // Until the core answers again; any new list of failures ends it.
+  const [retrying, setRetrying] = useState(false);
+  useEffect(() => setRetrying(false), [failed]);
   const rows = useMemo(() => groups.flatMap((group) => group.rows), [groups]);
   const keys = useMemo(() => rowKeys(groups), [groups]);
   // By key, not place: claude's list can replace the built-in one under an open menu, and Enter must take the row the user sees.
@@ -159,6 +170,8 @@ export function ModelMenu({ models, engines, pending, current, started, recent, 
     if (event.nativeEvent.isComposing) return;
     const action = menuKey(event, selected, rows.length, query);
     if (action === null) return;
+    // Tab reaches a Retry first; the menu closes on the Tab after it.
+    if (action === 'close' && event.key === 'Tab' && !event.shiftKey && root.current?.querySelector('.model-retry:not(:disabled)')) return;
     event.preventDefault();
     if (action === 'close') {
       // Closing removes the search box before the browser moves the focus, which would then fall to the page itself.
@@ -252,8 +265,31 @@ export function ModelMenu({ models, engines, pending, current, started, recent, 
             </div>
           ))}
         </div>
+        {unlisted.map((group) => (
+          <div key={group.id} className="model-group model-unlisted">
+            <span className="model-engine">{group.title}</span>
+            <span className="model-hint">{retrying ? `Listing ${group.title} models…` : `Could not list ${group.title} models`}</span>
+            <button
+              type="button"
+              className="model-retry"
+              disabled={retrying || onRetry === undefined}
+              onClick={() => {
+                setRetrying(true);
+                search.current?.focus();
+                onRetry?.();
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== 'Tab' || event.shiftKey) return;
+                event.preventDefault();
+                onClose(true);
+              }}
+            >
+              Retry
+            </button>
+          </div>
+        ))}
         {/* Mounted while empty, so that a screen reader announces the text when it appears. */}
-        <div className="model-empty" role="status">{groups.length === 0 && query.trim() !== '' ? `No model matches “${query.trim()}”` : ''}</div>
+        <div className="model-empty" role="status">{groups.length === 0 && unlisted.length === 0 && query.trim() !== '' ? `No model matches “${query.trim()}”` : ''}</div>
       </div>
       <div className="model-foot" aria-hidden="true"><span><kbd>↑</kbd><kbd>↓</kbd>move</span><span><kbd>↵</kbd>choose</span><span><kbd>esc</kbd>close</span></div>
     </div>

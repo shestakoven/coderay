@@ -819,7 +819,7 @@ test("a Claude sign-in keeps the keyboard's focus on its current step and gives 
   ]);
 });
 
-test('Escape in the Claude sign-in code form cancels only the sign-in, and the next Escape closes Settings', async ({ page }) => {
+test('Escape while a Claude sign-in checks its code cancels only the sign-in, and the next Escape closes Settings', async ({ page }) => {
   const stand = await standInAccounts(page, { claude: [], codex: [] });
   await openApp(page);
   const dialog = await openSettings(page);
@@ -833,10 +833,12 @@ test('Escape in the Claude sign-in code form cancels only the sign-in, and the n
   await expect(accounts.getByRole('button', { name: 'Open sign-in page' })).toBeFocused();
   await page.keyboard.press('Tab');
   await page.keyboard.type('CODE-SECRET-9');
+  await page.keyboard.press('Enter');
+  await expect(accounts.getByRole('button', { name: 'Cancel' })).toBeFocused();
   await page.keyboard.press('Escape');
   await expect(add).toBeFocused();
   await expect(dialog).toBeVisible();
-  expect(stand.sent).toEqual([{ type: 'account.login.start', engine: 'claude', method: 'browser' }, { type: 'account.login.cancel' }]);
+  expect(stand.sent).toEqual([{ type: 'account.login.start', engine: 'claude', method: 'browser' }, { type: 'account.login.code', code: 'CODE-SECRET-9' }, { type: 'account.login.cancel' }]);
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
 });

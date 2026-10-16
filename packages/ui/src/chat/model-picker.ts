@@ -30,6 +30,8 @@ export interface PickerGroup {
   status: EngineStatus | null;
   /** The engine's models are still coming. */
   loading: boolean;
+  /** The engine runs, yet could not list its models. */
+  failed: boolean;
   rows: PickerRow[];
 }
 
@@ -50,13 +52,16 @@ export interface PickerInput {
   recent: string[];
   /** The engines whose models are still coming. */
   pending?: readonly EngineId[];
+  /** The engines that could not list their models. */
+  failed?: readonly EngineId[];
 }
 
 /** The models to offer, each with its engine and efforts (a core older than the engines sends neither), with Claude's built-in list when claude listed none. */
 export function catalogOf(models: ModelInfo[]): ModelInfo[] {
   const filled = models.map((model) => ({ ...model, engine: model.engine ?? 'claude', efforts: model.efforts ?? claudeEfforts() }));
   // A row's key is its id: an engine listing one id twice would give two rows one key.
-  const known = filled.filter((model, index) => filled.findIndex((other) => other.value === model.value) === index);
+  const seen = new Set<string>();
+  const known = filled.filter((model) => !seen.has(model.value) && seen.add(model.value));
   return known.some((model) => model.engine === 'claude') ? known : [...FALLBACK_MODELS.map((model) => ({ ...model, efforts: claudeEfforts() })), ...known];
 }
 
@@ -65,7 +70,7 @@ const queryWords = (query: string): string[] => query.toLowerCase().split(/\s+/)
 // Every word of the query must occur somewhere, in any order: "gpt 6" finds "GPT-6", "claude sonnet" finds Claude's Sonnet.
 const matchesAll = (words: string[], texts: string[]): boolean => words.every((word) => texts.some((text) => text.toLowerCase().includes(word)));
 
-export function pickerGroups({ models, engines, engine, current, started, query, recent, pending = [] }: PickerInput): PickerGroup[] {
+export function pickerGroups({ models, engines, engine, current, started, query, recent, pending = [], failed = [] }: PickerInput): PickerGroup[] {
   const words = queryWords(query);
   // The chat's own model stays choosable when no engine lists it any more, as the old select kept it.
   const listed = current === null || models.some((model) => model.value === current)
@@ -75,14 +80,20 @@ export function pickerGroups({ models, engines, engine, current, started, query,
   const hit = (model: ModelInfo): boolean => matchesAll(words, [model.name, model.value, ENGINE_NAMES[model.engine]]);
   const byValue = new Map(listed.map((model) => [model.value, model]));
   const recentRows = words.length === 0 ? recent.flatMap((value) => byValue.get(value) ?? []).slice(0, RECENT_SHOWN).map(row) : [];
-  const groups = ENGINE_IDS.map((id): PickerGroup => ({
-    id, title: ENGINE_NAMES[id], status: engines.find((status) => status.engine === id) ?? null, loading: pending.includes(id),
-    rows: listed.filter((model) => model.engine === id && hit(model)).map(row),
-  }));
+  const groups = ENGINE_IDS.map((id): PickerGroup => {
+    const status = engines.find((known) => known.engine === id) ?? null;
+    // An engine that cannot run says why itself; a listing failure is news only for one that can.
+    return {
+      id, title: ENGINE_NAMES[id], status, loading: pending.includes(id), failed: failed.includes(id) && (status === null || status.state === 'ready'),
+      rows: listed.filter((model) => model.engine === id && hit(model)).map(row),
+    };
+  });
   return [
-    ...(recentRows.length > 0 ? [{ id: 'recent' as const, title: 'Recent', status: null, loading: false, rows: recentRows }] : []),
-    // An engine that cannot run, or whose models are still coming, keeps its header while nothing is typed or its name is, so the user sees why its models are missing.
-    ...groups.filter((group) => group.rows.length > 0 || ((group.loading || (group.status !== null && group.status.state !== 'ready')) && matchesAll(words, [group.title]))),
+    ...(recentRows.length > 0 ? [{ id: 'recent' as const, title: 'Recent', status: null, loading: false, failed: false, rows: recentRows }] : []),
+    // An engine whose models are still coming keeps its header whatever is typed, as they may match; one that cannot run or list them
+    // keeps it while nothing is typed or its name is, so the user sees why its models are missing.
+    ...groups.filter((group) => group.rows.length > 0 || group.loading
+      || ((group.failed || (group.status !== null && group.status.state !== 'ready')) && matchesAll(words, [group.title]))),
   ];
 }
 

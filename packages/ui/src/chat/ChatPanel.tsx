@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
 import { ENGINE_CAPABILITIES, ENGINE_NAMES, PROTECTION, type ChatItem, type ClientMessage, type EngineId, type GateAnswer, type GatePromptView, type ImageRef, type ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
@@ -182,11 +182,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     <section className="chat">
       <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
-        {pick && (
-          <span className="engine-chip" title={PROTECTION[pick.engine ?? 'claude'].title}>
-            {ENGINE_NAMES[pick.engine ?? 'claude']}<span className="engine-protection">{PROTECTION[pick.engine ?? 'claude'].caption}</span>
-          </span>
-        )}
+        {pick && <EngineChip engine={pick.engine ?? 'claude'} />}
         {(chat.session?.status === 'crashed' || chat.session?.status === 'refused') && (
           <span className={`chat-status ${chat.session?.status ?? 'none'}`} title={chat.session?.model ?? undefined}>
             <i className="status-dot" />{chat.session.status === 'refused' ? ((chat.session.engine ?? 'claude') === 'claude' ? 'hook off' : 'refused') : chat.session.status}
@@ -315,7 +311,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           >
             <Icon name="skill" size={18} />
           </button>
-          <ModelControls current={pick} models={chats.models} engines={chats.engines} pending={chats.pending} started={started} enabled={sendable} send={send} onMenu={setModelMenu} onChosen={() => composer.current?.focus()} />
+          <ModelControls current={pick} models={chats.models} engines={chats.engines} pending={chats.pending} failed={chats.failed} started={started} enabled={sendable} send={send} onMenu={setModelMenu} onChosen={() => composer.current?.focus()} />
           <span className="spacer" />
           {!sendable && (
             <button className="composer-action stop" onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title} aria-label={stop.label}>
@@ -331,6 +327,32 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} canStop={ENGINE_CAPABILITIES[pick?.engine ?? 'claude'].backgroundTasks} /><UsageMeter usage={chat.usage} /></div>
       </footer>}
     </section>
+  );
+}
+
+// Focusable, so its explanation reaches the keyboard and a screen reader as well as the pointer; Escape puts the tooltip away.
+function EngineChip({ engine }: { engine: EngineId }) {
+  const why = useId();
+  const [quiet, setQuiet] = useState(false);
+  const { caption, short, title } = PROTECTION[engine];
+  return (
+    <span
+      className="engine-chip" tabIndex={0} aria-describedby={why} data-quiet={quiet || undefined}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || quiet) return;
+        event.stopPropagation();
+        setQuiet(true);
+      }}
+      onBlur={() => setQuiet(false)}
+      onMouseLeave={() => setQuiet(false)}
+    >
+      {ENGINE_NAMES[engine]}<span className="engine-protection">{caption}</span>
+      <span className="engine-short" aria-hidden="true">{short}</span>
+      <Icon name="shield" size={14} />
+      <span className="engine-why" role="tooltip">
+        <b aria-hidden="true">{ENGINE_NAMES[engine]} · {caption}</b> <span id={why}>{title}</span>
+      </span>
+    </span>
   );
 }
 

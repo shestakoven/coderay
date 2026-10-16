@@ -78,9 +78,9 @@ const ENGINE_EFFORT = /^[a-z][a-z0-9_-]{0,31}$/;
 
 export const isEffortFor = (engine: EngineId, effort: string): boolean => (engine === 'claude' ? isClaudeEffort(effort) : ENGINE_EFFORT.test(effort));
 
-/** How each engine's writes are held to the plan, in the chat header's words. */
-export const PROTECTION: Record<EngineId, { caption: string; title: string }> = {
-  claude: { caption: 'Hook', title: "Every write passes CodeRay's hook before it runs." },
-  codex: { caption: 'OS sandbox + approvals', title: 'Codex runs read-only in the OS sandbox; each write waits for CodeRay to approve it.' },
-  opencode: { caption: 'Rules only', title: 'opencode asks CodeRay before each write; nothing stops a write it does not ask about.' },
+/** How each engine's writes are held to the plan, in the chat header's words; `short` stands in for the caption in a narrow header. */
+export const PROTECTION: Record<EngineId, { caption: string; short: string; title: string }> = {
+  claude: { caption: 'Hook', short: 'Hook', title: "Every write passes CodeRay's hook before it runs." },
+  codex: { caption: 'OS sandbox + approvals', short: 'Sandbox', title: 'Codex runs read-only in the OS sandbox; each write waits for CodeRay to approve it.' },
+  opencode: { caption: 'Rules only', short: 'Rules', title: 'opencode asks CodeRay before each write; nothing stops a write it does not ask about.' },
 };
