@@ -720,6 +720,77 @@ test('the accounts page shows the system account as the active one', async ({ pa
   await expect(accounts.getByRole('button', { name: /Add account/ })).toBeVisible();
 });
 
+test("a sign-in keeps the keyboard's focus on its current step and gives it back where it began, and Escape closes only the key form", async ({ page }) => {
+  // The page talks to a stand-in for the core's accounts: Claude and Codex, each step answered the way the core answers it, state first.
+  const idle = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
+  const account = { id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 };
+  let claude = [account];
+  let login: object = idle;
+  let push = (): void => undefined;
+  await page.routeWebSocket(/\/ws\?/, (ws) => {
+    const server = ws.connectToServer();
+    let settings: object = {};
+    push = () => {
+      const engines = [{ engine: 'claude', accounts: claude, activeId: null }, { engine: 'codex', accounts: [], activeId: null }];
+      ws.send(JSON.stringify({ type: 'settings.snapshot', settings: { ...settings, accounts: { engines, login } } }));
+    };
+    server.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as { type: string; settings: object };
+      if (message.type !== 'settings.snapshot') return ws.send(raw);
+      settings = message.settings;
+      push();
+    });
+    ws.onMessage((raw) => {
+      const message = JSON.parse(String(raw)) as { type: string; requestId: string };
+      if (!message.type.startsWith('account.')) return server.send(raw);
+      if (message.type === 'account.login.start') login = { ...idle, state: 'waiting', engine: 'claude', method: 'browser' };
+      if (message.type === 'account.login.code') login = { ...idle, state: 'checking', engine: 'claude', method: 'browser' };
+      if (message.type === 'account.login.cancel') login = idle;
+      if (message.type === 'account.remove') claude = [];
+      push();
+      ws.send(JSON.stringify({ type: 'settings.result', requestId: message.requestId, error: null }));
+    });
+  });
+  await openApp(page);
+  const dialog = await openSettings(page);
+  await showCategory(dialog, 'Accounts');
+  const accounts = setting(dialog, 'Claude accounts');
+  const codex = setting(dialog, 'Codex accounts');
+  const step = async (state: object, focused: Locator): Promise<void> => {
+    login = state;
+    push();
+    await expect(focused).toBeFocused();
+  };
+
+  await accounts.getByRole('button', { name: 'Add account' }).focus();
+  await page.keyboard.press('Enter');
+  await expect(accounts.getByRole('textbox', { name: 'Sign-in code' })).toBeFocused();
+  await expect(codex.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeDisabled();
+  await expect(codex.getByText('Finish or cancel the Claude sign-in first.')).toBeVisible();
+  await step({ ...idle, state: 'waiting', engine: 'claude', method: 'browser', url: 'https://claude.com/oauth?state=s' }, accounts.getByRole('button', { name: 'Open sign-in page' }));
+  await page.keyboard.press('Tab');
+  await page.keyboard.type('code#1');
+  await page.keyboard.press('Enter');
+  await expect(accounts.getByRole('button', { name: 'Cancel' })).toBeFocused();
+  await step({ ...idle, state: 'error', engine: 'claude', method: 'browser', error: 'The sign-in timed out after 10 minutes.' }, accounts.getByRole('button', { name: 'Retry' }));
+  await expect(codex.getByRole('button', { name: 'Sign in with ChatGPT' })).toBeEnabled();
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await expect(accounts.getByRole('button', { name: 'Add account' })).toBeFocused();
+
+  await codex.getByRole('button', { name: 'Use an API key' }).focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('sk not a key');
+  await expect(codex.getByRole('button', { name: 'Add key' })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(codex.getByRole('button', { name: 'Use an API key' })).toBeFocused();
+
+  await accounts.getByRole('button', { name: 'Remove' }).focus();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await expect(accounts.getByRole('radio', { name: 'System' })).toBeFocused();
+});
+
 test('the scope choice is remembered after a reload', async ({ page }) => {
   await openApp(page);
   const dialog = await openSettings(page);
