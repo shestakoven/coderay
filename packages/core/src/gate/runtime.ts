@@ -112,7 +112,8 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
       agent.onProcessExit(() => plans.withdrawPending("The agent's process ended while the plan waited for an answer."));
       // claude cancels its waiting propose_plan on Stop; Codex sends no notifications/cancelled, so the plan is withdrawn here.
       agent.onInterrupt(() => {
-        if (agent.engineOf() !== 'claude') plans.withdrawPending('The user stopped the agent while the plan waited for an answer.');
+        const engine = agent.engineOf();
+        if (engine !== null && engine !== 'claude') plans.withdrawPending('The agent was stopped while the plan waited for an answer.');
       });
       agent.onProcessExit(() => gate.dropAll());
     },

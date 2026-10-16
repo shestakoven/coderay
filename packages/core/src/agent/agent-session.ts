@@ -16,7 +16,7 @@ import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
 import { commandLine, forceKill, isAlive, reaches, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
 import { claudeUnder, KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
-import { codexCommand, codexUnder, type CodexCommand } from './codex/command';
+import { codexUnder, type CodexCommand } from './codex/command';
 import { codexMcp } from './codex/mcp';
 import { claudeEngine } from './engines/claude';
 import { codexEngine, signedOutHint } from './engines/codex';
@@ -109,6 +109,7 @@ const SESSION_ERRORS = {
   'in-terminal': 'The agent runs in the terminal view. Switch back to the chat to do this.',
   'no-engine': 'That model needs an engine CodeRay does not have.',
   'no-terminal': 'This engine has no terminal view.',
+  refused: "This chat's agent was refused; the chat says why.",
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -205,10 +206,11 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
+    const codex = options.codex;
     this.engines = options.engines ?? new EngineRegistry([
       claudeEngine({ command: () => this.activeClaude(), cwd: options.root, account: () => this.options.accounts?.claude?.activeLabel() ?? null }),
-      ...(options.codex ? [codexEngine({
-        command: () => this.activeCodex(), cwd: options.root,
+      ...(codex ? [codexEngine({
+        command: () => codexUnder(codex, this.accountHome('codex', this.activeAccount('codex'))), cwd: options.root,
         signedOut: () => signedOutHint(this.accountHome('codex', this.activeAccount('codex'))),
         account: () => this.options.accounts?.codex?.activeLabel() ?? null,
       })] : []),
@@ -217,10 +219,6 @@ export class AgentSession {
 
   private activeClaude(): ClaudeCommand {
     return claudeUnder(this.options.claude, this.accountHome('claude', this.activeAccount('claude')));
-  }
-
-  private activeCodex(): CodexCommand {
-    return codexUnder(this.options.codex ?? codexCommand('codex'), this.accountHome('codex', this.activeAccount('codex')));
   }
 
   private accountHome(engine: EngineId, id: string | null): AccountHome {
@@ -647,6 +645,12 @@ export class AgentSession {
     this.apply(this.tracker.notice(text));
   }
 
+  // A failure each attempt meets again is said once, until something else happens in the chat.
+  private noticeOnce(text: string): void {
+    const last = [...this.items.values()].reduce<ChatItem | null>((latest, item) => (latest === null || item.seq > latest.seq ? item : latest), null);
+    if (last?.kind !== 'notice' || last.text !== text) this.apply(this.tracker.notice(text));
+  }
+
   queueNote(text: string): void {
     if (text.trim() === '') throw new SessionError('empty');
     this.notes.push(text);
@@ -655,7 +659,7 @@ export class AgentSession {
   sendAbsorbed(text: string): void {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
-    if (this.refused) throw new SessionError('hook-off', this.refusal ?? undefined);
+    if (this.refused) throw new SessionError(this.session === null || this.session.engine === 'claude' ? 'hook-off' : 'refused', this.refusal ?? undefined);
     if (this.terminalOpen) {
       if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
       this.absorbed.push(text);
@@ -811,13 +815,16 @@ export class AgentSession {
     const running = this.transport !== null;
     // The old engine's agent stops before the chat names the new engine, so none of its last events land under that name.
     if (swap && running) await this.terminate('restart');
-    this.update({ engine: pick.engine, modelChoice: pick.modelChoice, effort: pick.effort });
     if (swap) {
-      // A refusal was the old engine's; as restart() does, only an agent that was running is started again, on the new engine.
+      // The unused chat moves to the new engine's active account and its windows; a refusal was the old engine's.
+      this.update({ engine: pick.engine, modelChoice: pick.modelChoice, effort: pick.effort, accountId: this.activeAccount(pick.engine) });
+      this.showLimits();
       this.clearRefusal();
+      // As restart() does: only an agent that was running is started again, on the new engine.
       if (running) this.warm();
       return;
     }
+    this.update({ engine: pick.engine, modelChoice: pick.modelChoice, effort: pick.effort });
     if (!this.transport) return;
     if (liveModel) {
       try {
@@ -1113,11 +1120,13 @@ export class AgentSession {
 
   // Codex's part of a launch: its command under the chat's account, the IDE's MCP list in its dialect, the instructions and the gate.
   private prepareCodex(session: SessionRecord): CodexLaunch | null {
+    const codex = this.options.codex;
+    if (!codex) throw new SessionError('no-engine');
     const gate = this.options.gate;
     try {
       gate?.check?.();
     } catch (error) {
-      this.apply(this.tracker.notice(`CodeRay could not get the gate ready for Codex (${(error as Error).message}).`));
+      this.noticeOnce(`CodeRay could not get the gate ready for Codex (${(error as Error).message}).`);
       return null;
     }
     let mcp: ReturnType<typeof codexMcp>;
@@ -1130,7 +1139,7 @@ export class AgentSession {
     return {
       engine: 'codex', cwd: session.cwd, engineSessionId: session.engineSessionId, resume: session.conversationStarted,
       model: modelOf(session.modelChoice), effort: session.effort,
-      codex: codexUnder(this.options.codex ?? codexCommand('codex'), home),
+      codex: codexUnder(codex, home),
       // The transport switches codex's apps and plugins off and keeps these secrets out of the model's shell, whatever the launch says.
       servers: mcp.names, config: mcp.config, env: mcp.env,
       developerInstructions: codexInstructions(gate?.systemPrompt(CODEX_PROMPT_NAMES) ?? null),

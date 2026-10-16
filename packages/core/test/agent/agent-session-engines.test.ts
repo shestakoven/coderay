@@ -40,7 +40,7 @@ function registry(claude: ClaudeCommand, codex: CodexCommand, started: Launch[],
 
 async function harness(options: {
   engines?: EngineId[]; seed?: (store: Store, root: string, transcriptsDir: string) => void; overrides?: Partial<AgentSessionOptions>;
-  codexScenario?: string; codexEnv?: Record<string, string>;
+  claudeScenario?: string; codexScenario?: string; codexEnv?: Record<string, string>;
 } = {}): Promise<Harness> {
   const home = tempDir('ide-home-');
   const root = tempDir('ide-root-');
@@ -48,7 +48,7 @@ async function harness(options: {
   const store = openStore(projectDir(home, root));
   onTestFinished(() => store.close());
   options.seed?.(store, root, transcriptsDir);
-  const claude = fakeClaude('multi-turn', join(home, `record-${randomUUID()}.jsonl`));
+  const claude = fakeClaude(options.claudeScenario ?? 'multi-turn', join(home, `record-${randomUUID()}.jsonl`));
   const codexRecord = join(home, `codex-${randomUUID()}.jsonl`);
   const codex = fakeCodex(options.codexScenario ?? 'multi-turn', codexRecord, options.codexEnv);
   const started: Launch[] = [];
@@ -224,6 +224,28 @@ describe('the model of a new chat', () => {
   });
 });
 
+// A Codex account of CodeRay's, signed in and active.
+function signedInCodexAccount(): { codexAccounts: AccountStore; id: string } {
+  const codexAccounts = new AccountStore({ home: tempDir('ide-codex-accounts-'), engine: 'codex', logout: async () => {} });
+  const id = randomUUID();
+  codexAccounts.add({ id, email: 'work@example.com', plan: 'Plus', createdAt: 1 });
+  codexAccounts.createDir(id);
+  codexAccounts.setActive(id);
+  writeFileSync(join(codexAccounts.homeDir(id)!, 'auth.json'), JSON.stringify({ type: 'chatgpt', email: 'work@example.com', planType: 'plus' }));
+  return { codexAccounts, id };
+}
+
+const notices = (h: Harness): string[] => h.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : []));
+
+function thrown(run: () => void): unknown {
+  try {
+    run();
+  } catch (error) {
+    return error;
+  }
+  return null;
+}
+
 describe('AgentSession on Codex', () => {
   const allowAll: SessionGate = {
     write: () => ({ settingsPath: '/dev/null' }), remove: () => {}, systemPrompt: (names) => `Use ${names.writeTools}.`,
@@ -231,13 +253,7 @@ describe('AgentSession on Codex', () => {
   };
 
   it("starts a Codex chat under the active Codex account with Codex's prompt and the approvals paragraph, idecore in Codex's dialect, and codex's skills", async () => {
-    const accountsHome = tempDir('ide-codex-accounts-');
-    const codexAccounts = new AccountStore({ home: accountsHome, engine: 'codex', logout: async () => {} });
-    const id = randomUUID();
-    codexAccounts.add({ id, email: 'work@example.com', plan: 'Plus', createdAt: 1 });
-    codexAccounts.createDir(id);
-    codexAccounts.setActive(id);
-    writeFileSync(join(codexAccounts.homeDir(id)!, 'auth.json'), JSON.stringify({ type: 'chatgpt', email: 'work@example.com', planType: 'plus' }));
+    const { codexAccounts, id } = signedInCodexAccount();
     const h = await harness({ overrides: {
       gate: allowAll, accounts: { codex: codexAccounts },
       mcpServers: () => ({ idecore: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer core-secret' } } }),
@@ -262,7 +278,39 @@ describe('AgentSession on Codex', () => {
     h.session.send('hi');
     await waitFor(() => h.started.length === 2 && h.session.state().session?.status === 'refused', 'refused again');
     const signedOut = 'Codex is signed out: run codex login, or add an account in Settings → Accounts.';
-    expect(h.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : []))).toEqual([signedOut, signedOut]);
+    expect([notices(h), thrown(() => h.session.sendAbsorbed('note'))]).toMatchObject([[signedOut, signedOut], { code: 'refused', message: signedOut }]);
+  });
+
+  it("moves a chat to the active account and the windows of the engine it changes to before its first message, never the other engine's, both ways", async () => {
+    const h = await harness({ claudeScenario: 'usage' });
+    h.session.send('hi');
+    await turnClosed(h);
+    await h.session.newSession({ modelChoice: 'codex:gpt-6-luna', effort: 'medium' });
+    h.session.send('hi');
+    await turnClosed(h);
+    await h.session.newSession();
+    const shown = () => h.session.state().usage.limits.map((window) => window.label);
+    const onCodex = shown();
+    await h.session.configure('sonnet', 'medium');
+    const onClaude = shown();
+    await h.session.configure('codex:gpt-6-luna', 'medium');
+    const { codexAccounts, id } = signedInCodexAccount();
+    const idle = await harness({ overrides: { accounts: { codex: codexAccounts }, defaultModel: undefined } });
+    await idle.session.configure('sonnet', 'medium');
+    await idle.session.configure('codex:gpt-6-luna', 'medium');
+    expect([onCodex, onClaude, shown(), idle.started, idle.store.session(idle.session.sessionId()!)?.accountId]).toEqual([['30d'], ['5h', '7d'], ['30d'], [], id]);
+  });
+
+  it("starts no Codex agent while the gate cannot decide yet, and says so once; nor where CodeRay runs no codex", async () => {
+    const h = await harness({ overrides: { gate: { ...allowAll, check: () => { throw new Error('the watchdog is not ready yet'); } } } });
+    await h.session.newSession({ modelChoice: 'codex:gpt-6-luna', effort: 'medium' });
+    expect(() => h.session.send('hi')).toThrow('CodeRay could not get the gate ready, so the agent was not started.');
+    const none = await harness({ overrides: { codex: undefined } });
+    await none.session.newSession({ modelChoice: 'codex:gpt-6-luna', effort: 'medium' });
+    expect(() => none.session.send('hi')).toThrow('That model needs an engine CodeRay does not have.');
+    expect([notices(h), h.started, notices(none), none.started]).toEqual([
+      ['CodeRay could not get the gate ready for Codex (the watchdog is not ready yet).'], [], ['That model needs an engine CodeRay does not have.'], [],
+    ]);
   });
 
   it("keeps each engine's account limits apart: a Claude chat after a Codex chat shows none, and the Codex chat its own again", async () => {
@@ -285,6 +333,6 @@ describe('AgentSession on Codex', () => {
     await h.session.newSession({ modelChoice: 'codex:gpt-6-luna', effort: 'medium' });
     h.session.send('hi');
     await waitFor(() => h.session.state().session?.status === 'crashed', 'the agent crashed');
-    expect(h.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : [])).at(-1)).toMatch(/^codex stopped unexpectedly \(exit code 3\)/);
+    expect(notices(h).at(-1)).toMatch(/^codex stopped unexpectedly \(exit code 3\)/);
   });
 });
