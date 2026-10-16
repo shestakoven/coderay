@@ -30,6 +30,8 @@ export interface EngineStatus {
   state: EngineState;
   /** One line that tells the user what to do; null when the engine is ready. */
   hint: string | null;
+  /** The active account's name, present once the engine has an account of CodeRay's: "System", or the account's e-mail and plan. */
+  account?: string;
 }
 
 /** The engine, model and effort a chat runs with; a null model is claude's own default. */

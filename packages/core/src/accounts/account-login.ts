@@ -37,7 +37,7 @@ export function loginUrl(output: string): string | null {
 export class AccountLogin {
   private readonly options: AccountLoginOptions;
   private attempt: Attempt | null = null;
-  private current: AccountLoginView = { state: 'idle', url: null, error: null };
+  private current: AccountLoginView = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
 
   constructor(options: AccountLoginOptions) {
     this.options = options;
@@ -66,7 +66,7 @@ export class AccountLogin {
       if (this.attempt !== attempt || this.current.url !== null) return;
       attempt.output = (attempt.output + chunk).slice(0, MAX_OUTPUT_CHARS);
       const url = loginUrl(attempt.output);
-      if (url !== null) this.set({ state: 'waiting', url, error: null });
+      if (url !== null) this.set({ state: 'waiting', engine: 'claude', method: 'browser', url, userCode: null, error: null });
     };
     child.stdout?.setEncoding('utf8');
     child.stdout?.on('data', read);
@@ -82,7 +82,7 @@ export class AccountLogin {
       if (code === 0) this.check(attempt);
       else this.fail(attempt, `The sign-in did not finish (claude exited with ${code === null ? 'a signal' : `code ${code}`}).`);
     });
-    this.set({ state: 'waiting', url: null, error: null });
+    this.set({ state: 'waiting', engine: 'claude', method: 'browser', url: null, userCode: null, error: null });
   }
 
   submitCode(code: string): void {
@@ -93,13 +93,13 @@ export class AccountLogin {
 
   cancel(): void {
     if (this.attempt) this.discard(this.attempt);
-    if (this.current.state !== 'idle') this.set({ state: 'idle', url: null, error: null });
+    if (this.current.state !== 'idle') this.set({ state: 'idle', engine: null, method: null, url: null, userCode: null, error: null });
   }
 
   private check(attempt: Attempt): void {
     if (this.attempt !== attempt) return;
     clearTimeout(attempt.timer);
-    this.set({ state: 'checking', url: null, error: null });
+    this.set({ state: 'checking', engine: 'claude', method: 'browser', url: null, userCode: null, error: null });
     const child = execFile(this.options.claude, ['auth', 'status', '--json'], { env: accountEnv(attempt.dir), timeout: STATUS_TIMEOUT_MS }, (_error, stdout) => {
       if (this.attempt !== attempt) return;
       // A signed-out claude exits with code 1 but still prints its status.
@@ -116,7 +116,7 @@ export class AccountLogin {
         return;
       }
       this.attempt = null;
-      this.set({ state: 'idle', url: null, error: null });
+      this.set({ state: 'idle', engine: null, method: null, url: null, userCode: null, error: null });
     });
     child.stdin?.end();
   }
@@ -124,7 +124,7 @@ export class AccountLogin {
   private fail(attempt: Attempt, error: string): void {
     if (this.attempt !== attempt) return;
     this.discard(attempt);
-    this.set({ state: 'error', url: null, error });
+    this.set({ state: 'error', engine: 'claude', method: 'browser', url: null, userCode: null, error });
   }
 
   private discard(attempt: Attempt): void {

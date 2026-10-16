@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { AccountLoginView, AccountsView } from '@ide/protocol';
+import type { AccountLoginView, AccountsView, AccountView } from '@ide/protocol';
 import { AccountsSection } from '../src/settings/AccountsSection';
 
 interface Element {
@@ -41,10 +41,12 @@ const isDisabled = (element: Element): boolean => 'disabled' in element.attrs;
 const A = { id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 };
 const B = { id: '0b5c1a6e-3d2f-4e8a-9c7b-1f2e3d4c5b6a', email: 'b@example.com', createdAt: 2 };
 const URL = 'https://claude.com/cai/oauth/authorize?code=true&client_id=c&state=secret-state-123';
-const idle: AccountLoginView = { state: 'idle', url: null, error: null };
+const idle: AccountLoginView = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
+const claudeLogin = (login: Pick<AccountLoginView, 'state' | 'url' | 'error'>): AccountLoginView => ({ ...login, engine: 'claude', method: 'browser', userCode: null });
 
-function render(view: Partial<AccountsView> = {}, busy = false): Element {
-  const full: AccountsView = { accounts: [A, B], activeId: null, login: idle, ...view };
+function render(view: { accounts?: AccountView[]; activeId?: string | null; login?: AccountLoginView } = {}, busy = false): Element {
+  const { accounts = [A, B], activeId = null, login = idle } = view;
+  const full: AccountsView = { engines: [{ engine: 'claude', accounts, activeId }], login };
   return parse(renderToStaticMarkup(<AccountsSection view={full} busy={busy} onRequest={() => undefined} />));
 }
 
@@ -129,7 +131,7 @@ describe('AccountsSection sign-in', () => {
   });
 
   it('shows an enabled sign-in button, a code input, Submit, Cancel and a hint while waiting with a URL', () => {
-    const root = render({ login: { state: 'waiting', url: URL, error: null } });
+    const root = render({ login: claudeLogin({ state: 'waiting', url: URL, error: null }) });
     const codeInputs = all(root, (element) => element.tag === 'input' && !isRadio(element));
     expect([
       buttons(root, 'Open sign-in page').map(isDisabled),
@@ -142,21 +144,21 @@ describe('AccountsSection sign-in', () => {
   });
 
   it('never shows the sign-in URL as text', () => {
-    expect(textOf(render({ login: { state: 'waiting', url: URL, error: null } }))).not.toContain('secret-state-123');
+    expect(textOf(render({ login: claudeLogin({ state: 'waiting', url: URL, error: null }) }))).not.toContain('secret-state-123');
   });
 
   it('disables the sign-in button and says claude is starting while waiting without a URL', () => {
-    const root = render({ login: { state: 'waiting', url: null, error: null } });
+    const root = render({ login: claudeLogin({ state: 'waiting', url: null, error: null }) });
     expect([buttons(root, 'Open sign-in page').map(isDisabled), textOf(root).includes('Starting claude…')]).toStrictEqual([[true], true]);
   });
 
   it('says it is checking the account and offers no Add account while checking', () => {
-    const root = render({ login: { state: 'checking', url: null, error: null } });
+    const root = render({ login: claudeLogin({ state: 'checking', url: null, error: null }) });
     expect([textOf(root).includes('Checking account…'), buttons(root, 'Add account').length, buttons(root, 'Open sign-in page').length]).toStrictEqual([true, 0, 0]);
   });
 
   it('shows the error message of a failed sign-in', () => {
-    const root = render({ login: { state: 'error', url: null, error: 'Claude did not report a signed-in account.' } });
+    const root = render({ login: claudeLogin({ state: 'error', url: null, error: 'Claude did not report a signed-in account.' }) });
     expect(textOf(root)).toContain('Claude did not report a signed-in account.');
   });
 });

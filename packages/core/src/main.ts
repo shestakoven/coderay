@@ -268,7 +268,7 @@ try {
 
   const settingsSnapshot = (): ServerMessage => ({
     type: 'settings.snapshot',
-    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), login: login.view() } },
+    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), engines: [{ engine: 'claude', ...accounts.list() }], login: login.view() } },
   });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });

@@ -27,6 +27,29 @@ describe('parseClientMessage account requests', () => {
     expect(parse({ type: 'account.remove', requestId: 'r1', id })).toEqual({ type: 'account.remove', requestId: 'r1', id });
   });
 
+  it('parses a sign-in, a choice and a removal for an engine, with the way to sign in and the key that way needs', () => {
+    const messages = [
+      { type: 'account.login.start', requestId: 'r1', engine: 'codex', method: 'device-code' },
+      { type: 'account.login.start', requestId: 'r2', engine: 'codex', method: 'api-key', apiKey: 'sk-proj-AbC_123-xyz' },
+      { type: 'account.select', requestId: 'r3', engine: 'codex', id },
+      { type: 'account.remove', requestId: 'r4', engine: 'codex', id },
+    ];
+    expect(messages.map(parse)).toEqual(messages);
+  });
+
+  it.each([
+    ['an unknown engine', { type: 'account.login.start', requestId: 'r', engine: 'gemini', method: 'browser' }],
+    ['a way the engine does not offer', { type: 'account.login.start', requestId: 'r', engine: 'claude', method: 'api-key', apiKey: 'sk-x' }],
+    ['a key without the API-key way', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'browser', apiKey: 'sk-x' }],
+    ['the API-key way without a key', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key' }],
+    ['a key with a space', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key', apiKey: 'sk x' }],
+    ['a key of 513 characters', { type: 'account.login.start', requestId: 'r', engine: 'codex', method: 'api-key', apiKey: 'k'.repeat(513) }],
+    ['a choice for an unknown engine', { type: 'account.select', requestId: 'r', engine: 'gemini', id: null }],
+    ['a removal for an engine given as a number', { type: 'account.remove', requestId: 'r', engine: 1, id }],
+  ])('rejects %s', (_, message) => {
+    expect(parse(message)).toBeNull();
+  });
+
   it('accepts a code of exactly 4096 characters', () => {
     const code = 'c'.repeat(4096);
     expect(parse({ type: 'account.login.code', requestId: 'r', code })).toEqual({ type: 'account.login.code', requestId: 'r', code });

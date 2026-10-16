@@ -144,7 +144,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
   const matched = useMemo(() => matchBlocks(query, {
     'mcp-servers': (settings?.servers ?? []).map((server) => server.name),
     'claude-code-servers': (settings?.claudeCodeServers ?? []).map((server) => server.name),
-    accounts: (settings?.accounts.accounts ?? []).map((account) => account.email),
+    accounts: (settings?.accounts.engines ?? []).flatMap((engine) => engine.accounts.map((account) => account.email)),
   }).filter((block) => block.id !== 'claude-code-servers' || hasClaudeRows), [query, settings, hasClaudeRows]);
   const counts = countByCategory(matched);
   const visible: BlockId[] = searching ? matched.map((block) => block.id) : blocksOf(category).map((block) => block.id).filter((id) => id !== 'claude-code-servers' || hasClaudeRows);

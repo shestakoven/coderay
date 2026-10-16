@@ -10,8 +10,9 @@ export function AccountsSection({ view, busy, onRequest }: {
   const [confirming, setConfirming] = useState<string | null>(null);
   const [code, setCode] = useState('');
   const { login } = view;
-  const rows = [{ id: null, label: 'System' }, ...view.accounts.map((account) => ({ id: account.id, label: account.email }))];
-  const active = rows.find((row) => row.id === view.activeId) ?? rows[0]!;
+  const claude = view.engines[0] ?? { engine: 'claude', accounts: [], activeId: null };
+  const rows = [{ id: null, label: 'System' }, ...claude.accounts.map((account) => ({ id: account.id, label: account.email }))];
+  const active = rows.find((row) => row.id === claude.activeId) ?? rows[0]!;
   const send = (message: ClientMessage & { requestId: string }): void => {
     setConfirming(null);
     onRequest(message);
@@ -35,7 +36,7 @@ export function AccountsSection({ view, busy, onRequest }: {
       </p>
       <div role="radiogroup" aria-label="Claude account" className="sw-list">
         {rows.map((row) => {
-          const on = view.activeId === row.id;
+          const on = claude.activeId === row.id;
           return (
             <div key={row.id ?? 'system'} className={`sw-account${on ? ' on' : ''}`}>
               <label className="account-choice sw-account-choice">

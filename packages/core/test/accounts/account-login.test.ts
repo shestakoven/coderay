@@ -11,6 +11,8 @@ import { accountsDir, accountsFile, fakeCli, filesUnder, mode, withEnv, type Fak
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const EMAIL = 'new.person@example.com';
+const claudeView = (view: Pick<AccountLoginView, 'state' | 'url' | 'error'>): AccountLoginView =>
+  ({ ...view, engine: view.state === 'idle' ? null : 'claude', method: view.state === 'idle' ? null : 'browser', userCode: null });
 
 type CodeOutcome = 'ok' | 'signed-out' | 'invalid';
 
@@ -41,13 +43,13 @@ describe('AccountLogin.start', () => {
   it('waits for a code with the sign-in URL stripped of its terminal hyperlink and colour sequences', async () => {
     const { login, url, waiting } = setup();
     login.start();
-    expect(await waiting()).toStrictEqual({ state: 'waiting', url, error: null });
+    expect(await waiting()).toStrictEqual(claudeView({ state: 'waiting', url, error: null }));
   });
 
   it('is waiting before claude has printed the URL', () => {
     const { login } = setup();
     login.start();
-    expect(login.view()).toStrictEqual({ state: 'waiting', url: null, error: null });
+    expect(login.view()).toStrictEqual(claudeView({ state: 'waiting', url: null, error: null }));
   });
 
   it.each(['target', 'text'] as const)('never exposes half of a URL split across two output chunks inside the link %s', async (splitAt) => {
@@ -83,7 +85,7 @@ describe('AccountLogin.start', () => {
     login.start();
     await waiting();
     expect(() => login.start()).toThrow();
-    expect([login.view(), cli.invocations('auth login').length]).toStrictEqual([{ state: 'waiting', url, error: null }, 1]);
+    expect([login.view(), cli.invocations('auth login').length]).toStrictEqual([claudeView({ state: 'waiting', url, error: null }), 1]);
   });
 });
 
@@ -105,7 +107,7 @@ describe('AccountLogin.submitCode', () => {
     await settled('idle');
     const id = basename(loginRecord()?.configDir ?? '');
     expect([accounts.list().accounts, accounts.configDir(id), login.view()]).toStrictEqual([
-      [{ id, email: EMAIL, createdAt: 4242 }], loginRecord()?.configDir, { state: 'idle', url: null, error: null },
+      [{ id, email: EMAIL, createdAt: 4242 }], loginRecord()?.configDir, claudeView({ state: 'idle', url: null, error: null }),
     ]);
   });
 
@@ -214,7 +216,7 @@ describe('AccountLogin.cancel', () => {
     login.start();
     await waiting();
     login.cancel();
-    expect([login.view(), pendingDirs(home), existsSync(accountsFile(home))]).toStrictEqual([{ state: 'idle', url: null, error: null }, [], false]);
+    expect([login.view(), pendingDirs(home), existsSync(accountsFile(home))]).toStrictEqual([claudeView({ state: 'idle', url: null, error: null }), [], false]);
   });
 
   it('refuses a code after cancel and registers nothing', async () => {

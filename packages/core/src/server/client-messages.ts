@@ -1,6 +1,6 @@
 import {
-  AGENT_TERMINAL_ID, IMAGE_MEDIA_TYPES, isEffortFor, MAX_CHAT_IMAGES, MAX_REVIEW_GRAPH_FILES, parseModelId,
-  type ChatImage, type ClientMessage, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type Policy, type PromptAnswer,
+  AGENT_TERMINAL_ID, API_KEY_PATTERN, IMAGE_MEDIA_TYPES, isEffortFor, isEngineId, LOGIN_METHODS, MAX_CHAT_IMAGES, MAX_REVIEW_GRAPH_FILES, parseModelId,
+  type ChatImage, type ClientMessage, type EngineId, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type LoginMethod, type Policy, type PromptAnswer,
   type ReviewGraphFile, type WatchdogAnswer,
 } from '@ide/protocol';
 import { isAccountId } from '../accounts/account-store';
@@ -23,6 +23,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
     after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message, key, files,
+    engine, method, apiKey,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -122,15 +123,18 @@ export function parseClientMessage(raw: string): ClientMessage | null {
         : null;
     case 'project.clone.cancel':
     case 'project.close':
-    case 'account.login.start':
     case 'account.login.cancel':
       return { type, requestId };
+    case 'account.login.start': {
+      const target = loginTarget(engine, method, apiKey);
+      return target ? { type, requestId, ...target } : null;
+    }
     case 'account.login.code':
       return typeof code === 'string' && code.length <= MAX_CODE_LENGTH && code.trim() !== '' ? { type, requestId, code: code.trim() } : null;
     case 'account.select':
-      return id === null || isAccountId(id) ? { type, requestId, id } : null;
+      return (id === null || isAccountId(id)) && isEngineOrNone(engine) ? { type, requestId, ...(engine === undefined ? {} : { engine }), id } : null;
     case 'account.remove':
-      return isAccountId(id) ? { type, requestId, id } : null;
+      return isAccountId(id) && isEngineOrNone(engine) ? { type, requestId, ...(engine === undefined ? {} : { engine }), id } : null;
     case 'hub.close':
     case 'hub.restart':
       return isBoundedString(id, MAX_ID_LENGTH) ? { type, requestId, id } : null;
@@ -186,6 +190,21 @@ function parsePick(modelChoice: unknown, effort: unknown): { modelChoice: string
   const engine = modelChoice === null ? 'claude' : parseModelId(modelChoice)?.engine;
   if (engine === undefined || (effort !== null && !isEffortFor(engine, effort))) return null;
   return { modelChoice, effort };
+}
+
+const isEngineOrNone = (value: unknown): value is EngineId | undefined => value === undefined || isEngineId(value);
+
+// A key goes only with the API-key way, and never into a log line.
+function loginTarget(engine: unknown, method: unknown, apiKey: unknown): { engine?: EngineId; method?: LoginMethod; apiKey?: string } | null {
+  if (!isEngineOrNone(engine)) return null;
+  if (method !== undefined && !LOGIN_METHODS[engine ?? 'claude'].includes(method as LoginMethod)) return null;
+  if ((method === 'api-key') !== (apiKey !== undefined)) return null;
+  if (apiKey !== undefined && (typeof apiKey !== 'string' || !API_KEY_PATTERN.test(apiKey))) return null;
+  return {
+    ...(engine === undefined ? {} : { engine }),
+    ...(method === undefined ? {} : { method: method as LoginMethod }),
+    ...(apiKey === undefined ? {} : { apiKey: apiKey as string }),
+  };
 }
 
 function parsePlanAnswer(value: unknown): PlanAnswer | null {

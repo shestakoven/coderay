@@ -1,12 +1,12 @@
 import { execFile } from 'node:child_process';
 import { chmodSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import type { ClaudeAccountView } from '@ide/protocol';
+import type { AccountView } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
 import { writeFileNoFollow } from '../mcp/config';
 
 export interface AccountList {
-  accounts: ClaudeAccountView[];
+  accounts: AccountView[];
   activeId: string | null;
 }
 
@@ -24,7 +24,7 @@ const LOGOUT_TIMEOUT_MS = 15_000;
 
 export const isAccountId = (value: unknown): value is string => typeof value === 'string' && ACCOUNT_ID.test(value);
 
-const isAccount = (value: unknown): value is ClaudeAccountView =>
+const isAccount = (value: unknown): value is AccountView =>
   isRecord(value) && isAccountId(value.id) && typeof value.email === 'string' && typeof value.createdAt === 'number';
 
 export function accountEnv(dir: string): NodeJS.ProcessEnv {
@@ -81,7 +81,7 @@ export class AccountStore {
     this.write({ ...list, activeId: id });
   }
 
-  add(account: ClaudeAccountView): void {
+  add(account: AccountView): void {
     const list = this.list();
     this.write({ accounts: [...list.accounts.filter((other) => other.id !== account.id), account], activeId: list.activeId });
   }
