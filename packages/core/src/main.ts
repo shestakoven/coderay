@@ -326,16 +326,26 @@ try {
         return;
       case 'account.select': {
         const engine = message.engine ?? 'claude';
-        await agent.changeAccount(engine, () => accountsOf(engine).setActive(message.id));
-        refreshEngines();
+        await changeAccount(engine, () => accountsOf(engine).setActive(message.id));
         return;
       }
       case 'account.remove': {
         const engine = message.engine ?? 'claude';
-        await agent.changeAccount(engine, () => accountsOf(engine).remove(message.id));
-        refreshEngines();
+        await changeAccount(engine, () => accountsOf(engine).remove(message.id));
         return;
       }
+    }
+  };
+  // The windows hear of an applied change even when restarting the agent after it fails.
+  const changeAccount = async (engine: EngineId, change: () => void | Promise<void>): Promise<void> => {
+    let applied = false;
+    try {
+      await agent.changeAccount(engine, async () => {
+        await change();
+        applied = true;
+      });
+    } finally {
+      if (applied) refreshEngines();
     }
   };
 
@@ -349,16 +359,17 @@ try {
 
   let modelList: Promise<ModelInfo[]> | undefined;
   const modelCatalog = (): Promise<ModelInfo[]> => {
-    modelList ??= Promise.all(agent.engines.all().map((engine) => engine.listModels())).then((lists) => {
+    if (modelList) return modelList;
+    const pending: Promise<ModelInfo[]> = Promise.all(agent.engines.all().map((engine) => engine.listModels())).then((lists) => {
       const list = lists.flat();
-      if (list.length === 0) modelList = undefined;
+      if (list.length === 0 && modelList === pending) modelList = undefined;
       return list;
     });
-    return modelList;
+    modelList = pending;
+    return pending;
   };
   const engineStates = (): Promise<EngineStatus[]> => Promise.all(agent.engines.all().map((engine) => engine.status()));
-  // An account change can sign an engine in or out and change what it lists, so every window gets both again.
-  // Only the latest change's answers go out: a slow check from an earlier switch must not overwrite a newer one.
+  // An account change can sign an engine in or out and change its models, so every window gets both again, from the latest change only.
   let refreshes = 0;
   const refreshEngines = (): void => {
     const generation = ++refreshes;

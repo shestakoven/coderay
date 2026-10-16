@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { chmodSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
+import { chmodSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
 import type { AccountView } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
@@ -92,7 +92,7 @@ export class AccountStore {
   }
 
   /** What points the engine at the active account, for the background models, which keep the core's credentials. */
-  activeEnv(): Record<string, string> {
+  activeEnv(): Readonly<Record<string, string>> {
     return this.home(this.activeId()).env;
   }
 
@@ -136,24 +136,34 @@ export class AccountStore {
     return dir;
   }
 
-  private read(): Record<string, unknown> | null {
-    let value: unknown;
+  // A list reads a file it cannot read as no accounts; a write (`strict`) refuses it, or the other engines' lists would go.
+  private read(strict = false): Record<string, unknown> | null {
+    let text: string;
     try {
-      value = parseJson(readFileSync(this.path, 'utf8'));
-    } catch {
-      return null;
+      text = readFileSync(this.path, 'utf8');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      // A dangling link reads as ENOENT, but the rename would replace the link.
+      if (!strict || (code === 'ENOENT' && !lstatSync(this.path, { throwIfNoEntry: false }))) return null;
+      throw new AccountError(`CodeRay could not read ${this.path} (${code ?? 'unknown error'}) and left the accounts as they were.`);
     }
+    const value = parseJson(text);
     return isRecord(value) ? value : null;
   }
 
   // Replaces only this engine's part, so the other engines' lists and keys a later CodeRay wrote survive.
   // A temp file and a rename: the hub runs a core per project over this one file, and none may read it half-written.
   private write(list: AccountList): void {
-    const file = this.read() ?? {};
+    const file = this.read(true) ?? {};
     const next = this.engine === 'claude' ? { ...file, accounts: list.accounts, activeId: list.activeId } : { ...file, [this.engine]: list };
     const temp = `${this.path}.${process.pid}.tmp`;
-    writeFileNoFollow(temp, `${JSON.stringify(next, null, 2)}\n`, FILE_MODE);
-    renameSync(temp, this.path);
+    try {
+      writeFileNoFollow(temp, `${JSON.stringify(next, null, 2)}\n`, FILE_MODE);
+      renameSync(temp, this.path);
+    } catch (error) {
+      rmSync(temp, { force: true });
+      throw error;
+    }
   }
 }
 

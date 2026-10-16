@@ -60,8 +60,14 @@ export class AccountLogin {
     const dir = target.store.createDir(id);
     const attempt: Attempt = { id, engine, method, store: target.store, run: null, timer: undefined };
     this.attempt = attempt;
+    // Flows report only after `start` returns; one that reports sooner is heard once its run, timer and view are in place, so none leaks.
+    const early: FlowUpdate[] = [];
+    const report = (update: FlowUpdate): void => {
+      if (attempt.run === null) early.push(update);
+      else this.report(attempt, update);
+    };
     try {
-      attempt.run = target.flow.start({ ...target.store.home(id), dir }, method, secret, (update) => this.report(attempt, update));
+      attempt.run = target.flow.start({ ...target.store.home(id), dir }, method, secret, report);
     } catch (error) {
       this.attempt = null;
       target.store.discardDir(id);
@@ -69,6 +75,7 @@ export class AccountLogin {
     }
     attempt.timer = setTimeout(() => this.fail(attempt, 'The sign-in timed out after 10 minutes.'), this.options.timeoutMs ?? LOGIN_TIMEOUT_MS);
     this.set({ state: 'waiting', engine, method, url: null, userCode: null, error: null });
+    for (const update of early) this.report(attempt, update);
   }
 
   submitCode(code: string): void {
