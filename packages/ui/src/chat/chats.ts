@@ -1,4 +1,4 @@
-import { ENGINE_CAPABILITIES, type ChatSummary, type ClientMessage, type EngineId, type ModelInfo, type SessionView } from '@ide/protocol';
+import { ENGINE_CAPABILITIES, ENGINE_NAMES, type ChatSummary, type ClientMessage, type EngineId, type ModelInfo, type SessionView } from '@ide/protocol';
 import { catalogOf } from './model-picker';
 
 export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalogOf(models).find((model) => model.value === choice)?.name ?? choice ?? '—';
@@ -21,6 +21,10 @@ export function relativeTime(ts: number, now: number): string {
   if (days < 14) return `${days} d ago`;
   return new Date(ts).toISOString().slice(0, 10);
 }
+
+/** A chat's row: when it was used, and its engine, model and effort; a core older than the engines sends no engine. */
+export const chatMeta = (chat: ChatSummary, models: ModelInfo[], now: number): string =>
+  `${relativeTime(chat.lastActivityAt, now)} · ${ENGINE_NAMES[chat.engine ?? 'claude']} · ${modelLabel(chat.modelChoice, models)} · ${effortLabel(chat.effort)}`;
 
 export function configureMessage(
   session: Pick<SessionView, 'modelChoice' | 'effort'> | null,

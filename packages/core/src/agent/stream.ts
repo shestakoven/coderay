@@ -8,6 +8,8 @@ export interface ToolResultBlock {
   text: string;
   // The base64 data of the result's image parts, in order; their claimed media type is not kept, the bytes decide.
   images: string[];
+  /** The user or the gate refused the call (Codex says so in the item's status; claude in its result text). */
+  rejected?: boolean;
 }
 
 export type AssistantBlock =
@@ -29,6 +31,8 @@ export type StreamEvent =
   | { type: 'compact_boundary'; trigger: string | null; preTokens: number | null; postTokens: number | null }
   | { type: 'command_output'; text: string }
   | { type: 'usage'; update: UsageUpdate }
+  | { type: 'notice'; text: string }
+  | { type: 'refused'; reason: string }
   | { type: 'control_request'; requestId: string; subtype: string; toolName: string | null; input: unknown }
   | { type: 'control_cancel'; requestId: string }
   | { type: 'ignored' }

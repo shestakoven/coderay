@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { existsSync, mkdirSync, readdirSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
@@ -121,5 +121,13 @@ describe('reapOrphans', () => {
     expect([[...(reaped ?? [])].sort(), readdirSync(dir)]).toEqual([[...orphans].sort(), []]);
     vi.useRealTimers();
     await waitFor(() => orphans.every((pid) => !isAlive(pid)), 'orphans stopped');
+  });
+
+  it('stops a codex app-server whose core is gone, found by its codex-<pid> file', async () => {
+    const dir = tempDir('ide-run-');
+    const pid = sleeper();
+    renameSync(writePidRecord(dir, pid, await deadPid(), 'node /gone/core/main.ts'), join(dir, `codex-${pid}.pid.json`));
+    expect(await reapOrphans(dir, 200)).toEqual([pid]);
+    expect([await waitFor(() => !isAlive(pid) && 'gone', 'the app-server stopped'), readdirSync(dir)]).toEqual(['gone', []]);
   });
 });

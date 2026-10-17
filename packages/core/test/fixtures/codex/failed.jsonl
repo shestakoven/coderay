@@ -1,0 +1,3 @@
+{"method":"error","params":{"error":{"message":"Reconnecting... 1/5","codexErrorInfo":{"responseStreamDisconnected":{"httpStatusCode":401}},"additionalDetails":null},"willRetry":true,"threadId":"$THREAD","turnId":"$TURN"}}
+{"method":"error","params":{"error":{"message":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header","codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":401}},"additionalDetails":null},"willRetry":false,"threadId":"$THREAD","turnId":"$TURN"}}
+{"fake":"fail","message":"unexpected status 401 Unauthorized: Missing bearer or basic authentication in header","codexErrorInfo":{"httpConnectionFailed":{"httpStatusCode":401}}}

@@ -4,7 +4,7 @@ import { isRecord, parseJson } from '../json';
 import { writeFileNoFollow } from '../mcp/config';
 import { commandLine, descendants, isAlive, reaches, signal, signalGroup } from '../os-process';
 
-const PID_FILE = /^claude-\d+\.pid\.json$/;
+const PID_FILE = /^(?:claude|codex)-\d+\.pid\.json$/;
 const PRIVATE_FILE_MODE = 0o600;
 const POLL_MS = 50;
 
@@ -25,17 +25,17 @@ function ownerCommandLine(owner: number): string {
 }
 
 // Command lines identify the processes, so a pid the system has since given to another program is never trusted.
-export function recordClaude(dir: string, pid: number, owner = process.pid): string | null {
+export function recordClaude(dir: string, pid: number, owner = process.pid, name: 'claude' | 'codex' = 'claude'): string | null {
   const command = commandLine(pid)?.trim();
   const ownerCommand = ownerCommandLine(owner);
   // A record without the owner's command line would take a live core for dead.
   if (!command || !ownerCommand) return null;
-  const file = join(dir, `claude-${pid}.pid.json`);
+  const file = join(dir, `${name}-${pid}.pid.json`);
   try {
     writeFileNoFollow(file, JSON.stringify({ pid, command, owner, ownerCommand }), PRIVATE_FILE_MODE);
     return file;
   } catch (error) {
-    console.error('agent: could not write the pid file of claude', error);
+    console.error(`agent: could not write the pid file of ${name}`, error);
     return null;
   }
 }

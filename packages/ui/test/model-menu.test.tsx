@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { ChatPick } from '@ide/protocol';
+import { PROTECTION, type ChatPick, type EngineId, type SessionView } from '@ide/protocol';
 import { initialChatState } from '../src/chat/chat-state';
 import { ChatPanel } from '../src/chat/ChatPanel';
 import { ImageStore } from '../src/chat/image-store';
@@ -61,6 +61,27 @@ describe('ModelMenu', () => {
     const groupNames = [...html.matchAll(/class="model-group-head" id="[^"]+"[^>]*>(.*?)<\/div>/g)].map((match) => match[1]!.replace(/<[^>]+>/g, ''));
     expect([texts(html, 'model-account'), groupNames.map((name) => name.startsWith('Codex, account work@example.com · Plus'))]).toEqual([['work@example.com · Plus'], [false, true, false]]);
   });
+
+  it('keeps the header of an engine whose models are still coming, saying so, whatever is typed, so no query reads as matching nothing', () => {
+    const noCodex = THREE_ENGINES.filter((model) => model.engine !== 'codex');
+    const html = (initialQuery: string) => renderToStaticMarkup(
+      <ModelMenu models={noCodex} engines={[]} pending={['codex']} current={SONNET} started={false} recent={[]} initialQuery={initialQuery} onChoose={() => undefined} onClose={() => undefined} />,
+    );
+    expect([texts(html(''), 'model-engine'), texts(html(''), 'model-state loading'), texts(html('son'), 'model-engine'), texts(html('zzz'), 'model-engine'), texts(html('zzz'), 'model-empty')])
+      .toEqual([['Claude', 'Codex', 'opencode'], ['loading models'], ['Claude', 'Codex'], ['Codex'], ['']]);
+  });
+
+  it('says when an engine that runs could not list its models and offers to ask again, and leaves one that cannot run to its own reason', () => {
+    const noCodex = THREE_ENGINES.filter((model) => model.engine !== 'codex');
+    const html = (state: 'ready' | 'missing') => renderToStaticMarkup(
+      <ModelMenu
+        models={noCodex} engines={[{ engine: 'codex', state, hint: null }]} failed={['codex']} onRetry={() => undefined} current={SONNET} started={false} recent={[]}
+        initialQuery="" onChoose={() => undefined} onClose={() => undefined}
+      />,
+    );
+    expect([texts(html('ready'), 'model-hint'), /<button type="button" class="model-retry">Retry<\/button>/.test(html('ready')), html('missing').includes('model-unlisted')])
+      .toEqual([['Could not list Codex models'], true, false]);
+  });
 });
 
 describe('ModelControls', () => {
@@ -102,5 +123,47 @@ describe('ChatPanel', () => {
       ['Choose a model to start the agent', 'Choose a model first', true, 'Choose a model first'],
       ['Message the agent (Enter sends, Shift+Enter adds a line)', 'Send (Enter)', false, 'Claude Code&#x27;s own terminal interface: every slash command works'],
     ]);
+  });
+
+  it('names the engine and how it guards writes in the header, calls a refused Codex chat refused, ends a failed or crashed turn in its words, and offers no terminal for Codex', () => {
+    const ended = (id: string, resultSubtype: string, seq: number) => ({
+      turn: { id, kind: 'user' as const, openedAt: seq, startedAt: seq, closedAt: seq, resultSubtype },
+      item: { id: `m${seq}`, seq, turnId: id, parentToolUseId: null, kind: 'message' as const, role: 'user' as const, text: 'hi', ts: seq },
+    });
+    const turns = [ended('t1', 'failed', 1), ended('t2', 'crashed', 2)];
+    const header = (engine: EngineId) => {
+      const session: SessionView = { id: 's', engine, engineSessionId: 'c', status: 'refused', model: null, modelChoice: engine === 'codex' ? 'codex:gpt-6-luna' : 'sonnet', effort: 'medium', cliVersion: null, permissionMode: null, startedAt: 1 };
+      const chat = { ...initialChatState, session, turns: Object.fromEntries(turns.map(({ turn }) => [turn.id, turn])), items: Object.fromEntries(turns.map(({ item }) => [item.id, item])) };
+      const html = renderToStaticMarkup(
+        <ChatPanel
+          chat={chat} chats={{ activeId: 's', sessions: [], models: [], engines: [] }} send={() => true} onClearFilter={() => undefined}
+          onDismissError={() => undefined} prompts={[]} promptAnchored={false} onAnswerPrompt={() => undefined} onFocusTargets={() => undefined} dialog={null}
+          view="chat" onView={() => undefined} terminal={null} images={new ImageStore(() => true)} imagesLive={false}
+        />,
+      );
+      return [
+        /class="engine-chip"[^>]*>([^<]*)<span class="engine-protection">([^<]*)</.exec(html)?.slice(1),
+        /class="chat-status refused"[^>]*><i class="status-dot"><\/i>([^<]*)</.exec(html)?.[1],
+        [...html.matchAll(/<div class="turn-end">([^<]*)<\/div>/g)].map((match) => match[1]),
+        html.includes('Terminal</button>'),
+      ];
+    };
+    expect([header('claude'), header('codex')]).toEqual([
+      [['Claude', 'Hook'], 'hook off', ['failed', 'ended: claude exited'], true],
+      [['Codex', 'OS sandbox + approvals'], 'refused', ['failed', 'ended: codex exited'], false],
+    ]);
+  });
+
+  it("lets the keyboard and a screen reader reach the chip's explanation, and gives a narrow header the caption's short word", () => {
+    const session: SessionView = { id: 's', engine: 'codex', engineSessionId: 'c', status: 'running', model: null, modelChoice: 'codex:gpt-6-luna', effort: 'medium', cliVersion: null, permissionMode: null, startedAt: 1 };
+    const html = renderToStaticMarkup(
+      <ChatPanel
+        chat={{ ...initialChatState, session }} chats={{ activeId: 's', sessions: [], models: [], engines: [] }} send={() => true} onClearFilter={() => undefined}
+        onDismissError={() => undefined} prompts={[]} promptAnchored={false} onAnswerPrompt={() => undefined} onFocusTargets={() => undefined} dialog={null}
+        view="chat" onView={() => undefined} terminal={null} images={new ImageStore(() => true)} imagesLive={false}
+      />,
+    );
+    const why = /<span class="engine-chip" tabindex="0" aria-describedby="([^"]+)">/.exec(html)?.[1];
+    expect([html.includes(`<span id="${why}">${PROTECTION.codex.title}</span>`), /class="engine-short" aria-hidden="true">([^<]*)</.exec(html)?.[1]]).toEqual([true, 'Sandbox']);
   });
 });

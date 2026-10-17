@@ -171,7 +171,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           setChats((previous) => ({ ...previous, activeId: message.activeId, sessions: message.sessions, next: message.next }));
           break;
         case 'models.snapshot':
-          setChats((previous) => ({ ...previous, models: message.models }));
+          setChats((previous) => ({ ...previous, models: message.models, pending: message.pending ?? [], failed: message.failed ?? [] }));
           break;
         case 'engines.snapshot':
           setChats((previous) => ({ ...previous, engines: message.engines }));

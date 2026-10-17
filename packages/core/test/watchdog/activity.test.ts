@@ -256,13 +256,22 @@ describe('ActivityLedger attribution', () => {
       expect([ledger.attribute('a.ts', 1).origin, ledger.windowOf('t1'), ledger.runningShell(), ledger.runningSubagents()]).toEqual(['human', undefined, false, 0]);
     });
 
-    it('a repeated allowed for the same id replaces the call and keeps the first start', () => {
+    it("a repeated allowed for the same id merges the calls (a Codex patch's files) and keeps the first start; the same call twice is the call once", () => {
       const { clock, ledger } = make();
-      ledger.allowed(call({ targets: ['a.ts'] }));
+      ledger.allowed(call({ tool: 'Bash', toolClass: 'shell', targets: ['a.ts'], allTracked: true, allowedOnce: true }));
       clock.now = 5;
-      ledger.allowed(call({ targets: ['b.ts'], allowedOnce: true }));
+      ledger.allowed(call({ targets: ['b.ts'] }));
       expect(ledger.windowOf('t1')).toEqual({ from: 0, to: null });
-      expect(ledger.attribute('c.ts', 6).allowedOnce).toBe(true);
+      const agent = { origin: 'agent', toolUseIds: ['t1'], allowedOnce: true };
+      expect([ledger.attribute('a.ts', 6, { tracked: false, enforced: false }), ledger.attribute('z.ts', 6, { enforced: false })]).toEqual([agent, agent]);
+      const once = make();
+      const twice = make();
+      const write = call({ targets: ['a.ts'] });
+      once.ledger.allowed(write);
+      twice.ledger.allowed(write);
+      twice.ledger.allowed(write);
+      const seen = (ledger: ActivityLedger) => [ledger.attribute('a.ts', 1), ledger.attribute('b.ts', 1), ledger.attribute('c.ts', 1, { enforced: false })];
+      expect(seen(twice.ledger)).toEqual(seen(once.ledger));
     });
   });
 });

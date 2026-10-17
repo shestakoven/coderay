@@ -173,3 +173,18 @@ describe('idecore', () => {
     expect(result.status).toBe(404);
   });
 });
+
+describe('idecore for Codex', () => {
+  it('marks every tool read-only for a client that asks for the hints, and none for claude', async () => {
+    const { port } = await setup();
+    const annotated = async (path: string) => {
+      const client = new Client({ name: 'test', version: '0.0.0' });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}${path}`), { requestInit: { headers: { Authorization: `Bearer ${SECRET}` } } }));
+      onTestFinished(() => client.close());
+      return (await client.listTools()).tools.map((tool) => [tool.name, tool.annotations?.readOnlyHint ?? null]);
+    };
+    expect([await annotated('/mcp?readOnlyHints=1'), await annotated('/mcp')]).toEqual([
+      [['propose_plan', true], ['step', true]], [['propose_plan', null], ['step', null]],
+    ]);
+  });
+});

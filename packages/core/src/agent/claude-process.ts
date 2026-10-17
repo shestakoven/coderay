@@ -23,6 +23,7 @@ export interface ClaudeProcessOptions {
   killGraceMs?: number;
   // Where this claude's pid file goes, for the reaper of a core that dies without stopping it.
   pidDir?: string;
+  pidName?: 'claude' | 'codex';
 }
 
 export interface ClaudeProcess {
@@ -59,7 +60,7 @@ export function claudeUnder(base: ClaudeCommand, home: AccountHome): ClaudeComma
 export function spawnClaude(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, options: ClaudeProcessOptions = {}): SpawnedClaude {
   // Detached so that Ctrl+C in the core's terminal reaches the core only; the core stops claude itself.
   const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
-  const pidFile = options.pidDir !== undefined && child.pid !== undefined ? recordClaude(options.pidDir, child.pid) : null;
+  const pidFile = options.pidDir !== undefined && child.pid !== undefined ? recordClaude(options.pidDir, child.pid, process.pid, options.pidName) : null;
   let stderr = '';
   let error: string | null = null;
   child.stderr.setEncoding('utf8');

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { canOpenTerminal, chatTitle, configureMessage, effortLabel, modelLabel, relativeTime } from '../src/chat/chats';
+import { canOpenTerminal, chatMeta, chatTitle, configureMessage, effortLabel, modelLabel, relativeTime } from '../src/chat/chats';
 
 describe('models from the core', () => {
   const models = [
@@ -100,5 +100,15 @@ describe('configureMessage', () => {
 describe('canOpenTerminal', () => {
   it('offers the terminal view only for an engine that has one', () => {
     expect([canOpenTerminal('claude'), canOpenTerminal('codex'), canOpenTerminal('opencode')]).toEqual([true, false, false]);
+  });
+});
+
+describe('chatMeta', () => {
+  it("names each chat's engine in its row, and Claude for a chat a core older than the engines sent", () => {
+    const chat = { id: 'c', title: 't', startedAt: 0, lastActivityAt: 0, status: 'stopped', engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: 'high', messages: 1 } as const;
+    expect([
+      chatMeta(chat, [{ value: 'codex:gpt-6-luna', name: 'GPT-6-Luna', engine: 'codex', efforts: [] }], 10_000),
+      chatMeta({ ...chat, engine: undefined as never, modelChoice: 'sonnet', effort: 'medium' }, [], 10_000),
+    ]).toEqual(['just now · Codex · GPT-6-Luna · high', 'just now · Claude · Sonnet 5.5 · medium']);
   });
 });

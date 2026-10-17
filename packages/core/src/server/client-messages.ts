@@ -1,5 +1,5 @@
 import {
-  AGENT_TERMINAL_ID, API_KEY_PATTERN, IMAGE_MEDIA_TYPES, isEffortFor, isEngineId, LOGIN_METHODS, MAX_CHAT_IMAGES, MAX_REVIEW_GRAPH_FILES, parseModelId,
+  AGENT_TERMINAL_ID, API_KEY_PATTERN, ENGINE_IDS, IMAGE_MEDIA_TYPES, isEffortFor, isEngineId, LOGIN_METHODS, MAX_CHAT_IMAGES, MAX_REVIEW_GRAPH_FILES, parseModelId,
   type ChatImage, type ClientMessage, type EngineId, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type LoginMethod, type Policy, type PromptAnswer,
   type ReviewGraphFile, type WatchdogAnswer,
 } from '@ide/protocol';
@@ -184,11 +184,12 @@ function parseAnswer(value: unknown): PromptAnswer | null {
   return { kind: 'answers', answers: answers as Record<string, string> };
 }
 
-// A model of its engine and an effort that engine names; a null model is claude's own default.
+// A model of its engine and an effort that engine names; with no model the chat's engine decides, which only the session knows.
 function parsePick(modelChoice: unknown, effort: unknown): { modelChoice: string | null; effort: string | null } | null {
   if ((modelChoice !== null && typeof modelChoice !== 'string') || (effort !== null && typeof effort !== 'string')) return null;
-  const engine = modelChoice === null ? 'claude' : parseModelId(modelChoice)?.engine;
-  if (engine === undefined || (effort !== null && !isEffortFor(engine, effort))) return null;
+  const engine = modelChoice === null ? null : parseModelId(modelChoice)?.engine;
+  if (engine === undefined) return null;
+  if (effort !== null && !(engine === null ? ENGINE_IDS.some((id) => isEffortFor(id, effort)) : isEffortFor(engine, effort))) return null;
   return { modelChoice, effort };
 }
 

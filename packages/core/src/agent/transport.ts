@@ -1,11 +1,22 @@
 import type { ChatImage, EffortLevel, EngineId, ImageMediaType } from '@ide/protocol';
+import type { HookAnswer } from '../gate/hook-gate';
 import type { ClaudeCommand, ProcessExit } from './claude-process';
+import type { CodexCommand } from './codex/command';
+import type { JsonValue } from './codex/protocol';
 import type { PermissionAnswer } from './prompts';
 import type { StreamEvent } from './stream';
 
 export interface GateLaunch {
   settingsPath: string;
   appendSystemPrompt: string;
+}
+
+/** A call that may write, in claude's PreToolUse hook input shape, for the gate to decide. */
+export interface GateCall {
+  tool_name: string;
+  tool_input: Record<string, unknown>;
+  tool_use_id: string;
+  cwd: string;
 }
 
 /** What every engine starts a chat's agent with. */
@@ -18,6 +29,8 @@ export interface LaunchBase {
   effort: string | null;
   killGraceMs?: number;
   pidDir?: string;
+  /** The gate, for engines whose writes reach it as requests rather than through claude's hook: the calls of one request, allowed together or not at all; null when the request went away first. */
+  decide?: (calls: GateCall[], signal: AbortSignal) => Promise<HookAnswer | null>;
 }
 
 /** Claude's launch: the MCP config and the gate's settings AgentSession writes for it, and claude's own flags. */
@@ -29,7 +42,23 @@ export interface ClaudeLaunch extends LaunchBase {
   gate: GateLaunch | null;
 }
 
-export type Launch = ClaudeLaunch;
+/** Codex's launch: its command under the chat's account, the thread config and instructions AgentSession prepares for it. */
+export interface CodexLaunch extends LaunchBase {
+  engine: 'codex';
+  codex: CodexCommand;
+  /** The MCP servers CodeRay defines (idecore first among them). */
+  servers: string[];
+  /** CodeRay's MCP servers as thread config. */
+  config: Record<string, JsonValue>;
+  /** The secrets `config` names by variable. */
+  env: Record<string, string>;
+  developerInstructions: string;
+  signedOutHint: string;
+  /** What a turn that OpenAI refused the account's API key for tells the user. */
+  keyRejectedHint: string;
+}
+
+export type Launch = ClaudeLaunch | CodexLaunch;
 
 type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: ImageMediaType; data: string } };
 type TextBlock = { type: 'text'; text: string };

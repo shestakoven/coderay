@@ -19,6 +19,15 @@ describe('catalogOf', () => {
       ['fable', 'opus', 'sonnet', 'haiku', 'codex:gpt-6-luna'],
     ]);
   });
+
+  it('keeps the first of two models one engine lists under the same id, so no two rows share a key', () => {
+    const models = [
+      { value: 'codex:x', name: 'X', engine: 'codex' as const, efforts: [] },
+      { value: 'codex:x', name: 'X again', engine: 'codex' as const, efforts: ['low'] },
+      { value: 'sonnet', name: 'Sonnet', engine: 'claude' as const, efforts: [] },
+    ];
+    expect(catalogOf(models).map((model) => model.name)).toEqual(['X', 'Sonnet']);
+  });
 });
 
 describe('pickerGroups', () => {

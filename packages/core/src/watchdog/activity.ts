@@ -58,6 +58,16 @@ const under = (rel: string, base: string): boolean => {
   return dir === '' || dir === '.' || rel === dir || rel.startsWith(`${dir}/`);
 };
 
+// One id can carry several calls (each file of a Codex patch): whatever any of them may write stays covered.
+function merged(before: ToolCall, call: ToolCall): ToolCall {
+  return {
+    ...call,
+    targets: [...before.targets, ...call.targets.filter((target) => !before.targets.includes(target))],
+    allTracked: before.allTracked || call.allTracked,
+    allowedOnce: before.allowedOnce || call.allowedOnce,
+  };
+}
+
 export class ActivityLedger {
   private readonly now: () => number;
   private readonly graceMs: number;
@@ -76,7 +86,7 @@ export class ActivityLedger {
       if (entry.to !== null && entry.to < now - KEEP_ENDED_MS) this.entries.delete(id);
     }
     const existing = this.entries.get(call.toolUseId);
-    if (existing) existing.call = call;
+    if (existing) existing.call = merged(existing.call, call);
     else this.entries.set(call.toolUseId, { call, from: now, to: null, interruptedAt: null });
   }
 

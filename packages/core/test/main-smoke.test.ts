@@ -7,12 +7,13 @@ import { WebSocket } from 'ws';
 import type { ServerMessage } from '@ide/protocol';
 import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE } from './fake-claude/fake';
+import { FAKE_CODEX } from './fake-codex/fake';
 import { fixture, tempDir, waitFor, writeTree } from './helpers';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 
-async function startMain(options: { claude?: string; env?: Record<string, string> } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
+async function startMain(options: { claude?: string; env?: Record<string, string>; codex?: string } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
   const base = tempDir('main-smoke-');
   const root = join(base, 'project');
   const bin = join(base, 'bin');
@@ -23,7 +24,8 @@ async function startMain(options: { claude?: string; env?: Record<string, string
   execFileSync('git', ['init', '-q'], { cwd: root });
   const child: ChildProcess = spawn(
     process.execPath,
-    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE],
+    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE,
+      ...(options.codex === undefined ? ['--no-codex'] : ['--codex', options.codex])],
     {
       cwd: REPO,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), IDE_DEFAULT_MODEL: 'sonnet', ...options.env },
@@ -150,5 +152,37 @@ describe('main.ts', { timeout: 90_000 }, () => {
       { type: 'settings.result', requestId: 'r1', error: 'Codex has no accounts in this CodeRay.' },
       [['Model 1'], ['Model 3'], ['Model 3']], [['ready'], ['ready'], ['ready']],
     ]);
+  });
+
+  it("reports Codex's state beside Claude's, and still lists Claude's models when codex cannot list its own", async () => {
+    const { messages, socket } = await startMain({ codex: '/nonexistent/codex' });
+    socket.send(JSON.stringify({ type: 'models.list' }));
+    const models = await waitFor(() => messages.find((m) => m.type === 'models.snapshot'), 'the models');
+    const engines = await waitFor(() => messages.find((m) => m.type === 'engines.snapshot'), 'the engines');
+    expect([models, engines]).toEqual([
+      { type: 'models.snapshot', models: [], failed: ['codex'] },
+      { type: 'engines.snapshot', engines: [{ engine: 'claude', state: 'ready', hint: null }, { engine: 'codex', state: 'missing', hint: 'Install Codex: codex is not on the PATH.' }] },
+    ]);
+  });
+
+  it("sends Claude's models without waiting for a codex slow to list its own, saying codex's are coming, and every window both once codex has", async () => {
+    const dir = tempDir('main-slow-codex-');
+    mkdirSync(join(dir, 'home'));
+    const claude = join(dir, 'claude');
+    writeFileSync(claude, [
+      '#!/bin/sh',
+      "if [ \"$1\" = --version ]; then echo '2.1.296 (Claude Code)'; exit 0; fi",
+      'read -r request',
+      'printf \'{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[{"value":"sonnet","displayName":"Sonnet"}]}}}\\n\'',
+      'exec cat > /dev/null',
+    ].join('\n'), { mode: 0o755 });
+    const { messages, socket } = await startMain({ claude, codex: FAKE_CODEX, env: { HOME: join(dir, 'home'), FAKE_CODEX_SLOW: 'model/list', FAKE_CODEX_SLOW_MS: '8000' } });
+    const models = () => messages.flatMap((m) => (m.type === 'models.snapshot' ? [[m.models.map((model) => model.name), m.pending]] : []));
+    const asked = Date.now();
+    socket.send(JSON.stringify({ type: 'models.list' }));
+    await waitFor(() => models().length === 1, "Claude's models");
+    const waited = Date.now() - asked;
+    await waitFor(() => models().length === 2, 'the Codex models', 20_000);
+    expect([models(), waited < 6_000]).toEqual([[[['Sonnet'], ['codex']], [['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra'], undefined]], true]);
   });
 });

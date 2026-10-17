@@ -5,7 +5,7 @@ import { query, type CanUseTool, type Options, type PermissionResult, type SDKUs
 import { claudeEnv, spawnClaude, type SpawnedClaude } from './claude-process';
 import { parseStreamMessage } from './stream';
 import { usageOf } from './usage';
-import type { AgentTransport, Launch, TransportSink } from './transport';
+import type { AgentTransport, ClaudeLaunch, TransportSink } from './transport';
 
 restoreEnv(ENV_BEFORE_SDK);
 
@@ -17,7 +17,7 @@ const SCRIPT = /\.(?:js|mjs|tsx|ts|jsx)$/;
 const KEPT_FROM_CORE = ['NODE_OPTIONS', 'DEBUG'];
 const CANCELLED: PermissionResult = { behavior: 'deny', message: 'The request was cancelled.' };
 
-export function sdkOptions(launch: Launch): Options {
+export function sdkOptions(launch: ClaudeLaunch): Options {
   return {
     pathToClaudeCodeExecutable: launch.claude.command,
     cwd: launch.cwd,
@@ -68,7 +68,7 @@ class InputQueue implements AsyncIterable<SDKUserMessage> {
   }
 }
 
-export function startSdkTransport(launch: Launch, sink: TransportSink, tap?: (message: unknown) => void): AgentTransport {
+export function startSdkTransport(launch: ClaudeLaunch, sink: TransportSink, tap?: (message: unknown) => void): AgentTransport {
   const core = claudeEnv(launch.claude);
   const input = new InputQueue();
   const pending = new Map<string, (result: PermissionResult) => void>();

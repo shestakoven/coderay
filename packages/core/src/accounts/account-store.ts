@@ -163,11 +163,11 @@ export class AccountStore {
       writeFileNoFollow(temp, `${JSON.stringify(next, null, 2)}\n`, FILE_MODE);
       renameSync(temp, this.path);
     } catch (error) {
-      // rmSync leaves a dangling link at the temp path in place; unlink removes it.
+      // rmSync leaves a dangling link at the temp path in place; unlink removes it. The write's own error is the one reported.
       try {
         unlinkSync(temp);
       } catch (cleanup) {
-        if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT') throw cleanup;
+        if ((cleanup as NodeJS.ErrnoException).code !== 'ENOENT') console.error(`accounts: could not remove ${temp}`, cleanup);
       }
       throw error;
     }

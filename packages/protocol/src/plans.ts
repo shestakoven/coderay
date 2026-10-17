@@ -113,6 +113,7 @@ export interface GateTarget {
 export type GatePreview =
   | { kind: 'write'; path: string; content: string; truncated: boolean }
   | { kind: 'edit'; path: string; oldString: string; newString: string; truncated: boolean }
+  | { kind: 'patch'; path: string; diff: string; truncated: boolean }
   | { kind: 'command'; command: string; truncated: boolean }
   | { kind: 'input'; text: string; truncated: boolean };
 

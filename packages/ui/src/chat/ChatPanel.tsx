@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ImageRef, ToolStatus } from '@ide/protocol';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ENGINE_CAPABILITIES, ENGINE_NAMES, PROTECTION, type ChatItem, type ClientMessage, type EngineId, type GateAnswer, type GatePromptView, type ImageRef, type ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget, targetLabel } from '../plan/prompt-text';
@@ -25,7 +25,8 @@ import { ImageViewer } from './ImageViewer';
 const RECOVERED = "recovered from claude's transcript";
 
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
-const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
+const TURN_END: Record<string, string> = { error_during_execution: 'stopped', failed: 'failed' };
+const turnEnd = (subtype: string, engine: EngineId): string | undefined => (subtype === 'crashed' ? `ended: ${engine} exited` : TURN_END[subtype]);
 const START_WAIT_MS = 15000;
 const PINNED_SLACK = 48;
 const BUSY = 'The agent is working: it reads your message at its next step. Enter sends.';
@@ -181,9 +182,10 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     <section className="chat">
       <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
+        {pick && <EngineChip engine={pick.engine ?? 'claude'} />}
         {(chat.session?.status === 'crashed' || chat.session?.status === 'refused') && (
           <span className={`chat-status ${chat.session?.status ?? 'none'}`} title={chat.session?.model ?? undefined}>
-            <i className="status-dot" />{chat.session.status === 'refused' ? 'hook off' : chat.session.status}
+            <i className="status-dot" />{chat.session.status === 'refused' ? ((chat.session.engine ?? 'claude') === 'claude' ? 'hook off' : 'refused') : chat.session.status}
           </span>
         )}
         {chat.session?.permissionMode === 'plan' && (
@@ -228,8 +230,8 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
             {group.turn?.kind === 'agent-initiated' && <div className="turn-marker">↻ agent-initiated turn</div>}
             {!group.turn && group.items.some((item) => item.kind !== 'notice') && <div className="turn-marker">outside a turn</div>}
             {items.map((item) => <Item key={item.id} item={item} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
-            {group.turn?.resultSubtype && TURN_END[group.turn.resultSubtype] && (
-              <div className="turn-end">{TURN_END[group.turn.resultSubtype]}</div>
+            {group.turn?.resultSubtype && turnEnd(group.turn.resultSubtype, chat.session?.engine ?? 'claude') && (
+              <div className="turn-end">{turnEnd(group.turn.resultSubtype, chat.session?.engine ?? 'claude')}</div>
             )}
           </div>
         ))}
@@ -309,7 +311,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           >
             <Icon name="skill" size={18} />
           </button>
-          <ModelControls current={pick} models={chats.models} engines={chats.engines} started={started} enabled={sendable} send={send} onMenu={setModelMenu} onChosen={() => composer.current?.focus()} />
+          <ModelControls current={pick} models={chats.models} engines={chats.engines} pending={chats.pending} failed={chats.failed} started={started} enabled={sendable} send={send} onMenu={setModelMenu} onChosen={() => composer.current?.focus()} />
           <span className="spacer" />
           {!sendable && (
             <button className="composer-action stop" onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title} aria-label={stop.label}>
@@ -322,9 +324,35 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           </button>
         </div>
         </div>
-        <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} /><UsageMeter usage={chat.usage} /></div>
+        <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} canStop={ENGINE_CAPABILITIES[pick?.engine ?? 'claude'].backgroundTasks} /><UsageMeter usage={chat.usage} /></div>
       </footer>}
     </section>
+  );
+}
+
+// Focusable, so its explanation reaches the keyboard and a screen reader as well as the pointer; Escape puts the tooltip away.
+function EngineChip({ engine }: { engine: EngineId }) {
+  const why = useId();
+  const [quiet, setQuiet] = useState(false);
+  const { caption, short, title } = PROTECTION[engine];
+  return (
+    <span
+      className="engine-chip" tabIndex={0} aria-describedby={why} data-quiet={quiet || undefined}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || quiet) return;
+        event.stopPropagation();
+        setQuiet(true);
+      }}
+      onBlur={() => setQuiet(false)}
+      onMouseLeave={() => setQuiet(false)}
+    >
+      {ENGINE_NAMES[engine]}<span className="engine-protection">{caption}</span>
+      <span className="engine-short" aria-hidden="true">{short}</span>
+      <Icon name="shield" size={14} />
+      <span className="engine-why" role="tooltip">
+        <b aria-hidden="true">{ENGINE_NAMES[engine]} · {caption}</b> <span id={why}>{title}</span>
+      </span>
+    </span>
   );
 }
 

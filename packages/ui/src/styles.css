@@ -392,7 +392,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-switcher-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-new { padding: 2px 8px; background: transparent; border-color: transparent; color: var(--muted); border-radius: 6px; }
 .chat-new:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
-.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: 300px; max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: min(300px, 100cqi); max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
 .chat-rename { flex: 1; min-width: 0; padding: 5px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: var(--r-1); font: inherit; outline: 0; }
 .chat-list-empty { padding: 8px; }
 .chat-list-row { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; border-radius: var(--r-1); }
@@ -408,7 +408,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-delete-all:hover, .chat-delete-all.confirm { background: var(--raised); }
 .chat-delete-all.confirm { color: var(--error); }
 .chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-list-meta { font-size: calc(11px * var(--fs-scale, 1)); }
+.chat-list-meta { overflow: hidden; font-size: calc(11px * var(--fs-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
 .model-controls { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; }
 .model-controls select { flex: none; appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 6px; height: 28px; padding: 0 8px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; }
 .model-controls select:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
@@ -676,7 +676,7 @@ button:not(:disabled):hover { border-color: var(--accent); }
 
 /* Chat header at narrow widths */
 .chat-header .chat-status { flex: none; }
-.chat-switcher { flex: 1 1 0; }
+.chat-switcher { flex: 1 1 auto; }
 .chat-switcher-button { max-width: 100%; }
 .chat-header .spacer { flex: 0 0 0; }
 
@@ -855,3 +855,41 @@ button:not(:disabled):hover { border-color: var(--accent); }
 button.close-project { margin-right: auto; color: var(--fg); }
 .close-project:hover:not(:disabled) { text-decoration: underline; }
 @media (max-width: 800px) { .start-body { grid-template-columns: minmax(0, 520px); gap: 32px; padding-top: 6vh; } }
+.model-state.loading { color: var(--muted); }
+.model-state.loading::before { content: '⟳' / ''; display: inline-block; margin-right: 4px; animation: bg-spin 1.6s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .model-state.loading::before { animation: none; } }
+/* The chat's title gives way first, down to its floor, then the chip's caption: the title takes all but a sliver of the shrink, which
+   rounds to nothing (layout runs in 1/64 px), so a caption that fits is never cut. The engine's name is the chip's minimum. */
+.chat-header { container: chat-header / inline-size; }
+.chat-header .chat-switcher { flex-shrink: 100000; min-width: 30%; }
+.engine-chip { display: inline-grid; grid-template-columns: auto minmax(0, max-content); flex: 0 1 auto; align-items: center; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--r-1); color: var(--fg); font-size: calc(11px * var(--fs-scale, 1)); line-height: 1.45; white-space: nowrap; cursor: default; }
+.engine-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.engine-protection, .engine-short { overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.engine-protection::before, .engine-short::before { content: '·'; content: '·' / ', '; margin: 0 0.3em; }
+.engine-short, .engine-chip > .icon { display: none; }
+.engine-chip > .icon { color: var(--muted); }
+.engine-why { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* Under the header, across its width, so it never leaves the panel. */
+.engine-chip:not([data-quiet]):hover .engine-why, .engine-chip:not([data-quiet]):focus-visible .engine-why {
+  z-index: 20; top: calc(100% - 2px); left: 8px; right: 8px; width: auto; height: auto; padding: 6px 8px; overflow: visible; clip-path: none;
+  background: var(--raised); border-radius: var(--r-1); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); color: var(--fg); font-size: calc(12px * var(--fs-scale, 1)); line-height: 1.4; white-space: normal;
+}
+.engine-why b { display: block; margin-bottom: 2px; font-weight: 600; }
+/* Narrower: the short caption, then no frame, then the shield alone; the full words stay the chip's name and its tooltip. */
+@container chat-header (max-width: 460px) {
+  .engine-protection { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
+  .engine-short { display: block; }
+}
+@container chat-header (max-width: 400px) { .engine-chip { padding: 0; border-color: transparent; } }
+@container chat-header (max-width: 300px) {
+  .engine-chip { padding: 2px; font-size: 0; }
+  .engine-short { display: none; }
+  .engine-chip > .icon { display: block; }
+  .engine-why { font-size: calc(12px * var(--fs-scale, 1)); }
+}
+/* Below 360 px the agent view shows its icons without their words, which stay the buttons' names. */
+@container chat-header (max-width: 359px) { .chat-header .agent-view button { gap: 0; font-size: 0; } }
+.model-unlisted { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 8px 8px 4px; }
+.model-retry { padding: 0 6px; border: 0; border-radius: var(--r-1); background: none; color: var(--accent-hover); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-retry:hover:not(:disabled) { background: var(--raised); }
+.model-retry:disabled { color: var(--muted); }

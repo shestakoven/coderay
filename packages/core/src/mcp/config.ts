@@ -120,6 +120,15 @@ export function fileHash(path: string): string {
   }
 }
 
+const resolved = (env: NodeJS.ProcessEnv, name: string, fallback: string | undefined): string => {
+  const value = Object.hasOwn(env, name) ? env[name] : undefined;
+  return value !== undefined && value !== '' ? value : (fallback ?? '');
+};
+
+/** ${VAR} and ${VAR:-default} expanded from env, for a consumer that expands none itself. */
+export const expandVariables = (text: string, env: NodeJS.ProcessEnv): string =>
+  text.replace(VARIABLE, (_match, name: string, fallback: string | undefined) => resolved(env, name, fallback));
+
 // claude expands ${VAR} and ${VAR:-default} in url and ${VAR} in headers itself (spike c28), so those secrets stay out of the run file.
 export function prepareEntry(entry: McpEntry, env: NodeJS.ProcessEnv): { entry: McpEntry; missing: string[] } {
   const missing = new Set<string>();
@@ -128,8 +137,7 @@ export function prepareEntry(entry: McpEntry, env: NodeJS.ProcessEnv): { entry: 
       const value = Object.hasOwn(env, name) ? env[name] : undefined;
       if (value === undefined && fallback === undefined) missing.add(name);
       if (claudeExpands === 'all' || (claudeExpands === 'plain' && fallback === undefined)) return match;
-      if (value !== undefined && value !== '') return value;
-      return fallback ?? '';
+      return resolved(env, name, fallback);
     });
   const mapValues = (map: Record<string, string> | undefined, change: (text: string) => string) =>
     map && Object.fromEntries(Object.entries(map).map(([key, value]) => [key, change(value)]));
