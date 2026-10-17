@@ -105,6 +105,7 @@ async function play(current) {
     } else if (step.request !== undefined) {
       const id = nextRequest++;
       send({ id, method: step.request, params: step.params });
+      for (const note of step.meanwhile ?? []) notify(note.method, note.params);
       if (step.withdrawMs !== undefined) {
         setTimeout(() => {
           const resolve = waiting.get(id);

@@ -32,6 +32,8 @@ const VERSION = /\/(\d+\.\d+\.\d+)/;
 // What 0.160.0 answers a resume of a thread it keeps no record of: one that never ran a turn, or one the user deleted.
 const NO_ROLLOUT = /^no rollout found for thread id /;
 const INTERRUPTED: StreamEvent = { type: 'result', subtype: 'error_during_execution', origin: null };
+// Why a patch's question is withdrawn: its list of changes grew or changed while the user was asked.
+const PATCH_CHANGED = Symbol('patch changed');
 
 type Reply = (verdict: 'accept' | 'decline') => ApprovalResponse | ElicitationResponse;
 // The requests the gate answers, each with its whitelisted reply.
@@ -68,6 +70,8 @@ class CodexTransport implements AgentTransport {
   private readonly events = new CodexEvents();
   private readonly ours: Set<string>;
   private readonly requests = new Map<RequestId, AbortController>();
+  // The patch questions being asked, by item id.
+  private readonly patchAsks = new Map<string, AbortController>();
   private readonly skillsReady: Promise<SkillMetadata[]>;
   // A turn/start answer read after its turn's end must not make that turn current again.
   private readonly endedTurns = new Set<string>();
@@ -283,6 +287,8 @@ class CodexTransport implements AgentTransport {
     const turn = isRecord(params) && params.threadId === this.threadId && isRecord(params.turn) && typeof params.turn.id === 'string' ? params.turn.id : null;
     if (method === 'turn/started' && turn !== null) this.turnId = turn;
     const events = this.events.handle(method, params);
+    // A patch that changed while the user was asked is asked about again: an accept of the old list would let codex write what nobody saw.
+    if (method === 'item/fileChange/patchUpdated' && isRecord(params) && typeof params.itemId === 'string') this.patchAsks.get(params.itemId)?.abort(PATCH_CHANGED);
     // After codex's own words, before the turn ends.
     if (method === 'turn/completed' && turn !== null && this.keyRejected(params)) {
       const end = events.findIndex((event) => event.type === 'result');
@@ -447,26 +453,34 @@ class CodexTransport implements AgentTransport {
       server.rpc.reply(id, reply('decline'));
       return;
     }
-    const controller = new AbortController();
-    this.requests.set(id, controller);
     const decide = this.launch.decide;
-    let denied = false;
-    try {
-      const calls = this.gateCalls(method, params);
-      const verdict = await judge(calls, decide && (async (call, signal) => {
-        const answer = await decide(call, signal);
-        if (answer !== null && answer.permissionDecision !== 'allow') denied = true;
-        return answer;
-      }), controller.signal);
-      if (verdict === null || controller.signal.aborted || !this.answerable(server)) return;
-      // Only the gate's own no makes a declined MCP call read as refused; no gate or a failure is not the user's answer.
-      if (verdict === 'decline' && denied && method === 'mcpServer/elicitation/request' && calls[0]) this.events.reject(calls[0].tool_use_id);
-      server.rpc.reply(id, reply(verdict));
-    } catch (error) {
-      console.error(`codex: could not judge a ${method} request; declined it`, error);
-      if (!controller.signal.aborted && this.answerable(server)) server.rpc.reply(id, reply('decline'));
-    } finally {
-      if (this.requests.get(id) === controller) this.requests.delete(id);
+    const patch = method === 'item/fileChange/requestApproval' && isRecord(params) && typeof params.itemId === 'string' ? params.itemId : null;
+    for (;;) {
+      const controller = new AbortController();
+      this.requests.set(id, controller);
+      if (patch !== null) this.patchAsks.set(patch, controller);
+      let denied = false;
+      try {
+        const calls = this.gateCalls(method, params);
+        const verdict = await judge(calls, decide && (async (call, signal) => {
+          const answer = await decide(call, signal);
+          if (answer !== null && answer.permissionDecision !== 'allow') denied = true;
+          return answer;
+        }), controller.signal);
+        if (controller.signal.reason === PATCH_CHANGED && this.answerable(server)) continue;
+        if (verdict === null || controller.signal.aborted || !this.answerable(server)) return;
+        // Only the gate's own no makes a declined MCP call read as refused; no gate or a failure is not the user's answer.
+        if (verdict === 'decline' && denied && method === 'mcpServer/elicitation/request' && calls[0]) this.events.reject(calls[0].tool_use_id);
+        server.rpc.reply(id, reply(verdict));
+        return;
+      } catch (error) {
+        console.error(`codex: could not judge a ${method} request; declined it`, error);
+        if (!controller.signal.aborted && this.answerable(server)) server.rpc.reply(id, reply('decline'));
+        return;
+      } finally {
+        if (this.requests.get(id) === controller) this.requests.delete(id);
+        if (patch !== null && this.patchAsks.get(patch) === controller) this.patchAsks.delete(patch);
+      }
     }
   }
 

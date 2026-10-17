@@ -264,6 +264,30 @@ describe('the Codex transport', () => {
     ]);
   });
 
+  it('asks again about a patch whose changes changed while the user was asked, and answers for the patch as it then is', async () => {
+    const scenario = join(tempDir('codex-patch-changed-'), 'patch-changed.jsonl');
+    const edit = { path: '$CWD/src/other.ts', kind: { type: 'update', move_path: null }, diff: "@@ -1 +1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n" };
+    const add = { path: '$CWD/src/new.ts', kind: { type: 'add' }, diff: 'export {};\n' };
+    const at = { threadId: '$THREAD', turnId: '$TURN' };
+    writeFileSync(scenario, [
+      { method: 'item/started', params: { ...at, item: { type: 'fileChange', id: 'patch-1', changes: [edit], status: 'inProgress' } } },
+      { request: 'item/fileChange/requestApproval', params: { ...at, itemId: 'patch-1', reason: null, grantRoot: null }, meanwhile: [{ method: 'item/fileChange/patchUpdated', params: { ...at, itemId: 'patch-1', changes: [edit, add] } }] },
+    ].map((line) => JSON.stringify(line)).join('\n'));
+    const asked: string[] = [];
+    const s = scene(scenario, {
+      decide: async (call, signal) => {
+        asked.push(`${call.tool_name} ${String(call.tool_input.file_path).replace(s.dir, '')}`);
+        // The first question waits for the user, who would allow the one file it shows.
+        if (asked.length === 1) await new Promise((resolve) => { signal.addEventListener('abort', resolve); setTimeout(resolve, 1_000); });
+        return ALLOW;
+      },
+    });
+    const { transport, results } = run(s.launch);
+    transport.send(userMessage('edit', []));
+    await waitFor(() => results().length === 1, 'the patch turn ended');
+    expect([asked, replies(s)]).toEqual([['Edit /src/other.ts', 'Edit /src/other.ts', 'Write /src/new.ts'], [{ decision: 'accept' }]]);
+  });
+
   it("ends a shell command still running on Stop, with the app-server it ran under, though a sub-agent's turn ended meanwhile", async () => {
     const s = scene('shell-running');
     const { transport, results } = run(s.launch);
