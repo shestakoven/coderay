@@ -136,18 +136,19 @@ describe('the Codex transport', () => {
     expect([asked, replies(s), rejected]).toEqual([tools, [reply], [refused]]);
   });
 
-  it('grants no extra permissions and answers any other request of the app-server with an error, never asking the gate', async () => {
+  it("grants no extra permissions, declines a sub-agent's request and answers any other request of the app-server with an error, never asking the gate", async () => {
     const scenario = join(tempDir('codex-requests-'), 'requests.jsonl');
     writeFileSync(scenario, [
       { request: 'item/permissions/requestApproval', params: { threadId: '$THREAD', turnId: '$TURN', itemId: 'x', reason: null, permissions: { network: { enabled: true } } } },
       { request: 'applyPatchApproval', params: { conversationId: '$THREAD', callId: 'p', fileChanges: {}, reason: null, grantRoot: null } },
+      { request: 'item/commandExecution/requestApproval', params: { kind: 'command', threadId: 'thread-sub', turnId: 'turn-sub', itemId: 'c1', command: 'rm -rf build', cwd: '$CWD' } },
     ].map((line) => JSON.stringify(line)).join('\n'));
     const asked: GateCall[] = [];
     const s = scene(scenario, { decide: async (call) => { asked.push(call); return ALLOW; } });
     const { transport, results } = run(s.launch);
     transport.send(userMessage('go', []));
     await waitFor(() => results().length === 1, 'the turn ended');
-    expect([replies(s), asked]).toEqual([[{ permissions: {}, scope: 'turn' }, { error: { code: -32601, message: 'CodeRay does not handle applyPatchApproval.' } }], []]);
+    expect([replies(s), asked]).toEqual([[{ permissions: {}, scope: 'turn' }, { error: { code: -32601, message: 'CodeRay does not handle applyPatchApproval.' } }, { decision: 'decline' }], []]);
   });
 
   it.each([

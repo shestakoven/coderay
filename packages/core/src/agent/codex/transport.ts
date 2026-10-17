@@ -441,6 +441,12 @@ class CodexTransport implements AgentTransport {
     }
     // Stop under way, a refusal or an app-server being replaced: codex ends the request with its turn, and the user is not asked.
     if (!this.answerable(server)) return;
+    // A sub-agent's request: its items are in another thread, which the chat neither shows nor follows to their end.
+    if (isRecord(params) && typeof params.threadId === 'string' && params.threadId !== this.threadId) {
+      console.warn(`codex: declined a ${method} request of another thread (a sub-agent's)`);
+      server.rpc.reply(id, reply('decline'));
+      return;
+    }
     const controller = new AbortController();
     this.requests.set(id, controller);
     const decide = this.launch.decide;
