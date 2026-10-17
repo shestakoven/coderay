@@ -9,7 +9,7 @@ import type {
   McpServerElicitationRequestParams, McpToolCallItem, PermissionsRequestApprovalResponse, ThreadItem,
 } from './protocol';
 
-export type Decide = (call: GateCall, signal: AbortSignal) => Promise<HookAnswer | null>;
+export type Decide = (calls: GateCall[], signal: AbortSignal) => Promise<HookAnswer | null>;
 export type Verdict = 'accept' | 'decline' | null;
 
 // codex-cli 0.160 runs the tool on this accept.
@@ -104,22 +104,19 @@ export function elicitationCall(params: McpServerElicitationRequestParams, calls
   return { tool_name: `mcp__${item.server}__${item.tool}`, tool_input: isRecord(item.arguments) ? item.arguments : {}, tool_use_id: item.id, cwd };
 }
 
-/** Accept only when every call is allowed; a denial or a gate that failed declines; a hold that ended without an answer leaves the request unanswered. */
+/** Accept only when the gate allows every call; a denial or a gate that failed declines; a hold that ended without an answer leaves the request unanswered. */
 export async function judge(calls: GateCall[], decide: Decide | undefined, signal: AbortSignal): Promise<Verdict> {
   if (!decide || calls.length === 0) return 'decline';
-  for (const call of calls) {
-    let answer: HookAnswer | null;
-    try {
-      answer = await decide(call, signal);
-    } catch (error) {
-      if (signal.aborted) return null;
-      console.warn(`codex: declined ${call.tool_name} ${call.tool_use_id}: the gate failed (${error instanceof Error ? error.message : String(error)})`);
-      return 'decline';
-    }
-    if (signal.aborted || answer === null) return null;
-    if (answer?.permissionDecision !== 'allow') return 'decline';
+  let answer: HookAnswer | null;
+  try {
+    answer = await decide(calls, signal);
+  } catch (error) {
+    if (signal.aborted) return null;
+    console.warn(`codex: declined ${calls[0]!.tool_name} ${calls[0]!.tool_use_id}: the gate failed (${error instanceof Error ? error.message : String(error)})`);
+    return 'decline';
   }
-  return 'accept';
+  if (signal.aborted || answer === null) return null;
+  return answer?.permissionDecision === 'allow' ? 'accept' : 'decline';
 }
 
 // Whitelisted replies only: never acceptForSession, an execpolicy amendment or a persisted elicitation.

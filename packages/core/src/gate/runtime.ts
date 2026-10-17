@@ -101,7 +101,7 @@ export function createGateRuntime(options: GateRuntimeOptions): GateRuntime {
       systemPrompt: (names) => systemPrompt(options.components(), options.map !== undefined, options.search !== undefined, names),
       canary,
       check: () => {},
-      decide: (call, signal) => gate.evaluate(call, signal),
+      decide: (calls, signal) => gate.evaluateAll(calls, signal),
     },
     attach(agent) {
       session = agent;

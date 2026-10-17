@@ -128,7 +128,7 @@ describe('the Codex transport', () => {
     ["an MCP tool's elicitation with no gate", 'elicitation', false, [], { action: 'decline', content: null, _meta: null }, false],
   ])('declines %s, and the call ends rejected only when the gate denied it', async (_, scenario, gate, tools, reply, refused) => {
     const asked: string[] = [];
-    const s = scene(scenario, gate ? { decide: async (call) => { asked.push(call.tool_name); return DENY; } } : {});
+    const s = scene(scenario, gate ? { decide: async (calls) => { asked.push(...calls.map((call) => call.tool_name)); return DENY; } } : {});
     const { transport, events, results } = run(s.launch);
     transport.send(userMessage('go', []));
     await waitFor(() => results().length === 1, 'the turn ended');
@@ -144,7 +144,7 @@ describe('the Codex transport', () => {
       { request: 'item/commandExecution/requestApproval', params: { kind: 'command', threadId: 'thread-sub', turnId: 'turn-sub', itemId: 'c1', command: 'rm -rf build', cwd: '$CWD' } },
     ].map((line) => JSON.stringify(line)).join('\n'));
     const asked: GateCall[] = [];
-    const s = scene(scenario, { decide: async (call) => { asked.push(call); return ALLOW; } });
+    const s = scene(scenario, { decide: async (calls) => { asked.push(...calls); return ALLOW; } });
     const { transport, results } = run(s.launch);
     transport.send(userMessage('go', []));
     await waitFor(() => results().length === 1, 'the turn ended');
@@ -164,7 +164,7 @@ describe('the Codex transport', () => {
     let held: AbortSignal | null = null;
     let release = () => {};
     const withdrawn: boolean[] = [];
-    const s = scene(scenario, { decide: async (_call, signal) => {
+    const s = scene(scenario, { decide: async (_calls, signal) => {
       held = signal;
       await new Promise<void>((resolve) => { release = resolve; });
       withdrawn.push(signal.aborted);
@@ -215,7 +215,7 @@ describe('the Codex transport', () => {
     const ask = { request: 'item/commandExecution/requestApproval', params: { kind: 'command', threadId: '$THREAD', turnId: '$TURN', itemId: 'c1', command: 'touch f', cwd: '$CWD' } };
     writeFileSync(scenario, [{ fake: 'sleep', ms: 1_000 }, ask, { fake: 'sleep', ms: 60_000 }].map((line) => JSON.stringify(line)).join('\n'));
     const asked: string[] = [];
-    const s = scene(scenario, { decide: async (call) => { asked.push(call.tool_name); return DENY; } }, { FAKE_CODEX_SILENT: silent });
+    const s = scene(scenario, { decide: async (calls) => { asked.push(...calls.map((call) => call.tool_name)); return DENY; } }, { FAKE_CODEX_SILENT: silent });
     const { transport, events, results } = run(s.launch);
     transport.send(userMessage('first', []));
     await waitFor(() => (turns === 0 ? sent(s.records(), 'thread/start').length === 1 : events.some((event) => event.type === 'init')), 'codex busy with the message');
@@ -248,19 +248,19 @@ describe('the Codex transport', () => {
     ]);
   });
 
-  it('judges a patch by its latest list of changes, one question per file, and declines it at the first file the gate denies', async () => {
-    const asked: string[] = [];
+  it('puts a patch to the gate with its latest list of changes, a call per file, and declines it when the gate denies one', async () => {
+    const asked: string[][] = [];
     const s = scene('multi-patch', {
-      decide: async (call) => {
-        asked.push(`${call.tool_name} ${String(call.tool_input.file_path ?? call.tool_input.command).replaceAll(s.dir, '')}`);
-        return call.tool_name === 'Bash' && String(call.tool_input.command).startsWith('mv') ? DENY : ALLOW;
+      decide: async (calls) => {
+        asked.push(calls.map((call) => `${call.tool_name} ${String(call.tool_input.file_path ?? call.tool_input.command).replaceAll(s.dir, '')}`));
+        return calls.some((call) => call.tool_name === 'Bash' && String(call.tool_input.command).startsWith('mv')) ? DENY : ALLOW;
       },
     });
     const { transport, results } = run(s.launch);
     transport.send(userMessage('tidy up', []));
     await waitFor(() => results().length === 1, 'the patch turn ended');
     expect([asked, replies(s)]).toEqual([
-      ['Edit /src/other.ts', "Bash rm -- '/src/old.ts'", "Bash mv -- '/src/a.ts' '/src/b.ts'"], [{ decision: 'decline' }],
+      [['Edit /src/other.ts', "Bash rm -- '/src/old.ts'", "Bash mv -- '/src/a.ts' '/src/b.ts'"]], [{ decision: 'decline' }],
     ]);
   });
 
@@ -273,10 +273,10 @@ describe('the Codex transport', () => {
       { method: 'item/started', params: { ...at, item: { type: 'fileChange', id: 'patch-1', changes: [edit], status: 'inProgress' } } },
       { request: 'item/fileChange/requestApproval', params: { ...at, itemId: 'patch-1', reason: null, grantRoot: null }, meanwhile: [{ method: 'item/fileChange/patchUpdated', params: { ...at, itemId: 'patch-1', changes: [edit, add] } }] },
     ].map((line) => JSON.stringify(line)).join('\n'));
-    const asked: string[] = [];
+    const asked: string[][] = [];
     const s = scene(scenario, {
-      decide: async (call, signal) => {
-        asked.push(`${call.tool_name} ${String(call.tool_input.file_path).replace(s.dir, '')}`);
+      decide: async (calls, signal) => {
+        asked.push(calls.map((call) => `${call.tool_name} ${String(call.tool_input.file_path).replace(s.dir, '')}`));
         // The first question waits for the user, who would allow the one file it shows.
         if (asked.length === 1) await new Promise((resolve) => { signal.addEventListener('abort', resolve); setTimeout(resolve, 1_000); });
         return ALLOW;
@@ -285,7 +285,7 @@ describe('the Codex transport', () => {
     const { transport, results } = run(s.launch);
     transport.send(userMessage('edit', []));
     await waitFor(() => results().length === 1, 'the patch turn ended');
-    expect([asked, replies(s)]).toEqual([['Edit /src/other.ts', 'Edit /src/other.ts', 'Write /src/new.ts'], [{ decision: 'accept' }]]);
+    expect([asked, replies(s)]).toEqual([[['Edit /src/other.ts'], ['Edit /src/other.ts', 'Write /src/new.ts']], [{ decision: 'accept' }]]);
   });
 
   it("ends a shell command still running on Stop, with the app-server it ran under, though a sub-agent's turn ended meanwhile", async () => {

@@ -64,23 +64,23 @@ describe('elicitationCall', () => {
 });
 
 describe('judge', () => {
-  it('accepts only when every call is allowed; declines at the first denial, without a gate or without a call; and leaves a hold that ended unanswered', async () => {
+  it('puts all calls to the gate at once and accepts only when it allows them; declines on its denial, without a gate or without a call; and leaves a hold that ended unanswered', async () => {
     const answer = (decision: 'allow' | 'deny'): HookAnswer => ({ permissionDecision: decision, permissionDecisionReason: 'r' });
     const call = (id: string): GateCall => ({ tool_name: 'Bash', tool_input: { command: id }, tool_use_id: id, cwd: '/p' });
-    const asked: string[] = [];
-    const decide = (verdicts: Record<string, HookAnswer>) => async (gateCall: GateCall) => {
-      asked.push(gateCall.tool_use_id);
-      return verdicts[gateCall.tool_use_id] ?? null;
+    const asked: string[][] = [];
+    const decide = (verdict: HookAnswer | null) => async (calls: GateCall[]) => {
+      asked.push(calls.map((gateCall) => gateCall.tool_use_id));
+      return verdict;
     };
     const signal = new AbortController().signal;
     expect([
-      await judge([call('a'), call('b')], decide({ a: answer('allow'), b: answer('allow') }), signal),
-      await judge([call('c'), call('d')], decide({ c: answer('deny'), d: answer('allow') }), signal),
+      await judge([call('a'), call('b')], decide(answer('allow')), signal),
+      await judge([call('c')], decide(answer('deny')), signal),
       await judge([call('e')], undefined, signal),
-      await judge([], decide({}), signal),
-      await judge([call('f')], decide({}), signal),
+      await judge([], decide(answer('allow')), signal),
+      await judge([call('f')], decide(null), signal),
       asked,
-    ]).toEqual(['accept', 'decline', 'decline', 'decline', null, ['a', 'b', 'c', 'f']]);
+    ]).toEqual(['accept', 'decline', 'decline', 'decline', null, [['a', 'b'], ['c'], ['f']]]);
     const stop = new AbortController();
     const allowThenStop = async () => {
       stop.abort();

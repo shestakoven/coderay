@@ -199,9 +199,15 @@ function start(decide: Decide, command: CodexCommand = codex): Run {
     engine: 'codex', cwd: project, engineSessionId: '', resume: false, model, effort: 'low', codex: command, pidDir: aux, servers: rendered.names,
     config: rendered.config, env: { ...rendered.env, SMOKE_PROBE: '1' }, developerInstructions: CODEX_APPROVALS,
     signedOutHint: signedOutHint(SYSTEM_HOME), keyRejectedHint: keyRejectedHint(SYSTEM_HOME),
-    decide: async (call, signal) => {
-      asked.push(call);
-      return decide(call, signal);
+    // As the gate does: call by call, until one is not allowed.
+    decide: async (calls, signal) => {
+      let answer: HookAnswer | null = null;
+      for (const call of calls) {
+        asked.push(call);
+        answer = await decide(call, signal);
+        if (answer?.permissionDecision !== 'allow') break;
+      }
+      return answer;
     },
   };
   const transport = startCodexTransport(launch, { event: (event) => {

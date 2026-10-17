@@ -43,8 +43,8 @@ export interface SessionGate {
   canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
   /** Throws while the gate cannot decide yet, so no agent starts unguarded. */
   check?(): void;
-  /** Decides a call that may write, as claude's PreToolUse hook does; null when the call went away first. */
-  decide?(call: GateCall, signal: AbortSignal): Promise<HookAnswer | null>;
+  /** Decides calls that may write and run together or not at all, as claude's PreToolUse hook does one; null when they went away first. */
+  decide?(calls: GateCall[], signal: AbortSignal): Promise<HookAnswer | null>;
 }
 
 // A chat runs under the account its engine had active when it started: claude looks --resume transcripts up in that account's directory.
@@ -1144,7 +1144,7 @@ export class AgentSession {
       servers: mcp.names, config: mcp.config, env: mcp.env,
       developerInstructions: codexInstructions(gate?.systemPrompt(CODEX_PROMPT_NAMES) ?? null),
       signedOutHint: signedOutHint(home), keyRejectedHint: keyRejectedHint(home),
-      ...(gate?.decide ? { decide: (call: GateCall, signal: AbortSignal) => gate.decide!(call, signal) } : {}),
+      ...(gate?.decide ? { decide: (calls: GateCall[], signal: AbortSignal) => gate.decide!(calls, signal) } : {}),
       killGraceMs: this.options.killGraceMs, pidDir: runDir(this.options.home),
     };
   }

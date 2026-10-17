@@ -29,8 +29,8 @@ export interface LaunchBase {
   effort: string | null;
   killGraceMs?: number;
   pidDir?: string;
-  /** The gate, for engines whose writes reach it as requests rather than through claude's hook; null when the call went away first. */
-  decide?: (call: GateCall, signal: AbortSignal) => Promise<HookAnswer | null>;
+  /** The gate, for engines whose writes reach it as requests rather than through claude's hook: the calls of one request, allowed together or not at all; null when the request went away first. */
+  decide?: (calls: GateCall[], signal: AbortSignal) => Promise<HookAnswer | null>;
 }
 
 /** Claude's launch: the MCP config and the gate's settings AgentSession writes for it, and claude's own flags. */

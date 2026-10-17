@@ -9,7 +9,7 @@ import { parseStatus } from '../git/status-parse';
 import { isRecord } from '../json';
 import { globOwners, ownerIndex } from '../plans/freeze';
 import type { ComponentRef } from '../plans/plan-input';
-import type { PlanService } from '../plans/plan-service';
+import type { ExpandTarget, PlanService } from '../plans/plan-service';
 import type { GateEventRecord, GateResolution, Store, ToolDecisionRecord } from '../store/store';
 import type { Hold } from './hold';
 import { classifyPaths, expandHome, realTarget } from './paths';
@@ -62,6 +62,13 @@ interface HookInput {
   toolInput: Record<string, unknown>;
   toolUseId: string;
   cwd: string;
+  batch?: Batch;
+}
+
+// Calls that run together or not at all: the plan expansion their answers ask for, and what each allowed one leaves behind.
+interface Batch {
+  expand: ExpandTarget[];
+  effects: (() => void | Promise<void>)[];
 }
 
 interface Judged {
@@ -90,6 +97,7 @@ interface Pending {
   event: GateEventRecord;
   judged: Judged;
   expandable: boolean;
+  batch: Batch | undefined;
   settle(outcome: Outcome): void;
 }
 
@@ -141,9 +149,33 @@ export class HookGate {
     return this.prompts().filter((prompt) => prompt.status === 'pending');
   }
 
-  async evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
-    const input = parseHookInput(raw, this.options.root);
-    if (!input) return deny('CodeRay: the hook input could not be read.');
+  evaluate(raw: unknown, signal: AbortSignal): Promise<HookAnswer | null> {
+    return this.evaluateCall(raw, signal, undefined);
+  }
+
+  /**
+   * Calls that run together or not at all (a Codex patch): asked about in turn, the first one not allowed answers for all, and what an
+   * allowed one leaves (a plan expansion, its decision record, its prompt's resolution) happens only once every one is allowed.
+   */
+  async evaluateAll(raws: unknown[], signal: AbortSignal): Promise<HookAnswer | null> {
+    if (raws.length === 1) return this.evaluate(raws[0], signal);
+    const batch: Batch = { expand: [], effects: [] };
+    let answer: HookAnswer | null = deny('CodeRay: there was no call to judge.');
+    for (const raw of raws) {
+      answer = await this.evaluateCall(raw, signal, batch);
+      if (answer?.permissionDecision !== 'allow') return answer;
+    }
+    if (signal.aborted) return null;
+    // Throws when the plan changed meanwhile so that it cannot be expanded: then none of the calls runs.
+    if (batch.expand.length > 0) this.options.plans.expand([...new Map(batch.expand.map((target) => [`${target.rel}\0${target.deleted === true}`, target])).values()]);
+    for (const effect of batch.effects) await effect();
+    return answer;
+  }
+
+  private async evaluateCall(raw: unknown, signal: AbortSignal, batch: Batch | undefined): Promise<HookAnswer | null> {
+    const parsed = parseHookInput(raw, this.options.root);
+    if (!parsed) return deny('CodeRay: the hook input could not be read.');
+    const input: HookInput = { ...parsed, batch };
     this.inflight.set(input.toolUseId, (this.inflight.get(input.toolUseId) ?? 0) + 1);
     try {
       return await this.admit(input, signal, this.now() + (this.options.holdMs ?? GATE_HOLD_MS));
@@ -210,7 +242,7 @@ export class HookGate {
     }
     if (decision.outcome === 'flag') {
       this.record(input, judged, 'flag');
-      this.event(input, judged, mode, 'flagged');
+      this.later(input.batch, () => this.event(input, judged, mode, 'flagged'));
       return allow(decision.reason);
     }
     return this.ask(input, judged, mode, signal, deadline);
@@ -221,7 +253,8 @@ export class HookGate {
     if (!pending) throw new GateError('That call is no longer waiting for an answer.');
     if (answer === 'expand-plan') {
       if (!pending.view.canExpand || !this.options.plans.canExpand()) throw new GateError('The plan cannot be expanded for this call.');
-      this.options.plans.expand(pending.judged.decision.outOfScope.map((target) => ({ rel: target.scopeRel ?? target.rel as string, exists: target.exists, dir: target.dir, deleted: target.deleting })));
+      if (pending.batch) pending.batch.expand.push(...expandTargets(pending.judged));
+      else this.options.plans.expand(expandTargets(pending.judged));
     }
     pending.settle(answer);
   }
@@ -253,7 +286,7 @@ export class HookGate {
         this.waiting.delete(view.id);
         resolve(value);
       };
-      this.waiting.set(view.id, { view, event, judged, expandable: isExpandable(judged), settle });
+      this.waiting.set(view.id, { view, event, judged, expandable: isExpandable(judged), batch: input.batch, settle });
       this.saveEvent(event);
       this.emit();
       if (signal.aborted) settle('closed');
@@ -284,9 +317,14 @@ export class HookGate {
       return deny(reason);
     }
     if (outcome === 'allow-once') {
-      this.close(view, event, 'allow-once', 'allowed-once');
+      this.close(view, event, 'allow-once', 'allowed-once', input.batch);
       this.record(input, judged, 'ask-approved', 'CodeRay: the user allowed this call once.');
       return allow('CodeRay: the user allowed this call once.');
+    }
+    if (input.batch) {
+      this.close(view, event, 'expand-plan', 'plan-expanded', input.batch);
+      this.record(input, judged, 'ask-approved', undefined, false);
+      return allow('CodeRay: the user expanded the plan for this call.');
     }
     const generation = this.options.hold?.generation();
     const again = await this.judge(input);
@@ -441,9 +479,16 @@ export class HookGate {
   }
 
   private record(
-    input: HookInput, judged: Judged, decision: ToolDecision, reason = judged.decision.reason,
+    input: HookInput, judged: Judged, decision: ToolDecision, reason?: string,
     allowedOnce = decision === 'ask-approved' || decision === 'flag',
   ): void {
+    const batch = input.batch;
+    // On the plan as it is once the batch is allowed: the record names the plan version that covers its call.
+    if (batch && ALLOWED.has(decision)) batch.effects.push(async () => this.write(input, batch.expand.length > 0 ? await this.judge(input) : judged, decision, reason, allowedOnce));
+    else this.write(input, judged, decision, reason, allowedOnce);
+  }
+
+  private write(input: HookInput, judged: Judged, decision: ToolDecision, reason = judged.decision.reason, allowedOnce: boolean): void {
     const record: ToolDecisionRecord = {
       toolUseId: input.toolUseId, decision, planId: judged.decision.planId, planVersion: judged.decision.version,
       stepKey: judged.decision.stepKey, targets: judged.targets.flatMap((target) => (target.rel === null ? [] : [target.rel])),
@@ -492,11 +537,20 @@ export class HookGate {
     });
   }
 
-  private close(view: GatePromptView, event: GateEventRecord, answer: GateAnswer | null, resolution: GateResolution): void {
+  private close(view: GatePromptView, event: GateEventRecord, answer: GateAnswer | null, resolution: GateResolution, batch?: Batch): void {
     const closed: GatePromptView = { ...view, status: answer === null ? 'dropped' : 'answered', answer };
     this.closed = [closed, ...this.closed].slice(0, KEPT_CLOSED);
-    this.saveEvent({ ...event, prompt: closed, resolution, resolvedAt: this.now() });
+    const save = (as: GateResolution) => this.saveEvent({ ...event, prompt: closed, resolution: as, resolvedAt: this.now() });
+    // Until every call of its batch is allowed, and for good when one is not, the call was dropped.
+    if (batch) save('dropped');
+    this.later(batch, () => save(resolution));
     this.emit();
+  }
+
+  // What a call of a batch leaves waits until every call of the batch is allowed.
+  private later(batch: Batch | undefined, effect: () => void): void {
+    if (batch) batch.effects.push(effect);
+    else effect();
   }
 
   private saveEvent(event: GateEventRecord): void {
@@ -524,6 +578,10 @@ export class HookGate {
 function isExpandable(judged: Judged): boolean {
   const { outOfScope } = judged.decision;
   return outOfScope.length > 0 && outOfScope.every((target) => target.kind === 'enforced' && target.rel !== null);
+}
+
+function expandTargets(judged: Judged): ExpandTarget[] {
+  return judged.decision.outOfScope.map((target) => ({ rel: target.scopeRel ?? target.rel as string, exists: target.exists, dir: target.dir, deleted: target.deleting }));
 }
 
 function parseHookInput(raw: unknown, root: string): HookInput | null {

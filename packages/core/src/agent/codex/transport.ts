@@ -462,8 +462,8 @@ class CodexTransport implements AgentTransport {
       let denied = false;
       try {
         const calls = this.gateCalls(method, params);
-        const verdict = await judge(calls, decide && (async (call, signal) => {
-          const answer = await decide(call, signal);
+        const verdict = await judge(calls, decide && (async (asked, signal) => {
+          const answer = await decide(asked, signal);
           if (answer !== null && answer.permissionDecision !== 'allow') denied = true;
           return answer;
         }), controller.signal);
