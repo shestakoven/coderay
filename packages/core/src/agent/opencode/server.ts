@@ -22,11 +22,13 @@ const DISPOSE_TIMEOUT_MS = 3_000;
 const PROBE_TIMEOUT_MS = 20_000;
 const GONE_WAIT_MS = 1_000;
 const POLL_MS = 20;
-// What the server's own environment holds and the model's shell must not see (Q7).
-const SECRETS = ['OPENCODE_SERVER_PASSWORD', 'OPENCODE_SERVER_USERNAME', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_PID'];
+// Every OPENCODE_* goes, not a list: besides the password and the config (Q7), 1.19 sets OPENCODE_CONSOLE_TOKEN for a console org account.
+// env by its absolute path: a relative PATH entry (node_modules/.bin) would run the project's own env with the secrets.
+// A word of a value that only looks like a variable must not print an error into the command's output.
+const DROP_OPENCODE_VARS = ['for word in $(/usr/bin/env); do', '  case $word in OPENCODE_*=*) unset "${word%%=*}" 2>/dev/null ;; esac', 'done'].join('\n');
 const PLAIN_PATH = /^[\w./+-]+$/;
 
-/** The shell wrapper of Q7, written 0755 under `<runDir>/opencode-shell/<basename of the user's shell>`; it drops the server's secrets and execs the user's shell. */
+/** The shell wrapper of Q7, written 0755 under `<runDir>/opencode-shell/<basename of the user's shell>`; it drops every `OPENCODE_*` and execs the user's shell. */
 export function shellWrapper(runDir: string, userShell = process.env.SHELL || '/bin/zsh'): string {
   // opencode takes only an absolute path to an existing file as its shell.
   const shell = isAbsolute(userShell) ? userShell : '/bin/zsh';
@@ -38,8 +40,7 @@ export function shellWrapper(runDir: string, userShell = process.env.SHELL || '/
   const quoted = PLAIN_PATH.test(shell) ? shell : `'${shell.replaceAll("'", "'\\''")}'`;
   // Renamed into place: another chat's server may be running a command through the wrapper right now.
   const staged = `${path}.${process.pid}.${randomBytes(4).toString('hex')}`;
-  // env by its absolute path: a relative PATH entry (node_modules/.bin) would run the project's own env with the secrets.
-  writeFileNoFollow(staged, `#!/bin/sh\nexec /usr/bin/env ${SECRETS.map((name) => `-u ${name}`).join(' ')} ${quoted} "$@"\n`, 0o755);
+  writeFileNoFollow(staged, `#!/bin/sh\n${DROP_OPENCODE_VARS}\nexec ${quoted} "$@"\n`, 0o755);
   renameSync(staged, path);
   return path;
 }

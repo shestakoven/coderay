@@ -1,4 +1,4 @@
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -112,18 +112,22 @@ describe('withServer', () => {
 });
 
 describe('shellWrapper', () => {
-  it("writes an executable named after the user's shell that drops the server's secrets and execs the real shell", () => {
+  it("writes an executable named after the user's shell that drops every OPENCODE_* and execs the real shell", () => {
     const { dir } = scratch();
     const path = shellWrapper(dir, '/bin/zsh');
     const sh = shellWrapper(dir, '/bin/sh');
-    const secrets = { OPENCODE_SERVER_PASSWORD: 'pw', OPENCODE_SERVER_USERNAME: 'u', OPENCODE_CONFIG_CONTENT: '{}', OPENCODE_PID: '1', KEEP: 'kept' };
+    const secrets = {
+      OPENCODE_SERVER_PASSWORD: 'pw', OPENCODE_SERVER_USERNAME: 'u', OPENCODE_CONFIG_CONTENT: '{"a": "b *"}', OPENCODE_PID: '1', OPENCODE_CONSOLE_TOKEN: 't', OPENCODE_API_KEY: 'k=v',
+      KEEP: 'kept', MULTI: 'one\nOPENCODE_NOT.A_VAR=two',
+    };
     // A project's own env first on PATH, as a relative node_modules/.bin entry would put it.
     const hostile = join(dir, 'bin');
     mkdirSync(hostile);
     writeFileSync(join(hostile, 'env'), `#!/bin/sh\ntouch ${join(dir, 'HOSTILE_ENV_RAN')}\n`, { mode: 0o755 });
-    const seen = execFileSync(sh, ['-c', 'printenv'], { env: { PATH: `${hostile}:${process.env.PATH}`, ...secrets }, encoding: 'utf8' }).split('\n').map((line) => line.split('=')[0]);
-    expect([path.endsWith('/opencode-shell/zsh'), statSync(path).mode & 0o777, statSync(join(dir, 'opencode-shell')).mode & 0o777, readFileSync(path, 'utf8'), Object.keys(secrets).filter((name) => seen.includes(name)), existsSync(join(dir, 'HOSTILE_ENV_RAN'))]).toEqual([
-      true, 0o755, 0o700, '#!/bin/sh\nexec /usr/bin/env -u OPENCODE_SERVER_PASSWORD -u OPENCODE_SERVER_USERNAME -u OPENCODE_CONFIG_CONTENT -u OPENCODE_PID /bin/zsh "$@"\n', ['KEEP'], false,
+    const run = spawnSync(sh, ['-c', 'printenv'], { env: { PATH: `${hostile}:${process.env.PATH}`, ...secrets }, encoding: 'utf8' });
+    const seen = run.stdout.split('\n').map((line) => line.split('=')[0]);
+    expect([path.endsWith('/opencode-shell/zsh'), statSync(path).mode & 0o777, statSync(join(dir, 'opencode-shell')).mode & 0o777, readFileSync(path, 'utf8'), Object.keys(secrets).filter((name) => seen.includes(name)), run.stderr, existsSync(join(dir, 'HOSTILE_ENV_RAN'))]).toEqual([
+      true, 0o755, 0o700, expect.stringMatching(/^#!\/bin\/sh\n[^]*\nexec \/bin\/zsh "\$@"\n$/), ['KEEP', 'MULTI'], '', false,
     ]);
   });
 });
