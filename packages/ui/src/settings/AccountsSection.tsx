@@ -1,20 +1,36 @@
-import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
+import { Fragment, useCallback, useEffect, useId, useRef, useState, type KeyboardEvent } from 'react';
 import {
   API_KEY_PATTERN, ENGINE_NAMES, LOGIN_METHODS, type AccountLoginView, type ClientMessage, type EngineAccountsView, type EngineId, type LoginMethod,
 } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
-import { methodLabel, SYSTEM_NOTE } from './accounts';
+import { methodLabel, profileNameProblem, SYSTEM_NOTE, type ProviderList } from './accounts';
+import { ProviderKeys } from './ProviderKeys';
+import type { RunOptions } from './requests';
 
 const Spinner = () => <span className="bg-tasks-spin" aria-hidden="true">⟳</span>;
 
-export function AccountsSection({ engine, view, login, busy, onRequest }: {
+const ASKED: ProviderList = { loading: true, providers: [], loginCommand: '', error: null };
+// A key change starts opencode under the profile, which can take longer than the usual answer.
+const PROVIDER_TIMEOUT_MS = 60_000;
+const FOCUSABLE = 'input:not(:disabled), button:not(:disabled)';
+
+export function AccountsSection({ engine, view, login, busy, onRequest, providers = {}, open = null, onProviders }: {
   engine: EngineId;
   view: EngineAccountsView;
   login: AccountLoginView;
   busy: boolean;
-  onRequest: (message: ClientMessage & { requestId: string }) => void;
+  onRequest: (message: ClientMessage & { requestId: string }, options?: RunOptions) => void;
+  /** An opencode profile's providers, by profile id. */
+  providers?: Record<string, ProviderList>;
+  /** The profile whose providers are shown. */
+  open?: string | null;
+  /** Shows a profile's providers and asks the core for them again, or hides them (null). */
+  onProviders?: (id: string | null) => void;
 }) {
   const [confirming, setConfirming] = useState<string | null>(null);
+  const [nameForm, setNameForm] = useState(false);
+  const [profileName, setProfileName] = useState('');
+  const [nameError, setNameError] = useState<string | null>(null);
   // The code and the key stay out of React state: a controlled input writes its value into the DOM's value attribute.
   const [hasCode, setHasCode] = useState(false);
   const [keyForm, setKeyForm] = useState(false);
@@ -24,7 +40,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   const keyId = useId();
   const keyInput = useRef<HTMLInputElement>(null);
   const section = useRef<HTMLDivElement>(null);
-  const lastFocus = useRef<{ element: HTMLElement; inList: boolean } | null>(null);
+  const lastFocus = useRef<{ element: HTMLElement; inList: boolean; scope: HTMLElement | null } | null>(null);
   const began = useRef<LoginMethod | null>(null);
   const primary = useRef<HTMLButtonElement>(null);
   const codeInput = useRef<HTMLInputElement>(null);
@@ -40,7 +56,8 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   const cancelButton = useRef<HTMLButtonElement>(null);
   const name = ENGINE_NAMES[engine];
   // A login view without an engine comes from a core before engine-scoped accounts: it is Claude's.
-  const loginEngine = login.state === 'idle' ? null : (login.engine ?? 'claude');
+  // A profile is made at once: the moment its view waits is no sign-in to show.
+  const loginEngine = login.state === 'idle' || login.method === 'profile' ? null : (login.engine ?? 'claude');
   const mine = loginEngine === engine;
   // Only a running sign-in blocks the others; a failed one waits for its Retry or Dismiss without holding them up.
   const running = login.state === 'waiting' || login.state === 'checking';
@@ -66,11 +83,15 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
     const root = section.current;
     if (last === null || root === null || (document.activeElement !== null && document.activeElement !== document.body)) return;
     const find = (selector: string) => root.querySelector<HTMLInputElement | HTMLButtonElement>(selector);
-    const target = last.element.isConnected
+    // A control gone or disabled inside a provider's row or panel gives the focus to the first control there that can take it, else to the panel.
+    const gone = !last.element.isConnected || (last.element as HTMLButtonElement).disabled;
+    const scope = gone && last.scope?.isConnected ? last.scope : null;
+    const scoped = scope && (scope.querySelector<HTMLInputElement | HTMLButtonElement>(FOCUSABLE) ?? (scope.hasAttribute('tabindex') ? (scope as HTMLButtonElement) : null));
+    const target = scoped ?? (last.element.isConnected
       ? (last.element as HTMLButtonElement)
       : last.inList
         ? find('input[type="radio"]:checked')
-        : find('[data-landing]') ?? find(`.account-add[data-method="${began.current}"]`) ?? find('.account-add');
+        : find('[data-landing]') ?? find(`.account-add[data-method="${began.current}"]`) ?? find('.account-add'));
     if (target && !target.disabled) target.focus();
   });
   const rows = [
@@ -79,9 +100,9 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
   ];
   const active = rows.find((row) => row.id === view.activeId) ?? rows[0]!;
   const requestId = (): string => crypto.randomUUID();
-  const send = (message: ClientMessage & { requestId: string }): void => {
+  const send = (message: ClientMessage & { requestId: string }, options?: RunOptions): void => {
     setConfirming(null);
-    onRequest(message);
+    onRequest(message, options);
   };
   const start = (method: LoginMethod, apiKey?: string): void =>
     send({ type: 'account.login.start', requestId: requestId(), engine, method, ...(apiKey === undefined ? {} : { apiKey }) });
@@ -97,6 +118,18 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
     if (confirming !== id) setConfirming(id);
     else send({ type: 'account.remove', requestId: requestId(), engine, id });
   };
+  const closeName = (): void => {
+    setNameForm(false);
+    setProfileName('');
+    setNameError(null);
+  };
+  const typedProblem = profileName.trim() === '' ? null : profileNameProblem(profileName);
+  // Create is enabled only for a name the core takes; the core trims it, and on the wire it rides in `apiKey`.
+  const submitName = (): void =>
+    send(
+      { type: 'account.login.start', requestId: requestId(), engine, method: 'profile', apiKey: profileName },
+      { inline: true, onSettled: (error) => (error === null ? closeName() : setNameError(error)) },
+    );
   const closeKey = (): void => {
     if (keyInput.current) keyInput.current.value = '';
     setKeyForm(false);
@@ -125,7 +158,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
     if (!navigator.clipboard) return settle('failed');
     navigator.clipboard.writeText(login.userCode ?? '').then(() => settle('done'), () => settle('failed'));
   };
-  const open = (url: string | null): void => {
+  const openPage = (url: string | null): void => {
     if (url) window.open(url, '_blank', 'noopener');
   };
   const retry = (): void => {
@@ -140,7 +173,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
       ref={section}
       className="sw-accounts accounts"
       onFocus={(event) => {
-        lastFocus.current = { element: event.target, inList: event.target.closest('[role="radiogroup"]') !== null };
+        lastFocus.current = { element: event.target, inList: event.target.closest('[role="radiogroup"]') !== null, scope: event.target.closest<HTMLElement>('[data-focus-scope]') };
       }}
     >
       <p className="sw-account-note">
@@ -149,42 +182,78 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
       <div role="radiogroup" aria-label={`${name} account`} className="sw-list">
         {rows.map((row) => {
           const on = view.activeId === row.id;
+          const profile = engine === 'opencode' && row.id !== null ? row.id : null;
+          const removing = confirming === row.id;
           return (
-            <div key={row.id ?? 'system'} className={`sw-account${on ? ' on' : ''}`}>
-              <label className="account-choice sw-account-choice">
-                <input
-                  type="radio"
-                  name={`${engine}-account`}
-                  checked={on}
-                  disabled={busy}
-                  onChange={() => send({ type: 'account.select', requestId: requestId(), engine, id: row.id })}
-                />
-                <span className="sw-avatar" aria-hidden="true" data-initial={row.id === null ? undefined : row.label.charAt(0).toUpperCase()}>
-                  {row.id === null && <Icon name="terminal" size={14} />}
-                </span>
-                <b>{row.label}</b>
-              </label>
-              {row.id === null && <span className="muted sw-account-sub">{SYSTEM_NOTE[engine]}</span>}
-              {row.plan !== null && <span className="muted sw-account-sub">{row.plan}</span>}
-              {on && <span className="sw-tag sw-active">active</span>}
-              {row.id !== null && (
-                <span className="sw-account-actions">
-                  <button
-                    type="button"
-                    className={`sw-btn ghost account-remove${confirming === row.id ? ' confirm' : ''}`}
+            <Fragment key={row.id ?? 'system'}>
+              <div className={`sw-account${on ? ' on' : ''}`}>
+                <label className="account-choice sw-account-choice">
+                  <input
+                    type="radio"
+                    name={`${engine}-account`}
+                    checked={on}
                     disabled={busy}
-                    title={confirming === row.id ? 'Click again to sign this account out and delete its credentials' : 'Remove this account'}
-                    onClick={() => remove(row.id)}
-                  >
-                    {confirming === row.id ? 'Remove sign-in?' : 'Remove'}
-                  </button>
-                </span>
+                    onChange={() => send({ type: 'account.select', requestId: requestId(), engine, id: row.id })}
+                  />
+                  <span className="sw-avatar" aria-hidden="true" data-initial={row.id === null ? undefined : row.label.charAt(0).toUpperCase()}>
+                    {row.id === null && <Icon name="terminal" size={14} />}
+                  </span>
+                  <b>{row.label}</b>
+                </label>
+                {row.id === null && <span className="muted sw-account-sub">{SYSTEM_NOTE[engine]}</span>}
+                {row.plan !== null && <span className="muted sw-account-sub">{row.plan}</span>}
+                {on && <span className="sw-tag sw-active">active</span>}
+                {row.id !== null && (
+                  <span className="sw-account-actions">
+                    {profile !== null && (
+                      <button
+                        type="button"
+                        className="sw-btn ghost sw-disclosure"
+                        aria-expanded={open === profile}
+                        aria-controls={open === profile ? `${keyId}-providers` : undefined}
+                        onClick={() => onProviders?.(open === profile ? null : profile)}
+                      >
+                        <Icon name={open === profile ? 'chevron-down' : 'chevron-right'} size={14} /> Providers
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className={`sw-btn ghost account-remove${removing ? ' confirm' : ''}`}
+                      disabled={busy}
+                      title={profile !== null
+                        ? (removing ? 'Click again to delete this profile and its provider keys' : 'Remove this profile')
+                        : (removing ? 'Click again to sign this account out and delete its credentials' : 'Remove this account')}
+                      onClick={() => remove(row.id)}
+                    >
+                      {removing ? (profile !== null ? 'Remove profile?' : 'Remove sign-in?') : 'Remove'}
+                    </button>
+                  </span>
+                )}
+              </div>
+              {profile !== null && open === profile && (
+                <div id={`${keyId}-providers`} className="sw-account-detail">
+                  <ProviderKeys
+                    {...(providers[profile] ?? ASKED)}
+                    accountId={profile}
+                    profile={row.label}
+                    busy={busy}
+                    onRefresh={() => onProviders?.(profile)}
+                    onSet={(provider, apiKey, settled) => send(
+                      { type: 'account.provider.set', requestId: requestId(), id: profile, providerID: provider.id, apiKey },
+                      { inline: true, timeoutMs: PROVIDER_TIMEOUT_MS, okText: `${provider.name} key saved`, onSettled: settled },
+                    )}
+                    onRemove={(provider, settled) => send(
+                      { type: 'account.provider.remove', requestId: requestId(), id: profile, providerID: provider.id },
+                      { inline: true, timeoutMs: PROVIDER_TIMEOUT_MS, okText: `${provider.name} key removed`, onSettled: settled },
+                    )}
+                  />
+                </div>
               )}
-            </div>
+            </Fragment>
           );
         })}
       </div>
-      {!mine && !keyForm && (
+      {!mine && !keyForm && !nameForm && (
         <>
           <div className="sw-login-row">
             {LOGIN_METHODS[engine].map((method, index) => (
@@ -198,6 +267,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
                 onClick={() => {
                   began.current = method;
                   if (method === 'api-key') setKeyForm(true);
+                  else if (method === 'profile') setNameForm(true);
                   else start(method);
                 }}
               >
@@ -255,12 +325,51 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
           {key === 'bad' && <p id={`${keyId}-bad`} className="sw-error">That is not an API key: one line without spaces, at most 512 characters.</p>}
         </form>
       )}
+      {nameForm && (
+        <form
+          className="sw-login"
+          onSubmit={(event) => {
+            event.preventDefault();
+            submitName();
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== 'Escape') return;
+            // Escape closes the name form, not the whole Settings dialog.
+            event.preventDefault();
+            event.stopPropagation();
+            closeName();
+          }}
+        >
+          <label className="sw-field-help" id={`${keyId}-name-help`} htmlFor={`${keyId}-name`}>Name the profile, such as Work or Personal. It keeps its own opencode providers and keys.</label>
+          <div className="sw-login-row">
+            <input
+              id={`${keyId}-name`}
+              className="sw-code sw-name"
+              data-landing
+              value={profileName}
+              aria-label="Profile name"
+              aria-invalid={(typedProblem ?? nameError) !== null}
+              aria-describedby={`${keyId}-name-help${(typedProblem ?? nameError) === null ? '' : ` ${keyId}-name-bad`}`}
+              autoComplete="off"
+              spellCheck={false}
+              placeholder="Work"
+              onChange={(event) => {
+                setProfileName(event.target.value);
+                setNameError(null);
+              }}
+            />
+            <button type="submit" className="sw-btn primary" disabled={busy || profileName.trim() === '' || typedProblem !== null}>Create</button>
+            <button type="button" className="sw-btn ghost" onClick={closeName}>Cancel</button>
+          </div>
+          {(typedProblem ?? nameError) !== null && <p id={`${keyId}-name-bad`} className="sw-error">{typedProblem ?? nameError}</p>}
+        </form>
+      )}
       {/* Said in text, not a tooltip: a disabled button takes no focus and shows no title to the keyboard. */}
       {!mine && elsewhere !== null && <p id={`${keyId}-why`} className="sw-field-help">Finish or cancel the {elsewhere} sign-in first.</p>}
       {mine && login.state === 'waiting' && login.method === 'device-code' && (
         <div className="sw-login" role="group" aria-label="Device code sign-in" onKeyDown={escapeCancels}>
           <div className="sw-login-row">
-            <button ref={primary} type="button" className="sw-btn primary" disabled={login.url === null} data-landing={login.url !== null || undefined} onClick={() => open(login.url)}>
+            <button ref={primary} type="button" className="sw-btn primary" disabled={login.url === null} data-landing={login.url !== null || undefined} onClick={() => openPage(login.url)}>
               Open the device page
             </button>
             {login.url === null && <span className="muted"><Spinner /> Starting {engine}…</span>}
@@ -282,7 +391,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest }: {
       {mine && login.state === 'waiting' && login.method !== 'device-code' && (
         <div className="sw-login" onKeyDown={escapeCancels}>
           <div className="sw-login-row">
-            <button ref={primary} type="button" className="sw-btn primary" disabled={login.url === null} data-landing={login.url !== null || undefined} onClick={() => open(login.url)}>
+            <button ref={primary} type="button" className="sw-btn primary" disabled={login.url === null} data-landing={login.url !== null || undefined} onClick={() => openPage(login.url)}>
               Open sign-in page
             </button>
             {login.url === null && <span className="muted"><Spinner /> Starting {engine}…</span>}

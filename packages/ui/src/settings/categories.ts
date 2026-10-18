@@ -21,7 +21,7 @@ export type BlockId =
   | 'mode' | 'auto-approve'
   | 'guarded' | 'harness' | 'outside-allowed'
   | 'mcp-servers' | 'claude-code-servers'
-  | 'accounts' | 'accounts-codex'
+  | 'accounts' | 'accounts-codex' | 'accounts-opencode'
   | 'density' | 'font-size' | 'reduced-motion' | 'canvas-dots';
 
 export interface Block {
@@ -42,6 +42,7 @@ export const BLOCKS: Block[] = [
   { id: 'claude-code-servers', category: 'mcp', title: 'From Claude Code', help: 'Loaded by Claude Code itself. Edit them with claude mcp.', keywords: ['claude code', 'plugin', 'mcp', 'claude mcp', 'read only'] },
   { id: 'accounts', category: 'accounts', title: 'Claude accounts', help: 'Choose the sign-in the agent runs under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'claude', 'oauth'] },
   { id: 'accounts-codex', category: 'accounts', title: 'Codex accounts', help: 'Choose the ChatGPT sign-in or API key Codex chats run under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'codex', 'chatgpt', 'openai', 'api key', 'device code'] },
+  { id: 'accounts-opencode', category: 'accounts', title: 'opencode profiles', help: 'Choose the profile opencode chats run under, or add one and give its providers their keys.', keywords: ['account', 'profile', 'system', 'opencode', 'provider', 'api key', 'key', 'openai', 'anthropic', 'openrouter', 'oauth'] },
   { id: 'density', category: 'appearance', title: 'Density', help: 'How much room rows, tabs and panels take.', keywords: ['compact', 'comfortable', 'spacing', 'rows'] },
   { id: 'font-size', category: 'appearance', title: 'Text size', help: 'Scales the text across CodeRay.', keywords: ['font', 'size', 'zoom', 'larger', 'smaller', 'text'] },
   { id: 'reduced-motion', category: 'appearance', title: 'Reduce motion', help: 'Turns off animations and transitions.', keywords: ['animation', 'motion', 'accessibility', 'transition'] },
