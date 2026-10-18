@@ -123,11 +123,11 @@ describe('reapOrphans', () => {
     await waitFor(() => orphans.every((pid) => !isAlive(pid)), 'orphans stopped');
   });
 
-  it('stops a codex app-server whose core is gone, found by its codex-<pid> file', async () => {
+  it.each(['codex', 'opencode'])('stops a %s server whose core is gone, found by its <engine>-<pid> file', async (engine) => {
     const dir = tempDir('ide-run-');
     const pid = sleeper();
-    renameSync(writePidRecord(dir, pid, await deadPid(), 'node /gone/core/main.ts'), join(dir, `codex-${pid}.pid.json`));
+    renameSync(writePidRecord(dir, pid, await deadPid(), 'node /gone/core/main.ts'), join(dir, `${engine}-${pid}.pid.json`));
     expect(await reapOrphans(dir, 200)).toEqual([pid]);
-    expect([await waitFor(() => !isAlive(pid) && 'gone', 'the app-server stopped'), readdirSync(dir)]).toEqual(['gone', []]);
+    expect([await waitFor(() => !isAlive(pid) && 'gone', 'the server stopped'), readdirSync(dir)]).toEqual(['gone', []]);
   });
 });

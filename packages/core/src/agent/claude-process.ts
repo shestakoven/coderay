@@ -3,7 +3,7 @@ import { createInterface } from 'node:readline';
 import type { Readable, Writable } from 'node:stream';
 import type { AccountHome } from '../accounts/account-homes';
 import { forceKill, signal } from '../os-process';
-import { recordClaude, removePidFile } from './reaper';
+import { recordClaude, removePidFile, type PidName } from './reaper';
 
 export interface ClaudeCommand {
   command: string;
@@ -23,7 +23,7 @@ export interface ClaudeProcessOptions {
   killGraceMs?: number;
   // Where this claude's pid file goes, for the reaper of a core that dies without stopping it.
   pidDir?: string;
-  pidName?: 'claude' | 'codex';
+  pidName?: PidName;
 }
 
 export interface ClaudeProcess {
@@ -73,8 +73,11 @@ export function spawnClaude(file: string, args: string[], cwd: string, env: Node
     error = spawnError.message;
   });
   // A core that dies without its shutdown path must not leave the unguarded agent running; claude's SIGTERM handler stops its tools.
+  // opencode's does not stop a running shell command, which runs in its own group: the tree goes at once.
   const onCoreExit = (): void => {
-    if (child.pid !== undefined) signal(child.pid, 'SIGTERM');
+    if (child.pid === undefined) return;
+    if (options.pidName === 'opencode') forceKill(child.pid);
+    else signal(child.pid, 'SIGTERM');
   };
   // A failed spawn emits 'error' and 'close' but never 'exit', which would leave the listener behind.
   if (child.pid !== undefined) process.on('exit', onCoreExit);
