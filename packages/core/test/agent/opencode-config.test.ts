@@ -58,6 +58,7 @@ describe('selfCheck', () => {
   it.each([
     ['an agent in use missing from the list', { agents: good.filter((entry) => entry.name !== 'plan') }, 'opencode lists no agent "plan"'],
     ['an agent list it cannot read', { agents: 'nope' }, 'opencode listed no agents CodeRay can read'],
+    ['an agent it cannot name', { agents: [...good, { mode: 'subagent', permission: RULES }] }, 'opencode listed no agents CodeRay can read'],
     ['a config it cannot read', { config: ['nope'] }, 'opencode answered with a config CodeRay cannot read'],
     ['sharing on', { config: { ...config, share: 'auto' } }, 'opencode would share this chat (share: auto)'],
     ['another shell', { config: { ...config, shell: '/bin/zsh' } }, "opencode would run commands in /bin/zsh, not CodeRay's shell wrapper"],
