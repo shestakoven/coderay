@@ -91,9 +91,11 @@ export const LOGIN_METHODS: Record<EngineId, readonly LoginMethod[]> = {
 
 /** An API key CodeRay accepts: 1–512 printable ASCII characters, no spaces. The core and the sign-in form both check it. */
 export const API_KEY_PATTERN = /^[\x21-\x7e]{1,512}$/;
+export const API_KEY_RULE = 'A key is 1 to 512 characters without spaces.';
 
 /** A profile name CodeRay accepts, once trimmed: 1–40 characters, no control or format characters (bidi controls included). */
 export const PROFILE_NAME_PATTERN = /^[^\p{Cc}\p{Cf}]{1,40}$/u;
+export const PROFILE_NAME_RULE = 'A profile name is 1 to 40 characters without control characters.';
 
 /** One of opencode's providers as a profile sees it: connected when its models are listed, and the ways it takes a credential. */
 export interface ProviderView {

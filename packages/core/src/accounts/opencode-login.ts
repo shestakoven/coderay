@@ -1,4 +1,6 @@
-import { API_KEY_PATTERN, PROFILE_NAME_PATTERN, type ProviderView, type SettingsClientMessage, type SettingsServerMessage } from '@ide/protocol';
+import {
+  API_KEY_PATTERN, API_KEY_RULE as KEY_RULE, PROFILE_NAME_PATTERN, PROFILE_NAME_RULE as NAME_RULE, type ProviderView, type SettingsClientMessage, type SettingsServerMessage,
+} from '@ide/protocol';
 import type { OpencodeClient } from '../agent/opencode/api';
 import { opencodeUnder, type OpencodeCommand } from '../agent/opencode/command';
 import { inlineConfig } from '../agent/opencode/config';
@@ -8,8 +10,6 @@ import { opencodeLoginCommand, type SignedHome } from './account-homes';
 import type { LoginFlow } from './account-login';
 import { AccountError, type AccountStore } from './account-store';
 
-const NAME_RULE = 'A profile name is 1 to 40 characters without control characters.';
-const KEY_RULE = 'A key is 1 to 512 characters without spaces.';
 const NO_OPENCODE = 'opencode is not available in this CodeRay.';
 const NO_PROFILE = 'That profile no longer exists.';
 
