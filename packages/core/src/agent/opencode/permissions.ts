@@ -56,7 +56,11 @@ export function askCalls(
   // Normalised too: a workdir of `<project>/../elsewhere` is not in the project.
   const abs = (path: string): string => resolve(cwd, path);
   const read = READS.get(ask.permission);
-  if (read !== undefined) return ask.patterns.map((pattern) => ({ ...base, tool_name: read[0], tool_input: { [read[1]]: pattern } }));
+  if (read !== undefined) {
+    // A call outside the project asks for the directory, then for itself, under one callID: the gate's decision on the directory must not stand for the call's.
+    const id = ask.permission === 'external_directory' ? `${ask.callID}:external_directory` : ask.callID;
+    return ask.patterns.map((pattern) => ({ ...base, tool_use_id: id, tool_name: read[0], tool_input: { [read[1]]: pattern } }));
+  }
   if (ask.permission === 'edit') {
     // The edit, write and apply_patch tools all ask `edit`; a patch lists its files, each with its own diff.
     const { diff, filepath, files } = ask.metadata;

@@ -41,7 +41,7 @@ describe('askCalls', () => {
     ['a task for a checked subagent, asked before its input is known → Task', ask('task', { patterns: ['general'], metadata: { description: 'look', subagent_type: 'general' } }), undefined, [{ ...base, tool_name: 'Task', tool_input: { subagent_type: 'general' } }]],
     ['a task resuming a session this chat created → Task with it', ask('task', { patterns: ['explore'] }), { subagent_type: 'explore', task_id: 'ses_child' }, [{ ...base, tool_name: 'Task', tool_input: { subagent_type: 'explore', task_id: 'ses_child' } }]],
     ["an IDE server's tool → its mcp name with the tool's input", ask('files_write_note'), { text: 'hi' }, [{ ...base, tool_name: 'mcp__files__write_note', tool_input: { text: 'hi' } }]],
-    ['an external directory → a read of each pattern', ask('external_directory', { patterns: ['/elsewhere/*'], metadata: { filepath: '/elsewhere/a.ts', parentDir: '/elsewhere' } }), undefined, [{ ...base, tool_name: 'Read', tool_input: { file_path: '/elsewhere/*' } }]],
+    ["an external directory → a read of each pattern, under an id of its own: the call's own ask may follow", ask('external_directory', { patterns: ['/elsewhere/*'], metadata: { filepath: '/elsewhere/a.ts', parentDir: '/elsewhere' } }), undefined, [{ ...base, tool_use_id: 'call_1:external_directory', tool_name: 'Read', tool_input: { file_path: '/elsewhere/*' } }]],
   ])('%s', (_name, input, state, expected) => {
     expect(calls(input, state)).toEqual(expected);
   });
