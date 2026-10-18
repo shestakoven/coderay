@@ -76,6 +76,8 @@ describe('selfCheck', () => {
     ['a custom tool', { toolIds: [...tools, 'marker'] }, 'opencode loaded a custom tool "marker", which would run without asking'],
     ['a custom tool in place of a built-in one', { toolIds: [...tools, 'write'] }, 'opencode loaded a custom tool "write" in place of its own, which would run without asking'],
     ['a tool list it cannot read', { toolIds: { ids: tools } }, 'opencode listed tools CodeRay cannot read'],
+    ['an empty tool list', { toolIds: [] }, 'opencode listed tools without its own "bash", so CodeRay cannot tell which tools it runs'],
+    ['a tool list without write', { toolIds: tools.filter((id) => id !== 'write') }, 'opencode listed tools without its own "write", so CodeRay cannot tell which tools it runs'],
   ])('refuses %s', (_name, answers, reason) => {
     expect(check(answers)).toBe(reason);
   });

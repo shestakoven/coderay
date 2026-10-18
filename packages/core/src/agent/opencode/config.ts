@@ -11,6 +11,8 @@ const ANY = '*';
 const IDECORE_TOOLS = 'idecore_*';
 const ALLOWED: ReadonlySet<string> = new Set(ALLOWED_TOOLS);
 const BUILT_IN: ReadonlySet<string> = new Set(BUILT_IN_TOOLS);
+// An answer without these is not the registry the model's calls go through, so it cannot show a custom tool.
+const REGISTRY_TOOLS = ['bash', 'read', 'edit', 'write'];
 
 export type Action = 'allow' | 'ask' | 'deny';
 
@@ -96,7 +98,8 @@ function toolProblem(ids: unknown): string | null {
     if (seen.has(id)) return `opencode loaded a custom tool "${id}" in place of its own, which would run without asking`;
     seen.add(id);
   }
-  return null;
+  const missing = REGISTRY_TOOLS.find((id) => !seen.has(id));
+  return missing === undefined ? null : `opencode listed tools without its own "${missing}", so CodeRay cannot tell which tools it runs`;
 }
 
 type Agent = Record<string, unknown> & { name: string };
