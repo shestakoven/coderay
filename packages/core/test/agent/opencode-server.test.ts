@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -117,9 +117,13 @@ describe('shellWrapper', () => {
     const path = shellWrapper(dir, '/bin/zsh');
     const sh = shellWrapper(dir, '/bin/sh');
     const secrets = { OPENCODE_SERVER_PASSWORD: 'pw', OPENCODE_SERVER_USERNAME: 'u', OPENCODE_CONFIG_CONTENT: '{}', OPENCODE_PID: '1', KEEP: 'kept' };
-    const seen = execFileSync(sh, ['-c', 'printenv'], { env: { PATH: process.env.PATH, ...secrets }, encoding: 'utf8' }).split('\n').map((line) => line.split('=')[0]);
-    expect([path.endsWith('/opencode-shell/zsh'), statSync(path).mode & 0o777, statSync(join(dir, 'opencode-shell')).mode & 0o777, readFileSync(path, 'utf8'), Object.keys(secrets).filter((name) => seen.includes(name))]).toEqual([
-      true, 0o755, 0o700, '#!/bin/sh\nexec env -u OPENCODE_SERVER_PASSWORD -u OPENCODE_SERVER_USERNAME -u OPENCODE_CONFIG_CONTENT -u OPENCODE_PID /bin/zsh "$@"\n', ['KEEP'],
+    // A project's own env first on PATH, as a relative node_modules/.bin entry would put it.
+    const hostile = join(dir, 'bin');
+    mkdirSync(hostile);
+    writeFileSync(join(hostile, 'env'), `#!/bin/sh\ntouch ${join(dir, 'HOSTILE_ENV_RAN')}\n`, { mode: 0o755 });
+    const seen = execFileSync(sh, ['-c', 'printenv'], { env: { PATH: `${hostile}:${process.env.PATH}`, ...secrets }, encoding: 'utf8' }).split('\n').map((line) => line.split('=')[0]);
+    expect([path.endsWith('/opencode-shell/zsh'), statSync(path).mode & 0o777, statSync(join(dir, 'opencode-shell')).mode & 0o777, readFileSync(path, 'utf8'), Object.keys(secrets).filter((name) => seen.includes(name)), existsSync(join(dir, 'HOSTILE_ENV_RAN'))]).toEqual([
+      true, 0o755, 0o700, '#!/bin/sh\nexec /usr/bin/env -u OPENCODE_SERVER_PASSWORD -u OPENCODE_SERVER_USERNAME -u OPENCODE_CONFIG_CONTENT -u OPENCODE_PID /bin/zsh "$@"\n', ['KEEP'], false,
     ]);
   });
 });

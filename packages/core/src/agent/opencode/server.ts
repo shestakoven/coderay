@@ -38,7 +38,8 @@ export function shellWrapper(runDir: string, userShell = process.env.SHELL || '/
   const quoted = PLAIN_PATH.test(shell) ? shell : `'${shell.replaceAll("'", "'\\''")}'`;
   // Renamed into place: another chat's server may be running a command through the wrapper right now.
   const staged = `${path}.${process.pid}.${randomBytes(4).toString('hex')}`;
-  writeFileNoFollow(staged, `#!/bin/sh\nexec env ${SECRETS.map((name) => `-u ${name}`).join(' ')} ${quoted} "$@"\n`, 0o755);
+  // env by its absolute path: a relative PATH entry (node_modules/.bin) would run the project's own env with the secrets.
+  writeFileNoFollow(staged, `#!/bin/sh\nexec /usr/bin/env ${SECRETS.map((name) => `-u ${name}`).join(' ')} ${quoted} "$@"\n`, 0o755);
   renameSync(staged, path);
   return path;
 }
