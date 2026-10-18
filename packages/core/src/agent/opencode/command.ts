@@ -27,7 +27,8 @@ const ZEN_KEY = 'OPENCODE_API_KEY';
 export function opencodeEnv(command: OpencodeCommand, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...command.env };
   for (const name of Object.keys(env)) if (name.startsWith('OPENCODE_') && name !== ZEN_KEY) delete env[name];
-  Object.assign(env, extra);
   for (const name of command.unset ?? []) delete env[name];
+  // Last, so a home's unset list cannot remove the hardening or the password.
+  Object.assign(env, extra);
   return env;
 }

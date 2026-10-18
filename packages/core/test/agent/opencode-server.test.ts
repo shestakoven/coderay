@@ -40,7 +40,8 @@ describe('startServer', () => {
     vi.stubEnv('OPENCODE_CONFIG', '/elsewhere/opencode.json');
     // Zen's key is a credential, not configuration: the System account keeps it.
     vi.stubEnv('OPENCODE_API_KEY', 'zen-key');
-    const server = startServer(fakeOpencode(null, record, { OPENCODE_CONFIG_DIR: '/elsewhere', OPENCODE_AUTO_SHARE: '1', OPENCODE_SERVER_USERNAME: 'other' }), {
+    const command = fakeOpencode(null, record, { OPENCODE_CONFIG_DIR: '/elsewhere', OPENCODE_AUTO_SHARE: '1', OPENCODE_SERVER_USERNAME: 'other' });
+    const server = startServer({ ...command, unset: ['OPENCODE_PURE', 'OPENCODE_SERVER_PASSWORD'] }, {
       cwd: dir, pidDir: dir, configContent: '{"mcp":{}}', env: { OPENCODE_PURE: '0', OPENCODE_PERMISSION: '{"edit":"allow"}' },
     });
     const early = server.pid;
