@@ -4,3 +4,6 @@
 {"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_chose","type":"text","text":"You chose A.","time":{"start":1,"end":2}}}}
 {"fake":"await-turn"}
 {"question":{"text":"C or D?","options":["C","D"],"callID":"call_q2"}}
+{"fake":"await-turn"}
+{"question":{"text":"E or F?","options":["E","F"],"callID":"call_q3","session":"unannounced"}}
+{"question":{"text":"G or H?","options":["G","H"],"callID":"call_q4","session":"ses_foreign"}}
