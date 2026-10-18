@@ -72,7 +72,7 @@ function killAllUnder(base: string): void {
 
 function startHubProcess(env: { base: string; home: string; bin: string }, port: number, projects: string[]) {
   const args = ['--import', 'tsx', MAIN, '--hub', ...projects.flatMap((root) => ['--project', root]),
-    '--ide-home', env.home, '--port', String(port), '--allow-origin', ORIGIN, '--claude', FAKE_CLAUDE, '--no-codex'];
+    '--ide-home', env.home, '--port', String(port), '--allow-origin', ORIGIN, '--claude', FAKE_CLAUDE, '--no-codex', '--no-opencode'];
   const child: ChildProcess = spawn(process.execPath, args, {
     cwd: REPO,
     env: {
@@ -143,6 +143,8 @@ describe('main.ts --hub', { timeout: 180_000 }, () => {
 
     const coresOf = (root: string) => processesUnder(root, [hubProcess.child.pid]);
     expect(coresOf(b).length).toBeGreaterThan(0);
+    const argsOf = (pid: number) => execFileSync('ps', ['-ww', '-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
+    expect(coresOf(a).map(argsOf).filter((args) => args.includes('--exit-with-parent')).map((args) => args.includes(' --no-opencode '))).toEqual([true]);
     hub.send({ type: 'hub.close', requestId: 'close-b', id: runningB.id });
     expect(await waitFor(() => hub.messages.find((m) => m.type === 'hub.close.result'), 'the close result', 30_000)).toEqual({ type: 'hub.close.result', requestId: 'close-b', error: null });
     expect(hub.latest()?.projects.map((p) => p.root)).toEqual([a]);

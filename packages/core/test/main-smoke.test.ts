@@ -8,12 +8,13 @@ import type { ServerMessage } from '@ide/protocol';
 import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE } from './fake-claude/fake';
 import { FAKE_CODEX } from './fake-codex/fake';
+import { FAKE_OPENCODE } from './fake-opencode/fake';
 import { fixture, tempDir, waitFor, writeTree } from './helpers';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 
-async function startMain(options: { claude?: string; env?: Record<string, string>; codex?: string } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
+async function startMain(options: { claude?: string; env?: Record<string, string>; codex?: string; opencode?: string } = {}): Promise<{ messages: ServerMessage[]; socket: WebSocket }> {
   const base = tempDir('main-smoke-');
   const root = join(base, 'project');
   const bin = join(base, 'bin');
@@ -25,7 +26,7 @@ async function startMain(options: { claude?: string; env?: Record<string, string
   const child: ChildProcess = spawn(
     process.execPath,
     ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE,
-      ...(options.codex === undefined ? ['--no-codex'] : ['--codex', options.codex])],
+      ...(options.codex === undefined ? ['--no-codex'] : ['--codex', options.codex]), ...(options.opencode === undefined ? ['--no-opencode'] : ['--opencode', options.opencode])],
     {
       cwd: REPO,
       env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), IDE_DEFAULT_MODEL: 'sonnet', ...options.env },
@@ -50,6 +51,19 @@ async function startMain(options: { claude?: string; env?: Record<string, string
     socket.once('error', reject);
   });
   return { messages, socket };
+}
+
+// A claude that tells its version and lists Sonnet.
+function sonnetClaude(dir: string): string {
+  const claude = join(dir, 'claude');
+  writeFileSync(claude, [
+    '#!/bin/sh',
+    "if [ \"$1\" = --version ]; then echo '2.1.296 (Claude Code)'; exit 0; fi",
+    'read -r request',
+    'printf \'{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[{"value":"sonnet","displayName":"Sonnet"}]}}}\\n\'',
+    'exec cat > /dev/null',
+  ].join('\n'), { mode: 0o755 });
+  return claude;
 }
 
 describe('main.ts', { timeout: 90_000 }, () => {
@@ -168,15 +182,7 @@ describe('main.ts', { timeout: 90_000 }, () => {
   it("sends Claude's models without waiting for a codex slow to list its own, saying codex's are coming, and every window both once codex has", async () => {
     const dir = tempDir('main-slow-codex-');
     mkdirSync(join(dir, 'home'));
-    const claude = join(dir, 'claude');
-    writeFileSync(claude, [
-      '#!/bin/sh',
-      "if [ \"$1\" = --version ]; then echo '2.1.296 (Claude Code)'; exit 0; fi",
-      'read -r request',
-      'printf \'{"type":"control_response","response":{"subtype":"success","request_id":"models","response":{"models":[{"value":"sonnet","displayName":"Sonnet"}]}}}\\n\'',
-      'exec cat > /dev/null',
-    ].join('\n'), { mode: 0o755 });
-    const { messages, socket } = await startMain({ claude, codex: FAKE_CODEX, env: { HOME: join(dir, 'home'), FAKE_CODEX_SLOW: 'model/list', FAKE_CODEX_SLOW_MS: '8000' } });
+    const { messages, socket } = await startMain({ claude: sonnetClaude(dir), codex: FAKE_CODEX, env: { HOME: join(dir, 'home'), FAKE_CODEX_SLOW: 'model/list', FAKE_CODEX_SLOW_MS: '8000' } });
     const models = () => messages.flatMap((m) => (m.type === 'models.snapshot' ? [[m.models.map((model) => model.name), m.pending]] : []));
     const asked = Date.now();
     socket.send(JSON.stringify({ type: 'models.list' }));
@@ -184,5 +190,40 @@ describe('main.ts', { timeout: 90_000 }, () => {
     const waited = Date.now() - asked;
     await waitFor(() => models().length === 2, 'the Codex models', 20_000);
     expect([models(), waited < 6_000]).toEqual([[[['Sonnet'], ['codex']], [['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra'], undefined]], true]);
+  });
+
+  it("runs opencode beside Claude and Codex, makes a profile from its name, and lists a provider's models once the active profile has its key", async () => {
+    const dir = tempDir('main-opencode-');
+    mkdirSync(join(dir, 'home'));
+    const { messages, socket } = await startMain({ claude: sonnetClaude(dir), codex: FAKE_CODEX, opencode: FAKE_OPENCODE, env: { HOME: join(dir, 'home') } });
+    const send = (message: object): void => socket.send(JSON.stringify(message));
+    const answers = (requestId: string) => messages.flatMap((m) => ('requestId' in m && m.requestId === requestId ? [m] : []));
+    const answered = (requestId: string) => waitFor(() => answers(requestId).find((m) => m.type === 'settings.result'), `the result of ${requestId}`, 20_000);
+    const names = (has: string) => waitFor(() => messages.findLast((m) => m.type === 'models.snapshot' && m.models.some((model) => model.name === has)), `the models with ${has}`, 20_000);
+    send({ type: 'models.list' });
+    const listed = await names('OpenCode Zen · GPT OSS 120B (free)');
+    const engines = await waitFor(() => messages.find((m) => m.type === 'engines.snapshot' && m.engines.length === 3), 'all three engines', 20_000);
+    send({ type: 'account.login.start', requestId: 'bad', engine: 'opencode', method: 'profile', apiKey: 'a\u0007b' });
+    const refused = await answered('bad');
+    send({ type: 'account.login.start', requestId: 'r1', engine: 'opencode', method: 'profile', apiKey: '  Work ' });
+    await answered('r1');
+    const profiles = () => messages.findLast((m) => m.type === 'settings.snapshot')?.settings.accounts.engines.find((engine) => engine.engine === 'opencode');
+    const id = (await waitFor(() => profiles()?.accounts[0], 'the profile')).id;
+    send({ type: 'account.select', requestId: 'r2', engine: 'opencode', id });
+    await answered('r2');
+    send({ type: 'account.provider.set', requestId: 'r3', id, providerID: 'openai', apiKey: 'sk-test' });
+    await answered('r3');
+    const keyed = await names('OpenAI · Stub');
+    expect([
+      listed.type === 'models.snapshot' && listed.models.map((model) => model.name), engines.type === 'engines.snapshot' && engines.engines.map((engine) => [engine.engine, engine.state]),
+      refused, profiles(), answers('r3').map((m) => [m.type, m.type === 'settings.providers' && m.providers.find((p) => p.id === 'openai')?.connected, 'error' in m && m.error]),
+      keyed.type === 'models.snapshot' && keyed.models.filter((model) => model.engine === 'opencode').map((model) => model.name),
+    ]).toEqual([
+      ['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra', 'OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)'], [['claude', 'ready'], ['codex', 'ready'], ['opencode', 'ready']],
+      { type: 'settings.result', requestId: 'bad', error: 'A profile name is 1 to 40 characters without control characters.' },
+      { engine: 'opencode', accounts: [{ id, email: 'Work', createdAt: expect.any(Number) }], activeId: id },
+      [['settings.providers', true, null], ['settings.result', false, null]],
+      ['OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)', 'OpenAI · Stub'],
+    ]);
   });
 });

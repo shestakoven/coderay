@@ -18,12 +18,12 @@ describe('spawnCore', () => {
 });
 
 describe('childCoreArgs', () => {
-  it('hands each project core the codex the hub was given, or none, so a test hub never starts the real codex', () => {
+  it('hands each project core the codex and the opencode the hub was given, or none, so a test hub never starts the real ones', () => {
     const target = { root: '/work/app', port: 4401, home: '/h', hubPort: 4317 };
     const flags = { claude: '/bin/claude', noMapMcp: false, noAgentSearch: false, allowedOrigins: [] };
-    const codexOf = (args: string[]) => args.filter((arg, at) => arg === '--no-codex' || arg === '--codex' || args[at - 1] === '--codex');
-    expect([codexOf(childCoreArgs(target, { ...flags, codex: null })), codexOf(childCoreArgs(target, { ...flags, codex: '/opt/codex' }))]).toEqual([
-      ['--no-codex'], ['--codex', '/opt/codex'],
+    const engines = (args: string[]) => args.filter((arg, at) => /^--(no-)?(codex|opencode)$/.test(arg) || /^--(codex|opencode)$/.test(args[at - 1] ?? ''));
+    expect([engines(childCoreArgs(target, { ...flags, codex: null, opencode: null })), engines(childCoreArgs(target, { ...flags, codex: '/opt/codex', opencode: '/opt/opencode' }))]).toEqual([
+      ['--no-codex', '--no-opencode'], ['--codex', '/opt/codex', '--opencode', '/opt/opencode'],
     ]);
   });
 });
