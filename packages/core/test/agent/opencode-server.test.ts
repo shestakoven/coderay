@@ -11,7 +11,7 @@ import { tempDir, waitFor } from '../helpers';
 const TSX = fileURLToPath(new URL('../../../../node_modules/.bin/tsx', import.meta.url));
 const EXITING_CORE = fileURLToPath(new URL('../fake-opencode/exiting-core.ts', import.meta.url));
 // Literal, so a flag dropped from HARDENING_ENV cannot shrink both sides of an assertion.
-const HARDENING = { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_PURE: '1', OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' };
+const HARDENING = { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_PURE: '1', OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1', OPENCODE_DISABLE_LSP_DOWNLOAD: '1' };
 const records: string[] = [];
 // Runs before the temp directory goes: whatever fake or shell command a test started dies with it, even when the code under test failed to stop them.
 afterEach(() => {

@@ -26,7 +26,7 @@ export function ruleset(): Rule[] {
   return Object.entries(agentPermission()).map(([permission, action]) => ({ permission, pattern: ANY, action }));
 }
 
-/** The inline config (`OPENCODE_CONFIG_CONTENT`): the rules on every agent in use and at the top level, CodeRay's MCP servers, the user's switched off by name, sharing and updates off, the shell wrapper. */
+/** The inline config (`OPENCODE_CONFIG_CONTENT`): the rules on every agent in use and at the top level, CodeRay's MCP servers, the user's switched off by name, sharing, updates, language servers and formatters off, the shell wrapper. */
 export function inlineConfig(mcp: OpencodeMcp, userServers: readonly string[], shell: string): string {
   return JSON.stringify({
     permission: agentPermission(),
@@ -34,6 +34,9 @@ export function inlineConfig(mcp: OpencodeMcp, userServers: readonly string[], s
     mcp: { ...Object.fromEntries(userServers.filter((name) => !Object.hasOwn(mcp.config, name)).map((name) => [name, { enabled: false }])), ...mcp.config },
     share: 'disabled',
     autoupdate: false,
+    // A language server or formatter runs the project's own code (its tsserver, eslint or prettier config) with no ask.
+    lsp: false,
+    formatter: false,
     shell,
   });
 }
@@ -66,6 +69,9 @@ function configProblem(config: unknown, expected: SelfCheckExpected): string | n
   if (config.share !== 'disabled') return `opencode would share this chat (share: ${String(config.share)})`;
   // Q7: any other shell hands the model the server's password and config.
   if (config.shell !== expected.shell) return `opencode would run commands in ${String(config.shell)}, not CodeRay's shell wrapper`;
+  // A layer merged after CodeRay's (the user's org config, the managed one) can turn them back on.
+  if (config.lsp !== false) return "opencode would start language servers, which can run the project's code";
+  if (config.formatter !== false) return "opencode would run formatters, which can run the project's code";
   for (const [name, entry] of Object.entries(mcp)) {
     if (!expected.servers.includes(name) && !(isRecord(entry) && entry.enabled === false)) return `opencode would start the MCP server "${name}", which CodeRay did not configure`;
   }

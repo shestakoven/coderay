@@ -14,7 +14,7 @@ const expected = { servers: ['idecore'], toolOutput: TOOL_OUTPUT, shell: SHELL }
 const agent = (name: string, extra: Record<string, unknown> = {}, mode = name === 'general' || name === 'explore' ? 'subagent' : 'primary') => ({ name, mode, native: true, permission: { ...RULES, ...extra } });
 const good = ['build', 'plan', 'general', 'explore'].map((name) => agent(name));
 // F4: a plugin listed under OPENCODE_PURE is not loaded, so a listed one passes.
-const config = { share: 'disabled', shell: SHELL, plugin: ['file:///home/.config/opencode/plugins/global.js'], mcp: { idecore: { type: 'remote', enabled: true }, usersrv: { type: 'local', enabled: false } } };
+const config = { share: 'disabled', shell: SHELL, lsp: false, formatter: false, plugin: ['file:///home/.config/opencode/plugins/global.js'], mcp: { idecore: { type: 'remote', enabled: true }, usersrv: { type: 'local', enabled: false } } };
 const tools = [...BUILT_IN_TOOLS];
 const check = (answers: { agents?: unknown; config?: unknown; toolIds?: unknown }) => selfCheck({ agents: good, config, toolIds: tools, ...answers }, expected);
 const rule = (permission: string, pattern: string, action: string) => ({ permission, pattern, action });
@@ -24,10 +24,10 @@ const recorded = (file: string): { dir: string; msg: { path?: string; body?: unk
 const answer = (file: string, path: string): unknown => recorded(file).find((line) => line.dir === 'res' && line.msg.path === path)?.msg.body;
 
 describe('inlineConfig', () => {
-  it("puts the rules on every agent in use and at the top level, CodeRay's servers in, the user's off by name, sharing and updates off, the shell wrapper, and the same rules as a list for sessions", () => {
+  it("puts the rules on every agent in use and at the top level, CodeRay's servers in, the user's off by name, sharing, updates, language servers and formatters off, the shell wrapper, and the same rules as a list for sessions", () => {
     const parsed = JSON.parse(inlineConfig(opencodeMcp({ idecore: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer s' } } }), ['usersrv', 'other', 'idecore'], SHELL));
-    expect([Object.keys(parsed.agent), ...Object.values(parsed.agent).map((entry) => Object.entries((entry as { permission: object }).permission)), Object.entries(parsed.permission), parsed.mcp.idecore.url, parsed.mcp.usersrv, parsed.mcp.other, parsed.share, parsed.autoupdate, parsed.shell, ruleset(), agentPermission()]).toEqual([
-      ['build', 'plan', 'general', 'explore'], ...Array(4).fill(Object.entries(RULES)), Object.entries(RULES), 'http://127.0.0.1:9/mcp?keepAlive=1', { enabled: false }, { enabled: false }, 'disabled', false, SHELL,
+    expect([Object.keys(parsed.agent), ...Object.values(parsed.agent).map((entry) => Object.entries((entry as { permission: object }).permission)), Object.entries(parsed.permission), parsed.mcp.idecore.url, parsed.mcp.usersrv, parsed.mcp.other, parsed.share, parsed.autoupdate, parsed.lsp, parsed.formatter, parsed.shell, ruleset(), agentPermission()]).toEqual([
+      ['build', 'plan', 'general', 'explore'], ...Array(4).fill(Object.entries(RULES)), Object.entries(RULES), 'http://127.0.0.1:9/mcp?keepAlive=1', { enabled: false }, { enabled: false }, 'disabled', false, false, false, SHELL,
       Object.entries(RULES).map(([permission, action]) => rule(permission, '*', action)), RULES,
     ]);
   });
@@ -62,6 +62,8 @@ describe('selfCheck', () => {
     ['a config it cannot read', { config: ['nope'] }, 'opencode answered with a config CodeRay cannot read'],
     ['sharing on', { config: { ...config, share: 'auto' } }, 'opencode would share this chat (share: auto)'],
     ['another shell', { config: { ...config, shell: '/bin/zsh' } }, "opencode would run commands in /bin/zsh, not CodeRay's shell wrapper"],
+    ['language servers on', { config: { ...config, lsp: { typescript: { disabled: false } } } }, "opencode would start language servers, which can run the project's code"],
+    ['formatters on', { config: { ...config, formatter: true } }, "opencode would run formatters, which can run the project's code"],
     ['a user server still enabled', { config: { ...config, mcp: { ...config.mcp, usersrv: { type: 'local', enabled: true } } } }, 'opencode would start the MCP server "usersrv", which CodeRay did not configure'],
     ['a user server without an enabled flag', { config: { ...config, mcp: { ...config.mcp, other: { type: 'local' } } } }, 'opencode would start the MCP server "other", which CodeRay did not configure'],
     ['a custom tool', { toolIds: [...tools, 'marker'] }, 'opencode loaded a custom tool "marker", which would run without asking'],

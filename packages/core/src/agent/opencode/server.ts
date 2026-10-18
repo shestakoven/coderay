@@ -10,9 +10,9 @@ import { isOlderVersion, MIN_OPENCODE_VERSION } from '../tools';
 import { ApiError, opencodeClient, type OpencodeClient } from './api';
 import { opencodeEnv, type OpencodeCommand } from './command';
 
-/** On every server CodeRay starts: no project config, no plugins, no Claude Code prompt or skills. */
+/** On every server CodeRay starts: no project config, no plugins, no Claude Code prompt or skills, no language server downloads. */
 export const HARDENING_ENV: Readonly<Record<string, string>> = Object.freeze({
-  OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_PURE: '1', OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1',
+  OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_PURE: '1', OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1', OPENCODE_DISABLE_LSP_DOWNLOAD: '1',
 });
 
 const LISTENING = /listening on (http:\/\/127\.0\.0\.1:\d+)/;

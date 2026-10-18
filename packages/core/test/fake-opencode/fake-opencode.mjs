@@ -23,7 +23,7 @@ const record = (entry) => { if (env.FAKE_OPENCODE_RECORD) appendFileSync(env.FAK
 record({
   pid: process.pid, argv, xdg: Object.fromEntries(Object.keys(XDG).map((name) => [name, env[name] ?? null])),
   credentials: ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'GITHUB_TOKEN', 'AWS_ACCESS_KEY_ID'].filter((name) => env[name] !== undefined),
-  env: ['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_PURE', 'OPENCODE_DISABLE_CLAUDE_CODE_PROMPT', 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS'].filter((name) => env[name] === '1'),
+  env: ['OPENCODE_DISABLE_PROJECT_CONFIG', 'OPENCODE_PURE', 'OPENCODE_DISABLE_CLAUDE_CODE_PROMPT', 'OPENCODE_DISABLE_CLAUDE_CODE_SKILLS', 'OPENCODE_DISABLE_LSP_DOWNLOAD'].filter((name) => env[name] === '1'),
   opencodeVars: Object.keys(env).filter((name) => name.startsWith('OPENCODE_')).sort(),
   configContent: env.OPENCODE_CONFIG_CONTENT === undefined ? null : JSON.parse(env.OPENCODE_CONFIG_CONTENT),
   // A digest, so a test can tell two servers' passwords apart without the record holding one.
