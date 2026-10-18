@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { OpencodeCommand } from '../../src/agent/opencode/command';
 
@@ -24,6 +25,10 @@ export interface OpencodeRecord {
 export function fakeOpencode(scenario: string | null, recordFile: string, env: Record<string, string> = {}): OpencodeCommand {
   return { command: process.execPath, args: [FAKE_OPENCODE], env: { ...(scenario === null ? {} : { FAKE_OPENCODE_SCENARIO: scenario }), FAKE_OPENCODE_RECORD: recordFile, ...env } };
 }
+
+/** Every XDG home of the fake under `dir`: nothing reads or writes the owner's opencode, and the server's tool-output glob is the one CodeRay expects. */
+export const opencodeHomes = (dir: string): Record<string, string> =>
+  Object.fromEntries(['XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'].map((name) => [name, join(dir, name.toLowerCase())]));
 
 export function opencodeRecords(recordFile: string): OpencodeRecord[] {
   if (!existsSync(recordFile)) return [];

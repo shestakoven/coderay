@@ -7,7 +7,7 @@ import { AgentSession } from '../../src/agent/agent-session';
 import { writeMapFile } from '../../src/map/map-file';
 import { isAlive } from '../../src/os-process';
 import type { WatchdogSession } from '../../src/watchdog/watchdog';
-import { tempDir, waitFor } from '../helpers';
+import { fixture, tempDir, waitFor } from '../helpers';
 import { AWAIT, build, FILES, HOLD_OPEN, INIT, mcpWrite, OUT_OF_PLAN, pendingEvent, WAIT_TURN } from './harness';
 
 const _sessionFitsTheWatchdog = (session: AgentSession): WatchdogSession => session;
@@ -225,6 +225,13 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
       'a fail-open event with both files',
     );
     expect(event.changes.map((c) => c.origin)).toEqual(['agent-tool', 'agent-tool']);
+  });
+
+  it("takes no read of an opencode chat for a fail-open: opencode's rules run it without asking the gate", async () => {
+    const b = await build({ scenario: fixture('opencode/reply.jsonl'), engine: 'opencode' });
+    await b.send();
+    await waitFor(() => !b.session.hasOpenTurn(), 'the turn ended');
+    expect([b.session.state().items.flatMap((item) => (item.kind === 'tool' ? [[item.tool, item.status, item.decision]] : [])), b.events()]).toEqual([[['Read', 'ok', null]], []]);
   });
 
   it('records the hook-missing decision on the call', async () => {

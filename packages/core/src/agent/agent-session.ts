@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
   EMPTY_USAGE, ENGINE_CAPABILITIES, ENGINE_NAMES, isClaudeEffort, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
@@ -20,15 +20,22 @@ import { codexUnder, type CodexCommand } from './codex/command';
 import { codexMcp } from './codex/mcp';
 import { claudeEngine } from './engines/claude';
 import { codexEngine, keyRejectedHint, signedOutHint } from './engines/codex';
+import { opencodeEngine, providerHint } from './engines/opencode';
 import { EngineRegistry } from './engines/registry';
+import { opencodeUnder, type OpencodeCommand } from './opencode/command';
+import { ALLOWED_TOOLS } from './opencode/config';
+import { toolName } from './opencode/events';
+import { opencodeMcp, type OpencodeMcp } from './opencode/mcp';
+import { shellWrapper } from './opencode/server';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
 import { reapOrphans } from './reaper';
 import { type StreamEvent, type ToolResultBlock } from './stream';
-import { CLAUDE_PROMPT_NAMES, CODEX_PROMPT_NAMES, codexInstructions, type PromptNames } from './system-prompt';
+import { CLAUDE_PROMPT_NAMES, CODEX_PROMPT_NAMES, codexInstructions, INSTRUCTIONS_CUT, OPENCODE_PROMPT_NAMES, opencodeSystem, type PromptNames } from './system-prompt';
 import { TranscriptTail } from './transcript-tail';
 import {
-  gateArgs, userMessage, type AgentTransport, type ClaudeLaunch, type CodexLaunch, type ControlResponse, type GateCall, type GateLaunch, type TransportSink, type UserMessage,
+  gateArgs, userMessage, type AgentTransport, type ClaudeLaunch, type CodexLaunch, type ControlResponse, type GateCall, type GateLaunch, type OpencodeLaunch,
+  type TransportSink, type UserMessage,
 } from './transport';
 import { mergeLimits, type UsageUpdate } from './usage';
 import { DISALLOWED_TOOLS, ENGINE_BINARIES, isOlderVersion, MIN_VERSIONS, summarizeToolInput } from './tools';
@@ -79,6 +86,8 @@ export interface AgentSessionOptions {
   defaultModel?: ChatPick;
   // The codex the core runs; registers the Codex engine.
   codex?: CodexCommand;
+  // The opencode the core runs; registers the opencode engine.
+  opencode?: OpencodeCommand;
 }
 
 const ACTIVE_SESSION_KEY = 'activeSessionId';
@@ -146,6 +155,11 @@ const STALE_POLL_MS = 50;
 const NEVER_ABORTED = new AbortController().signal;
 const MAX_RESULT_IMAGES = 8;
 const MAX_STORED_BASE64 = Math.ceil(MAX_STORED_IMAGE_BYTES / 3) * 4;
+const OPENCODE_ALLOWED: ReadonlySet<string> = new Set(ALLOWED_TOOLS.map((tool) => toolName(tool, {}, [])));
+const opencodeExempt = (name: string): boolean => OPENCODE_ALLOWED.has(name) || name.startsWith('mcp__idecore__');
+const none = (): boolean => false;
+// The project's instructions, which opencode does not read itself under OPENCODE_DISABLE_PROJECT_CONFIG.
+const PROJECT_INSTRUCTIONS = ['AGENTS.md', 'CLAUDE.md'];
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
@@ -206,13 +220,20 @@ export class AgentSession {
   constructor(options: AgentSessionOptions) {
     this.options = options;
     this.blobs = new BlobStore(projectDir(options.home, options.root));
-    const codex = options.codex;
+    const { codex, opencode } = options;
     this.engines = options.engines ?? new EngineRegistry([
       claudeEngine({ command: () => this.activeClaude(), cwd: options.root, account: () => this.options.accounts?.claude?.activeLabel() ?? null }),
       ...(codex ? [codexEngine({
         command: () => codexUnder(codex, this.accountHome('codex', this.activeAccount('codex'))), cwd: options.root,
         signedOut: () => signedOutHint(this.accountHome('codex', this.activeAccount('codex'))),
         account: () => this.options.accounts?.codex?.activeLabel() ?? null,
+      })] : []),
+      ...(opencode ? [opencodeEngine({
+        command: () => opencodeUnder(opencode, this.accountHome('opencode', this.activeAccount('opencode'))), cwd: options.root,
+        // Q11-quiet: listing the models starts none of the user's MCP servers, so none needs switching off by name.
+        userServers: () => [],
+        account: () => this.options.accounts?.opencode?.activeLabel() ?? null,
+        runDir: runDir(options.home),
       })] : []),
     ]);
   }
@@ -394,6 +415,11 @@ export class AgentSession {
   /** The open chat's engine keeps its calls in an OS sandbox. */
   sandboxed(): boolean {
     return this.session !== null && this.session.foreignEngine === undefined && ENGINE_CAPABILITIES[this.session.engine].hardSandbox;
+  }
+
+  /** The tools the open chat's engine runs without asking the gate: opencode's rules allow its reads and idecore's tools. */
+  exempt(): (toolName: string) => boolean {
+    return this.session?.engine === 'opencode' ? opencodeExempt : none;
   }
 
   engineOf(): EngineId | null {
@@ -1149,6 +1175,39 @@ export class AgentSession {
     };
   }
 
+  // opencode's part of a launch: its command under the chat's account, the IDE's MCP list in its dialect, the shell wrapper, the system text and the gate.
+  private prepareOpencode(session: SessionRecord): OpencodeLaunch | null {
+    const opencode = this.options.opencode;
+    if (!opencode) throw new SessionError('no-engine');
+    const gate = this.options.gate;
+    try {
+      gate?.check?.();
+    } catch (error) {
+      this.noticeOnce(`CodeRay could not get the gate ready for opencode (${(error as Error).message}).`);
+      return null;
+    }
+    let mcp: OpencodeMcp;
+    try {
+      mcp = opencodeMcp(this.options.mcpServers?.() ?? {});
+    } catch (error) {
+      throw new SessionError('no-gate', `CodeRay could not give opencode its MCP servers (${(error as Error).message}), so the agent was not started.`);
+    }
+    const system = opencodeSystem(gate?.systemPrompt(OPENCODE_PROMPT_NAMES) ?? null, projectInstructions(session.cwd));
+    if (system.endsWith(INSTRUCTIONS_CUT)) this.noticeOnce("The project's instructions (AGENTS.md, CLAUDE.md) are longer than 64 KB: opencode gets only their first 64 KB.");
+    const home = this.accountHome('opencode', session.accountId);
+    const dir = runDir(this.options.home);
+    return {
+      engine: 'opencode', cwd: session.cwd, engineSessionId: session.engineSessionId, resume: session.conversationStarted,
+      model: modelOf(session.modelChoice), effort: session.effort,
+      opencode: opencodeUnder(opencode, home),
+      // Q11-quiet: the transport reads the user's servers from a server started without CodeRay's.
+      servers: mcp.names, mcp, userServers: null,
+      shell: shellWrapper(dir), system, providerHint: (providerID) => providerHint(providerID, home),
+      ...(gate?.decide ? { decide: (calls: GateCall[], signal: AbortSignal) => gate.decide!(calls, signal) } : {}),
+      killGraceMs: this.options.killGraceMs, pidDir: dir,
+    };
+  }
+
   private spawn(): void {
     if (!this.session || this.closed) return;
     this.refuseForeign(this.session);
@@ -1156,7 +1215,7 @@ export class AgentSession {
     if (!engine) throw new SessionError('no-engine');
     this.syncAccount();
     const session = this.session;
-    const launch = session.engine === 'codex' ? this.prepareCodex(session) : this.prepareClaude(session);
+    const launch = session.engine === 'codex' ? this.prepareCodex(session) : session.engine === 'opencode' ? this.prepareOpencode(session) : this.prepareClaude(session);
     if (!launch) return;
     // A stopped claude's last events may arrive while the next one starts; they no longer belong to the chat.
     const sink: TransportSink = { event: (event) => { if (this.transport === transport) this.onStreamEvent(event); } };
@@ -1243,6 +1302,9 @@ export class AgentSession {
       return [];
     }
     if (event.type === 'control_request') return this.controlRequest(event);
+    // opencode's chat runs on the second server it starts; the first only read the user's MCP servers.
+    const pid = this.transport?.pid ?? null;
+    if (event.type === 'init' && pid !== this.session?.pid) this.update({ pid });
     const changes = this.tracker.event(event);
     if (event.type === 'user') this.attachResultImages(event.toolResults, changes);
     if (event.type === 'init' && !this.versionChecked) {
@@ -1472,6 +1534,18 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
       console.error('agent: a session listener threw', error);
     }
   }
+}
+
+// Each file once: CLAUDE.md is often a link to AGENTS.md.
+function projectInstructions(cwd: string): { path: string; text: string }[] {
+  const files = PROJECT_INSTRUCTIONS.flatMap((path) => {
+    try {
+      return [{ path, text: readFileSync(join(cwd, path), 'utf8') }];
+    } catch {
+      return [];
+    }
+  });
+  return files.filter((file, index) => files.findIndex((other) => other.text === file.text) === index);
 }
 
 // The model as its engine names it, without the engine's prefix.
