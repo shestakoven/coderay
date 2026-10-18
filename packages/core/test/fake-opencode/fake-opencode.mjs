@@ -153,10 +153,11 @@ async function play(session, messageID) {
 
   async function ask(line) {
     let sessionID = session.id;
-    if (line.session === 'child') {
+    if (line.session === 'child' || line.session === 'unannounced') {
       const child = { id: nextId('ses'), parentID: session.id, directory: session.directory, permission: [rule('task', '*', 'deny')] };
       sessions.set(child.id, child); saveSessions();
-      send('session.created', { sessionID: child.id, info: info(child) });
+      // An unannounced child is one a task resumed by task_id: it was created on an earlier server.
+      if (line.session === 'child') send('session.created', { sessionID: child.id, info: info(child) });
       sessionID = child.id;
     } else if (line.session) {
       // A session this chat never saw created: GET /session/:id answers it as a root of its own.
@@ -170,6 +171,8 @@ async function play(session, messageID) {
     const asked = { id, sessionID, permission: line.ask, patterns: line.patterns ?? [], metadata: line.metadata ?? {}, always, tool: { messageID, callID: line.callID } };
     const reply = new Promise((resolve) => { waiting.set(id, { kind: 'permission', session: sessionID, asked, resolve }); });
     send('permission.asked', asked);
+    // Another client with the server's password answers the ask (the model curling the server, say).
+    if (line.answeredBy) setImmediate(() => { const w = waiting.get(id); if (!w) return; waiting.delete(id); send('permission.replied', { sessionID, requestID: id, reply: line.answeredBy }); w.resolve({ reply: line.answeredBy, message: null }); });
     const settle = (answer) => {
       // An ask answered after its turn ended (Q12-abort-leaves) changes nothing in the turn.
       if (over) return;
@@ -279,7 +282,9 @@ const server = createServer(async (req, res) => {
     sessions.set(s.id, s); saveSessions();
     record({ session: { id: s.id, permission: s.permission } });
     send('session.created', { sessionID: s.id, info: info(s) });
-    return json(res, 200, info(s));
+    // The event can come before the answer, as from a busy 1.19.
+    setTimeout(() => json(res, 200, info(s)), 20);
+    return;
   }
   let s;
   if ((s = m(/^\/session\/([^/]+)$/))) {
@@ -297,7 +302,7 @@ const server = createServer(async (req, res) => {
     prompts += 1;
     record({ prompt: { session: session.id, kind: s[2], body: body ?? null } });
     if (env.FAKE_OPENCODE_RULES_FLIP === '1' && prompts === 1) rulesFlipped = true;
-    if (env.FAKE_OPENCODE_REPLIED === '1' && prompts === 1) send('permission.replied', { sessionID: session.id, requestID: 'per_nobody', reply: 'once' });
+    if (env.FAKE_OPENCODE_REPLIED && prompts === 1) send('permission.replied', { sessionID: session.id, requestID: 'per_nobody', reply: env.FAKE_OPENCODE_REPLIED === 'reject' ? 'reject' : 'once' });
     const answer = () => json(res, 200, { info: { id: messageID, sessionID: session.id, role: 'assistant', finish: 'stop' }, parts: [] });
     if (env.FAKE_OPENCODE_UNKNOWN_MODEL === '1') {
       if (s[2] === 'prompt_async') json(res, 204); else answer();
