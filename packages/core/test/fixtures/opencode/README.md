@@ -28,7 +28,7 @@
 - **`/abort`** (Q12-abort-leaves): `session.error` `MessageAbortedError`, every running tool part ends `error` "Tool execution aborted", the rest of the turn is skipped to the next `await-turn`, and `session.idle` follows. A held ask **stays pending** in `GET /permission` with no `permission.replied`; a later `/permission/:id/reply` answers 200 and sends it. A held question stays too. (The real server also sent a second `session.idle` a moment after an abort; the fake sends one.)
 - **`/session/:id/prompt_async`** answers 204 at once; a prompt while the session is busy is folded into the running turn (Q12b: no second turn).
 - **`/session/:id/command`** answers `{info, parts}` when the turn ends, before `session.idle` (Q10). A `model` that is not a string is answered 400 as 1.19 does; `system` is recorded and has no effect.
-- **Auth** (Q1). `PUT /auth/:id` persists to `$XDG_DATA_HOME/opencode/auth.json` (else `<cwd>/fake-data/…`). `GET /provider`'s `connected` lists an authed provider at once; `GET /config/providers` lists it (with one stub model) only after `POST /instance/dispose` or a restart. The fake refuses to start when an `XDG_*` variable points at the real default home.
+- **Auth** (Q1). `PUT /auth/:id` persists to `$XDG_DATA_HOME/opencode/auth.json` (else `<cwd>/fake-data/…`). `GET /provider`'s `connected` lists an authed provider at once; `GET /config/providers` lists it (with one stub model) only after `POST /instance/dispose` or a restart, and only when `GET /provider` knows it (`openai`, `anthropic`). The fake refuses to start when an `XDG_*` variable points at the real default home.
 - **`GET /experimental/tool/ids`**: the 14 built-in tool ids of 1.19 (F1).
 
 ## Environment
@@ -41,6 +41,7 @@
 | `FAKE_OPENCODE_CONFIG` | JSON for the user's config, before the merge (default `{}`); `/agent` derives from it too. |
 | `FAKE_OPENCODE_PROVIDERS` | JSON for `GET /config/providers` (default: `opencode` with `nemotron-3.5-lightning-free` (262144, no variants) and `gpt-oss-120b-free` (131072, variants `low`/`high`)). |
 | `FAKE_OPENCODE_TOOL_IDS` | JSON for `GET /experimental/tool/ids`. |
+| `FAKE_OPENCODE_AUTH=fail` | `PUT /auth/:id` answers 400 with the request body quoted in its message. |
 | `FAKE_OPENCODE_NO_LISTEN=1` | Never prints the listening line. |
 | `FAKE_OPENCODE_LISTEN_STREAM=stderr` | Prints it on stderr. |
 | `FAKE_OPENCODE_HEALTH=down` | Health answers 503. |

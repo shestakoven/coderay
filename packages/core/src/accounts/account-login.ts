@@ -16,7 +16,10 @@ export interface FlowRun {
   stopped?: Promise<unknown>;
 }
 
-/** One engine's way of signing a new account's home in. It reports only after `start` returns, and never logs the URL, the code or the key. */
+/**
+ * One engine's way of signing a new account's home in. A report made before `start` returns is heard once it has; it never logs the URL, the code or the key.
+ * `secret` is the API key of the `api-key` way, the name of an opencode `profile`, and null otherwise.
+ */
 export interface LoginFlow {
   start(home: SignedHome, method: LoginMethod, secret: string | null, report: (update: FlowUpdate) => void): FlowRun;
 }

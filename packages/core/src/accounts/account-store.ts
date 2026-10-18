@@ -4,7 +4,7 @@ import { join, resolve, sep } from 'node:path';
 import type { AccountView } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
 import { writeFileNoFollow } from '../mcp/config';
-import { ACCOUNT_DIRS, accountHome, SYSTEM_HOME, type AccountEngine, type AccountHome, type SignedHome } from './account-homes';
+import { ACCOUNT_DIRS, accountHome, OPENCODE_HOME_DIRS, SYSTEM_HOME, type AccountEngine, type AccountHome, type SignedHome } from './account-homes';
 
 export interface AccountList {
   accounts: AccountView[];
@@ -124,6 +124,7 @@ export class AccountStore {
     chmodSync(this.base, DIR_MODE);
     mkdirSync(dir, { mode: DIR_MODE });
     chmodSync(dir, DIR_MODE);
+    if (this.engine === 'opencode') for (const sub of OPENCODE_HOME_DIRS) mkdirSync(join(dir, sub), { mode: DIR_MODE });
     return dir;
   }
 

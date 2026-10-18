@@ -93,7 +93,8 @@ const baseProviders = env.FAKE_OPENCODE_PROVIDERS ? JSON.parse(env.FAKE_OPENCODE
   'gpt-oss-120b-free': { id: 'gpt-oss-120b-free', providerID: 'opencode', name: 'GPT OSS 120B (free)', limit: { context: 131072, output: 32768 }, variants: { low: {}, high: {} } },
 } }], default: { opencode: 'nemotron-3.5-lightning-free' } };
 const KNOWN = { openai: 'OpenAI', anthropic: 'Anthropic' };
-const providers = () => ({ ...baseProviders, providers: [...baseProviders.providers, ...loaded.filter((id) => !baseProviders.providers.some((p) => p.id === id)).map((id) => ({ id, name: KNOWN[id] ?? id, env: [], models: { stub: { id: 'stub', providerID: id, name: 'Stub', limit: { context: 8192, output: 1024 }, variants: {} } } }))] });
+// A key of a provider the catalog does not know loads nothing.
+const providers = () => ({ ...baseProviders, providers: [...baseProviders.providers, ...loaded.filter((id) => Object.hasOwn(KNOWN, id) && !baseProviders.providers.some((p) => p.id === id)).map((id) => ({ id, name: KNOWN[id], env: [], models: { stub: { id: 'stub', providerID: id, name: 'Stub', limit: { context: 8192, output: 1024 }, variants: {} } } }))] });
 const commands = [{ name: 'probe-skill', description: 'A skill of the user', source: 'skill', template: 'Probe.', hints: [] }];
 
 const steps = env.FAKE_OPENCODE_SCENARIO ? readFileSync(env.FAKE_OPENCODE_SCENARIO, 'utf8').split('\n').filter((line) => line.trim() !== '') : [];
@@ -274,6 +275,8 @@ const server = createServer(async (req, res) => {
   if (path === '/provider/auth') return json(res, 200, { openai: [{ type: 'api', label: 'API key' }], anthropic: [{ type: 'api', label: 'API key' }, { type: 'oauth', label: 'Claude Pro/Max' }] });
   let a;
   if ((a = m(/^\/auth\/([^/]+)$/))) {
+    // A validation error that quotes the body back, key and all.
+    if (req.method === 'PUT' && env.FAKE_OPENCODE_AUTH === 'fail') return json(res, 400, { name: 'BadRequest', data: { message: `Invalid auth ${raw}` } });
     if (req.method === 'PUT') { auth.set(a[1], body); saveAuth(); return json(res, 200, true); }
     if (req.method === 'DELETE') { auth.delete(a[1]); saveAuth(); return json(res, 200, true); }
   }

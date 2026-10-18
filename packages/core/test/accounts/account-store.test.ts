@@ -325,4 +325,23 @@ describe('AccountStore per engine', () => {
       before, true, before, ['accounts.json', 'claude-accounts'], ['EISDIR', 'open'], ['EACCES', 'open'],
     ]);
   });
+
+  it("gives an opencode profile its four XDG homes (0700) and its own cloud credential files, all inside it, and none of the core's credentials", () => {
+    const home = tempDir('ide-accounts-home-');
+    const store = new AccountStore({ home, engine: 'opencode', logout: async () => {} });
+    const id = randomUUID();
+    const dir = store.createDir(id);
+    const { env, unset } = store.home(id);
+    expect([
+      dir, readdirSync(dir).sort().map((name) => [name, mode(join(dir, name))]), env,
+      ['OPENAI_API_KEY', 'OPENCODE_API_KEY', 'AWS_ACCESS_KEY_ID', 'AWS_SESSION_TOKEN', 'GOOGLE_APPLICATION_CREDENTIALS', 'GITHUB_TOKEN', 'GH_TOKEN'].filter((name) => !unset.includes(name)),
+    ]).toStrictEqual([
+      join(home, 'opencode-accounts', id), [['cache', 0o700], ['config', 0o700], ['data', 0o700], ['state', 0o700]],
+      {
+        XDG_DATA_HOME: join(dir, 'data'), XDG_CONFIG_HOME: join(dir, 'config'), XDG_STATE_HOME: join(dir, 'state'), XDG_CACHE_HOME: join(dir, 'cache'),
+        AWS_SHARED_CREDENTIALS_FILE: join(dir, 'aws/credentials'), AWS_CONFIG_FILE: join(dir, 'aws/config'), CLOUDSDK_CONFIG: join(dir, 'gcloud'),
+      },
+      [],
+    ]);
+  });
 });
