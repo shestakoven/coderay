@@ -123,18 +123,23 @@ describe('startOpencodeTransport', () => {
     // The stream drops before the ask: the ask is found with GET /permission when the stream opens again a second later.
     const gap = start('opencode/stream-gap.jsonl', { decide: allow });
     gap.send('fix');
+    // The stream takes two seconds to open again, and the ask comes while it opens: only a GET /permission after it opened finds it.
+    const slow = start('opencode/stream-hold.jsonl', { decide: allow });
+    slow.send('fix');
     const run = async (decide: Decide) => { const t = start('opencode/edit.jsonl', { decide }); t.send('ready?'); await t.ended(1); t.send('fix'); await t.ended(2); return t; };
     const allowed = await run(allow);
     const guard = await run(deny('CodeRay: no approved plan covers src/other.ts'));
     const user = await run(deny('CodeRay: the user denied this call', true));
     await gap.ended(1);
+    await slow.ended(1);
     const reply = (t: Scene) => { const r = t.records().find((entry) => entry.reply)?.reply; return r && [r.reply, r.message]; };
     expect([
       allowed.asked.map((call) => [call.tool_name, call.tool_use_id, (call.tool_input.diff as string).includes("+export const other = 'hello';")]), reply(allowed), existsSync(join(allowed.cwd, 'src/other.ts')) && readFileSync(join(allowed.cwd, 'src/other.ts'), 'utf8'),
       reply(guard), guard.events.some((e) => e.type === 'user' && e.toolResults[0]?.rejected === true),
       reply(user),
       gap.asked.map((call) => [call.tool_name, call.tool_use_id]), reply(gap), requests(gap.records(), 'GET', '/event').length, requests(gap.records(), 'GET', '/permission').length, gap.said(),
-    ]).toEqual([[['Edit', 'call_edit1', true]], ['once', null], "export const other = 'hello';\n", ['reject', 'CodeRay: no approved plan covers src/other.ts'], true, ['reject', null], [['Edit', 'call_gap']], ['once', null], 2, 1, 'Done.']);
+      slow.asked.map((call) => call.tool_use_id), reply(slow),
+    ]).toEqual([[['Edit', 'call_edit1', true]], ['once', null], "export const other = 'hello';\n", ['reject', 'CodeRay: no approved plan covers src/other.ts'], true, ['reject', null], [['Edit', 'call_gap']], ['once', null], 2, 1, 'Done.', ['call_hold'], ['once', null]]);
   });
 
   it('judges a two-file patch whole, a bash in its workdir after the directory it asked to reach, and rejects an ask whose session opencode cannot find', async () => {

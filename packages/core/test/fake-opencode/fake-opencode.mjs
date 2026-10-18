@@ -110,6 +110,7 @@ const saveSessions = () => { if (sessionFile !== null) writeFileSync(sessionFile
 const info = (s) => ({ id: s.id, slug: 'fake-session', version: VERSION, projectID: 'global', directory: s.directory, ...(s.parentID ? { parentID: s.parentID } : {}), title: 'New session', permission: s.permission ?? [], time: { created: 1, updated: 1 } });
 
 const streams = new Set();
+let eventHoldMs = 0;
 const waiting = new Map();   // permission or question id → { kind, session, asked?, resolve }
 const sleepers = [];
 let ids = 0; let prompts = 0;
@@ -219,7 +220,7 @@ async function play(session, messageID) {
     if (line.fake === 'sleep') { await new Promise((done) => { const timer = setTimeout(done, line.ms); void aborted.then(() => { clearTimeout(timer); done(); }); }); continue; }
     if (line.fake === 'write') { mkdirSync(dirname(join(session.directory, line.path)), { recursive: true }); writeFileSync(join(session.directory, line.path), line.content); continue; }
     // The event stream drops: what is sent until the client opens it again is lost to it.
-    if (line.fake === 'close-stream') { for (const res of streams) res.end(); streams.clear(); continue; }
+    if (line.fake === 'close-stream') { for (const res of streams) res.end(); streams.clear(); eventHoldMs = line.holdMs ?? 0; continue; }
     if (line.fake === 'spawn-sleeper') { const child = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' }); child.unref(); sleepers.push(child); record({ sleeperPid: child.pid }); continue; }
     if (line.fake === 'error') { send('session.error', { ...(line.session === false ? {} : { sessionID: session.id }), error: { name: 'UnknownError', data: { message: line.message } } }); continue; }
     if (line.ask) { await ask(line); continue; }
@@ -357,10 +358,16 @@ const server = createServer(async (req, res) => {
     return json(res, 200, true);
   }
   if (path === '/event' || path === '/global/event') {
-    res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
-    res.write(`data: ${JSON.stringify({ type: 'server.connected', properties: {} })}\n\n`);
-    streams.add(res);
-    req.on('close', () => streams.delete(res));
+    const subscribe = () => {
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
+      res.write(`data: ${JSON.stringify({ type: 'server.connected', properties: {} })}\n\n`);
+      streams.add(res);
+      req.on('close', () => streams.delete(res));
+    };
+    // A slow reconnect: what is sent before the stream opens is lost to it.
+    const hold = eventHoldMs;
+    eventHoldMs = 0;
+    if (hold > 0) setTimeout(subscribe, hold); else subscribe();
     return;
   }
   json(res, 404, { error: `fake-opencode: no route ${req.method} ${path}` });

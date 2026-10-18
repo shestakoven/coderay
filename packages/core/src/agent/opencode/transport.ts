@@ -257,11 +257,14 @@ class OpencodeTransport implements AgentTransport {
         for (let reopened = 0; ; reopened += 1) {
           let first = true;
           const stream = client.events((event) => {
-            if (first) opened();
+            if (first) {
+              opened();
+              // Only once the stream is open again: an ask sent between an earlier read and the stream's opening would be seen nowhere.
+              if (reopened > 0) void this.missedAsks(server, client);
+            }
             first = false;
             this.onEvent(server, client, event);
           }, this.streams.signal);
-          if (reopened > 0) void this.missedAsks(server, client);
           await stream.catch((error: Error) => console.warn(`opencode: its event stream failed: ${error.message}`));
           opened();
           if (!this.current(server)) return;

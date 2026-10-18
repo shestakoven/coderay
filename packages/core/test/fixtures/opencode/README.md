@@ -9,7 +9,7 @@
 | `{"question": {"text", "options", "callID"?, "session"?}}` | Sends the `question` tool part `running`, then `question.asked` (on the chat's session, or one chosen as an ask's `session` is), and waits. `/question/:id/reply` → `question.replied`, the part `completed`; `/question/:id/reject` → `question.rejected`, the part `error` "The user dismissed this question", and the turn ends. |
 | `{"fake": "await-turn"}` | Ends this prompt's lines: `session.idle` is sent; the next lines play at the next prompt. Lines before the first `await-turn` play during the first prompt. |
 | `{"fake": "sleep", "ms": N}` | Waits; `/abort` ends the wait. |
-| `{"fake": "close-stream"}` | Ends every open `/event` stream; what is sent until the client opens one again is lost to it (a held ask stays in `GET /permission`). |
+| `{"fake": "close-stream", "holdMs"?}` | Ends every open `/event` stream; what is sent until the client opens one again is lost to it (a held ask stays in `GET /permission`). `holdMs`: the next `GET /event` opens only that long after it comes, as a slow reconnect would. |
 | `{"fake": "write", "path", "content"}` | Writes a file under the session's directory (stands for an allowed edit). |
 | `{"fake": "spawn-sleeper"}` | Starts a `sleep 600` child in its own process group, records `{ sleeperPid }`; `/abort` kills it (as opencode kills a running bash); `/global/dispose` kills it too; SIGTERM alone does not (as the real server). |
 | `{"fake": "error", "message", "session"?: false}` | Sends `session.error` with the chat's session id (or none when `session` is false, as a broken user skill's error). |
