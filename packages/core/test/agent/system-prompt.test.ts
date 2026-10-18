@@ -94,6 +94,8 @@ describe('opencodeSystem', () => {
       text.startsWith(`PROMPT\n\n${OPENCODE_RULES}\n\n## AGENTS.md\n${'a'.repeat(half)}\n\n## CLAUDE.md\nbbb`), text.endsWith('b\n(project instructions cut at 64 KB)'), text.includes('MORE.md'),
       wide.startsWith(`${OPENCODE_RULES}\n\n## AGENTS.md\né`), wide.endsWith('é\n(project instructions cut at 64 KB)'),
       opencodeSystem(null, [{ path: 'AGENTS.md', text: 'short' }, { path: 'CLAUDE.md', text: 'rules' }]) === `${OPENCODE_RULES}\n\n## AGENTS.md\nshort\n\n## CLAUDE.md\nrules`,
-    ]).toEqual([true, true, false, true, true, true]);
+      // A file that fills the limit to the byte is whole.
+      opencodeSystem(null, [{ path: 'AGENTS.md', text: 'a'.repeat(MAX_PROJECT_INSTRUCTIONS - '## AGENTS.md\n'.length) }]).endsWith('aaa'),
+    ]).toEqual([true, true, false, true, true, true, true]);
   });
 });

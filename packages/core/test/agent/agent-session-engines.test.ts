@@ -4,7 +4,7 @@ import { dirname, join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { EngineId } from '@ide/protocol';
 import { AccountStore } from '../../src/accounts/account-store';
-import { AgentSession, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
+import { AgentSession, type AgentSessionOptions, type SessionAccounts, type SessionGate } from '../../src/agent/agent-session';
 import type { ClaudeCommand } from '../../src/agent/claude-process';
 import type { CodexCommand } from '../../src/agent/codex/command';
 import { claudeEngine } from '../../src/agent/engines/claude';
@@ -418,18 +418,23 @@ describe('AgentSession on opencode', () => {
     ]);
   });
 
-  it("shows an opencode refusal as a refused chat with its reason in the words of the chat's account and tries again with the next message, and starts no opencode while the gate cannot decide yet", async () => {
-    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1' } });
+  it("runs an opencode chat in its profile's home, shows its refusal as a refused chat with the reason in that profile's words and tries again with the next message, and starts no opencode while the gate cannot decide yet", async () => {
+    const profile = tempDir('oc-profile-');
+    const work: SessionAccounts = { activeId: () => 'work', home: () => ({ dir: profile, env: opencodeHomes(profile), unset: [], args: [] }), label: () => 'Work', activeLabel: () => 'Work' };
+    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1' }, overrides: { accounts: { opencode: work } } });
     await opencodeChat(h);
     h.session.send('hi');
     await waitFor(() => h.session.state().session?.status === 'refused', 'the chat refused');
     h.session.send('again');
     await waitFor(() => h.started.length === 2 && h.session.state().session?.status === 'refused', 'refused again');
-    const reason = 'opencode has no provider "opencode" connected for this model. Run opencode auth login in a terminal to connect a provider, or pick a free opencode/* model.';
+    const reason = 'opencode has no provider "opencode" connected for this model. Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.';
+    const homes = new Set(h.opencodeRecords().flatMap((record) => (record.pid === undefined ? [] : [record.xdg?.XDG_CONFIG_HOME])));
     const blocked = await harness({ overrides: { gate: { ...allowAll, check: () => { throw new Error('the watchdog is not ready yet'); } } } });
     await opencodeChat(blocked);
     expect(() => blocked.session.send('hi')).toThrow('CodeRay could not get the gate ready, so the agent was not started.');
-    expect([notices(h), notices(blocked), blocked.started]).toEqual([[reason, reason], ['CodeRay could not get the gate ready for opencode (the watchdog is not ready yet).'], []]);
+    expect([notices(h), [...homes], notices(blocked), blocked.started]).toEqual([
+      [reason, reason], [opencodeHomes(profile).XDG_CONFIG_HOME], ['CodeRay could not get the gate ready for opencode (the watchdog is not ready yet).'], [],
+    ]);
   });
 
   it("says once that the project's instructions were cut, names the server a chat runs on, the second one after the one that read the user's servers, and reads its crash in opencode's words", async () => {
