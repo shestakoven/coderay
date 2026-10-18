@@ -509,7 +509,7 @@ describe('HookGate', () => {
       gate.withdrawPending('x');
       hold.release();
       const reply = await answer;
-      expect(reply?.permissionDecisionReason).toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
+      expect(reply).toMatchObject({ permissionDecisionReason: "CodeRay: the user did not respond in time. Stop and wait for the user's next message.", final: true });
       expect(gate.prompts().map((prompt) => prompt.status)).toEqual(['dropped']);
     });
 
@@ -556,6 +556,26 @@ describe('HookGate', () => {
     await approve();
     expect((await call('Write', { file_path: join(root, 'src/other.ts') }))?.permissionDecisionReason)
       .toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
+  });
+
+  it("marks final the user's own denial and a call that ran out of time, not the guard's denial or a call that ended", async () => {
+    const live = await setup();
+    const other = { file_path: join(live.root, 'src/other.ts') };
+    const unplanned = await live.call('Write', other);
+    await live.approve();
+    const denied = live.call('Write', other, undefined, 'toolu_2');
+    live.gate.answer((await live.pending()).id, 'deny');
+    const ended = live.call('Write', other, undefined, 'toolu_3');
+    await live.pending();
+    live.gate.dropForTool('toolu_3');
+    const hold = new Hold();
+    const timed = await setup({ hold, holdMs: 50 });
+    await timed.approve();
+    const unanswered = await timed.call('Write', { file_path: join(timed.root, 'src/other.ts') });
+    hold.hold('event');
+    const held = await timed.call('Write', { file_path: join(timed.root, 'src/app.ts') });
+    expect([unplanned, await denied, await ended, unanswered, held].map((answer) => [answer?.permissionDecision, answer?.final]))
+      .toEqual([['deny', undefined], ['deny', true], ['deny', undefined], ['deny', true], ['deny', true]]);
   });
 
   it('refuses a second answer to the same prompt', async () => {
