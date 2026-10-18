@@ -10,6 +10,8 @@ import { tempDir, waitFor } from '../helpers';
 
 const TSX = fileURLToPath(new URL('../../../../node_modules/.bin/tsx', import.meta.url));
 const EXITING_CORE = fileURLToPath(new URL('../fake-opencode/exiting-core.ts', import.meta.url));
+// Literal, so a flag dropped from HARDENING_ENV cannot shrink both sides of an assertion.
+const HARDENING = { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_PURE: '1', OPENCODE_DISABLE_CLAUDE_CODE_PROMPT: '1', OPENCODE_DISABLE_CLAUDE_CODE_SKILLS: '1' };
 const records: string[] = [];
 // Runs before the temp directory goes: whatever fake or shell command a test started dies with it, even when the code under test failed to stop them.
 afterEach(() => {
@@ -42,9 +44,9 @@ describe('startServer', () => {
     const pidFile = readdirSync(dir).find((name) => /^opencode-\d+\.pid\.json$/.test(name));
     const recorded = pidFile === undefined ? null : JSON.parse(readFileSync(join(dir, pidFile), 'utf8')).pid;
     await server.kill();
-    expect([early !== undefined, first.argv, first.env, first.opencodeVars, first.configContent, health !== undefined, version, base, recorded === early]).toEqual([
+    expect([HARDENING_ENV, early !== undefined, first.argv, first.env, first.opencodeVars, first.configContent, health !== undefined, version, base, recorded === early]).toEqual([
       // The inherited OPENCODE_* are gone, and nothing passed in overrides the hardening; only CodeRay's own remain.
-      true, ['serve', '--port', '0', '--hostname', '127.0.0.1'], Object.keys(HARDENING_ENV), ['OPENCODE_CONFIG_CONTENT', ...Object.keys(HARDENING_ENV), 'OPENCODE_SERVER_PASSWORD'].sort(), { mcp: {} }, true, '1.19.0', expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), true,
+      HARDENING, true, ['serve', '--port', '0', '--hostname', '127.0.0.1'], Object.keys(HARDENING), ['OPENCODE_CONFIG_CONTENT', ...Object.keys(HARDENING), 'OPENCODE_SERVER_PASSWORD'].sort(), { mcp: {} }, true, '1.19.0', expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), true,
     ]);
   });
 
