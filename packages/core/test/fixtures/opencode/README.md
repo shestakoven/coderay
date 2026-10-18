@@ -5,7 +5,7 @@
 | Line | Effect |
 |---|---|
 | `{"type": …, "properties": …}` | An SSE event, sent as is after `$SESSION`, `$MESSAGE`, `$CWD` are filled (a part without an `id` gets `prt_<n>`). |
-| `{"ask": "edit" \| "bash" \| "task" \| "webfetch" \| "external_directory", "tool"?, "callID", "patterns", "metadata", "input", "always"?, "apply"?, "output"?, "parallel"?, "before"?, "session"?: "child"}` | Sends the tool part `running` with `input` (tool `tool`, default the ask), then `permission.asked` (on a child session, after a `session.created` with the chat as `parentID`, when `session` is `child`), and waits for `/permission/:id/reply`. `once`: `apply` (a file or a list) is written and the part `completed` follows (a `task` part completes when the turn ends, as a subagent's does). `reject` with a message: the part ends `error` with the feedback and the turn goes on. A plain `reject`: the part ends `error` and the turn ends. `before`: an ask 1.19 sends ahead of another for the same call (`external_directory` before a write outside the project): `once` sends nothing more. `parallel`: the next line plays at once (two pending asks on one session). |
+| `{"ask": "edit" \| "bash" \| "task" \| "webfetch" \| "external_directory", "tool"?, "callID", "patterns", "metadata", "input", "always"?, "apply"?, "output"?, "parallel"?, "before"?, "session"?: "child" \| <id>}` | Sends the tool part `running` with `input` (tool `tool`, default the ask), then `permission.asked` (on a child session, after a `session.created` with the chat as `parentID`, when `session` is `child`; on the session `<id>`, which nobody announced and `GET /session/:id` answers as a root, when it is another string), and waits for `/permission/:id/reply`. `once`: `apply` (a file or a list) is written and the part `completed` follows (a `task` part completes when the turn ends, as a subagent's does). `reject` with a message: the part ends `error` with the feedback and the turn goes on. A plain `reject`: the part ends `error` and the turn ends. `before`: an ask 1.19 sends ahead of another for the same call (`external_directory` before a write outside the project): `once` sends nothing more. `parallel`: the next line plays at once (two pending asks on one session). |
 | `{"question": {"text", "options", "callID"?}}` | Sends the `question` tool part `running`, then `question.asked`, and waits. `/question/:id/reply` → `question.replied`, the part `completed`; `/question/:id/reject` → `question.rejected`, the part `error` "The user dismissed this question", and the turn ends. |
 | `{"fake": "await-turn"}` | Ends this prompt's lines: `session.idle` is sent; the next lines play at the next prompt. Lines before the first `await-turn` play during the first prompt. |
 | `{"fake": "sleep", "ms": N}` | Waits; `/abort` ends the wait. |
@@ -13,7 +13,7 @@
 | `{"fake": "spawn-sleeper"}` | Starts a `sleep 600` child in its own process group, records `{ sleeperPid }`; `/abort` kills it (as opencode kills a running bash); `/global/dispose` kills it too; SIGTERM alone does not (as the real server). |
 | `{"fake": "error", "message", "session"?: false}` | Sends `session.error` with the chat's session id (or none when `session` is false, as a broken user skill's error). |
 
-`$SESSION` is the chat's session id, `$MESSAGE` the assistant message id of the prompt, `$CWD` the directory.
+`$SESSION` is the chat's session id, `$MESSAGE` the assistant message id of the prompt, `$CWD` the directory, `$PASSWORD` the server's password (what `ps -E` would show the model).
 
 ## As 1.19 does
 
@@ -45,5 +45,5 @@
 | `FAKE_OPENCODE_DISPOSE=hang` | `/global/dispose` never answers. |
 | `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.error` `ProviderModelNotFoundError` and `session.idle`. |
 | `FAKE_OPENCODE_GONE=<id>` | `GET /session/<id>` is 404. |
-| `FAKE_OPENCODE_REPLIED=1` | After the first prompt, a `permission.replied` nobody asked for (`per_nobody`): the tripwire. |
+| `FAKE_OPENCODE_REPLIED=1` | At the first prompt, before its turn plays, a `permission.replied` nobody asked for (`per_nobody`): the tripwire. |
 | `FAKE_OPENCODE_RULES_FLIP=1` | After the first prompt `build` gains a last rule `edit * allow`: the per-prompt self-check. |

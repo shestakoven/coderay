@@ -130,7 +130,7 @@ function rejectOthers(sessionID, except) {
 }
 
 async function play(session, messageID) {
-  const fill = (line) => line.replaceAll('$SESSION', session.id).replaceAll('$MESSAGE', messageID).replaceAll('$CWD', session.directory);
+  const fill = (line) => line.replaceAll('$SESSION', session.id).replaceAll('$MESSAGE', messageID).replaceAll('$CWD', session.directory).replaceAll('$PASSWORD', env.OPENCODE_SERVER_PASSWORD ?? '');
   let abort;
   const aborted = new Promise((resolve) => { abort = () => resolve(ABORTED); });
   Object.assign(session, { busy: true, aborted: false, abort });
@@ -158,6 +158,9 @@ async function play(session, messageID) {
       sessions.set(child.id, child); saveSessions();
       send('session.created', { sessionID: child.id, info: info(child) });
       sessionID = child.id;
+    } else if (line.session) {
+      // A session this chat never saw created: GET /session/:id answers it as a root of its own.
+      sessionID = line.session;
     }
     const tool = line.tool ?? line.ask;
     const input = line.input ?? {};
@@ -294,7 +297,7 @@ const server = createServer(async (req, res) => {
     prompts += 1;
     record({ prompt: { session: session.id, kind: s[2], body: body ?? null } });
     if (env.FAKE_OPENCODE_RULES_FLIP === '1' && prompts === 1) rulesFlipped = true;
-    if (env.FAKE_OPENCODE_REPLIED === '1' && prompts === 1) setTimeout(() => send('permission.replied', { sessionID: session.id, requestID: 'per_nobody', reply: 'once' }), 50);
+    if (env.FAKE_OPENCODE_REPLIED === '1' && prompts === 1) send('permission.replied', { sessionID: session.id, requestID: 'per_nobody', reply: 'once' });
     const answer = () => json(res, 200, { info: { id: messageID, sessionID: session.id, role: 'assistant', finish: 'stop' }, parts: [] });
     if (env.FAKE_OPENCODE_UNKNOWN_MODEL === '1') {
       if (s[2] === 'prompt_async') json(res, 204); else answer();
