@@ -151,18 +151,18 @@ async function play(session, messageID) {
   };
   const wait = (promise) => Promise.race([promise, aborted]);
 
+  // The session an ask or a question comes from: the chat's, a child (an unannounced one is a task resumed by task_id, created on an
+  // earlier server), or another named one, which GET /session/:id answers as a root of its own.
+  const sessionFor = (kind) => {
+    if (kind !== 'child' && kind !== 'unannounced') return kind || session.id;
+    const child = { id: nextId('ses'), parentID: session.id, directory: session.directory, permission: [rule('task', '*', 'deny')] };
+    sessions.set(child.id, child); saveSessions();
+    if (kind === 'child') send('session.created', { sessionID: child.id, info: info(child) });
+    return child.id;
+  };
+
   async function ask(line) {
-    let sessionID = session.id;
-    if (line.session === 'child' || line.session === 'unannounced') {
-      const child = { id: nextId('ses'), parentID: session.id, directory: session.directory, permission: [rule('task', '*', 'deny')] };
-      sessions.set(child.id, child); saveSessions();
-      // An unannounced child is one a task resumed by task_id: it was created on an earlier server.
-      if (line.session === 'child') send('session.created', { sessionID: child.id, info: info(child) });
-      sessionID = child.id;
-    } else if (line.session) {
-      // A session this chat never saw created: GET /session/:id answers it as a root of its own.
-      sessionID = line.session;
-    }
+    const sessionID = sessionFor(line.session);
     const tool = line.tool ?? line.ask;
     const input = line.input ?? {};
     start(sessionID, tool, line.callID, input);
@@ -196,19 +196,20 @@ async function play(session, messageID) {
   async function question(line) {
     const callID = line.question.callID ?? 'q1';
     const questions = [{ question: line.question.text, header: line.question.header ?? 'Question', options: line.question.options.map((label) => ({ label, description: '' })), multiple: false }];
-    start(session.id, 'question', callID, { questions });
+    const sessionID = sessionFor(line.question.session);
+    start(sessionID, 'question', callID, { questions });
     const id = nextId('que');
-    const reply = new Promise((resolve) => { waiting.set(id, { kind: 'question', session: session.id, resolve }); });
-    send('question.asked', { id, sessionID: session.id, questions, tool: { messageID, callID } });
+    const reply = new Promise((resolve) => { waiting.set(id, { kind: 'question', session: sessionID, resolve }); });
+    send('question.asked', { id, sessionID, questions, tool: { messageID, callID } });
     const answer = await wait(reply);
     if (answer === ABORTED) return;
     if (answer.kind === 'reject') {
-      part(toolPart(session.id, 'question', callID, { status: 'error', input: { questions }, error: 'The user dismissed this question', time: { start: 1, end: 2 } }));
+      part(toolPart(sessionID, 'question', callID, { status: 'error', input: { questions }, error: 'The user dismissed this question', time: { start: 1, end: 2 } }));
       ended = true;
       return;
     }
     const chosen = questions.map((q, index) => `"${q.question}"="${[answer.answers?.[index] ?? []].flat().join(', ') || 'Unanswered'}"`).join(', ');
-    part(toolPart(session.id, 'question', callID, { status: 'completed', input: { questions }, output: `User has answered your questions: ${chosen}. You can now continue with the user's answers in mind.`, title: 'question', metadata: {}, time: { start: 1, end: 2 } }));
+    part(toolPart(sessionID, 'question', callID, { status: 'completed', input: { questions }, output: `User has answered your questions: ${chosen}. You can now continue with the user's answers in mind.`, title: 'question', metadata: {}, time: { start: 1, end: 2 } }));
   }
 
   while (at < steps.length && !session.aborted && !ended) {
@@ -216,6 +217,8 @@ async function play(session, messageID) {
     if (line.fake === 'await-turn') { closed = true; break; }
     if (line.fake === 'sleep') { await new Promise((done) => { const timer = setTimeout(done, line.ms); void aborted.then(() => { clearTimeout(timer); done(); }); }); continue; }
     if (line.fake === 'write') { mkdirSync(dirname(join(session.directory, line.path)), { recursive: true }); writeFileSync(join(session.directory, line.path), line.content); continue; }
+    // The event stream drops: what is sent until the client opens it again is lost to it.
+    if (line.fake === 'close-stream') { for (const res of streams) res.end(); streams.clear(); continue; }
     if (line.fake === 'spawn-sleeper') { const child = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' }); child.unref(); sleepers.push(child); record({ sleeperPid: child.pid }); continue; }
     if (line.fake === 'error') { send('session.error', { ...(line.session === false ? {} : { sessionID: session.id }), error: { name: 'UnknownError', data: { message: line.message } } }); continue; }
     if (line.ask) { await ask(line); continue; }
@@ -316,6 +319,8 @@ const server = createServer(async (req, res) => {
     return;
   }
   if ((s = m(/^\/session\/([^/]+)\/abort$/))) {
+    // A server that takes the abort and goes on: no idle comes.
+    if (env.FAKE_OPENCODE_ABORT === 'ignore') return json(res, 200, true);
     const session = sessions.get(s[1]);
     if (session?.busy) {
       session.aborted = true;

@@ -6,9 +6,10 @@
 |---|---|
 | `{"type": …, "properties": …}` | An SSE event, sent as is after `$SESSION`, `$MESSAGE`, `$CWD` are filled (a part without an `id` gets `prt_<n>`). |
 | `{"ask": "edit" \| "bash" \| "task" \| "webfetch" \| "external_directory", "tool"?, "callID", "patterns", "metadata", "input", "always"?, "apply"?, "output"?, "parallel"?, "before"?, "session"?: "child" \| "unannounced" \| <id>, "answeredBy"?}` | Sends the tool part `running` with `input` (tool `tool`, default the ask), then `permission.asked` (on a child session, after a `session.created` with the chat as `parentID`, when `session` is `child`; on such a child with no `session.created`, as a task resumed by `task_id` would be, when it is `unannounced`; on the session `<id>`, which nobody announced and `GET /session/:id` answers as a root, when it is another string), and waits for `/permission/:id/reply`. `once`: `apply` (a file or a list) is written and the part `completed` follows (a `task` part completes when the turn ends, as a subagent's does). `reject` with a message: the part ends `error` with the feedback and the turn goes on. A plain `reject`: the part ends `error` and the turn ends. `before`: an ask 1.19 sends ahead of another for the same call (`external_directory` before a write outside the project): `once` sends nothing more. `parallel`: the next line plays at once (two pending asks on one session). `answeredBy`: another client answers the ask with that reply right after it is asked. |
-| `{"question": {"text", "options", "callID"?}}` | Sends the `question` tool part `running`, then `question.asked`, and waits. `/question/:id/reply` → `question.replied`, the part `completed`; `/question/:id/reject` → `question.rejected`, the part `error` "The user dismissed this question", and the turn ends. |
+| `{"question": {"text", "options", "callID"?, "session"?}}` | Sends the `question` tool part `running`, then `question.asked` (on the chat's session, or one chosen as an ask's `session` is), and waits. `/question/:id/reply` → `question.replied`, the part `completed`; `/question/:id/reject` → `question.rejected`, the part `error` "The user dismissed this question", and the turn ends. |
 | `{"fake": "await-turn"}` | Ends this prompt's lines: `session.idle` is sent; the next lines play at the next prompt. Lines before the first `await-turn` play during the first prompt. |
 | `{"fake": "sleep", "ms": N}` | Waits; `/abort` ends the wait. |
+| `{"fake": "close-stream"}` | Ends every open `/event` stream; what is sent until the client opens one again is lost to it (a held ask stays in `GET /permission`). |
 | `{"fake": "write", "path", "content"}` | Writes a file under the session's directory (stands for an allowed edit). |
 | `{"fake": "spawn-sleeper"}` | Starts a `sleep 600` child in its own process group, records `{ sleeperPid }`; `/abort` kills it (as opencode kills a running bash); `/global/dispose` kills it too; SIGTERM alone does not (as the real server). |
 | `{"fake": "error", "message", "session"?: false}` | Sends `session.error` with the chat's session id (or none when `session` is false, as a broken user skill's error). |
@@ -44,6 +45,7 @@
 | `FAKE_OPENCODE_LISTEN_STREAM=stderr` | Prints it on stderr. |
 | `FAKE_OPENCODE_HEALTH=down` | Health answers 503. |
 | `FAKE_OPENCODE_DISPOSE=hang` | `/global/dispose` never answers. |
+| `FAKE_OPENCODE_ABORT=ignore` | `/session/:id/abort` answers 200 and the turn goes on: no idle comes. |
 | `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.error` `ProviderModelNotFoundError` and `session.idle`. |
 | `FAKE_OPENCODE_GONE=<id>` | `GET /session/<id>` is 404. |
 | `FAKE_OPENCODE_REPLIED=1` | At the first prompt, before its turn plays, a `permission.replied` `once` nobody asked for (`per_nobody`): the tripwire; `=reject` replies `reject`. |
