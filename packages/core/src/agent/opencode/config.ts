@@ -49,7 +49,8 @@ export function toolOutputGlob(env: NodeJS.ProcessEnv): string {
 export interface SelfCheckProblem { agent: string; permission: string; pattern: string; action: string }
 /** The server's answers to GET /agent, GET /config and GET /experimental/tool/ids. */
 export interface SelfCheckAnswers { agents: unknown; config: unknown; toolIds: unknown }
-export interface SelfCheckExpected { servers: readonly string[]; toolOutput: string; shell: string }
+/** `mcp` is CodeRay's rendered entries (`OpencodeMcp.config`). */
+export interface SelfCheckExpected { mcp: Record<string, unknown>; toolOutput: string; shell: string }
 
 /** Why the server would let a write through, share the chat, or hand the model its secrets; null when it would not. The rules are read from GET /agent only: GET /config does not keep their order (Q8). */
 export function selfCheck(answers: SelfCheckAnswers, expected: SelfCheckExpected): SelfCheckProblem | string | null {
@@ -72,11 +73,20 @@ function configProblem(config: unknown, expected: SelfCheckExpected): string | n
   // A layer merged after CodeRay's (the user's org config, the managed one) can turn them back on.
   if (config.lsp !== false) return "opencode would start language servers, which can run the project's code";
   if (config.formatter !== false) return "opencode would run formatters, which can run the project's code";
+  // A later layer can repoint CodeRay's own entry, and every idecore_* tool runs without asking.
+  for (const [name, ours] of Object.entries(expected.mcp)) {
+    if (!sameServer(Object.hasOwn(mcp, name) ? mcp[name] : undefined, ours)) return `opencode's MCP server "${name}" is not the one CodeRay configured`;
+  }
   for (const [name, entry] of Object.entries(mcp)) {
-    if (!expected.servers.includes(name) && !(isRecord(entry) && entry.enabled === false)) return `opencode would start the MCP server "${name}", which CodeRay did not configure`;
+    if (!Object.hasOwn(expected.mcp, name) && !(isRecord(entry) && entry.enabled === false)) return `opencode would start the MCP server "${name}", which CodeRay did not configure`;
   }
   return null;
 }
+
+const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+const sameServer = (actual: unknown, ours: unknown): boolean =>
+  isRecord(actual) && isRecord(ours) && actual.enabled === true && actual.type === ours.type
+  && (ours.type === 'remote' ? actual.url === ours.url : same(actual.command, ours.command) && same(actual.environment, ours.environment));
 
 function toolProblem(ids: unknown): string | null {
   if (!Array.isArray(ids) || !ids.every((id): id is string => typeof id === 'string')) return 'opencode listed tools CodeRay cannot read';

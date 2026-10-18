@@ -10,11 +10,12 @@ const RECORDED = fileURLToPath(new URL('../fixtures/opencode/recorded/', import.
 const RULES = { '*': 'ask', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow', todowrite: 'allow', question: 'allow', skill: 'allow', 'idecore_*': 'allow' };
 const SHELL = '/run/opencode-shell/zsh';
 const TOOL_OUTPUT = '/data/opencode/tool-output/*';
-const expected = { servers: ['idecore'], toolOutput: TOOL_OUTPUT, shell: SHELL };
+const { config: mcp } = opencodeMcp({ idecore: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer s' } }, files: { type: 'stdio', command: 'node', args: ['srv.js'], env: { A: '1' } } }, {});
+const expected = { mcp, toolOutput: TOOL_OUTPUT, shell: SHELL };
 const agent = (name: string, extra: Record<string, unknown> = {}, mode = name === 'general' || name === 'explore' ? 'subagent' : 'primary') => ({ name, mode, native: true, permission: { ...RULES, ...extra } });
 const good = ['build', 'plan', 'general', 'explore'].map((name) => agent(name));
 // F4: a plugin listed under OPENCODE_PURE is not loaded, so a listed one passes.
-const config = { share: 'disabled', shell: SHELL, lsp: false, formatter: false, plugin: ['file:///home/.config/opencode/plugins/global.js'], mcp: { idecore: { type: 'remote', enabled: true }, usersrv: { type: 'local', enabled: false } } };
+const config = { share: 'disabled', shell: SHELL, lsp: false, formatter: false, plugin: ['file:///home/.config/opencode/plugins/global.js'], mcp: { ...mcp, usersrv: { type: 'local', enabled: false } } };
 const tools = [...BUILT_IN_TOOLS];
 const check = (answers: { agents?: unknown; config?: unknown; toolIds?: unknown }) => selfCheck({ agents: good, config, toolIds: tools, ...answers }, expected);
 const rule = (permission: string, pattern: string, action: string) => ({ permission, pattern, action });
@@ -64,6 +65,12 @@ describe('selfCheck', () => {
     ['another shell', { config: { ...config, shell: '/bin/zsh' } }, "opencode would run commands in /bin/zsh, not CodeRay's shell wrapper"],
     ['language servers on', { config: { ...config, lsp: { typescript: { disabled: false } } } }, "opencode would start language servers, which can run the project's code"],
     ['formatters on', { config: { ...config, formatter: true } }, "opencode would run formatters, which can run the project's code"],
+    ["idecore pointed elsewhere", { config: { ...config, mcp: { ...config.mcp, idecore: { ...mcp.idecore as object, url: 'http://evil/mcp' } } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
+    ["idecore turned into a local server", { config: { ...config, mcp: { ...config.mcp, idecore: { ...mcp.idecore as object, type: 'local', command: ['node', 'evil.js'] } } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
+    ["CodeRay's local server with another command", { config: { ...config, mcp: { ...config.mcp, files: { ...mcp.files as object, command: ['node', 'evil.js'] } } } }, 'opencode\'s MCP server "files" is not the one CodeRay configured'],
+    ["CodeRay's local server with another environment", { config: { ...config, mcp: { ...config.mcp, files: { ...mcp.files as object, environment: { A: '1', NODE_OPTIONS: '--require evil.js' } } } } }, 'opencode\'s MCP server "files" is not the one CodeRay configured'],
+    ["CodeRay's server switched off", { config: { ...config, mcp: { ...config.mcp, idecore: { ...mcp.idecore as object, enabled: false } } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
+    ['a user server named as a property every object has', { config: { ...config, mcp: { ...config.mcp, constructor: { type: 'local' } } } }, 'opencode would start the MCP server "constructor", which CodeRay did not configure'],
     ['a user server still enabled', { config: { ...config, mcp: { ...config.mcp, usersrv: { type: 'local', enabled: true } } } }, 'opencode would start the MCP server "usersrv", which CodeRay did not configure'],
     ['a user server without an enabled flag', { config: { ...config, mcp: { ...config.mcp, other: { type: 'local' } } } }, 'opencode would start the MCP server "other", which CodeRay did not configure'],
     ['a custom tool', { toolIds: [...tools, 'marker'] }, 'opencode loaded a custom tool "marker", which would run without asking'],
