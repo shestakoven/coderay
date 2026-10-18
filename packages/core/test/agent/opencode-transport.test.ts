@@ -76,26 +76,31 @@ describe('startOpencodeTransport', () => {
     ]);
   });
 
-  it('drops an effort the model does not list, and opens no session before the first message', async () => {
-    const t = start('opencode/reply.jsonl', { effort: 'high' });
+  it('drops an effort the model does not list, opens no session before the first message, and sends a message that comes during a turn after it', async () => {
+    const t = start('opencode/multi-turn.jsonl', { effort: 'high' });
     await t.transport.skills();
     await new Promise((resolve) => setTimeout(resolve, 100));
     const before = requests(t.records(), 'POST', '/session').length;
+    // 1.19 folds a prompt sent during a turn into it (Q12b): the second must wait for the first's idle to get its own answer.
     t.send('hi');
-    await t.ended();
-    expect([before, 'variant' in ((t.records().find((r) => r.prompt)?.prompt?.body as object) ?? {})]).toEqual([0, false]);
+    t.send('again');
+    await t.ended(2);
+    expect([before, 'variant' in ((t.records().find((r) => r.prompt)?.prompt?.body as object) ?? {}), t.said(), t.results()]).toEqual([0, false, 'OK\n42', ['success', 'success']]);
   });
 
   it.each([
     ['an agent that allows edits', { FAKE_OPENCODE_AGENTS: JSON.stringify([{ name: 'build', mode: 'primary', permission: { '*': 'ask', edit: 'allow' } }]) }, 'opencode agent build would run edit without asking (its rule for edit on * is allow), so the chat was not started.'],
+    ['a subagent that allows any tool', { FAKE_OPENCODE_AGENTS: JSON.stringify([{ name: 'build', mode: 'primary', permission: { '*': 'ask' } }, { name: 'general', mode: 'subagent', permission: [{ permission: '*', pattern: '*', action: 'ask' }, { permission: '*', pattern: '*', action: 'allow' }] }]) }, 'opencode agent general would run any tool without asking (its rule for * on * is allow), so the chat was not started.'],
     ['a server that never listens', { FAKE_OPENCODE_NO_LISTEN: '1' }, /^opencode did not start: opencode did not say where it listens/],
     ['a server older than 1.19', { FAKE_OPENCODE_VERSION: '1.18.9' }, /^opencode did not start: opencode 1\.18\.9 is older than 1\.19\.0/],
     ['a model whose provider is not connected', { FAKE_OPENCODE_UNKNOWN_MODEL: '1' }, 'opencode has no provider "opencode" connected for this model: add its key in Settings → Accounts, or pick another model.'],
-    ['a permission.replied CodeRay did not send', { FAKE_OPENCODE_REPLIED: '1' }, "Something answered opencode's asks besides CodeRay (permission per_nobody), so the chat was stopped."],
+    ['a reject of an ask CodeRay never saw', { FAKE_OPENCODE_REPLIED: 'reject' }, "Something answered opencode's asks besides CodeRay (permission per_nobody), so the chat was stopped."],
+    ['an ask another client allowed', { FAKE_OPENCODE_SCENARIO: fixture('opencode/foreign-reply.jsonl') }, /^Something answered opencode's asks besides CodeRay \(permission per_\d+_\d+\), so the chat was stopped\.$/],
     ['a root session CodeRay did not create', { FAKE_OPENCODE_SCENARIO: fixture('opencode/foreign-session.jsonl') }, "Something created a session on this chat's opencode server besides CodeRay (ses_foreign), so the chat was stopped."],
     ['rules that changed after the first turn', { FAKE_OPENCODE_RULES_FLIP: '1' }, 'opencode agent build would run edit without asking (its rule for edit on * is allow), so the chat was not started.'],
   ])('refuses the chat with the reason on %s, and the agent says nothing', async (_name, env, reason) => {
-    const t = start('opencode/multi-turn.jsonl', { env, listenTimeoutMs: 'FAKE_OPENCODE_NO_LISTEN' in env ? 1_000 : undefined });
+    // The gate holds every ask: only CodeRay's tripwire can end one.
+    const t = start('opencode/multi-turn.jsonl', { env, decide: hold, listenTimeoutMs: 'FAKE_OPENCODE_NO_LISTEN' in env ? 1_000 : undefined });
     t.send('hi');
     await t.refusedOrEnded();
     if (t.refused() === null) { t.send('again'); await t.refusedOrEnded(2); }
@@ -126,22 +131,26 @@ describe('startOpencodeTransport', () => {
     ]).toEqual([[['Edit', 'call_edit1', true]], ['once', null], "export const other = 'hello';\n", ['reject', 'CodeRay: no approved plan covers src/other.ts'], true, ['reject', null]]);
   });
 
-  it('judges a two-file patch whole, and a bash in its workdir after the directory it asked to reach', async () => {
+  it('judges a two-file patch whole, a bash in its workdir after the directory it asked to reach, and rejects an ask whose session opencode cannot find', async () => {
     const patch = start('opencode/two-file.jsonl', { decide: async (calls) => ({ permissionDecision: calls.every((call) => call.tool_name === 'Edit') ? 'allow' : 'deny', permissionDecisionReason: 'only edits' }) });
     patch.send('ready?'); await patch.ended(1); patch.send('patch'); await patch.ended(2);
-    const bash = start('opencode/bash-workdir.jsonl', { decide: allow });
+    const bash = start('opencode/bash-workdir.jsonl', { decide: allow, env: { FAKE_OPENCODE_GONE: 'ses_gone' } });
     bash.send('go'); await bash.ended(1);
     const elsewhere = join(bash.cwd, '../elsewhere');
-    expect([patch.asked.map((call) => call.tool_name), patch.records().find((r) => r.reply)?.reply?.reply, existsSync(join(patch.cwd, 'src/new.ts')), bash.asked.map((call) => [call.tool_name, call.tool_input.command ?? call.tool_input.file_path, call.cwd])]).toEqual([
-      ['Edit', 'Write'], 'reject', false, [['Read', `${bash.cwd}/../elsewhere/*`, bash.cwd], ['Bash', 'rm -rf src', elsewhere]],
+    expect([
+      patch.asked.map((call) => call.tool_name), patch.records().find((r) => r.reply)?.reply?.reply, existsSync(join(patch.cwd, 'src/new.ts')),
+      bash.asked.map((call) => [call.tool_name, call.tool_input.command ?? call.tool_input.file_path, call.cwd]), bash.records().filter((r) => r.reply).map((r) => r.reply!.reply),
+    ]).toEqual([
+      ['Edit', 'Write'], 'reject', false, [['Read', `${bash.cwd}/../elsewhere/*`, bash.cwd], ['Bash', 'rm -rf src', elsewhere]], ['once', 'once', 'reject'],
     ]);
   });
 
-  it("judges a child session's ask under the chat, allows a task only for a subagent that passed, and rejects an ask of a session that is not the chat's before the gate sees it", async () => {
+  it("judges the asks of the chat's subagents, announced or resumed, shows a subagent's calls under its task, allows a task only for a subagent that passed, and rejects an ask of a session that is not the chat's before the gate sees it", async () => {
     const t = start('opencode/child-ask.jsonl', { decide: allow });
     t.send('go');
     await t.ended();
-    expect([t.asked.map((call) => call.tool_name), t.records().filter((r) => r.reply).map((r) => r.reply!.reply)]).toEqual([['Task', 'Edit'], ['once', 'once', 'reject']]);
+    const underTask = t.events.some((e) => e.type === 'assistant' && e.parentToolUseId === 'call_task1' && e.blocks.some((b) => b.kind === 'tool_use' && b.id === 'call_edit2'));
+    expect([t.asked.map((call) => call.tool_name), t.records().filter((r) => r.reply).map((r) => r.reply!.reply), underTask]).toEqual([['Task', 'Edit', 'Edit'], ['once', 'once', 'once', 'reject'], true]);
   });
 
   it("rejects a bash naming the server's secrets before the gate sees it, and never shows the server's password or CodeRay's bearer token", async () => {
@@ -163,7 +172,7 @@ describe('startOpencodeTransport', () => {
     expect([seen, replies]).toEqual([2, [['reject', false], ['reject', true]]]);
   });
 
-  it('answers a held ask with a plain reject on Stop, aborts the session, ends the turn within a second, and answers the next message on the same server', async () => {
+  it('answers a held ask with a plain reject on Stop, aborts the session, ends the turn within a second, answers the next message on the same server, and ends a Stop with no turn at once', async () => {
     const t = start('opencode/hang.jsonl', { decide: hold });
     t.send('hi');
     await waitFor(() => t.asked.length === 1, 'the edit is held');
@@ -174,7 +183,9 @@ describe('startOpencodeTransport', () => {
     const took = Date.now() - at;
     t.send('again');
     await t.ended(2);
-    expect([t.results(), took < 1000, requests(t.records(), 'POST', /\/abort$/).length, t.records().find((r) => r.reply)?.reply?.reply, t.said(), servers(t)]).toEqual([['error_during_execution', 'success'], true, 1, 'reject', 'Back.', before]);
+    // A Stop with no turn running ends at once and sends opencode nothing.
+    t.transport.interrupt();
+    expect([t.results(), took < 1000, requests(t.records(), 'POST', /\/abort$/).length, t.records().find((r) => r.reply)?.reply?.reply, t.said(), servers(t)]).toEqual([['error_during_execution', 'success', 'error_during_execution'], true, 1, 'reject', 'Back.', before]);
   });
 
   it("resumes the stored session when it exists with the chat's ruleset, and opens a new one with a notice when opencode has no record of it, or it has other rules or another directory", async () => {
@@ -204,13 +215,22 @@ describe('startOpencodeTransport', () => {
     ]);
   });
 
-  it("sends a /name message as the command with no request timeout, and a question to the chat's prompt, answered through opencode", async () => {
+  it("sends a /name message as the command with no request timeout, and a question to the chat's prompt, answered through opencode, or declined and withdrawn on Stop", async () => {
     const t = start('opencode/question.jsonl');
     t.send('/probe-skill now');
-    const request = await waitFor(() => t.events.find((e) => e.type === 'control_request'), 'the question shows');
-    t.transport.respond({ subtype: 'success', request_id: (request as { requestId: string }).requestId, response: { behavior: 'allow', updatedInput: { answers: { 'A or B?': 'A' } } } });
+    const questions = () => t.events.flatMap((e) => (e.type === 'control_request' ? [e] : []));
+    const [first] = await waitFor(() => questions().length === 1 && questions(), 'the question shows');
+    t.transport.respond({ subtype: 'success', request_id: first!.requestId, response: { behavior: 'allow', updatedInput: { answers: { 'A or B?': 'A' } } } });
     await t.ended();
+    t.send('again');
+    const second = (await waitFor(() => questions().length === 2 && questions(), 'the second question shows'))[1]!;
+    t.transport.interrupt();
+    await t.ended(2);
     const prompt = t.records().find((r) => r.prompt)?.prompt;
-    expect([prompt?.kind, (prompt?.body as { command: string; arguments: string }).command, (prompt?.body as { arguments: string }).arguments, t.records().find((r) => r.questionReply)?.questionReply?.answers, t.said()]).toEqual(['command', 'probe-skill', 'now', [['A']], 'You chose A.']);
+    const withdrawn = t.events.flatMap((e) => (e.type === 'control_cancel' ? [e.requestId] : []));
+    expect([
+      prompt?.kind, (prompt?.body as { command: string; arguments: string }).command, (prompt?.body as { arguments: string }).arguments, (first!.input as { questions: { multiSelect: boolean }[] }).questions[0]?.multiSelect,
+      t.records().flatMap((r) => (r.questionReply ? [[r.questionReply.kind, r.questionReply.answers]] : [])), t.said(), withdrawn, t.results(),
+    ]).toEqual(['command', 'probe-skill', 'now', false, [['reply', [['A']]], ['reject', null]], 'You chose A.', [second.requestId], ['success', 'error_during_execution']]);
   });
 });
