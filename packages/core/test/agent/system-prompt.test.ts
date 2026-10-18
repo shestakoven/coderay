@@ -86,13 +86,14 @@ describe('systemPrompt', () => {
 });
 
 describe('opencodeSystem', () => {
-  it('puts the gate prompt first, then the rules, then each project instruction file under its path, cut at the limit with a note and never inside a character', () => {
-    const text = opencodeSystem('PROMPT', [{ path: 'AGENTS.md', text: 'a'.repeat(MAX_PROJECT_INSTRUCTIONS) }, { path: 'CLAUDE.md', text: 'rules' }]);
+  it('puts the gate prompt first, then the rules, then each project instruction file under its path, the one that passes the limit cut with a note and never inside a character, and none after it', () => {
+    const half = MAX_PROJECT_INSTRUCTIONS / 2;
+    const text = opencodeSystem('PROMPT', [{ path: 'AGENTS.md', text: 'a'.repeat(half) }, { path: 'CLAUDE.md', text: 'b'.repeat(half) }, { path: 'MORE.md', text: 'more' }]);
     const wide = opencodeSystem(null, [{ path: 'AGENTS.md', text: 'é'.repeat(MAX_PROJECT_INSTRUCTIONS) }]);
     expect([
-      text.startsWith(`PROMPT\n\n${OPENCODE_RULES}\n\n## AGENTS.md\naaa`), text.includes('## CLAUDE.md'), text.endsWith('a\n(project instructions cut at 64 KB)'),
+      text.startsWith(`PROMPT\n\n${OPENCODE_RULES}\n\n## AGENTS.md\n${'a'.repeat(half)}\n\n## CLAUDE.md\nbbb`), text.endsWith('b\n(project instructions cut at 64 KB)'), text.includes('MORE.md'),
       wide.startsWith(`${OPENCODE_RULES}\n\n## AGENTS.md\né`), wide.endsWith('é\n(project instructions cut at 64 KB)'),
       opencodeSystem(null, [{ path: 'AGENTS.md', text: 'short' }, { path: 'CLAUDE.md', text: 'rules' }]) === `${OPENCODE_RULES}\n\n## AGENTS.md\nshort\n\n## CLAUDE.md\nrules`,
-    ]).toEqual([true, false, true, true, true, true]);
+    ]).toEqual([true, true, false, true, true, true]);
   });
 });
