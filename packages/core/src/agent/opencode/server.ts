@@ -47,6 +47,8 @@ export function shellWrapper(runDir: string, userShell = process.env.SHELL || '/
 
 export interface OpencodeServer {
   readonly pid: number | undefined;
+  /** This server's own password, so nothing it says can show it. */
+  readonly password: string;
   /** Resolves with the base URL once the listening line, health and version check passed; rejects with the reason (stderr's last line) and the process stopped otherwise. */
   readonly ready: Promise<{ base: string; client: OpencodeClient; version: string }>;
   readonly exited: Promise<ProcessExit>;
@@ -145,7 +147,7 @@ export function startServer(command: OpencodeCommand, options: ServerOptions): O
   })();
   // A caller that stops the server before it asks must not leave an unhandled rejection behind.
   ready.catch(() => {});
-  return { pid: spawned.child.pid, ready, exited: spawned.exited, kill };
+  return { pid: spawned.child.pid, password, ready, exited: spawned.exited, kill };
 }
 
 /** A short-lived server for one question (status, models, providers), stopped afterwards whatever happens. */

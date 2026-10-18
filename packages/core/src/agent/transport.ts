@@ -3,6 +3,8 @@ import type { HookAnswer } from '../gate/hook-gate';
 import type { ClaudeCommand, ProcessExit } from './claude-process';
 import type { CodexCommand } from './codex/command';
 import type { JsonValue } from './codex/protocol';
+import type { OpencodeCommand } from './opencode/command';
+import type { OpencodeMcp } from './opencode/mcp';
 import type { PermissionAnswer } from './prompts';
 import type { StreamEvent } from './stream';
 
@@ -58,7 +60,26 @@ export interface CodexLaunch extends LaunchBase {
   keyRejectedHint: string;
 }
 
-export type Launch = ClaudeLaunch | CodexLaunch;
+/** opencode's launch: its command under the chat's account, CodeRay's MCP servers in its dialect, the shell wrapper and the system text. */
+export interface OpencodeLaunch extends LaunchBase {
+  engine: 'opencode';
+  opencode: OpencodeCommand;
+  /** The servers CodeRay defines (idecore first among them). */
+  servers: string[];
+  /** CodeRay's MCP servers in opencode's dialect. */
+  mcp: OpencodeMcp;
+  /** The user's own MCP server names, read by CodeRay, or null to read them from a server started without CodeRay's. */
+  userServers: string[] | null;
+  /** The shell wrapper's path (Q7). */
+  shell: string;
+  /** Sent as `system` with every prompt: the gate's rules, then the project's instructions. */
+  system: string;
+  providerHint: (providerID: string) => string;
+  /** How long a server gets to say where it listens; the server's own default otherwise. */
+  listenTimeoutMs?: number;
+}
+
+export type Launch = ClaudeLaunch | CodexLaunch | OpencodeLaunch;
 
 type ImageBlock = { type: 'image'; source: { type: 'base64'; media_type: ImageMediaType; data: string } };
 type TextBlock = { type: 'text'; text: string };

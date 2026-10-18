@@ -9,6 +9,7 @@ import { isRecord } from '../../json';
 import { opencodeEnv, type OpencodeCommand } from '../opencode/command';
 import { inlineConfig } from '../opencode/config';
 import { HARDENING_ENV, shellWrapper, withServer } from '../opencode/server';
+import { startOpencodeTransport } from '../opencode/transport';
 import { isOlderVersion, MIN_OPENCODE_VERSION } from '../tools';
 import type { Engine } from './registry';
 
@@ -122,8 +123,9 @@ export function opencodeEngine(options: OpencodeEngineOptions): Engine {
       return account === null ? status : { ...status, account };
     },
     listModels: async () => (await (last !== null && Date.now() - last.at < REUSE_MS ? last.probe : probe())).models,
-    start: (launch) => {
-      throw new Error(`The opencode engine cannot start a ${launch.engine} chat.`);
+    start: (launch, sink) => {
+      if (!('opencode' in launch)) throw new Error(`The opencode engine cannot start a ${launch.engine} chat.`);
+      return startOpencodeTransport(launch, sink);
     },
   };
 }
