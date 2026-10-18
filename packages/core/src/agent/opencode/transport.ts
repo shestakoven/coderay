@@ -292,7 +292,7 @@ class OpencodeTransport implements AgentTransport {
     if (type === 'session.created') return this.created(properties);
     if (type === 'permission.asked') return this.asked(server, client, properties);
     if (type === 'permission.replied') return this.replied(properties);
-    if (type === 'question.asked') return this.questioned(client, properties);
+    if (type === 'question.asked') return void this.questioned(server, client, properties);
     const error = properties.error;
     if (type === 'session.error' && properties.sessionID === this.sessionId && isRecord(error) && error.name === 'ProviderModelNotFoundError') {
       const provider = isRecord(error.data) && typeof error.data.providerID === 'string' ? error.data.providerID : (this.model?.split('/')[0] ?? '');
@@ -401,10 +401,13 @@ class OpencodeTransport implements AgentTransport {
     this.refuse(`Something answered opencode's asks besides CodeRay (permission ${String(id)}), so the chat was stopped.`);
   }
 
-  private questioned(client: OpencodeClient, properties: Record<string, unknown>): void {
+  private async questioned(server: OpencodeServer, client: OpencodeClient, properties: Record<string, unknown>): Promise<void> {
     const { id, sessionID, questions } = properties;
     if (typeof id !== 'string') return;
-    if (!this.turnOpen || typeof sessionID !== 'string' || !this.ownSessions.has(sessionID) || !Array.isArray(questions) || !questions.every(isQuestion)) {
+    // A subagent resumed by task_id may ask before it asks for a tool: its parents say whether it is the chat's.
+    const owned = typeof sessionID === 'string' && (this.ownSessions.has(sessionID) || (await this.ownedParent(client, sessionID).catch(() => false)));
+    if (!this.current(server)) return;
+    if (!this.turnOpen || !owned || !Array.isArray(questions) || !questions.every(isQuestion)) {
       console.warn(`opencode: declined the question ${id}, which is not the chat's or cannot be read`);
       client.post(`/question/${id}/reject`).catch((error: Error) => console.warn(`opencode: could not decline the question ${id}: ${error.message}`));
       return;
@@ -606,6 +609,13 @@ class OpencodeTransport implements AgentTransport {
     return this.secrets.reduce((shown, secret) => shown.replaceAll(secret, '…'), text);
   }
 
+  // A call's input as the row shows it: every string in it.
+  private hideIn(value: unknown): unknown {
+    if (typeof value === 'string') return this.hide(value);
+    if (Array.isArray(value)) return value.map((item) => this.hideIn(item));
+    return isRecord(value) ? Object.fromEntries(Object.entries(value).map(([key, item]) => [key, this.hideIn(item)])) : value;
+  }
+
   private scrub(event: StreamEvent): StreamEvent {
     switch (event.type) {
       case 'notice':
@@ -615,7 +625,7 @@ class OpencodeTransport implements AgentTransport {
       case 'text_delta':
         return { ...event, text: this.hide(event.text) };
       case 'assistant':
-        return { ...event, blocks: event.blocks.map((block) => (block.kind === 'tool_use' ? block : { ...block, text: this.hide(block.text) })) };
+        return { ...event, blocks: event.blocks.map((block) => (block.kind === 'tool_use' ? { ...block, input: this.hideIn(block.input) } : { ...block, text: this.hide(block.text) })) };
       case 'user':
         return { ...event, toolResults: event.toolResults.map((result) => ({ ...result, text: this.hide(result.text) })) };
       default:
