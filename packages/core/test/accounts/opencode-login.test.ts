@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { SettingsClientMessage, SettingsServerMessage } from '@ide/protocol';
@@ -7,7 +7,7 @@ import { accountHome, opencodeLoginCommand, type SignedHome } from '../../src/ac
 import { AccountStore } from '../../src/accounts/account-store';
 import { answerProviders, opencodeLogin, opencodeProviders, removeProviderKey, setProviderKey, type ProviderRequest } from '../../src/accounts/opencode-login';
 import { fakeOpencode, opencodeRecords, requests } from '../fake-opencode/fake';
-import { tempDir } from '../helpers';
+import { tempDir, waitFor } from '../helpers';
 
 const NAME_RULE = 'A profile name is 1 to 40 characters without control characters.';
 
@@ -41,18 +41,23 @@ describe('opencodeLogin', () => {
 
 describe('provider keys', () => {
   it("lists the providers with their methods under the profile's XDG home, sets a key through PUT /auth, removes it, and leaves only the XDG homes behind", async () => {
-    const { home, runner, records } = profile({ OPENAI_API_KEY: 'sk-of-the-core', GITHUB_TOKEN: 'gh-of-the-core' });
-    const view = (list: Awaited<ReturnType<typeof opencodeProviders>>) => list.map((p) => [p.id, p.connected, p.methods, p.env]);
+    const { home, runner, record, records } = profile({ OPENAI_API_KEY: 'sk-of-the-core', GITHUB_TOKEN: 'gh-of-the-core' });
+    const view = (list: Awaited<ReturnType<typeof opencodeProviders>>) => list.map((p) => [p.name, p.connected, p.methods, p.env]);
     const before = view(await opencodeProviders(runner, home));
     const set = view(await setProviderKey(runner, home, 'openai', 'sk-test'));
     const removed = view(await removeProviderKey(runner, home, 'openai'));
+    // A server slow to stop keeps its pid file in the run directory meanwhile: a core killed then leaves the reaper an orphan to find.
+    const pidFile = () => (existsSync(runner.runDir) ? readdirSync(runner.runDir).find((name) => /^opencode-\d+\.pid\.json$/.test(name)) : undefined);
+    const slow = opencodeProviders({ ...runner, command: fakeOpencode(null, record, { FAKE_OPENCODE_DISPOSE: 'hang' }) }, home);
+    await waitFor(pidFile, 'the pid file of a running server');
+    await slow;
     expect([
       before, set[1], removed[1], requests(records(), 'PUT', '/auth/openai').map((r) => r.body), requests(records(), 'DELETE', '/auth/openai').length,
       [...new Set(records().flatMap((r) => (r.pid === undefined ? [] : [r.xdg?.XDG_CONFIG_HOME])))], records().flatMap((r) => r.credentials ?? []),
       readdirSync(home.dir).sort(), readFileSync(join(home.dir, 'data/opencode/auth.json'), 'utf8'), readdirSync(runner.runDir),
     ]).toEqual([
-      [['opencode', true, ['api'], ['OPENCODE_API_KEY']], ['openai', false, ['api'], ['OPENAI_API_KEY']], ['anthropic', false, ['api', 'oauth'], ['ANTHROPIC_API_KEY']]],
-      ['openai', true, ['api'], ['OPENAI_API_KEY']], ['openai', false, ['api'], ['OPENAI_API_KEY']], [{ type: 'api', key: 'sk-test' }], 1,
+      [['OpenCode Zen', true, ['api'], ['OPENCODE_API_KEY']], ['OpenAI', false, ['api'], ['OPENAI_API_KEY']], ['Anthropic', false, ['oauth', 'api'], ['ANTHROPIC_API_KEY']]],
+      ['OpenAI', true, ['api'], ['OPENAI_API_KEY']], ['OpenAI', false, ['api'], ['OPENAI_API_KEY']], [{ type: 'api', key: 'sk-test' }], 1,
       [join(home.dir, 'config')], [], ['cache', 'config', 'data', 'state'], '{}', ['opencode-shell'],
     ]);
   });
@@ -70,8 +75,8 @@ describe('provider keys', () => {
 });
 
 describe('answerProviders', () => {
-  const ask = async (request: ProviderRequest, setup: { opencode?: boolean; active?: boolean } = {}) => {
-    const p = profile();
+  const ask = async (request: ProviderRequest, setup: { opencode?: boolean; active?: boolean; env?: Record<string, string> } = {}) => {
+    const p = profile(setup.env);
     if (setup.active) p.store.setActive(p.id);
     let refreshes = 0;
     const replies: SettingsServerMessage[] = [];
@@ -101,11 +106,13 @@ describe('answerProviders', () => {
     const set = await ask({ type: 'account.provider.set', requestId: 'r', id: 'PROFILE', providerID: 'openai', apiKey: 'sk-test' }, { active: true });
     const removed = await ask({ type: 'account.provider.remove', requestId: 'r', id: 'PROFILE', providerID: 'openai' });
     const listed = await ask({ type: 'account.providers', requestId: 'r', id: 'PROFILE' });
-    const shape = (replies: SettingsServerMessage[]) => replies.map((m) => (m.type === 'settings.providers' ? [m.type, m.providers.find((p) => p.id === 'openai')?.connected, m.loginCommand, m.error] : [m.type, 'error' in m && m.error]));
-    expect([shape(set.replies), set.refreshes, shape(removed.replies), removed.refreshes, shape(listed.replies), (listed.replies[0] as { id: string }).id]).toEqual([
+    const broken = await ask({ type: 'account.providers', requestId: 'r', id: 'PROFILE' }, { env: { FAKE_OPENCODE_HEALTH: 'down' } });
+    const shape =(replies: SettingsServerMessage[]) => replies.map((m) => (m.type === 'settings.providers' ? [m.type, m.providers.find((p) => p.id === 'openai')?.connected, m.loginCommand, m.error] : [m.type, 'error' in m && m.error]));
+    expect([shape(set.replies), set.refreshes, shape(removed.replies), removed.refreshes, shape(listed.replies), (listed.replies[0] as { id: string }).id, shape(broken.replies)]).toEqual([
       [['settings.providers', true, opencodeLoginCommand(set.home), null], ['settings.result', null]], 1,
       [['settings.providers', false, opencodeLoginCommand(removed.home), null], ['settings.result', null]], 0,
       [['settings.providers', false, opencodeLoginCommand(listed.home), null]], listed.home.dir.split('/').at(-1),
+      [['settings.providers', undefined, opencodeLoginCommand(broken.home), "opencode's health check failed (503)"]],
     ]);
   });
 });

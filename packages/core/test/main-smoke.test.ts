@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { WebSocket } from 'ws';
-import type { ServerMessage } from '@ide/protocol';
+import type { ModelInfo, ServerMessage } from '@ide/protocol';
 import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE } from './fake-claude/fake';
 import { FAKE_CODEX } from './fake-codex/fake';
@@ -199,9 +199,12 @@ describe('main.ts', { timeout: 90_000 }, () => {
     const send = (message: object): void => socket.send(JSON.stringify(message));
     const answers = (requestId: string) => messages.flatMap((m) => ('requestId' in m && m.requestId === requestId ? [m] : []));
     const answered = (requestId: string) => waitFor(() => answers(requestId).find((m) => m.type === 'settings.result'), `the result of ${requestId}`, 20_000);
-    const names = (has: string) => waitFor(() => messages.findLast((m) => m.type === 'models.snapshot' && m.models.some((model) => model.name === has)), `the models with ${has}`, 20_000);
+    // Every engine's models, as each list request or account change sends them once all have answered.
+    const models = () => messages.flatMap((m) => (m.type === 'models.snapshot' && m.pending === undefined ? [m.models] : []));
+    const listedAfter = (count: number, what: string) => waitFor(() => models()[count], what, 20_000);
+    const opencodeNames = (list: ModelInfo[]) => list.filter((model) => model.engine === 'opencode').map((model) => model.name);
     send({ type: 'models.list' });
-    const listed = await names('OpenCode Zen · GPT OSS 120B (free)');
+    const listed = await listedAfter(0, 'the models');
     const engines = await waitFor(() => messages.find((m) => m.type === 'engines.snapshot' && m.engines.length === 3), 'all three engines', 20_000);
     send({ type: 'account.login.start', requestId: 'bad', engine: 'opencode', method: 'profile', apiKey: 'a\u0007b' });
     const refused = await answered('bad');
@@ -209,20 +212,24 @@ describe('main.ts', { timeout: 90_000 }, () => {
     await answered('r1');
     const profiles = () => messages.findLast((m) => m.type === 'settings.snapshot')?.settings.accounts.engines.find((engine) => engine.engine === 'opencode');
     const id = (await waitFor(() => profiles()?.accounts[0], 'the profile')).id;
+    const beforeSelect = models().length;
     send({ type: 'account.select', requestId: 'r2', engine: 'opencode', id });
     await answered('r2');
+    // The profile's own models first, so the key's change cannot ride on the choice's refresh.
+    const selected = await listedAfter(beforeSelect, 'the models of the profile');
     send({ type: 'account.provider.set', requestId: 'r3', id, providerID: 'openai', apiKey: 'sk-test' });
     await answered('r3');
-    const keyed = await names('OpenAI · Stub');
+    const keyed = await listedAfter(beforeSelect + 1, 'the models once the profile has the key');
     expect([
-      listed.type === 'models.snapshot' && listed.models.map((model) => model.name), engines.type === 'engines.snapshot' && engines.engines.map((engine) => [engine.engine, engine.state]),
+      listed.map((model) => model.name), engines.type === 'engines.snapshot' && engines.engines.map((engine) => [engine.engine, engine.state]),
       refused, profiles(), answers('r3').map((m) => [m.type, m.type === 'settings.providers' && m.providers.find((p) => p.id === 'openai')?.connected, 'error' in m && m.error]),
-      keyed.type === 'models.snapshot' && keyed.models.filter((model) => model.engine === 'opencode').map((model) => model.name),
+      opencodeNames(selected), opencodeNames(keyed),
     ]).toEqual([
       ['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra', 'OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)'], [['claude', 'ready'], ['codex', 'ready'], ['opencode', 'ready']],
       { type: 'settings.result', requestId: 'bad', error: 'A profile name is 1 to 40 characters without control characters.' },
       { engine: 'opencode', accounts: [{ id, email: 'Work', createdAt: expect.any(Number) }], activeId: id },
       [['settings.providers', true, null], ['settings.result', false, null]],
+      ['OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)'],
       ['OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)', 'OpenAI · Stub'],
     ]);
   });

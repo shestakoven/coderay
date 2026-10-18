@@ -272,7 +272,7 @@ const server = createServer(async (req, res) => {
   if (path === '/config' && req.method === 'GET') return json(res, 200, configEcho());
   if (path === '/config/providers') return json(res, 200, providers());
   if (path === '/provider') return json(res, 200, { all: [{ id: 'opencode', name: 'OpenCode Zen', env: ['OPENCODE_API_KEY'] }, { id: 'openai', name: 'OpenAI', env: ['OPENAI_API_KEY'] }, { id: 'anthropic', name: 'Anthropic', env: ['ANTHROPIC_API_KEY'] }], default: baseProviders.default, connected: ['opencode', ...auth.keys()] });
-  if (path === '/provider/auth') return json(res, 200, { openai: [{ type: 'api', label: 'API key' }], anthropic: [{ type: 'api', label: 'API key' }, { type: 'oauth', label: 'Claude Pro/Max' }] });
+  if (path === '/provider/auth') return json(res, 200, { openai: [{ type: 'api', label: 'API key' }], anthropic: [{ type: 'oauth', label: 'Claude Pro/Max' }, { type: 'oauth', label: 'Create an API Key' }, { type: 'api', label: 'Manually enter API Key' }] });
   let a;
   if ((a = m(/^\/auth\/([^/]+)$/))) {
     // A validation error that quotes the body back, key and all.
