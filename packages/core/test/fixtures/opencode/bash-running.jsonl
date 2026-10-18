@@ -3,6 +3,6 @@
 {"fake":"spawn-sleeper"}
 {"fake":"sleep","ms":60000}
 {"fake":"await-turn"}
-{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":""}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":"","time":{"start":1}}}}
 {"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_back","field":"text","delta":"Back."}}
-{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":"Back."}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":"Back.","time":{"start":1,"end":2}}}}
