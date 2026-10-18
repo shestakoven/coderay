@@ -169,6 +169,7 @@ describe('efforts', () => {
     expect([
       choose(luna, true, chat), choose(openrouter, true, chat), choose(sonnet, false, null), choose(haiku, false, null), choose(openrouter, false, null),
       choose(haiku, false, chat), choose(sonnet, false, chat), choose(sonnet, false, { engine: 'claude', modelChoice: null, effort: null }),
+      choose(luna, false, chat), choose(openrouter, false, chat),
     ]).toEqual([
       { type: 'session.new', modelChoice: 'codex:gpt-6-luna', effort: 'medium' },
       { type: 'session.new', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
@@ -178,6 +179,8 @@ describe('efforts', () => {
       { type: 'session.configure', modelChoice: 'haiku', effort: 'medium' },
       null,
       { type: 'session.configure', modelChoice: 'sonnet', effort: null },
+      { type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'medium' },
+      { type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
     ]);
   });
 });

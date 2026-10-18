@@ -205,5 +205,7 @@ export const newChatEffort = (model: ModelInfo, current: string | null): string 
 export function chooseMessage(row: PickerRow, current: ChatPick | null): ClientMessage | null {
   if (row.locked) return { type: 'session.new', modelChoice: row.model.value, effort: newChatEffort(row.model, current?.effort ?? null) };
   if (current === null) return { type: 'session.configure', modelChoice: row.model.value, effort: firstEffort(row.model) };
-  return row.model.value === current.modelChoice ? null : { type: 'session.configure', modelChoice: row.model.value, effort: current.effort };
+  if (row.model.value === current.modelChoice) return null;
+  // An unused chat moving to another engine takes the effort a new chat on that model would.
+  return { type: 'session.configure', modelChoice: row.model.value, effort: row.model.engine === current.engine ? current.effort : newChatEffort(row.model, current.effort) };
 }
