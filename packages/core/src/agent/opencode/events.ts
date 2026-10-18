@@ -201,10 +201,10 @@ export class OpencodeEvents {
     const tool = text(part.tool);
     const state = isRecord(part.state) ? part.state : {};
     if (callID === null || tool === null) return [];
-    if (isRecord(state.input)) this.inputs.set(callID, state.input);
+    // A pending part's input is always empty (1.19 fills it when the call runs): an ask that comes first finds no input.
+    if (state.status !== 'pending' && isRecord(state.input)) this.inputs.set(callID, state.input);
     const input = this.inputs.get(callID) ?? {};
     if (state.status === 'running') {
-      // A pending part has no input yet: the call shows once it runs, when its name and file are known.
       if (this.open.has(callID)) return [];
       this.open.set(callID, { parent, session: sessionID, task: tool === 'task' });
       return [{ type: 'assistant', parentToolUseId: parent, blocks: [{ kind: 'tool_use', id: callID, name: toolName(tool, input, this.servers), input: shownInput(tool, input) }] }];
@@ -239,7 +239,8 @@ export class OpencodeEvents {
     // The user's stop: the turn's end says so.
     if (value.name === 'MessageAbortedError') return [];
     const data = isRecord(value.data) ? value.data : {};
-    const message = text(data.message) ?? text(value.name) ?? 'an unknown error';
+    // An internal error carries its stack trace: the user reads its first line.
+    const message = (text(data.message) ?? text(value.name) ?? 'an unknown error').replace(/\n.*/s, '');
     this.failed = true;
     if (message === this.lastError) return [];
     this.lastError = message;

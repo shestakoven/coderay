@@ -125,7 +125,7 @@ describe('OpencodeEvents', () => {
       ...e.handle({ type: 'server.heartbeat', properties: {} }),
       ...e.handle({ type: 'vcs.branch.updated', properties: {} }),
       ...e.handle(error('UnknownError', 'a skill of yours is broken', null)),
-      ...e.handle(error('UnknownError', 'the provider answered 500')),
+      ...e.handle(error('UnknownError', 'the provider answered 500\n    at retry (chunk.js:1:2)')),
       ...e.handle(error('UnknownError', 'the provider answered 500')),
       ...e.handle(idle()),
     ];
@@ -137,7 +137,7 @@ describe('OpencodeEvents', () => {
     expect([early, out, clean, again]).toEqual([[], [{ type: 'unknown', label: 'vcs.branch.updated' }, ...failed], [{ type: 'result', subtype: 'success', origin: null }], failed]);
   });
 
-  it("adopts each child session's parts under the task call that started it, closes the tools still open at idle, keeps the latest tool input by call, and owns no stranger", () => {
+  it("adopts each child session's parts under the task call that started it, closes the tools still open at idle, keeps a call's input once it runs, and owns no stranger", () => {
     const e = events();
     e.turnStarted();
     const created = (id: string, parentID?: string) => ({ type: 'session.created', properties: { sessionID: id, info: { id, ...(parentID ? { parentID } : {}), directory: '/p' } } });
@@ -158,13 +158,13 @@ describe('OpencodeEvents', () => {
     ];
     // The transport adopts the children it sees as well: a second adoption changes nothing.
     e.adopt('ses_child2', S);
-    out.push(...e.handle(tool('c10', 'glob', { status: 'running' }, { pattern: '*.ts' }, 'ses_child2')), ...e.handle(idle()));
+    out.push(...e.handle(tool('c10', 'glob', { status: 'running' }, { pattern: '*.ts' }, 'ses_child2')), ...e.handle(tool('c11', 'webfetch', { status: 'pending' })), ...e.handle(idle()));
     expect([
       out.map((event) => (event.type === 'assistant' || event.type === 'user' ? [event.type, event.parentToolUseId] : event.type)),
-      ['ses_child', 'ses_stranger', 'ses_strangers_child'].map((id) => e.owns(id)), e.input('c9'),
+      ['ses_child', 'ses_stranger', 'ses_strangers_child'].map((id) => e.owns(id)), e.input('c9'), e.input('c11'),
     ]).toEqual([
       [['assistant', null], ['assistant', null], ['assistant', null], ['user', null], ['assistant', 'c_task'], ['assistant', 'c_task2'], ['user', null], ['user', null], ['user', 'c_task'], ['user', 'c_task2'], 'result'],
-      [true, false, false], { command: 'pwd', workdir: '/p/sub' },
+      [true, false, false], { command: 'pwd', workdir: '/p/sub' }, undefined,
     ]);
   });
 });
