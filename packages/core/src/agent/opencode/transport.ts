@@ -22,6 +22,9 @@ const REOPENS = 3;
 const REOPEN_MS = 1_000;
 // How far up a session's parents CodeRay looks for the chat's own.
 const MAX_DEPTH = 8;
+// How long a bash ask waits for its call's input, and how often it looks.
+const INPUT_WAIT_MS = 2_000;
+const INPUT_POLL_MS = 20;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
 const BEARER = /^Bearer\s+(\S+)$/i;
 // Every prompt runs this agent; the self-check reads its rules.
@@ -360,7 +363,8 @@ class OpencodeTransport implements AgentTransport {
         console.warn(`opencode: rejected the ${ask.permission} ask ${ask.id} of a session or a turn this chat does not follow`);
         reply = { reply: 'reject' };
       } else {
-        const input = ask.callID === null ? undefined : this.events.input(ask.callID);
+        const input = await this.inputOf(ask, controller.signal);
+        if (controller.signal.aborted) return;
         reply = await judgeAsk(askCalls(ask, input, this.launch.cwd, this.subagents, this.ownSessions, this.launch.servers), this.launch.decide, controller.signal);
       }
     } catch (error) {
@@ -369,6 +373,16 @@ class OpencodeTransport implements AgentTransport {
     }
     if (reply === null || controller.signal.aborted || !this.current(server)) return;
     this.answer(client, ask.id, reply);
+  }
+
+  // 1.19 may ask about a bash call a moment before it says the call runs, and only the running call names its workdir.
+  private async inputOf(ask: Ask, signal: AbortSignal): Promise<Record<string, unknown> | undefined> {
+    if (ask.callID === null) return undefined;
+    const end = Date.now() + INPUT_WAIT_MS;
+    while (ask.permission === 'bash' && this.events.input(ask.callID) === undefined && Date.now() < end && !signal.aborted) {
+      await new Promise((resolve) => setTimeout(resolve, INPUT_POLL_MS));
+    }
+    return this.events.input(ask.callID);
   }
 
   // A session CodeRay has not seen created (a subagent resumed by task_id) is the chat's when its parents lead to it.

@@ -167,12 +167,16 @@ async function play(session, messageID) {
     const sessionID = sessionFor(line.session);
     const tool = line.tool ?? line.ask;
     const input = line.input ?? {};
-    start(sessionID, tool, line.callID, input);
+    // 1.19 may ask about a bash call before it reports the call running.
+    const late = line.running === 'after';
+    if (late) part(toolPart(sessionID, tool, line.callID, { status: 'pending', input: {}, raw: '' }));
+    else start(sessionID, tool, line.callID, input);
     const id = nextId('per');
     const always = line.always ?? (line.ask === 'bash' ? (line.patterns ?? []).map((pattern) => `${pattern.split(' ')[0]} *`) : ['*']);
     const asked = { id, sessionID, permission: line.ask, patterns: line.patterns ?? [], metadata: line.metadata ?? {}, always, tool: { messageID, callID: line.callID } };
     const reply = new Promise((resolve) => { waiting.set(id, { kind: 'permission', session: sessionID, asked, resolve }); });
     send('permission.asked', asked);
+    if (late) setTimeout(() => part(toolPart(sessionID, tool, line.callID, { status: 'running', input, time: { start: Date.now() } })), 50);
     // Another client with the server's password answers the ask (the model curling the server, say).
     if (line.answeredBy) setImmediate(() => { const w = waiting.get(id); if (!w) return; waiting.delete(id); send('permission.replied', { sessionID, requestID: id, reply: line.answeredBy }); w.resolve({ reply: line.answeredBy, message: null }); });
     const settle = (answer) => {

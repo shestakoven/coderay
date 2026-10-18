@@ -142,17 +142,22 @@ describe('startOpencodeTransport', () => {
     ]).toEqual([[['Edit', 'call_edit1', true]], ['once', null], "export const other = 'hello';\n", ['reject', 'CodeRay: no approved plan covers src/other.ts'], true, ['reject', null], [['Edit', 'call_gap']], ['once', null], 2, 1, 'Done.', ['call_hold'], ['once', null]]);
   });
 
-  it('judges a two-file patch whole, a bash in its workdir after the directory it asked to reach, and rejects an ask whose session opencode cannot find', async () => {
+  it('judges a two-file patch whole, a bash in its workdir after the directory it asked to reach, a bash asked before it runs once it runs, and rejects an ask whose session opencode cannot find', async () => {
     const patch = start('opencode/two-file.jsonl', { decide: async (calls) => ({ permissionDecision: calls.every((call) => call.tool_name === 'Edit') ? 'allow' : 'deny', permissionDecisionReason: 'only edits' }) });
     patch.send('ready?'); await patch.ended(1); patch.send('patch'); await patch.ended(2);
     const bash = start('opencode/bash-workdir.jsonl', { decide: allow, env: { FAKE_OPENCODE_GONE: 'ses_gone' } });
     bash.send('go'); await bash.ended(1);
+    // 1.19 may ask about a bash call before the part that names its workdir says it runs.
+    const early = start('opencode/bash.jsonl', { decide: allow });
+    early.send('go'); await early.ended(1);
     const elsewhere = join(bash.cwd, '../elsewhere');
     expect([
       patch.asked.map((call) => call.tool_name), patch.records().find((r) => r.reply)?.reply?.reply, existsSync(join(patch.cwd, 'src/new.ts')),
       bash.asked.map((call) => [call.tool_name, call.tool_input.command ?? call.tool_input.file_path, call.cwd]), bash.records().filter((r) => r.reply).map((r) => r.reply!.reply),
+      early.asked.map((call) => [call.tool_name, call.tool_input.command, call.cwd]), early.records().filter((r) => r.reply).map((r) => r.reply!.reply),
     ]).toEqual([
       ['Edit', 'Write'], 'reject', false, [['Read', `${bash.cwd}/../elsewhere/*`, bash.cwd], ['Bash', 'rm -rf src', elsewhere]], ['once', 'once', 'reject'],
+      [['Bash', 'ls && echo x > esc.txt', early.cwd]], ['once'],
     ]);
   });
 
