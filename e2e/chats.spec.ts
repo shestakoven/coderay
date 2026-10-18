@@ -228,3 +228,21 @@ test('a Codex chat: choosing GPT-6-Luna makes it a Codex chat that answers, its 
   await page.locator('.chat-switcher-button').click();
   await expect(page.getByRole('option').filter({ hasText: 'hi' }).locator('.chat-list-meta')).toContainText('Codex · GPT-6-Luna · ');
 });
+
+test('an opencode chat: choosing Nemotron makes it an opencode chat that answers, offers no effort, its header says opencode guards writes by rules only, and its row names opencode and the model', async ({ page }) => {
+  core = await startCore('multi-turn', {}, 'tiny', null, 'reply');
+  await page.goto(core.url);
+  await expect(page.getByText('core connected')).toBeVisible();
+  await page.locator('.model-button').click();
+  await expect(page.getByTestId('model-menu').locator('.model-engine')).toHaveText(['Claude', 'opencode']);
+  await page.keyboard.press('Escape');
+  await chooseModel(page, 'nemotron');
+  await sendMessage(page, 'hi');
+  await expect(page.locator('.msg.assistant').last()).toHaveText('OK');
+  const chip = page.locator('.engine-chip');
+  await expect(chip.locator('.engine-why b')).toHaveText('opencode · Rules only');
+  await expect(chip).toHaveAccessibleDescription('opencode asks CodeRay before each write; nothing stops a write it does not ask about.');
+  await expect(page.getByRole('combobox', { name: 'Effort' })).toHaveCount(0);
+  await page.locator('.chat-switcher-button').click();
+  await expect(page.getByRole('option').filter({ hasText: 'hi' }).locator('.chat-list-meta')).toContainText('opencode · OpenCode Zen · Nemotron 3.5 Lightning (free) · —');
+});

@@ -722,19 +722,33 @@ test('the accounts page shows the system account as the active one', async ({ pa
 
 const IDLE_LOGIN = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
 
-interface AccountRequest { type: string; requestId: string; engine?: string; method?: string; apiKey?: string }
+interface AccountRequest { type: string; requestId: string; engine?: 'claude' | 'codex' | 'opencode'; method?: string; apiKey?: string; id?: string; providerID?: string }
+interface Provider { id: string; name: string; connected: boolean; methods: string[]; env: string[] }
 
-// The page talks to a stand-in for the core's accounts of Claude and Codex: each request is answered the way the core answers it, state first.
-async function standInAccounts(page: Page, lists: { claude: object[]; codex: object[] }): Promise<{ login: (state: object) => void; sent: Omit<AccountRequest, 'requestId'>[] }> {
+const PROFILE_ID = '9d3f0c2e-5b1a-4e7c-8f6d-2a1b3c4d5e6f';
+
+// The page talks to a stand-in for the core's accounts of Claude, Codex and (when listed) opencode: each request is answered the way the core answers it, state first.
+async function standInAccounts(page: Page, lists: { claude: object[]; codex: object[]; opencode?: object[] }): Promise<{
+  login: (state: object) => void;
+  providers: (id: string, list: Provider[]) => void;
+  sent: Omit<AccountRequest, 'requestId'>[];
+}> {
   let login: object = IDLE_LOGIN;
   const sent: Omit<AccountRequest, 'requestId'>[] = [];
   let push = (): void => undefined;
+  let answer = (_id: string, _list: Provider[]): void => undefined;
+  const providerLists = new Map<string, Provider[]>();
   await page.routeWebSocket(/\/ws\?/, (ws) => {
     const server = ws.connectToServer();
     let settings: object = {};
     push = () => {
       const engines = [{ engine: 'claude', accounts: lists.claude, activeId: null }, { engine: 'codex', accounts: lists.codex, activeId: null }];
+      if (lists.opencode) engines.push({ engine: 'opencode', accounts: lists.opencode, activeId: null });
       ws.send(JSON.stringify({ type: 'settings.snapshot', settings: { ...settings, accounts: { engines, login } } }));
+    };
+    answer = (id, list) => {
+      providerLists.set(id, list);
+      ws.send(JSON.stringify({ type: 'settings.providers', requestId: 'stand-in', id, providers: list, loginCommand: `XDG_CONFIG_HOME='/scratch/${id}/config' opencode auth login`, error: null }));
     };
     server.onMessage((raw) => {
       const message = JSON.parse(String(raw)) as { type: string; settings: object };
@@ -746,11 +760,24 @@ async function standInAccounts(page: Page, lists: { claude: object[]; codex: obj
       const { requestId, ...message } = JSON.parse(String(raw)) as AccountRequest;
       if (!message.type.startsWith('account.')) return server.send(raw);
       sent.push(message);
+      // A profile's providers come when the test gives them, and never with a settings.result.
+      if (message.type === 'account.providers') return;
+      if (message.type === 'account.provider.set' || message.type === 'account.provider.remove') {
+        const connected = message.type === 'account.provider.set';
+        answer(message.id!, (providerLists.get(message.id!) ?? []).map((provider) => (provider.id === message.providerID ? { ...provider, connected } : provider)));
+        return ws.send(JSON.stringify({ type: 'settings.result', requestId, error: null }));
+      }
       if (message.type === 'account.login.start') login = { ...IDLE_LOGIN, state: 'waiting', engine: message.engine, method: message.method };
       if (message.type === 'account.login.code') login = { ...IDLE_LOGIN, state: 'checking', engine: 'claude', method: 'browser' };
       if (message.type === 'account.login.cancel') login = IDLE_LOGIN;
-      if (message.type === 'account.remove') lists.claude = [];
+      if (message.type === 'account.remove') lists[message.engine ?? 'claude'] = [];
       push();
+      // The core makes a profile at once: its view waits for a moment, then the profile is listed.
+      if (message.method === 'profile') {
+        lists.opencode = [...(lists.opencode ?? []), { id: PROFILE_ID, email: message.apiKey, createdAt: 1 }];
+        login = IDLE_LOGIN;
+        push();
+      }
       ws.send(JSON.stringify({ type: 'settings.result', requestId, error: null }));
     });
   });
@@ -759,9 +786,86 @@ async function standInAccounts(page: Page, lists: { claude: object[]; codex: obj
       login = state;
       push();
     },
+    providers: (id, list) => answer(id, list),
     sent,
   };
 }
+
+test('an opencode profile: added and cancelled by keyboard, its rule shown under the name, found by search, its providers loaded and filtered, a key saved that never shows and removed by keyboard, rows that stack at 820 px, and the profile removed', async ({ page }) => {
+  const stand = await standInAccounts(page, { claude: [], codex: [], opencode: [] });
+  await openApp(page);
+  const dialog = await openSettings(page);
+  await showCategory(dialog, 'Accounts');
+  const profiles = setting(dialog, 'opencode profiles');
+  const add = profiles.getByRole('button', { name: 'Add profile' });
+  const name = profiles.getByRole('textbox', { name: 'Profile name' });
+  const rows = profiles.locator('.sw-provider-row');
+
+  await add.focus();
+  await page.keyboard.press('Enter');
+  await expect(name).toBeFocused();
+  await page.keyboard.press('Escape');
+  await expect(add).toBeFocused();
+  await expect(dialog).toBeVisible();
+  await page.keyboard.press('Enter');
+  await page.keyboard.type('x'.repeat(41));
+  await expect(profiles.getByText('A profile name is 1 to 40 characters without control characters.')).toBeVisible();
+  await expect(profiles.getByRole('button', { name: 'Create' })).toBeDisabled();
+  await name.fill('Work');
+  await page.keyboard.press('Enter');
+  await expect(profiles.getByRole('radio', { name: 'Work' })).toBeVisible();
+  await expect(add).toBeFocused();
+  await dialog.getByRole('textbox', { name: 'Search settings' }).fill('Work');
+  await expect(profiles).toBeVisible();
+  await expect(setting(dialog, 'Codex accounts')).toHaveCount(0);
+  await dialog.getByRole('textbox', { name: 'Search settings' }).fill('');
+
+  await profiles.getByRole('button', { name: 'Providers' }).click();
+  await expect(profiles.getByText('Loading providers…')).toBeVisible();
+  stand.providers(PROFILE_ID, [
+    { id: 'openai', name: 'OpenAI', connected: false, methods: ['api'], env: ['OPENAI_API_KEY'] },
+    { id: 'github-copilot', name: 'GitHub Copilot', connected: false, methods: ['oauth'], env: [] },
+    { id: 'openrouter', name: 'OpenRouter', connected: false, methods: ['api'], env: ['OPENROUTER_API_KEY'] },
+  ]);
+  await profiles.getByRole('searchbox', { name: 'Filter providers' }).fill('open');
+  await expect(rows.locator('b')).toHaveText(['OpenAI', 'OpenRouter']);
+  const key = profiles.getByLabel('OpenAI API key');
+  const state = rows.first().locator('.sw-provider-state');
+  await key.fill('draft');
+  await page.keyboard.press('Escape');
+  await expect(key).toHaveValue('');
+  await expect(dialog).toBeVisible();
+  await page.keyboard.type('sk-e2e-SECRET');
+  await page.keyboard.press('Enter');
+  await expect(state).toHaveText('connected');
+  await expect(key).toHaveValue('');
+  expect((await dialog.evaluate((element) => element.outerHTML)).includes('SECRET')).toBe(false);
+  // Save is disabled with the field empty, so Tab reaches the key's removal: asked once, then done, and the focus stays in the row.
+  await page.keyboard.press('Tab');
+  await page.keyboard.press('Enter');
+  await expect(rows.first().getByRole('button', { name: 'Remove the key?' })).toBeFocused();
+  await page.keyboard.press('Enter');
+  await expect(state).toHaveText('not connected');
+  await expect(key).toBeFocused();
+  const beside = async (): Promise<boolean> => {
+    const [label, field] = await Promise.all([rows.first().locator('b').boundingBox(), key.boundingBox()]);
+    return field!.y < label!.y + label!.height;
+  };
+  expect(await beside()).toBe(true);
+  await page.setViewportSize({ width: 820, height: 700 });
+  await expect.poll(beside).toBe(false);
+
+  await profiles.getByRole('button', { name: 'Remove', exact: true }).click();
+  await profiles.getByRole('button', { name: 'Remove profile?' }).click();
+  await expect(profiles.getByRole('radio', { name: 'Work' })).toHaveCount(0);
+  expect(stand.sent).toEqual([
+    { type: 'account.login.start', engine: 'opencode', method: 'profile', apiKey: 'Work' },
+    { type: 'account.providers', id: PROFILE_ID },
+    { type: 'account.provider.set', id: PROFILE_ID, providerID: 'openai', apiKey: 'sk-e2e-SECRET' },
+    { type: 'account.provider.remove', id: PROFILE_ID, providerID: 'openai' },
+    { type: 'account.remove', engine: 'opencode', id: PROFILE_ID },
+  ]);
+});
 
 test("a Claude sign-in keeps the keyboard's focus on its current step and gives it back where it began, shows its code field again empty, keeps the code out of the page's markup, and search finds a Claude account", async ({ page }) => {
   const stand = await standInAccounts(page, { claude: [{ id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 }], codex: [] });
