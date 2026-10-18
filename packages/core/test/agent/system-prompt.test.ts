@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { describe, expect, it, onTestFinished } from 'vitest';
-import { systemPrompt, type PromptNames } from '../../src/agent/system-prompt';
+import { MAX_PROJECT_INSTRUCTIONS, OPENCODE_RULES, opencodeSystem, systemPrompt, type PromptNames } from '../../src/agent/system-prompt';
 import { createGateRuntime } from '../../src/gate/runtime';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { openStore } from '../../src/store/store';
@@ -82,5 +82,17 @@ describe('systemPrompt', () => {
       .toEqual(['idecore_map_overview', 'idecore_propose_plan', 'idecore_step', 'idecore_map_component', 'idecore_search_code', 'idecore_set_chat_title']);
     expect([prompt.includes('mcp__'), prompt.includes('NotebookEdit'), prompt.includes('(edit, write, or a shell command'), prompt.includes('Before your first grep, glob or exploring bash command')])
       .toEqual([false, false, true, true]);
+  });
+});
+
+describe('opencodeSystem', () => {
+  it('puts the gate prompt first, then the rules, then each project instruction file under its path, cut at the limit with a note and never inside a character', () => {
+    const text = opencodeSystem('PROMPT', [{ path: 'AGENTS.md', text: 'a'.repeat(MAX_PROJECT_INSTRUCTIONS) }, { path: 'CLAUDE.md', text: 'rules' }]);
+    const wide = opencodeSystem(null, [{ path: 'AGENTS.md', text: 'é'.repeat(MAX_PROJECT_INSTRUCTIONS) }]);
+    expect([
+      text.startsWith(`PROMPT\n\n${OPENCODE_RULES}\n\n## AGENTS.md\naaa`), text.includes('## CLAUDE.md'), text.endsWith('a\n(project instructions cut at 64 KB)'),
+      wide.startsWith(`${OPENCODE_RULES}\n\n## AGENTS.md\né`), wide.endsWith('é\n(project instructions cut at 64 KB)'),
+      opencodeSystem(null, [{ path: 'AGENTS.md', text: 'short' }, { path: 'CLAUDE.md', text: 'rules' }]) === `${OPENCODE_RULES}\n\n## AGENTS.md\nshort\n\n## CLAUDE.md\nrules`,
+    ]).toEqual([true, false, true, true, true, true]);
   });
 });
