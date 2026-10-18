@@ -2,7 +2,7 @@ import { execFileSync, spawn } from 'node:child_process';
 import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HARDENING_ENV, shellWrapper, startServer, withServer } from '../../src/agent/opencode/server';
 import { isAlive, signal } from '../../src/os-process';
 import { FAKE_OPENCODE, fakeOpencode, opencodeRecords } from '../fake-opencode/fake';
@@ -15,6 +15,7 @@ const HARDENING = { OPENCODE_DISABLE_PROJECT_CONFIG: '1', OPENCODE_PURE: '1', OP
 const records: string[] = [];
 // Runs before the temp directory goes: whatever fake or shell command a test started dies with it, even when the code under test failed to stop them.
 afterEach(() => {
+  vi.unstubAllEnvs();
   for (const entry of records.splice(0).flatMap(opencodeRecords)) signal(entry.pid ?? entry.sleeperPid ?? -1, 'SIGKILL');
 });
 
@@ -34,6 +35,9 @@ function sleeperScenario(dir: string): string {
 describe('startServer', () => {
   it('spawns serve --port 0 with the hardening environment, a fresh password and the config content, knows its pid at once, waits for the listening line, health and the version, and writes an opencode pid file', async () => {
     const { dir, record } = scratch();
+    // As a user who exports them, or a core started from an opencode shell, would pass them on.
+    vi.stubEnv('OPENCODE_PERMISSION', '{"edit":"allow"}');
+    vi.stubEnv('OPENCODE_CONFIG', '/elsewhere/opencode.json');
     const server = startServer(fakeOpencode(null, record, { OPENCODE_CONFIG_DIR: '/elsewhere', OPENCODE_AUTO_SHARE: '1', OPENCODE_SERVER_USERNAME: 'other' }), {
       cwd: dir, pidDir: dir, configContent: '{"mcp":{}}', env: { OPENCODE_PURE: '0', OPENCODE_PERMISSION: '{"edit":"allow"}' },
     });
