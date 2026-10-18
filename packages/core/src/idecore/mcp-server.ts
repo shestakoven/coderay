@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { MapSnapshot } from '@ide/protocol';
 import { PLAN_FLOW_EDGE_STATES, PLAN_FLOW_FILE_OPS, PLAN_FLOW_NODE_KINDS, PLAN_FLOW_NODE_STATES } from '@ide/protocol';
 import { z } from 'zod';
@@ -15,6 +17,7 @@ export interface IdecoreRoute extends HttpRoute {
 }
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+export const KEEP_ALIVE_MS = 20_000;
 
 const PROPOSE_DESCRIPTION = [
   'Show your plan to the user on CodeRay map before you change project files, and wait for the answer.',
@@ -78,12 +81,23 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
   requireSecret(options.secret);
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
-  const buildServer = (hints: boolean): McpServer => {
+  const buildServer = (hints: boolean, keepAlive: boolean): McpServer => {
     // Codex asks before a tool without readOnlyHint; idecore's tools change no project file. Claude's session gets none.
     const marked = <T extends object>(config: T): T => (hints ? { ...config, annotations: { ...(config as { annotations?: object }).annotations, readOnlyHint: true } } : config);
+    // opencode gives up on a tool call after about 300 s unless progress notifications arrive on the call's own stream.
+    const alive = <T>(extra: RequestHandlerExtra<ServerRequest, ServerNotification>, work: Promise<T>): Promise<T> => {
+      if (!keepAlive) return work;
+      const progressToken = extra._meta?.progressToken ?? extra.requestId;
+      const started = Date.now();
+      const timer = setInterval(() => {
+        extra.sendNotification({ method: 'notifications/progress', params: { progressToken, progress: Math.round((Date.now() - started) / 1000) } }).catch(() => undefined);
+      }, KEEP_ALIVE_MS);
+      timer.unref();
+      return work.finally(() => clearInterval(timer));
+    };
     const server = new McpServer({ name: 'idecore', version: '1.0.0' });
     server.registerTool('propose_plan', marked({ description: PROPOSE_DESCRIPTION, inputSchema: proposeInput }), async (input, extra) => {
-      const outcome = await options.plans.propose(input, extra.signal);
+      const outcome = await alive(extra, options.plans.propose(input, extra.signal));
       return outcome.ok ? result(outcome.value) : failure(outcome.error);
     });
     server.registerTool('step', marked({ description: STEP_DESCRIPTION, inputSchema: stepInput }), async (input) => {
@@ -121,8 +135,8 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
     }
     const { search } = options;
     if (search) {
-      server.registerTool('search_code', marked({ description: SEARCH_DESCRIPTION, inputSchema: searchInput }), async ({ query, limit }) => {
-        const outcome = await search(query, limit ?? DEFAULT_SEARCH_LIMIT);
+      server.registerTool('search_code', marked({ description: SEARCH_DESCRIPTION, inputSchema: searchInput }), async ({ query, limit }, extra) => {
+        const outcome = await alive(extra, search(query, limit ?? DEFAULT_SEARCH_LIMIT));
         if (!outcome.ok) return failure(outcome.error);
         const files = new Map(options.map?.()?.files.map((file) => [file.path, file]));
         const results = outcome.hits.map(({ path, similarity }) => ({
@@ -165,8 +179,8 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
       created.onclose = () => {
         if (created.sessionId) transports.delete(created.sessionId);
       };
-      const hints = new URL(req.url ?? '/', 'http://localhost').searchParams.get('readOnlyHints') === '1';
-      await buildServer(hints).connect(created);
+      const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      await buildServer(query.get('readOnlyHints') === '1', query.get('keepAlive') === '1').connect(created);
       transport = created;
     }
     await transport.handleRequest(req, res, body);
