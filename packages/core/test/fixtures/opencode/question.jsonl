@@ -1,0 +1,4 @@
+{"question":{"text":"A or B?","options":["A","B"],"callID":"call_q1"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_chose","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_chose","field":"text","delta":"You chose A."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_chose","type":"text","text":"You chose A."}}}

@@ -1,0 +1,8 @@
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_plan","type":"tool","tool":"idecore_propose_plan","callID":"call_plan","state":{"status":"pending","input":{},"raw":""}}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_plan","type":"tool","tool":"idecore_propose_plan","callID":"call_plan","state":{"status":"running","input":{"title":"Fix the greeting"},"time":{"start":1}}}}}
+{"ask":"edit","callID":"call_held","patterns":["src/other.ts"],"input":{"filePath":"$CWD/src/other.ts","oldString":"helo","newString":"hello"},"metadata":{"filepath":"$CWD/src/other.ts","diff":"Index: $CWD/src/other.ts\n===================================================================\n--- $CWD/src/other.ts\n+++ $CWD/src/other.ts\n@@ -1,1 +1,1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n"},"apply":{"path":"src/other.ts","content":"export const other = 'hello';\n"}}
+{"fake":"sleep","ms":60000}
+{"fake":"await-turn"}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_back","field":"text","delta":"Back."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":"Back."}}}

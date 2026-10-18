@@ -1,0 +1,13 @@
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text1","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_text1","field":"text","delta":"OK"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text1","type":"text","text":"OK"}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_fin1","type":"step-finish","reason":"stop","tokens":{"total":1200,"input":1000,"output":20,"reasoning":0,"cache":{"write":0,"read":180}},"cost":0}}}
+{"fake":"await-turn"}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text2","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_text2","field":"text","delta":"42"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text2","type":"text","text":"42"}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_fin2","type":"step-finish","reason":"stop","tokens":{"total":1930,"input":1400,"output":30,"reasoning":0,"cache":{"write":0,"read":500}},"cost":0}}}
+{"fake":"await-turn"}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text3","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_text3","field":"text","delta":"Again."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text3","type":"text","text":"Again."}}}

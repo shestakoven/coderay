@@ -1,0 +1,5 @@
+{"ask":"external_directory","tool":"bash","before":true,"callID":"call_sh2","patterns":["$CWD/../elsewhere/*"],"input":{"command":"rm -rf src","workdir":"$CWD/../elsewhere","description":"clean"},"metadata":{"command":"rm -rf src","directories":["$CWD/../elsewhere"],"patterns":["$CWD/../elsewhere/*"]},"always":["$CWD/../elsewhere/*"]}
+{"ask":"bash","callID":"call_sh2","patterns":["rm -rf src"],"input":{"command":"rm -rf src","workdir":"$CWD/../elsewhere","description":"clean"},"metadata":{"command":"rm -rf src"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_done","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_done","field":"text","delta":"Done."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_done","type":"text","text":"Done."}}}

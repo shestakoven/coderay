@@ -1,0 +1,8 @@
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_sleep","type":"tool","tool":"bash","callID":"call_sleep","state":{"status":"pending","input":{},"raw":""}}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_sleep","type":"tool","tool":"bash","callID":"call_sleep","state":{"status":"running","input":{"command":"sleep 600","description":"wait"},"time":{"start":1}}}}}
+{"fake":"spawn-sleeper"}
+{"fake":"sleep","ms":60000}
+{"fake":"await-turn"}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":""}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_back","field":"text","delta":"Back."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_back","type":"text","text":"Back."}}}
