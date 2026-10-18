@@ -109,3 +109,32 @@ describe('parseClientMessage account requests', () => {
     expect([parse({ type: 'account.select', id }), parse({ type: 'account.remove', id })]).toEqual([null, null]);
   });
 });
+
+describe('parseClientMessage opencode profiles', () => {
+  // A name or a key the core refuses still reaches it, which answers with the rule; only what no rule can answer is dropped here.
+  it('passes a profile name trimmed, a name or a key the core answers with its rule, and the provider requests', () => {
+    const messages = [
+      { type: 'account.login.start', requestId: 'r1', engine: 'opencode', method: 'profile', apiKey: '  Work ' },
+      { type: 'account.login.start', requestId: 'r2', engine: 'opencode', method: 'profile', apiKey: 'a\u0007b' },
+      { type: 'account.providers', requestId: 'r3', id },
+      { type: 'account.provider.set', requestId: 'r4', id, providerID: 'amazon-bedrock', apiKey: 'has space' },
+      { type: 'account.provider.remove', requestId: 'r5', id, providerID: 'openai' },
+    ];
+    expect(messages.map(parse)).toEqual([{ ...messages[0], apiKey: 'Work' }, ...messages.slice(1)]);
+  });
+
+  it.each([
+    ['a profile without a name', { type: 'account.login.start', requestId: 'r', engine: 'opencode', method: 'profile' }],
+    ['a profile name given as a number', { type: 'account.login.start', requestId: 'r', engine: 'opencode', method: 'profile', apiKey: 7 }],
+    ['a profile for Claude', { type: 'account.login.start', requestId: 'r', method: 'profile', apiKey: 'Work' }],
+    ['a profile name of 4097 characters', { type: 'account.login.start', requestId: 'r', engine: 'opencode', method: 'profile', apiKey: 'x'.repeat(4097) }],
+    ['the providers of an id that is no uuid', { type: 'account.providers', requestId: 'r', id: '../x' }],
+    ['a key for a provider id with a slash', { type: 'account.provider.set', requestId: 'r', id, providerID: 'openai/../x', apiKey: 'sk-x' }],
+    ['a removal for the provider id ..', { type: 'account.provider.remove', requestId: 'r', id, providerID: '..' }],
+    ['a key that is not a string', { type: 'account.provider.set', requestId: 'r', id, providerID: 'openai', apiKey: null }],
+    ['a key of 4097 characters', { type: 'account.provider.set', requestId: 'r', id, providerID: 'openai', apiKey: 'k'.repeat(4097) }],
+    ['the providers without a request id', { type: 'account.providers', id }],
+  ])('rejects %s', (_, message) => {
+    expect(parse(message)).toBeNull();
+  });
+});
