@@ -1,11 +1,11 @@
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_HOME } from '../../src/accounts/account-homes';
 import { catalogModels, opencodeEngine, opencodeProbe, providerHint } from '../../src/agent/engines/opencode';
 import type { OpencodeCommand } from '../../src/agent/opencode/command';
 import { fakeOpencode, opencodeRecords } from '../fake-opencode/fake';
-import { tempDir } from '../helpers';
+import { tempDir, waitFor } from '../helpers';
 
 const dir = () => tempDir('oc-engine-');
 const starts = (record: string) => opencodeRecords(record).filter((entry) => entry.pid !== undefined).length;
@@ -64,17 +64,21 @@ describe('catalogModels', () => {
 });
 
 describe('the opencode engine', () => {
-  it('names the active account, and lists the models of the server its status started unless that was over a minute ago', async () => {
+  it("names the active account, lists the models of the server its status started unless that was over a minute ago, and keeps that server's pid file and shell in the run directory, where the reaper finds an orphan", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const d = dir();
+    const run = join(d, 'run');
     const record = join(d, 'rec.jsonl');
-    const engine = opencodeEngine({ command: () => fakeOpencode(null, record), cwd: d, userServers: () => [], account: () => 'work' });
+    const engine = opencodeEngine({ command: () => fakeOpencode(null, record), cwd: d, userServers: () => [], account: () => 'work', runDir: run });
+    const pidFile = waitFor(() => existsSync(run) && readdirSync(run).some((name) => /^opencode-\d+\.pid\.json$/.test(name)), "the probe server's pid file");
     const status = await engine.status();
     const listed = await engine.listModels();
     const afterListing = starts(record);
     vi.setSystemTime(Date.now() + 60_001);
     await engine.listModels();
-    expect([status, listed, afterListing, starts(record)]).toEqual([{ engine: 'opencode', state: 'ready', hint: null, account: 'work' }, FREE_MODELS, 1, 2]);
+    const shell = (opencodeRecords(record).find((entry) => entry.pid !== undefined)?.configContent as { shell: string }).shell;
+    expect([status, listed, afterListing, starts(record), await pidFile, shell.startsWith(`${run}/`) && existsSync(shell)])
+      .toEqual([{ engine: 'opencode', state: 'ready', hint: null, account: 'work' }, FREE_MODELS, 1, 2, true, true]);
   });
 
   it('tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile', () => {

@@ -58,8 +58,11 @@ export interface OpencodeProbe { status: EngineStatus; models: ModelInfo[] }
 
 const firstLine = (error: unknown): string => (error as Error).message.split('\n')[0] ?? '';
 
-/** One short-lived server answers both: the state (missing, old, error, ready) and, when ready, the models. It never rejects. */
-export async function opencodeProbe(command: OpencodeCommand, cwd: string, userServers: string[], timeoutMs = PROBE_TIMEOUT_MS): Promise<OpencodeProbe> {
+/**
+ * One short-lived server answers both: the state (missing, old, error, ready) and, when ready, the models. It never rejects.
+ * With `runDir` the server's pid file and shell wrapper live there, so a core killed mid-probe leaves the reaper an orphan to find.
+ */
+export async function opencodeProbe(command: OpencodeCommand, cwd: string, userServers: string[], timeoutMs = PROBE_TIMEOUT_MS, runDir?: string): Promise<OpencodeProbe> {
   const notReady = (state: EngineState, hint: string): OpencodeProbe => ({ status: { engine: 'opencode', state, hint }, models: [] });
   let stdout: string;
   try {
@@ -73,18 +76,18 @@ export async function opencodeProbe(command: OpencodeCommand, cwd: string, userS
   if (version === undefined) return notReady('error', 'opencode --version printed no version.');
   if (isOlderVersion(version, MIN_OPENCODE_VERSION)) return notReady('old', `Update opencode to ${MIN_OPENCODE_VERSION} or newer.`);
   // The server runs no command, but its config names a shell, and only the wrapper may be one.
-  let runDir: string | null = null;
+  let own: string | null = null;
   try {
-    runDir = mkdtempSync(join(tmpdir(), 'coderay-opencode-probe-'));
-    const configContent = inlineConfig({ config: {}, names: [] }, userServers, shellWrapper(runDir));
+    const dir = runDir ?? (own = mkdtempSync(join(tmpdir(), 'coderay-opencode-probe-')));
+    const configContent = inlineConfig({ config: {}, names: [] }, userServers, shellWrapper(dir));
     // The listening timeout ends first, so a server that never listens is reported with the reason it gave.
-    const answer = await withServer(command, cwd, (client) => client.get('/config/providers'), { configContent, listenTimeoutMs: timeoutMs }, timeoutMs + ANSWER_MS);
+    const answer = await withServer(command, cwd, (client) => client.get('/config/providers'), { configContent, listenTimeoutMs: timeoutMs, pidDir: runDir }, timeoutMs + ANSWER_MS);
     const models = catalogModels(answer).map(({ value, name, efforts }): ModelInfo => ({ value, name, engine: 'opencode', efforts }));
     return { status: { engine: 'opencode', state: 'ready', hint: null }, models };
   } catch (error) {
     return notReady('error', `opencode serve did not start: ${firstLine(error)}`);
   } finally {
-    if (runDir !== null) rmSync(runDir, { recursive: true, force: true });
+    if (own !== null) rmSync(own, { recursive: true, force: true });
   }
 }
 
@@ -104,13 +107,15 @@ export interface OpencodeEngineOptions {
   userServers: () => string[];
   /** The active profile's name, or null while opencode has no profile of CodeRay's. */
   account?: () => string | null;
+  /** The core's run directory, for the probe server's pid file and shell wrapper. */
+  runDir?: string;
 }
 
 export function opencodeEngine(options: OpencodeEngineOptions): Engine {
   // A refresh asks for the state, then the models: both come from the one server the state started.
   let last: { at: number; probe: Promise<OpencodeProbe> } | null = null;
   const probe = (): Promise<OpencodeProbe> => {
-    const started = opencodeProbe(options.command(), options.cwd, options.userServers());
+    const started = opencodeProbe(options.command(), options.cwd, options.userServers(), undefined, options.runDir);
     last = { at: Date.now(), probe: started };
     return started;
   };
