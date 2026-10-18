@@ -1,4 +1,4 @@
-import { isAbsolute, resolve } from 'node:path';
+import { resolve } from 'node:path';
 import type { HookAnswer } from '../../gate/hook-gate';
 import { isRecord } from '../../json';
 import { patchCalls, type Decide } from '../codex/approvals';
@@ -53,7 +53,8 @@ export function askCalls(
   };
   if (ask.callID === null) return refuse('it names no tool call');
   const base = { tool_use_id: ask.callID, cwd };
-  const abs = (path: string): string => (isAbsolute(path) ? path : resolve(cwd, path));
+  // Normalised too: a workdir of `<project>/../elsewhere` is not in the project.
+  const abs = (path: string): string => resolve(cwd, path);
   const read = READS.get(ask.permission);
   if (read !== undefined) return ask.patterns.map((pattern) => ({ ...base, tool_name: read[0], tool_input: { [read[1]]: pattern } }));
   if (ask.permission === 'edit') {
