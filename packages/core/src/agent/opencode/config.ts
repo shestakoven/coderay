@@ -1,3 +1,4 @@
+import { accessSync, constants, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { isRecord } from '../../json';
@@ -72,6 +73,8 @@ function configProblem(config: unknown, expected: SelfCheckExpected): string | n
   if (config.share !== 'disabled') return `opencode would share this chat (share: ${String(config.share)})`;
   // Q7: any other shell hands the model the server's password and config.
   if (config.shell !== expected.shell) return `opencode would run commands in ${String(config.shell)}, not CodeRay's shell wrapper`;
+  // 1.19 falls back to /bin/zsh, with the secrets, when its shell is not an existing file.
+  if (!isExecutableFile(expected.shell)) return `CodeRay's shell wrapper ${expected.shell} is missing, so opencode would run commands in /bin/zsh`;
   // A layer merged after CodeRay's (the user's org config, the managed one) can turn them back on.
   if (config.lsp !== false) return "opencode would start language servers, which can run the project's code";
   if (config.formatter !== false) return "opencode would run formatters, which can run the project's code";
@@ -83,6 +86,15 @@ function configProblem(config: unknown, expected: SelfCheckExpected): string | n
     if (!Object.hasOwn(expected.mcp, name) && !(isRecord(entry) && entry.enabled === false)) return `opencode would start the MCP server "${name}", which CodeRay did not configure`;
   }
   return null;
+}
+
+function isExecutableFile(path: string): boolean {
+  try {
+    accessSync(path, constants.X_OK);
+    return statSync(path).isFile();
+  } catch {
+    return false;
+  }
 }
 
 const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);

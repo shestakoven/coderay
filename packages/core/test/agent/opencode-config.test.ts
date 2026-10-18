@@ -8,7 +8,9 @@ import { opencodeMcp } from '../../src/agent/opencode/mcp';
 
 const RECORDED = fileURLToPath(new URL('../fixtures/opencode/recorded/', import.meta.url));
 const RULES = { '*': 'ask', read: 'allow', glob: 'allow', grep: 'allow', list: 'allow', todowrite: 'allow', question: 'allow', skill: 'allow', 'idecore_*': 'allow' };
-const SHELL = '/run/opencode-shell/zsh';
+// An executable file, as the shell wrapper is.
+const SHELL = '/bin/sh';
+const GONE = '/nonexistent/opencode-shell/zsh';
 const TOOL_OUTPUT = '/data/opencode/tool-output/*';
 const { config: mcp } = opencodeMcp({ idecore: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer s' } }, files: { type: 'stdio', command: 'node', args: ['srv.js'], env: { A: '1' } } }, {});
 const expected = { mcp, toolOutput: TOOL_OUTPUT, shell: SHELL };
@@ -17,7 +19,7 @@ const good = ['build', 'plan', 'general', 'explore'].map((name) => agent(name));
 // F4: a plugin listed under OPENCODE_PURE is not loaded, so a listed one passes.
 const config = { share: 'disabled', shell: SHELL, lsp: false, formatter: false, plugin: ['file:///home/.config/opencode/plugins/global.js'], mcp: { ...mcp, usersrv: { type: 'local', enabled: false } } };
 const tools = [...BUILT_IN_TOOLS];
-const check = (answers: { agents?: unknown; config?: unknown; toolIds?: unknown }) => selfCheck({ agents: good, config, toolIds: tools, ...answers }, expected);
+const check = ({ expected: shellOf = expected, ...answers }: { agents?: unknown; config?: unknown; toolIds?: unknown; expected?: typeof expected }) => selfCheck({ agents: good, config, toolIds: tools, ...answers }, shellOf);
 const rule = (permission: string, pattern: string, action: string) => ({ permission, pattern, action });
 
 const recorded = (file: string): { dir: string; msg: { path?: string; body?: unknown } }[] =>
@@ -63,6 +65,9 @@ describe('selfCheck', () => {
     ['a config it cannot read', { config: ['nope'] }, 'opencode answered with a config CodeRay cannot read'],
     ['sharing on', { config: { ...config, share: 'auto' } }, 'opencode would share this chat (share: auto)'],
     ['another shell', { config: { ...config, shell: '/bin/zsh' } }, "opencode would run commands in /bin/zsh, not CodeRay's shell wrapper"],
+    ['a shell wrapper that is gone', { config: { ...config, shell: GONE }, expected: { ...expected, shell: GONE } }, `CodeRay's shell wrapper ${GONE} is missing, so opencode would run commands in /bin/zsh`],
+    ['a shell wrapper that is a directory', { config: { ...config, shell: '/bin' }, expected: { ...expected, shell: '/bin' } }, "CodeRay's shell wrapper /bin is missing, so opencode would run commands in /bin/zsh"],
+    ['a shell wrapper that cannot run', { config: { ...config, shell: '/etc/hosts' }, expected: { ...expected, shell: '/etc/hosts' } }, "CodeRay's shell wrapper /etc/hosts is missing, so opencode would run commands in /bin/zsh"],
     ['language servers on', { config: { ...config, lsp: { typescript: { disabled: false } } } }, "opencode would start language servers, which can run the project's code"],
     ['formatters on', { config: { ...config, formatter: true } }, "opencode would run formatters, which can run the project's code"],
     ["idecore pointed elsewhere", { config: { ...config, mcp: { ...config.mcp, idecore: { ...mcp.idecore as object, url: 'http://evil/mcp' } } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
