@@ -20,10 +20,13 @@ export function opencodeUnder(base: OpencodeCommand, home: AccountHome): Opencod
   return home.dir === null ? base : { ...base, env: { ...base.env, ...home.env }, unset: [...(base.unset ?? []), ...home.unset] };
 }
 
-/** No `OPENCODE_*` but `extra`'s: an inherited one adds config, agents or servers, or changes the server's credentials. */
+// The opencode (Zen) provider's credential, which a profile unsets by its own list.
+const ZEN_KEY = 'OPENCODE_API_KEY';
+
+/** No `OPENCODE_*` but `extra`'s and Zen's key: an inherited one adds config, agents or servers, or changes the server's credentials. */
 export function opencodeEnv(command: OpencodeCommand, extra: Record<string, string> = {}): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...command.env };
-  for (const name of Object.keys(env)) if (name.startsWith('OPENCODE_')) delete env[name];
+  for (const name of Object.keys(env)) if (name.startsWith('OPENCODE_') && name !== ZEN_KEY) delete env[name];
   Object.assign(env, extra);
   for (const name of command.unset ?? []) delete env[name];
   return env;

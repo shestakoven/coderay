@@ -38,6 +38,8 @@ describe('startServer', () => {
     // As a user who exports them, or a core started from an opencode shell, would pass them on.
     vi.stubEnv('OPENCODE_PERMISSION', '{"edit":"allow"}');
     vi.stubEnv('OPENCODE_CONFIG', '/elsewhere/opencode.json');
+    // Zen's key is a credential, not configuration: the System account keeps it.
+    vi.stubEnv('OPENCODE_API_KEY', 'zen-key');
     const server = startServer(fakeOpencode(null, record, { OPENCODE_CONFIG_DIR: '/elsewhere', OPENCODE_AUTO_SHARE: '1', OPENCODE_SERVER_USERNAME: 'other' }), {
       cwd: dir, pidDir: dir, configContent: '{"mcp":{}}', env: { OPENCODE_PURE: '0', OPENCODE_PERMISSION: '{"edit":"allow"}' },
     });
@@ -50,7 +52,7 @@ describe('startServer', () => {
     await server.kill();
     expect([HARDENING_ENV, early !== undefined, first.argv, first.env, first.opencodeVars, first.configContent, health !== undefined, version, base, recorded === early]).toEqual([
       // The inherited OPENCODE_* are gone, and nothing passed in overrides the hardening; only CodeRay's own remain.
-      HARDENING, true, ['serve', '--port', '0', '--hostname', '127.0.0.1'], Object.keys(HARDENING), ['OPENCODE_CONFIG_CONTENT', ...Object.keys(HARDENING), 'OPENCODE_SERVER_PASSWORD'].sort(), { mcp: {} }, true, '1.19.0', expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), true,
+      HARDENING, true, ['serve', '--port', '0', '--hostname', '127.0.0.1'], Object.keys(HARDENING), ['OPENCODE_API_KEY', 'OPENCODE_CONFIG_CONTENT', ...Object.keys(HARDENING), 'OPENCODE_SERVER_PASSWORD'].sort(), { mcp: {} }, true, '1.19.0', expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/), true,
     ]);
   });
 
