@@ -19,7 +19,7 @@ const IGNORED = new Set([
   'permission.asked', 'permission.replied', 'question.asked', 'question.replied', 'question.rejected',
 ]);
 // A step's start and the files a step changed need no row of their own.
-const QUIET_PARTS = new Set(['step-start', 'patch']);
+const QUIET_PARTS = new Set(['step-start', 'patch', 'subtask']);
 
 interface OpenCall {
   parent: string | null;

@@ -125,6 +125,8 @@ describe('OpencodeEvents', () => {
     const out = [
       ...e.handle(part({ type: 'text', text: 'theirs', sessionID: 'ses_other', time: { start: 1, end: 2 } })),
       ...e.handle({ type: 'server.heartbeat', properties: {} }),
+      // A /command's marker in the user's message: its subagent shows by its own task part.
+      ...e.handle(part({ type: 'subtask', agent: 'build', command: 'review', prompt: 'Review.' })),
       ...e.handle({ type: 'vcs.branch.updated', properties: {} }),
       ...e.handle(error('UnknownError', 'a skill of yours is broken', null)),
       ...e.handle(error('UnknownError', 'the provider answered 500\n    at retry (chunk.js:1:2)')),
