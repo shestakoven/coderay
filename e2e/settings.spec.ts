@@ -791,7 +791,7 @@ async function standInAccounts(page: Page, lists: { claude: object[]; codex: obj
   };
 }
 
-test('an opencode profile: added and cancelled by keyboard, its rule shown under the name, found by search, its providers loaded and filtered, a key saved that never shows and removed by keyboard, rows that stack at 820 px, and the profile removed', async ({ page }) => {
+test('an opencode profile: added and cancelled by keyboard, its rule shown under the name, found by search, its providers loaded and filtered, a key\'s rule shown, a key saved that never shows and removed by keyboard, rows that stack at 820 px, and the profile removed', async ({ page }) => {
   const stand = await standInAccounts(page, { claude: [], codex: [], opencode: [] });
   await openApp(page);
   const dialog = await openSettings(page);
@@ -831,6 +831,8 @@ test('an opencode profile: added and cancelled by keyboard, its rule shown under
   await expect(rows.locator('b')).toHaveText(['OpenAI', 'OpenRouter']);
   const key = profiles.getByLabel('OpenAI API key');
   const state = rows.first().locator('.sw-provider-state');
+  await key.fill('has space');
+  await expect(rows.first().getByRole('alert')).toHaveText('A key is 1 to 512 characters without spaces.');
   await key.fill('draft');
   await page.keyboard.press('Escape');
   await expect(key).toHaveValue('');
