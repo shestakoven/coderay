@@ -3,16 +3,17 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_HOME } from '../../src/accounts/account-homes';
 import { catalogModels, opencodeEngine, opencodeProbe, providerHint } from '../../src/agent/engines/opencode';
-import type { OpencodeCommand } from '../../src/agent/opencode/command';
+import { opencodeCommand, type OpencodeCommand } from '../../src/agent/opencode/command';
 import { fakeOpencode, opencodeRecords } from '../fake-opencode/fake';
 import { tempDir, waitFor } from '../helpers';
 
 const dir = () => tempDir('oc-engine-');
 const starts = (record: string) => opencodeRecords(record).filter((entry) => entry.pid !== undefined).length;
+// As the core's --opencode names it: a script runs with the core's Node, anything else is the binary.
 const script = (body: string): OpencodeCommand => {
   const file = join(dir(), 'opencode.mjs');
   writeFileSync(file, body);
-  return { command: process.execPath, args: [file] };
+  return opencodeCommand(file);
 };
 const FREE_MODELS = [
   { value: 'opencode:opencode/nemotron-3.5-lightning-free', name: 'OpenCode Zen · Nemotron 3.5 Lightning (free)', engine: 'opencode', efforts: [] },
@@ -25,7 +26,7 @@ afterEach(() => {
 
 describe('opencodeProbe', () => {
   it.each([
-    ['missing', () => ({ command: '/nonexistent/opencode', args: [] }), undefined, 'missing', 'Install opencode: opencode is not on the PATH.'],
+    ['missing', () => opencodeCommand('/nonexistent/opencode'), undefined, 'missing', 'Install opencode: opencode is not on the PATH.'],
     ['hanging on --version', () => script('setInterval(() => {}, 1000);'), 300, 'error', 'opencode --version did not answer in 0.3 s.'],
     ['failing on --version', () => script('process.exit(3);'), undefined, 'error', /^opencode --version failed: Command failed: /],
     ['printing no version', () => script("process.stdout.write('opencode');"), undefined, 'error', 'opencode --version printed no version.'],
@@ -49,12 +50,12 @@ describe('opencodeProbe', () => {
 });
 
 describe('catalogModels', () => {
-  it("keeps each model's context limit beside its id and leaves out one whose id cannot be a model id", () => {
+  it("keeps each model's context limit beside its id and leaves out one whose id cannot be a model id or whose provider names none", () => {
     const models = catalogModels({ providers: [null, { id: 'p', name: 'P', models: {
       ok: { id: 'ok', name: 'OK', limit: { context: 4096 }, variants: { x: {}, 'Not An Effort': {} } },
       unknown: { id: 'unknown', name: 'Unknown', limit: { context: 0 } },
       'bad id': { id: 'bad id', name: 'Bad', limit: { context: 1 } },
-    } }, { id: 'q', models: { m: { id: 'm' } } }] });
+    } }, { id: 'q', models: { m: { id: 'm' } } }, { name: 'No id', models: { x: { id: 'x' } } }] });
     expect(models).toEqual([
       { value: 'opencode:p/ok', name: 'P · OK', efforts: ['x'], context: 4096 },
       { value: 'opencode:p/unknown', name: 'P · Unknown', efforts: [], context: null },
@@ -64,7 +65,7 @@ describe('catalogModels', () => {
 });
 
 describe('the opencode engine', () => {
-  it("names the active account, lists the models of the server its status started unless that was over a minute ago, and keeps that server's pid file and shell in the run directory, where the reaper finds an orphan", async () => {
+  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const d = dir();
     const run = join(d, 'run');
@@ -77,14 +78,12 @@ describe('the opencode engine', () => {
     vi.setSystemTime(Date.now() + 60_001);
     await engine.listModels();
     const shell = (opencodeRecords(record).find((entry) => entry.pid !== undefined)?.configContent as { shell: string }).shell;
-    expect([status, listed, afterListing, starts(record), await pidFile, shell.startsWith(`${run}/`) && existsSync(shell)])
-      .toEqual([{ engine: 'opencode', state: 'ready', hint: null, account: 'work' }, FREE_MODELS, 1, 2, true, true]);
-  });
-
-  it('tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile', () => {
-    expect([providerHint('openai', SYSTEM_HOME), providerHint('openai', { dir: '/profiles/p', env: {}, unset: [], args: [] })]).toEqual([
-      'opencode has no provider "openai" connected for this model. Run opencode auth login in a terminal to connect a provider, or pick a free opencode/* model.',
-      'opencode has no provider "openai" connected for this model. Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.',
+    const hints = [providerHint('openai', SYSTEM_HOME), providerHint('openai', { dir: '/profiles/p', env: {}, unset: [], args: [] })];
+    expect([status, listed, afterListing, starts(record), await pidFile, shell.startsWith(`${run}/`) && existsSync(shell), hints]).toEqual([
+      { engine: 'opencode', state: 'ready', hint: null, account: 'work' }, FREE_MODELS, 1, 2, true, true, [
+        'opencode has no provider "openai" connected for this model. Run opencode auth login in a terminal to connect a provider, or pick a free opencode/* model.',
+        'opencode has no provider "openai" connected for this model. Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.',
+      ],
     ]);
   });
 });

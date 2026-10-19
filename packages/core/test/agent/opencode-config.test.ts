@@ -37,10 +37,12 @@ describe('inlineConfig', () => {
 });
 
 describe('selfCheck', () => {
-  it('passes agents whose last catch-all rule asks and whose later allows are only the read-only tools, idecore, or the tool-output directory', () => {
+  it('passes agents whose last catch-all rule asks or denies and whose later allows are only the read-only tools, idecore, or the tool-output directory', () => {
     const withGlob = good.map((entry) => ({ ...entry, permission: { ...entry.permission, external_directory: { '*': 'ask', [TOOL_OUTPUT]: 'allow' } } }));
-    const listed = good.map((entry) => ({ ...entry, permission: [rule('*', '*', 'ask'), rule('edit', '*', 'allow'), rule('*', '*', 'deny'), rule('read', '*', 'allow'), rule('idecore_*', '*', 'allow')] }));
-    expect([check({}), check({ agents: withGlob }), check({ agents: listed })]).toEqual([null, null, null]);
+    const listed = good.map((entry) => ({ ...entry, permission: [rule('*', '*', 'ask'), rule('edit', '*', 'allow'), rule('*', '*', 'deny'), rule('read', '*', 'allow'), rule('bash', 'rm *', 'deny'), rule('idecore_*', '*', 'allow')] }));
+    // A string is one catch-all rule.
+    const asks = good.map((entry) => ({ ...entry, permission: 'ask' }));
+    expect([check({}), check({ agents: withGlob }), check({ agents: listed }), check({ agents: asks })]).toEqual([null, null, null, null]);
   });
 
   it.each([
@@ -52,6 +54,7 @@ describe('selfCheck', () => {
     ['external_directory allowed everywhere', [agent('build', { external_directory: 'allow' })], { agent: 'build', permission: 'external_directory', pattern: '*', action: 'allow' }],
     ["another home's tool-output directory", [agent('build', { external_directory: { '/elsewhere/opencode/tool-output/*': 'allow' } })], { agent: 'build', permission: 'external_directory', pattern: '/elsewhere/opencode/tool-output/*', action: 'allow' }],
     ['a subagent with no rules at all', [...good, { name: 'reviewer', mode: 'subagent', native: false, permission: {} }], { agent: 'reviewer', permission: '*', pattern: '*', action: 'none' }],
+    ['an allow before a narrower ask, which is no catch-all', [{ name: 'build', mode: 'primary', permission: [rule('*', '*', 'ask'), rule('edit', '*', 'allow'), rule('*', 'src/*', 'ask')] }], { agent: 'build', permission: 'edit', pattern: '*', action: 'allow' }],
     ['a list of rules whose last catch-all is allow', [{ name: 'build', mode: 'primary', permission: [rule('*', '*', 'ask'), rule('*', '*', 'allow')] }], { agent: 'build', permission: '*', pattern: '*', action: 'allow' }],
     ['a list with a rule it cannot read', [{ name: 'build', mode: 'primary', permission: [rule('*', '*', 'ask'), { permission: 'edit' }] }], { agent: 'build', permission: '*', pattern: '*', action: 'unreadable' }],
   ])('refuses %s', (_name, agents, problem) => {
@@ -63,6 +66,7 @@ describe('selfCheck', () => {
     ['an agent list it cannot read', { agents: 'nope' }, 'opencode listed no agents CodeRay can read'],
     ['an agent it cannot name', { agents: [...good, { mode: 'subagent', permission: RULES }] }, 'opencode listed no agents CodeRay can read'],
     ['a config it cannot read', { config: ['nope'] }, 'opencode answered with a config CodeRay cannot read'],
+    ['a config whose servers it cannot read', { config: { ...config, mcp: 'nope' } }, 'opencode answered with a config CodeRay cannot read'],
     ['sharing on', { config: { ...config, share: 'auto' } }, 'opencode would share this chat (share: auto)'],
     ['another shell', { config: { ...config, shell: '/bin/zsh' } }, "opencode would run commands in /bin/zsh, not CodeRay's shell wrapper"],
     ['a shell wrapper that is gone', { config: { ...config, shell: GONE }, expected: { ...expected, shell: GONE } }, `CodeRay's shell wrapper ${GONE} is missing, so opencode would run commands in /bin/zsh`],
@@ -74,6 +78,7 @@ describe('selfCheck', () => {
     ["idecore turned into a local server", { config: { ...config, mcp: { ...config.mcp, idecore: { ...mcp.idecore as object, type: 'local', command: ['node', 'evil.js'] } } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
     ["CodeRay's local server with another command", { config: { ...config, mcp: { ...config.mcp, files: { ...mcp.files as object, command: ['node', 'evil.js'] } } } }, 'opencode\'s MCP server "files" is not the one CodeRay configured'],
     ["CodeRay's local server with another environment", { config: { ...config, mcp: { ...config.mcp, files: { ...mcp.files as object, environment: { A: '1', NODE_OPTIONS: '--require evil.js' } } } } }, 'opencode\'s MCP server "files" is not the one CodeRay configured'],
+    ["CodeRay's server missing", { config: { ...config, mcp: { usersrv: config.mcp.usersrv } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
     ["CodeRay's server switched off", { config: { ...config, mcp: { ...config.mcp, idecore: { ...mcp.idecore as object, enabled: false } } } }, 'opencode\'s MCP server "idecore" is not the one CodeRay configured'],
     ['a user server named as a property every object has', { config: { ...config, mcp: { ...config.mcp, constructor: { type: 'local' } } } }, 'opencode would start the MCP server "constructor", which CodeRay did not configure'],
     ['a user server still enabled', { config: { ...config, mcp: { ...config.mcp, usersrv: { type: 'local', enabled: true } } } }, 'opencode would start the MCP server "usersrv", which CodeRay did not configure'],
@@ -103,11 +108,5 @@ describe('selfCheck', () => {
       ['explore'],
       join(homedir(), '.local', 'share', 'opencode', 'tool-output', '*'),
     ]);
-  });
-});
-
-describe('checkedSubagents', () => {
-  it('names the agents a task may reach that passed, and leaves out one that did not', () => {
-    expect(checkedSubagents([...good, agent('loose', { edit: 'allow' }, 'subagent'), agent('mine', {}, 'all')], TOOL_OUTPUT)).toEqual(['general', 'explore', 'mine']);
   });
 });

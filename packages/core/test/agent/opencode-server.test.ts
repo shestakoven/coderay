@@ -61,6 +61,7 @@ describe('startServer', () => {
     ['never prints the listening line', { FAKE_OPENCODE_NO_LISTEN: '1' }, [], /^opencode did not say where it listens within 1 s$/],
     ['exits before it listens', {}, ['bogus'], /^opencode exited before it said where it listens \(code 2\): fake-opencode: unsupported arguments bogus serve/],
     ['answers health with 503', { FAKE_OPENCODE_HEALTH: 'down' }, [], /^opencode's health check failed \(503\)$/],
+    ['answers health but not healthy', { FAKE_OPENCODE_HEALTH: 'unhealthy' }, [], /^opencode's health check did not say it is healthy and which version it is$/],
     ['is older than 1.19', { FAKE_OPENCODE_VERSION: '1.18.9' }, [], /^opencode 1\.18\.9 is older than 1\.19\.0, the version CodeRay was verified with: update opencode to run it in CodeRay\.$/],
     ['prints the listening line on stderr (and is then fine)', { FAKE_OPENCODE_LISTEN_STREAM: 'stderr' }, [], null],
   ])('settles ready with the reason and leaves no process when the server %s', async (_name, env, args, reason) => {

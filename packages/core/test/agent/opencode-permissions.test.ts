@@ -52,20 +52,19 @@ describe('askCalls', () => {
     ['an edit with no diff', ask('edit', { metadata: { filepath: '/p/a.ts' } }), {}],
     ['an edit naming its file only in patterns, which are relative to the worktree', ask('edit', { patterns: ['a.ts'], metadata: { diff: DIFF } }), {}],
     ['a patch whose file list has an unknown change type', ask('edit', { metadata: { diff: DIFF, files: [file('/p/a.ts', 'update'), file('/p/b.ts', 'rename')] } }), {}],
-    ['a patch with a move that names no destination', ask('edit', { metadata: { diff: DIFF, files: [file('/p/a.ts', 'move')] } }), {}],    ['a patch whose file list is not a list', ask('edit', { metadata: { diff: DIFF, filepath: '/p/a.ts', files: { path: '/p/b.ts' } } }), {}],
+    ['a patch with a move that names no destination', ask('edit', { metadata: { diff: DIFF, files: [file('/p/a.ts', 'move')] } }), {}],
+    ['a patch whose file list is not a list', ask('edit', { metadata: { diff: DIFF, filepath: '/p/a.ts', files: { path: '/p/b.ts' } } }), {}],
     ['a bash with no command', ask('bash', { patterns: ['ls'] }), { command: 'ls' }],
     ['a bash with no input known for its workdir', ask('bash', { metadata: { command: 'ls' } }), undefined],
     ['a bash in a shell the gate cannot read', ask('bash', { metadata: { command: 'fish -c "rm x"' } }), { command: 'fish -c "rm x"' }],
+    ...['OPENCODE_SERVER_PASSWORD', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_PID'].map((name): [string, Ask, Record<string, unknown>] => [
+      `a bash naming the server's ${name}`, ask('bash', { metadata: { command: `printenv ${name}` } }), { command: `printenv ${name}` },
+    ]),
     ['an ask with no tool call to pin the row to', ask('bash', { metadata: { command: 'ls' }, callID: null }), { command: 'ls' }],
     ["an ask for idecore's tools, which its rule allows", ask('idecore_propose_plan'), {}],
     ['a permission CodeRay does not know', ask('doctor', { patterns: ['x'] }), {}],
   ])('has no call for %s', (_name, input, state) => {
     expect(calls(input, state)).toEqual([]);
-  });
-
-  it("has no call for a bash naming any of the server's secrets", () => {
-    const named = ['OPENCODE_SERVER_PASSWORD', 'OPENCODE_CONFIG_CONTENT', 'OPENCODE_PID'].map((name) => `printenv ${name}`);
-    expect(named.map((command) => calls(ask('bash', { metadata: { command } }), { command }))).toEqual([[], [], []]);
   });
 });
 

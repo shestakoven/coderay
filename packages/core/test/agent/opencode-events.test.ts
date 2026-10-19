@@ -6,7 +6,7 @@ const part = (extra: object) => ({ type: 'message.part.updated', properties: { p
 // As 1.19 records them: a pending part carries no input yet, a running one the whole input.
 const tool = (callID: string, name: string, state: object, input: object = {}, sessionID = S) =>
   part({ id: `prt_${callID}`, type: 'tool', callID, tool: name, state: { input, ...state }, sessionID });
-const delta = (partID: string, text: string) => ({ type: 'message.part.delta', properties: { sessionID: S, messageID: 'msg_1', partID, field: 'text', delta: text } });
+const delta = (partID: string, text: string, sessionID = S, field = 'text') => ({ type: 'message.part.delta', properties: { sessionID, messageID: 'msg_1', partID, field, delta: text } });
 const idle = (sessionID = S) => ({ type: 'session.idle', properties: { sessionID } });
 const error = (name: string, message: string, sessionID: string | null = S) =>
   ({ type: 'session.error', properties: { ...(sessionID === null ? {} : { sessionID }), error: { name, data: { message } } } });
@@ -39,6 +39,8 @@ describe('OpencodeEvents', () => {
       ...e.handle(part({ id: 'prt_e', type: 'reasoning', text: '', time: { start: 2, end: 3 } })),
       ...e.handle(part({ type: 'text', text: '', time: { start: 3 } })),
       ...e.handle(delta('prt_1', 'O')),
+      // Only a text field is the reply's.
+      ...e.handle(delta('prt_1', '{}', S, 'metadata')),
       ...e.handle(delta('prt_1', 'K')),
       ...e.handle(part({ type: 'text', text: 'OK', time: { start: 3, end: 4 } })),
     ];
@@ -137,7 +139,7 @@ describe('OpencodeEvents', () => {
     expect([early, out, clean, again]).toEqual([[], [{ type: 'unknown', label: 'vcs.branch.updated' }, ...failed], [{ type: 'result', subtype: 'success', origin: null }], failed]);
   });
 
-  it("adopts each child session's parts under the task call that started it, closes the tools still open at idle, keeps a call's input once it runs, and owns no stranger", () => {
+  it("adopts each child session's parts under the task call that started it, closes the tools still open at idle, keeps a call's input once it runs and until the next turn, and owns no stranger", () => {
     const e = events();
     e.turnStarted();
     const created = (id: string, parentID?: string) => ({ type: 'session.created', properties: { sessionID: id, info: { id, ...(parentID ? { parentID } : {}), directory: '/p' } } });
@@ -153,18 +155,22 @@ describe('OpencodeEvents', () => {
       ...e.handle(tool('c_read', 'read', { status: 'completed', output: 'a' }, { filePath: '/p/a.ts' })),
       ...e.handle(tool('c9', 'bash', { status: 'pending' }, {}, 'ses_child')),
       ...e.handle(tool('c9', 'bash', { status: 'running' }, { command: 'pwd', workdir: '/p/sub' }, 'ses_child')),
+      ...e.handle(part({ id: 'prt_ct', type: 'text', text: '', time: { start: 1 }, sessionID: 'ses_child' })),
+      ...e.handle(delta('prt_ct', 'looking', 'ses_child')),
       ...e.handle(part({ type: 'step-finish', tokens: { total: 15, input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } }, sessionID: 'ses_child' })),
       ...e.handle(idle('ses_child')),
     ];
     // The transport adopts the children it sees as well: a second adoption changes nothing.
     e.adopt('ses_child2', S);
     out.push(...e.handle(tool('c10', 'glob', { status: 'running' }, { pattern: '*.ts' }, 'ses_child2')), ...e.handle(tool('c11', 'webfetch', { status: 'pending' })), ...e.handle(idle()));
+    const kept = e.input('c9');
+    e.turnStarted();
     expect([
-      out.map((event) => (event.type === 'assistant' || event.type === 'user' ? [event.type, event.parentToolUseId] : event.type)),
-      ['ses_child', 'ses_stranger', 'ses_strangers_child'].map((id) => e.owns(id)), e.input('c9'), e.input('c11'),
+      out.map((event) => (event.type === 'assistant' || event.type === 'user' || event.type === 'text_delta' ? [event.type, event.parentToolUseId] : event.type)),
+      ['ses_child', 'ses_stranger', 'ses_strangers_child'].map((id) => e.owns(id)), kept, e.input('c11'), e.input('c9'),
     ]).toEqual([
-      [['assistant', null], ['assistant', null], ['assistant', null], ['user', null], ['assistant', 'c_task'], ['assistant', 'c_task2'], ['user', null], ['user', null], ['user', 'c_task'], ['user', 'c_task2'], 'result'],
-      [true, false, false], { command: 'pwd', workdir: '/p/sub' }, undefined,
+      [['assistant', null], ['assistant', null], ['assistant', null], ['user', null], ['assistant', 'c_task'], ['text_delta', 'c_task'], ['assistant', 'c_task2'], ['user', null], ['user', null], ['user', 'c_task'], ['user', 'c_task2'], 'result'],
+      [true, false, false], { command: 'pwd', workdir: '/p/sub' }, undefined, undefined,
     ]);
   });
 });
