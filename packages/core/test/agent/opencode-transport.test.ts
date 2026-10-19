@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { HookAnswer } from '../../src/gate/hook-gate';
 import { ruleset } from '../../src/agent/opencode/config';
 import { opencodeMcp } from '../../src/agent/opencode/mcp';
@@ -275,10 +275,14 @@ describe('startOpencodeTransport', () => {
   });
 
   it("sends a /name message as the command with its agent and no request timeout, and a question of the chat or of its resumed subagent to the chat's prompt, declined or answered through opencode, or withdrawn on Stop; another session's question is declined unseen", async () => {
+    // A /command answers when its turn ends: the clock runs past any request timeout while its question waits.
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    onTestFinished(() => void vi.useRealTimers());
     const t = start('opencode/question.jsonl');
     t.send('/probe-skill now');
     const questions = () => t.events.flatMap((e) => (e.type === 'control_request' ? [e] : []));
     const [first] = await waitFor(() => questions().length === 1 && questions(), 'the question shows');
+    vi.advanceTimersByTime(60_000);
     t.transport.respond({ subtype: 'success', request_id: first!.requestId, response: { behavior: 'deny', message: 'Neither.' } });
     await t.ended();
     t.send('again');
