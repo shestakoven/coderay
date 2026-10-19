@@ -1,7 +1,8 @@
 import { basename } from 'node:path';
 import { shellWord } from './codex/events';
 
-const READ_SHELLS = new Set(['sh', 'bash', 'zsh', 'dash']);
+/** The shells whose command lines the gate's shell reader parses. */
+export const READ_SHELLS: ReadonlySet<string> = new Set(['sh', 'bash', 'zsh', 'dash']);
 // Shells whose scripts the gate's shell reader does not parse (or not under that spelling): a write in one would look like none.
 const UNREAD_SHELLS = new Set([...READ_SHELLS, 'ash', 'busybox', 'csh', 'elvish', 'fish', 'ksh', 'mksh', 'nu', 'oksh', 'posh', 'powershell', 'pwsh', 'tcsh', 'xonsh', 'yash']);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;

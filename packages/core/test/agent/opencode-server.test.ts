@@ -1,6 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { HARDENING_ENV, shellWrapper, startServer, withServer } from '../../src/agent/opencode/server';
@@ -133,5 +133,14 @@ describe('shellWrapper', () => {
     expect([path.endsWith('/opencode-shell/zsh'), statSync(path).mode & 0o777, statSync(join(dir, 'opencode-shell')).mode & 0o777, readFileSync(path, 'utf8'), Object.keys(secrets).filter((name) => seen.includes(name)), run.stderr, existsSync(join(dir, 'HOSTILE_ENV_RAN'))]).toEqual([
       true, 0o755, 0o700, expect.stringMatching(/^#!\/bin\/sh\n[^]*\nexec \/bin\/zsh "\$@"\n$/), ['KEEP', 'MULTI'], '', false,
     ]);
+  });
+
+  it.each([
+    ['/opt/homebrew/bin/bash', 'bash', '/opt/homebrew/bin/bash'],
+    ['/usr/local/bin/fish', 'zsh', '/bin/zsh'],
+    ['/opt/homebrew/bin/nu', 'zsh', '/bin/zsh'],
+  ])('runs commands of a %s login shell through %s, which execs %s: the gate reads only POSIX shells', (userShell, name, real) => {
+    const path = shellWrapper(scratch().dir, userShell);
+    expect([basename(path), readFileSync(path, 'utf8').endsWith(`\nexec ${real} "$@"\n`)]).toEqual([name, true]);
   });
 });

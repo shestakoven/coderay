@@ -6,6 +6,7 @@ import { isRecord } from '../../json';
 import { writeFileNoFollow } from '../../mcp/config';
 import { descendants, isAlive, signal } from '../../os-process';
 import { spawnClaude, type ProcessExit, type SpawnedClaude } from '../claude-process';
+import { READ_SHELLS } from '../shell-read';
 import { isOlderVersion, MIN_OPENCODE_VERSION } from '../tools';
 import { ApiError, opencodeClient, type OpencodeClient } from './api';
 import { opencodeEnv, type OpencodeCommand } from './command';
@@ -28,14 +29,17 @@ const POLL_MS = 20;
 const DROP_OPENCODE_VARS = ['for word in $(/usr/bin/env); do', '  case $word in OPENCODE_*=*) unset "${word%%=*}" 2>/dev/null ;; esac', 'done'].join('\n');
 const PLAIN_PATH = /^[\w./+-]+$/;
 
-/** The shell wrapper of Q7, written 0755 under `<runDir>/opencode-shell/<basename of the user's shell>`; it drops every `OPENCODE_*` and execs the user's shell. */
+/**
+ * The shell wrapper of Q7, written 0755 under `<runDir>/opencode-shell/<basename of the shell>`; it drops every `OPENCODE_*` and execs the
+ * user's shell when the gate reads its commands, zsh otherwise.
+ */
 export function shellWrapper(runDir: string, userShell = process.env.SHELL || '/bin/zsh'): string {
-  // opencode takes only an absolute path to an existing file as its shell.
-  const shell = isAbsolute(userShell) ? userShell : '/bin/zsh';
+  // opencode takes only an absolute path to an existing file as its shell; a fish or nu would run commands the gate read as POSIX.
+  const shell = isAbsolute(userShell) && READ_SHELLS.has(basename(userShell)) ? userShell : '/bin/zsh';
   const dir = join(runDir, 'opencode-shell');
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   chmodSync(dir, 0o700);
-  // Named as the user's shell: opencode picks the shell's arguments by its name.
+  // Named as the shell it execs: opencode picks the shell's arguments by its name.
   const path = join(dir, basename(shell));
   const quoted = PLAIN_PATH.test(shell) ? shell : `'${shell.replaceAll("'", "'\\''")}'`;
   // Renamed into place: another chat's server may be running a command through the wrapper right now.
