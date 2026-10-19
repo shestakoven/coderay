@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import type { HookAnswer } from '../../src/gate/hook-gate';
 import { ruleset } from '../../src/agent/opencode/config';
 import { opencodeMcp } from '../../src/agent/opencode/mcp';
-import { shellWrapper } from '../../src/agent/opencode/server';
+import { shellWrapper, withServer } from '../../src/agent/opencode/server';
 import { startOpencodeTransport } from '../../src/agent/opencode/transport';
 import type { StreamEvent } from '../../src/agent/stream';
 import { userMessage, type AgentTransport, type GateCall, type OpencodeLaunch } from '../../src/agent/transport';
@@ -106,6 +106,16 @@ describe('startOpencodeTransport', () => {
     await t.refusedOrEnded();
     if (t.refused() === null) { t.send('again'); await t.refusedOrEnded(2); }
     expect([t.said().includes('42'), reason instanceof RegExp ? reason.test(t.refused() ?? '') : t.refused()]).toEqual([false, reason instanceof RegExp ? true : reason]);
+  });
+
+  it('starts opencode again when 1.19 could not open its database beside another server of the same home, for a chat and for a short question', async () => {
+    const t = start('opencode/reply.jsonl', { env: { FAKE_OPENCODE_DB_BUSY: '2' } });
+    t.send('hi');
+    await t.refusedOrEnded();
+    const dir = tempDir('oc-busy-');
+    const homes = Object.fromEntries(['XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'].map((name) => [name, join(dir, name.toLowerCase())]));
+    const version = await withServer(fakeOpencode(null, join(dir, 'rec.jsonl'), { ...homes, FAKE_OPENCODE_DB_BUSY: '2' }), dir, async (_client, answered) => answered);
+    expect([t.refused(), t.said(), version]).toEqual([null, 'OK', '1.19.0']);
   });
 
   it("switches the user's own MCP servers off by name on the server the chat uses, and refuses a name that clashes with CodeRay's", async () => {

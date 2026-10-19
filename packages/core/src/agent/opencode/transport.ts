@@ -11,7 +11,7 @@ import { checkedSubagents, inlineConfig, ruleset, selfCheck, toolOutputGlob } fr
 import { OpencodeEvents } from './events';
 import type { OpencodeMcp } from './mcp';
 import { askCalls, judgeAsk, readAsk, type Ask, type Reply } from './permissions';
-import { startServer, type OpencodeServer } from './server';
+import { retryBusy, startServer, type OpencodeServer } from './server';
 
 const INTERRUPTED: StreamEvent = { type: 'result', subtype: 'error_during_execution', origin: null };
 const FAILED: StreamEvent = { type: 'result', subtype: 'failed', origin: null };
@@ -105,6 +105,8 @@ class OpencodeTransport implements AgentTransport {
   private interruptTimer: NodeJS.Timeout | undefined;
   // Every Stop counts: a message sent before it never starts a turn after it.
   private stops = 0;
+  // Starts that found the database busy with another server of the same home.
+  private busyStarts = 0;
 
   constructor(launch: OpencodeLaunch, sink: TransportSink) {
     this.launch = launch;
@@ -237,7 +239,13 @@ class OpencodeTransport implements AgentTransport {
       this.ready = true;
       for (const pending of this.queue.splice(0)) this.enqueue(pending);
     } catch (error) {
-      if (this.current(server)) this.refuse(`opencode did not start: ${(error as Error).message}`);
+      if (!this.current(server)) return;
+      if (await retryBusy(error, this.busyStarts)) {
+        this.busyStarts += 1;
+        if (this.current(server)) this.start(userServers);
+        return;
+      }
+      this.refuse(`opencode did not start: ${(error as Error).message}`);
     }
   }
 

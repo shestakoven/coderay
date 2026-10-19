@@ -19,6 +19,18 @@ for (const [name, real] of Object.entries(XDG)) {
   if (env[name] !== undefined && resolve(env[name]) === join(homedir(), real)) { process.stderr.write(`fake-opencode: ${name} is the real ~/${real}\n`); process.exit(2); }
 }
 
+// 1.19 started beside another server on the same home, while that one sets the database up: it exits before it listens.
+if (env.FAKE_OPENCODE_DB_BUSY && env.FAKE_OPENCODE_RECORD) {
+  const counter = `${env.FAKE_OPENCODE_RECORD}.busy`;
+  const failed = existsSync(counter) ? Number(readFileSync(counter, 'utf8')) : 0;
+  if (failed < Number(env.FAKE_OPENCODE_DB_BUSY)) {
+    writeFileSync(counter, String(failed + 1));
+    // A home's first servers fail on its setup query, later ones on the lock.
+    process.stderr.write(failed === 0 ? 'Error: Unexpected error\nFailed query: \nparams: \n' : 'Error: Unexpected error\n\ndatabase is locked\n');
+    process.exit(1);
+  }
+}
+
 const record = (entry) => { if (env.FAKE_OPENCODE_RECORD) appendFileSync(env.FAKE_OPENCODE_RECORD, `${JSON.stringify(entry)}\n`); };
 record({
   pid: process.pid, argv, xdg: Object.fromEntries(Object.keys(XDG).map((name) => [name, env[name] ?? null])),

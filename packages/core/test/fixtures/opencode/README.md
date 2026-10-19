@@ -42,6 +42,7 @@
 | `FAKE_OPENCODE_PROVIDERS` | JSON for `GET /config/providers` (default: `opencode` with `nemotron-3.5-lightning-free` (262144, no variants) and `gpt-oss-120b-free` (131072, variants `low`/`high`)). |
 | `FAKE_OPENCODE_TOOL_IDS` | JSON for `GET /experimental/tool/ids`. |
 | `FAKE_OPENCODE_AUTH=fail` | `PUT /auth/:id` answers 400 with the request body quoted in its message. |
+| `FAKE_OPENCODE_DB_BUSY=<n>` | The first `n` starts with this record file exit with code 1 before they listen, as 1.19 does beside another server of the same home that sets the database up: the first with "Failed query:", the rest with "database is locked" on stderr. |
 | `FAKE_OPENCODE_NO_LISTEN=1` | Never prints the listening line. |
 | `FAKE_OPENCODE_LISTEN_STREAM=stderr` | Prints it on stderr. |
 | `FAKE_OPENCODE_HEALTH=down` | Health answers 503. |

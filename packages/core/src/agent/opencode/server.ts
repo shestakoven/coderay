@@ -64,10 +64,25 @@ export interface ServerOptions {
   listenTimeoutMs?: number;
 }
 
+/** 1.19 exited before it listened because another server on the same home was setting the database up: a start worth trying again. */
+export class DatabaseBusy extends Error {}
+
+const BUSY = /database is locked|Failed query:/;
+const BUSY_RETRIES = 2;
+const BUSY_RETRY_MS = 300;
+
+/** Waits before the next start after `attempt` busy ones; false once the retries are spent. */
+export async function retryBusy(error: unknown, attempt: number): Promise<boolean> {
+  if (!(error instanceof DatabaseBusy) || attempt >= BUSY_RETRIES) return false;
+  await new Promise((resolve) => setTimeout(resolve, BUSY_RETRY_MS * (attempt + 1)));
+  return true;
+}
+
 // Q6: 1.19 prints the line on stdout; stderr is read too, and its last line explains a server that never got there.
 function listening(spawned: SpawnedClaude, timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
     let last = '';
+    let busy = false;
     const tail = (): string => (last === '' ? '' : `: ${last}`);
     const timer = setTimeout(() => reject(new Error(`opencode did not say where it listens within ${timeoutMs / 1000} s${tail()}`)), timeoutMs);
     const read = (line: string): void => {
@@ -79,11 +94,13 @@ function listening(spawned: SpawnedClaude, timeoutMs: number): Promise<string> {
     createInterface({ input: spawned.child.stdout }).on('line', read);
     createInterface({ input: spawned.child.stderr }).on('line', (line) => {
       if (line.trim() !== '') last = line.trim();
+      busy ||= BUSY.test(line);
       read(line);
     });
     void spawned.exited.then((exit) => {
       clearTimeout(timer);
-      reject(new Error(`opencode exited before it said where it listens (${exit.error ?? exit.signal ?? `code ${exit.code}`})${tail()}`));
+      const message = `opencode exited before it said where it listens (${exit.error ?? exit.signal ?? `code ${exit.code}`})${tail()}`;
+      reject(busy ? new DatabaseBusy(message) : new Error(message));
     });
   });
 }
@@ -153,6 +170,18 @@ export function startServer(command: OpencodeCommand, options: ServerOptions): O
 /** A short-lived server for one question (status, models, providers), stopped afterwards whatever happens. */
 export async function withServer<T>(
   command: OpencodeCommand, cwd: string, ask: (client: OpencodeClient, version: string) => Promise<T>, options: Omit<ServerOptions, 'cwd'> = {}, timeoutMs = PROBE_TIMEOUT_MS,
+): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await withOneServer(command, cwd, ask, options, timeoutMs);
+    } catch (error) {
+      if (!(await retryBusy(error, attempt))) throw error;
+    }
+  }
+}
+
+async function withOneServer<T>(
+  command: OpencodeCommand, cwd: string, ask: (client: OpencodeClient, version: string) => Promise<T>, options: Omit<ServerOptions, 'cwd'>, timeoutMs: number,
 ): Promise<T> {
   const server = startServer(command, { ...options, cwd });
   let timer: NodeJS.Timeout | undefined;
