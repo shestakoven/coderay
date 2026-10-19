@@ -163,14 +163,14 @@ describe('OpencodeEvents', () => {
     // The transport adopts the children it sees as well: a second adoption changes nothing.
     e.adopt('ses_child2', S);
     out.push(...e.handle(tool('c10', 'glob', { status: 'running' }, { pattern: '*.ts' }, 'ses_child2')), ...e.handle(tool('c11', 'webfetch', { status: 'pending' })), ...e.handle(idle()));
-    const kept = e.input('c9');
+    const inputs = [e.input('c9'), e.input('c11')];
     e.turnStarted();
     expect([
       out.map((event) => (event.type === 'assistant' || event.type === 'user' || event.type === 'text_delta' ? [event.type, event.parentToolUseId] : event.type)),
-      ['ses_child', 'ses_stranger', 'ses_strangers_child'].map((id) => e.owns(id)), kept, e.input('c11'), e.input('c9'),
+      ['ses_child', 'ses_stranger', 'ses_strangers_child'].map((id) => e.owns(id)), inputs, e.input('c9'),
     ]).toEqual([
       [['assistant', null], ['assistant', null], ['assistant', null], ['user', null], ['assistant', 'c_task'], ['text_delta', 'c_task'], ['assistant', 'c_task2'], ['user', null], ['user', null], ['user', 'c_task'], ['user', 'c_task2'], 'result'],
-      [true, false, false], { command: 'pwd', workdir: '/p/sub' }, undefined, undefined,
+      [true, false, false], [{ command: 'pwd', workdir: '/p/sub' }, undefined], undefined,
     ]);
   });
 });
