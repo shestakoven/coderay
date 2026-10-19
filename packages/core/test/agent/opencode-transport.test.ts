@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { HookAnswer } from '../../src/gate/hook-gate';
-import { ruleset } from '../../src/agent/opencode/config';
+import { BUILT_IN_TOOLS, ruleset } from '../../src/agent/opencode/config';
 import { opencodeMcp } from '../../src/agent/opencode/mcp';
 import { shellWrapper, withServer } from '../../src/agent/opencode/server';
 import { startOpencodeTransport } from '../../src/agent/opencode/transport';
@@ -119,6 +119,18 @@ describe('startOpencodeTransport', () => {
     await t.refusedOrEnded();
     if (t.refused() === null) { t.send('again'); await t.refusedOrEnded(2); }
     expect([t.said().includes('42'), reason instanceof RegExp ? reason.test(t.refused() ?? '') : t.refused(), await t.transport.skills()]).toEqual([false, reason instanceof RegExp ? true : reason, skills]);
+  });
+
+  it("waits over a minute for the tool list of a server that installs a user tool's dependencies, so the refusal names the tool", async () => {
+    // 1.19 lists the tools only after that install, about a minute when an earlier server was stopped in its middle (F5).
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'], shouldAdvanceTime: true });
+    onTestFinished(() => void vi.useRealTimers());
+    const t = start('opencode/multi-turn.jsonl', { env: { FAKE_OPENCODE_TOOL_IDS: JSON.stringify([...BUILT_IN_TOOLS, 'marker']), FAKE_OPENCODE_TOOL_IDS_HOLD_MS: '500' } });
+    await waitFor(() => requests(t.records(), 'GET', '/experimental/tool/ids').length > 0, 'the tool list asked');
+    vi.advanceTimersByTime(80_000);
+    t.send('hi');
+    await t.refusedOrEnded();
+    expect(t.refused()).toBe('opencode loaded a custom tool "marker", which would run without asking, so the chat was not started.');
   });
 
   it.each([

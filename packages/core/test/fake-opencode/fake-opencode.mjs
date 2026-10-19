@@ -294,7 +294,10 @@ const server = createServer(async (req, res) => {
     if (req.method === 'DELETE') { auth.delete(a[1]); saveAuth(); return json(res, 200, true); }
   }
   if (path === '/command') return json(res, 200, commands);
-  if (path === '/experimental/tool/ids') return json(res, 200, env.FAKE_OPENCODE_TOOL_IDS ? JSON.parse(env.FAKE_OPENCODE_TOOL_IDS) : TOOL_IDS);
+  if (path === '/experimental/tool/ids') {
+    const answer = () => json(res, 200, env.FAKE_OPENCODE_TOOL_IDS ? JSON.parse(env.FAKE_OPENCODE_TOOL_IDS) : TOOL_IDS);
+    return env.FAKE_OPENCODE_TOOL_IDS_HOLD_MS ? void setTimeout(answer, Number(env.FAKE_OPENCODE_TOOL_IDS_HOLD_MS)) : answer();
+  }
   if (path === '/permission' && req.method === 'GET') return json(res, 200, [...waiting.values()].filter((w) => w.kind === 'permission').map((w) => w.asked));
   if (path === '/session' && req.method === 'POST') {
     if (env.FAKE_OPENCODE_SESSION_FAIL === '1') return json(res, 500, { name: 'UnknownError', data: { message: 'the database is read-only' } });

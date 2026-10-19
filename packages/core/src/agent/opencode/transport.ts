@@ -25,6 +25,8 @@ const MAX_DEPTH = 8;
 // How long a bash ask waits for its call's input, and how often it looks.
 const INPUT_WAIT_MS = 2_000;
 const INPUT_POLL_MS = 20;
+// 1.19 lists the tools once a user tool's dependencies are installed; a server stopped mid-install leaves a lock the next waits about a minute on (F5).
+const TOOL_IDS_TIMEOUT_MS = 90_000;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
 const MODEL_NOT_FOUND = /^Model not found: ([^/\s]+)\//;
 const BEARER = /^Bearer\s+(\S+)$/i;
@@ -253,7 +255,7 @@ class OpencodeTransport implements AgentTransport {
   private async check(client: OpencodeClient): Promise<string | null> {
     const agents = await client.get('/agent');
     const config = await client.get('/config');
-    const toolIds = await client.get('/experimental/tool/ids');
+    const toolIds = await client.get('/experimental/tool/ids', TOOL_IDS_TIMEOUT_MS);
     this.subagents = checkedSubagents(agents, this.toolOutput);
     const problem = selfCheck({ agents, config, toolIds }, { mcp: this.launch.mcp.config, toolOutput: this.toolOutput, shell: this.launch.shell });
     if (problem === null) return null;
