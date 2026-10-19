@@ -1,9 +1,11 @@
-// One update cycle of the installed app: check, download in the background, offer a restart. The app menu shows where it stands.
+// One update cycle of the installed app: check, download in the background, offer a restart. The app menu and the window show where it stands.
 const FIRST_CHECK_MS = 15_000;
 const CHECK_EVERY_MS = 4 * 60 * 60_000;
 
 export function createUpdater({ autoUpdater, dialog, getWindow, version, log, onChange }) {
   let state = { phase: 'idle' };
+  // Counts the times the restart was offered, so the window can show it again after a "Later".
+  let offers = 0;
   // Only a check the user asked for answers back with a dialog; the scheduled ones stay quiet.
   let askedByUser = false;
 
@@ -11,9 +13,10 @@ export function createUpdater({ autoUpdater, dialog, getWindow, version, log, on
   autoUpdater.autoInstallOnAppQuit = true;
   autoUpdater.logger = { info: (m) => log(`info ${m}`), warn: (m) => log(`warn ${m}`), error: (m) => log(`error ${m}`), debug: () => {} };
 
+  const snapshot = () => ({ phase: state.phase, version: state.version ?? null, percent: state.percent ?? null, offers });
   const set = (next) => {
     state = next;
-    onChange();
+    onChange(snapshot());
   };
   const say = (options) => {
     const win = getWindow();
@@ -26,7 +29,14 @@ export function createUpdater({ autoUpdater, dialog, getWindow, version, log, on
 
   const install = () => autoUpdater.quitAndInstall(false, true);
 
-  async function offerRestart() {
+  async function offerRestart({ byUser = false } = {}) {
+    // With a window the offer is its toast. Without one nothing pops up on its own; the menu item and the next quit do the job.
+    if (getWindow()) {
+      offers += 1;
+      onChange(snapshot());
+      return;
+    }
+    if (!byUser) return;
     // Restarting stops the running agents, so the safe answer is the default; the update also installs on the next quit.
     const { response } = await say({
       type: 'info',
@@ -60,7 +70,7 @@ export function createUpdater({ autoUpdater, dialog, getWindow, version, log, on
 
   function check({ byUser = false } = {}) {
     if (state.phase === 'ready') {
-      if (byUser) offerRestart();
+      if (byUser) offerRestart({ byUser });
       return;
     }
     if (state.phase !== 'idle') return;
@@ -84,5 +94,9 @@ export function createUpdater({ autoUpdater, dialog, getWindow, version, log, on
     }
   }
 
-  return { start, check, menuItem };
+  const restart = () => {
+    if (state.phase === 'ready') install();
+  };
+
+  return { start, check, menuItem, getState: snapshot, restart };
 }

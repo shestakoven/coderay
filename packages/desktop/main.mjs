@@ -4,7 +4,7 @@ import { appendFileSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, autoUpdater as nativeUpdater, BrowserWindow, dialog, Menu, shell } from 'electron';
+import { app, autoUpdater as nativeUpdater, BrowserWindow, dialog, ipcMain, Menu, shell } from 'electron';
 import electronUpdater from 'electron-updater';
 import { keepRoomForTrafficLights } from './chrome-insets.mjs';
 import { createStopper } from './stop-children.mjs';
@@ -154,6 +154,25 @@ app.whenReady().then(async () => {
     return;
   }
 
+  // The window shows the update as a toast; the progress percent changes too often to be worth a message.
+  let lastBroadcast = '';
+  const broadcast = (update) => {
+    const key = JSON.stringify([update.phase, update.version, update.offers]);
+    if (key === lastBroadcast) return;
+    lastBroadcast = key;
+    for (const win of BrowserWindow.getAllWindows()) win.webContents.send('update:state', update);
+  };
+  const fromOurUi = (event) => {
+    try {
+      return new URL(event.senderFrame.url).origin === UI_ORIGIN;
+    } catch {
+      return false;
+    }
+  };
+  ipcMain.handle('update:get', (event) => (fromOurUi(event) ? (updater?.getState() ?? null) : null));
+  ipcMain.handle('update:restart', (event) => {
+    if (fromOurUi(event)) updater?.restart();
+  });
   const updater = packaged ? createUpdater({
     autoUpdater: electronUpdater.autoUpdater,
     dialog,
@@ -164,7 +183,10 @@ app.whenReady().then(async () => {
         appendFileSync(join(app.getPath('logs'), 'update.log'), `${new Date().toISOString()} ${line}\n`);
       } catch {}
     },
-    onChange: () => setMenu(),
+    onChange: (update) => {
+      setMenu();
+      broadcast(update);
+    },
   }) : null;
   // The default menu binds Cmd+W to "Close Window"; CodeRay needs that key to close a project.
   const setMenu = () => Menu.setApplicationMenu(Menu.buildFromTemplate([
@@ -189,7 +211,7 @@ app.whenReady().then(async () => {
       // Like PyCharm: the traffic lights sit inside the app's own top bar instead of a separate title bar.
       titleBarStyle: 'hidden',
       trafficLightPosition: { x: 14, y: 13 },
-      webPreferences: { contextIsolation: true, nodeIntegration: false },
+      webPreferences: { contextIsolation: true, nodeIntegration: false, preload: join(dirname(fileURLToPath(import.meta.url)), 'preload.cjs') },
     });
     win.webContents.on('dom-ready', () => {
       win.webContents.insertCSS(`

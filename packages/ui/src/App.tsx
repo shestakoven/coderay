@@ -11,6 +11,7 @@ import { anchorOf, NewMenu, OverflowMenu, type MenuAnchor } from './project/Proj
 import { ProjectPalette } from './project/ProjectPalette';
 import { ProjectTabs } from './project/ProjectTabs';
 import { ProjectView } from './project/ProjectView';
+import { UpdateToast } from './desktop/UpdateToast';
 import { Notices } from './project/Notices';
 import { noticesReducer } from './project/notice-state';
 import type { PaletteAction } from './project/palette-model';
@@ -380,6 +381,7 @@ export function App() {
         />
       )}
       <Notices notices={notices} projects={projects.projects} keyOf={keyOf} onOpen={(id) => { activate(id); dispatchNotices({ type: 'shown', projectId: id }); }} onDismiss={(id) => dispatchNotices({ type: 'dismiss', id })} />
+      <UpdateToast />
       <Tooltips />
     </div>
   );

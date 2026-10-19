@@ -122,6 +122,12 @@
 .ptoast.anchored { position: fixed; z-index: 95; }
 .ptoast::before { content: ''; position: absolute; left: 0; top: 12px; bottom: 12px; width: 3px; border-radius: 0 3px 3px 0; background: var(--warn); }
 .ptoast.done::before { background: var(--ok); }
+.ptoast.update::before { background: var(--accent); }
+.ptoast .pt-icon { flex: none; width: 30px; height: 30px; border-radius: 8px; display: grid; place-items: center; color: var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.ptoasts.dock { top: auto; right: auto; left: 14px; bottom: 38px; }
+.ptoasts.dock .ptoast { max-width: calc(100vw - 28px); animation-name: ptoast-up; }
+@keyframes ptoast-up { from { opacity: 0; transform: translateY(8px) scale(0.98); } }
+.pbtn:disabled { opacity: 0.6; cursor: default; }
 .ptoast.error::before { background: var(--error); }
 .ptoast .caret { position: absolute; top: -5px; width: 10px; height: 10px; transform: rotate(45deg); background: var(--surface); border-radius: 2px 0 0 0; box-shadow: -1px -1px 0 rgba(255, 255, 255, 0.07); }
 .ptoast .pt-body { flex: 1; min-width: 0; }
