@@ -1,0 +1,7 @@
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"commandExecution","id":"cmd-1","command":"/bin/zsh -lc 'sleep 600'","cwd":"$CWD","processId":"1","status":"inProgress","commandActions":[{"type":"unknown","command":"sleep 600"}],"aggregatedOutput":null,"exitCode":null}}}
+{"method":"turn/started","params":{"threadId":"sub-agent-thread","turn":{"id":"sub-turn","items":[],"status":"inProgress","error":null}}}
+{"method":"turn/completed","params":{"threadId":"sub-agent-thread","turn":{"id":"sub-turn","items":[],"status":"completed","error":null}}}
+{"fake":"spawn-sleeper"}
+{"fake":"sleep","ms":60000}
+{"fake":"await-turn"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"Back.","phase":"final_answer"}}}

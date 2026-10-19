@@ -1,40 +1,65 @@
 import { randomUUID } from 'node:crypto';
-import { chmodSync, existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import {
-  EFFORT_LEVELS, EMPTY_USAGE,
-  type ChatImage, type ChatItem, type ChatSummary, type EffortLevel, type McpServerState, type PromptAnswer, type PromptBody, type SessionPatch, type SessionServerMessage,
-  type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
+  EMPTY_USAGE, ENGINE_CAPABILITIES, ENGINE_NAMES, isClaudeEffort, isEffortFor, MAX_CHAT_IMAGES, parseModelId,
+  type ChatImage, type ChatItem, type ChatPick, type ChatSummary, type EngineId, type ImageRef, type LimitWindow, type McpEntry, type McpServerState, type PromptAnswer, type PromptBody,
+  type SessionPatch, type SessionServerMessage, type SessionState, type SessionView, type TaskView, type TurnView, type UsageView,
 } from '@ide/protocol';
+import { SYSTEM_HOME, type AccountHome } from '../accounts/account-homes';
 import { CANARY_MS } from '../gate/canary';
+import type { HookAnswer } from '../gate/hook-gate';
 import type { TerminalLaunch } from '../terminal/terminal-service';
 import { defaultTranscriptsDir, largest, recoverTranscript, transcriptPath, UNCLEAN_STOP_KEY } from '../watchdog/recovery';
 import { projectDir, runDir } from '../home';
-import { commandLine, forceKill, isAlive, signal } from '../os-process';
+import { BlobStore, MAX_STORED_IMAGE_BYTES } from '../images/blob-store';
+import { commandLine, forceKill, isAlive, reaches, signal } from '../os-process';
 import type { MessageRecord, PromptRecord, SessionRecord, Store, ToolDecisionRecord, ToolEventRecord } from '../store/store';
-import { KILL_GRACE_MS, startClaude, type ClaudeCommand, type ClaudeProcess, type ProcessExit } from './claude-process';
+import { claudeUnder, KILL_GRACE_MS, startClaude, type ClaudeCommand, type ProcessExit } from './claude-process';
+import { codexUnder, type CodexCommand } from './codex/command';
+import { codexMcp } from './codex/mcp';
+import { claudeEngine } from './engines/claude';
+import { codexEngine, keyRejectedHint, signedOutHint } from './engines/codex';
+import { opencodeEngine, providerHint } from './engines/opencode';
+import { EngineRegistry } from './engines/registry';
+import { opencodeUnder, type OpencodeCommand } from './opencode/command';
+import { ALLOWED_TOOLS } from './opencode/config';
+import { toolName } from './opencode/events';
+import { opencodeMcp, type OpencodeMcp } from './opencode/mcp';
+import { shellWrapper } from './opencode/server';
 import { answerProblem, parsePromptBody, PROMPT_TOOLS, promptResponse } from './prompts';
 import { hookEventInfo, parseHookEvent, parseTranscriptLine, type AgentEvent } from './hook-events';
-import { parseStreamLine, type StreamEvent } from './stream';
+import { reapOrphans } from './reaper';
+import { type StreamEvent, type ToolResultBlock } from './stream';
+import { CLAUDE_PROMPT_NAMES, CODEX_PROMPT_NAMES, codexInstructions, INSTRUCTIONS_CUT, OPENCODE_PROMPT_NAMES, opencodeSystem, type PromptNames } from './system-prompt';
 import { TranscriptTail } from './transcript-tail';
-import { parseUsage } from './usage';
-import { DISALLOWED_TOOLS, isModelChoice, isOlderVersion, MIN_CLAUDE_VERSION, summarizeToolInput } from './tools';
+import {
+  gateArgs, userMessage, type AgentTransport, type ClaudeLaunch, type CodexLaunch, type ControlResponse, type GateCall, type GateLaunch, type OpencodeLaunch,
+  type TransportSink, type UserMessage,
+} from './transport';
+import { mergeLimits, type UsageUpdate } from './usage';
+import { DISALLOWED_TOOLS, ENGINE_BINARIES, isOlderVersion, MIN_VERSIONS, summarizeToolInput } from './tools';
 import { TurnTracker, type Change, type ToolEndInfo } from './tracker';
 
-export type McpServers = Record<string, object>;
+export type McpServers = Record<string, McpEntry>;
 
 export interface SessionGate {
   write(sessionId: string, events?: boolean): { settingsPath: string };
   remove(sessionId: string): void;
-  systemPrompt(): string;
+  systemPrompt(names: PromptNames): string;
   canary?: { expect(sessionId: string): void; wait(sessionId: string, ms: number): Promise<boolean> };
+  /** Throws while the gate cannot decide yet, so no agent starts unguarded. */
+  check?(): void;
+  /** Decides calls that may write and run together or not at all, as claude's PreToolUse hook does one; null when they went away first. */
+  decide?(calls: GateCall[], signal: AbortSignal): Promise<HookAnswer | null>;
 }
 
-// A session runs under the Claude account it started with: claude looks --resume transcripts up in that account's config directory.
+// A chat runs under the account its engine had active when it started: claude looks --resume transcripts up in that account's directory.
 export interface SessionAccounts {
   activeId(): string | null;
-  configDir(id: string | null): string | null;
+  home(id: string | null): AccountHome;
   label(id: string | null): string;
+  activeLabel(): string | null;
 }
 
 export interface AgentSessionOptions {
@@ -42,7 +67,7 @@ export interface AgentSessionOptions {
   home: string;
   store: Store;
   claude: ClaudeCommand;
-  accounts?: SessionAccounts;
+  accounts?: Partial<Record<EngineId, SessionAccounts>>;
   mcpServers?: () => McpServers;
   killGraceMs?: number;
   gate?: SessionGate;
@@ -55,6 +80,14 @@ export interface AgentSessionOptions {
   activeStep?: () => { planId: string; key: string; title: string } | null;
   transcriptsDir?: string;
   canLeave?: () => string | null;
+  // The engines a chat can run on; Claude only, by default.
+  engines?: EngineRegistry;
+  // What a project's first chat starts with; without it nothing starts until the user picks a model.
+  defaultModel?: ChatPick;
+  // The codex the core runs; registers the Codex engine.
+  codex?: CodexCommand;
+  // The opencode the core runs; registers the opencode engine.
+  opencode?: OpencodeCommand;
 }
 
 const ACTIVE_SESSION_KEY = 'activeSessionId';
@@ -63,9 +96,11 @@ const HOOK_OFF_NOTICE =
   "CodeRay's hook did not start, so the agent was not started. Claude Code settings (a managed policy or disableAllHooks) may be switching hooks off.";
 
 const GAP_NOTICE = "Calls made while the core was down may be missing; claude's transcript could not be read.";
+const NO_TRANSCRIPT_GAP_NOTICE = 'Calls made while the core was down may be missing.';
 
 const SESSION_ERRORS = {
   empty: 'Type a message first.',
+  'no-model': 'Choose a model for this chat first.',
   restarting: 'The session is restarting. Try again in a moment.',
   'prompt-gone': 'That question is no longer waiting for an answer.',
   'bad-answer': 'That answer does not fit the question.',
@@ -75,11 +110,15 @@ const SESSION_ERRORS = {
   'busy-configure': 'Wait for the agent to finish or press Stop before changing the model.',
   'busy-switch': 'Wait for the agent to finish or press Stop before switching chats.',
   'busy-account': 'Wait for the agent to finish or press Stop before switching accounts.',
+  'engine-locked': 'This chat runs on another engine. Start a new chat to use that model.',
   'bad-model': 'That model name is not valid.',
   'bad-effort': 'That effort level is not valid.',
   'no-chat': 'That chat does not exist.',
   'busy-terminal': 'Wait for the agent to finish or press Stop before opening the terminal.',
   'in-terminal': 'The agent runs in the terminal view. Switch back to the chat to do this.',
+  'no-engine': 'That model needs an engine CodeRay does not have.',
+  'no-terminal': 'This engine has no terminal view.',
+  refused: "This chat's agent was refused; the chat says why.",
 };
 
 export type SessionErrorCode = keyof typeof SESSION_ERRORS;
@@ -94,12 +133,12 @@ export class SessionError extends Error {
 }
 
 type ExitReason = 'restart' | 'new' | 'close';
-type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'modelChoice' | 'effort' | 'accountId' | 'claudeSessionId' | 'conversationStarted'>>;
+type SessionUpdate = Partial<Pick<SessionRecord, 'status' | 'pid' | 'launchId' | 'engine' | 'modelChoice' | 'effort' | 'accountId' | 'engineSessionId' | 'conversationStarted'>>;
 
 interface LaunchFiles {
   claude: ClaudeCommand;
   configPath: string;
-  gateArgs: string[];
+  gate: GateLaunch | null;
 }
 
 interface PendingPrompt {
@@ -114,9 +153,19 @@ const INTERRUPT_CONFIRM_MS = 5000;
 const PRIVATE_FILE_MODE = 0o600;
 const STALE_POLL_MS = 50;
 const NEVER_ABORTED = new AbortController().signal;
+const MAX_RESULT_IMAGES = 8;
+const MAX_STORED_BASE64 = Math.ceil(MAX_STORED_IMAGE_BYTES / 3) * 4;
+const OPENCODE_ALLOWED: ReadonlySet<string> = new Set(ALLOWED_TOOLS.map((tool) => toolName(tool, {}, [])));
+const opencodeExempt = (name: string): boolean => OPENCODE_ALLOWED.has(name) || name.startsWith('mcp__idecore__');
+const none = (): boolean => false;
+// The project's instructions, which opencode does not read itself under OPENCODE_DISABLE_PROJECT_CONFIG.
+const PROJECT_INSTRUCTIONS = ['AGENTS.md', 'CLAUDE.md'];
 
 export class AgentSession {
   private readonly options: AgentSessionOptions;
+  private readonly blobs: BlobStore;
+  /** The engines a chat can run on, whose status and models the core reports, under the active account. */
+  readonly engines: EngineRegistry;
   private readonly listeners = new Set<(message: SessionServerMessage) => void>();
   private readonly reportedUnknown = new Set<string>();
   private readonly pendingPrompts = new Map<string, PendingPrompt>();
@@ -139,16 +188,22 @@ export class AgentSession {
   private tasks = new Map<string, TaskView>();
   private mcpServers: McpServerState[] = [];
   private skills: string[] = [];
+  private skillsKnown = false;
   private permissionMode: string | null = null;
   private usage: UsageView = EMPTY_USAGE;
-  private process: ClaudeProcess | null = null;
+  private transport: AgentTransport | null = null;
   private exitReason: ExitReason | null = null;
   private terminating = false;
+  // Set by close(): no claude starts after the core began to shut down.
+  private closed = false;
   private versionChecked = false;
   private idle = true;
   private hookReady = true;
   private refused = false;
-  private pendingSends: object[] = [];
+  private refusal: string | null = null;
+  // Each engine's account reports its own windows; a new chat shows those of its own engine and account.
+  private readonly limits = new Map<string, LimitWindow[]>();
+  private pendingSends: UserMessage[] = [];
   private notes: string[] = [];
   private crashed = false;
   private terminalOpen = false;
@@ -157,9 +212,38 @@ export class AgentSession {
   private nudgedTurn: string | null = null;
   private readonly nudged = new Set<string>();
   private interruptKeyAt = Number.NEGATIVE_INFINITY;
+  private sweepPending = false;
+  // After /clear claude names the new conversation in its next init; it has no message of its own until one is sent.
+  private clearPending = false;
+  private clearedTo: string | null = null;
 
   constructor(options: AgentSessionOptions) {
     this.options = options;
+    this.blobs = new BlobStore(projectDir(options.home, options.root));
+    const { codex, opencode } = options;
+    this.engines = options.engines ?? new EngineRegistry([
+      claudeEngine({ command: () => this.activeClaude(), cwd: options.root, account: () => this.options.accounts?.claude?.activeLabel() ?? null }),
+      ...(codex ? [codexEngine({
+        command: () => codexUnder(codex, this.accountHome('codex', this.activeAccount('codex'))), cwd: options.root,
+        signedOut: () => signedOutHint(this.accountHome('codex', this.activeAccount('codex'))),
+        account: () => this.options.accounts?.codex?.activeLabel() ?? null,
+      })] : []),
+      ...(opencode ? [opencodeEngine({
+        command: () => opencodeUnder(opencode, this.accountHome('opencode', this.activeAccount('opencode'))), cwd: options.root,
+        // Q11-quiet: listing the models starts none of the user's MCP servers, so none needs switching off by name.
+        userServers: () => [],
+        account: () => this.options.accounts?.opencode?.activeLabel() ?? null,
+        runDir: runDir(options.home),
+      })] : []),
+    ]);
+  }
+
+  private activeClaude(): ClaudeCommand {
+    return claudeUnder(this.options.claude, this.accountHome('claude', this.activeAccount('claude')));
+  }
+
+  private accountHome(engine: EngineId, id: string | null): AccountHome {
+    return this.options.accounts?.[engine]?.home(id) ?? SYSTEM_HOME;
   }
 
   onMessage(listener: (message: SessionServerMessage) => void): () => void {
@@ -184,10 +268,13 @@ export class AgentSession {
 
   async start(): Promise<void> {
     try {
+      await reapOrphans(runDir(this.options.home), this.options.killGraceMs ?? KILL_GRACE_MS);
       await this.loadLatest();
     } finally {
       this.started = true;
     }
+    // A crash between deleting a chat and sweeping its images leaves them behind until here.
+    this.sweepBlobs();
   }
 
   private async loadLatest(): Promise<void> {
@@ -198,14 +285,23 @@ export class AgentSession {
       this.previous = latest ?? store.latestSession();
       return;
     }
-    if (latest.status === 'running') this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
-    this.crashed = this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
+    // A new chat's claude starts before its first message: a chat left without one is dropped, so it neither looks crashed nor gets resumed.
+    const discard = (latest.status === 'running' || latest.status === 'stopped') && this.unused(latest);
+    if (latest.status === 'running' && !discard) this.options.store.setMeta(UNCLEAN_STOP_KEY, '1');
+    this.crashed = !discard && this.options.store.meta(UNCLEAN_STOP_KEY) === '1';
     if (latest.status === 'running') {
       await stopStale(latest, this.options.killGraceMs ?? KILL_GRACE_MS);
       rmSync(this.configPath(latest.id), { force: true });
       this.options.gate?.remove(latest.id);
     }
-    const gap = latest.status === 'running' ? await this.recoverChat(latest) : null;
+    if (discard) {
+      this.persist(() => store.deleteSession(latest.id));
+      this.setActive('');
+      this.previous = store.latestSession();
+      return;
+    }
+    const recovers = latest.foreignEngine === undefined && ENGINE_CAPABILITIES[latest.engine].transcriptRecovery;
+    const gap = latest.status === 'running' && recovers ? await this.recoverChat(latest) : null;
     this.load(latest);
     this.apply(this.tracker.processExited());
     for (const id of gap?.ids ?? []) {
@@ -213,6 +309,7 @@ export class AgentSession {
       if (item?.kind === 'message' || item?.kind === 'tool') this.items.set(id, { ...item, recovered: true });
     }
     if (gap?.unreadable) this.apply(this.tracker.notice(GAP_NOTICE));
+    if (latest.status === 'running' && !recovers) this.apply(this.tracker.notice(NO_TRANSCRIPT_GAP_NOTICE));
     if (latest.status === 'running') this.update({ status: 'crashed', pid: null, launchId: null });
   }
 
@@ -228,7 +325,7 @@ export class AgentSession {
         ...history.messages.map((m) => m.ts),
         ...history.toolEvents.flatMap((t) => [t.toolUseAt, t.endedAt ?? 0]),
       ]);
-      const recovered = await recoverTranscript({ claudeSessionId: session.claudeSessionId, cwd: session.cwd, since, dir: this.transcriptsDir(session) });
+      const recovered = await recoverTranscript({ engineSessionId: session.engineSessionId, cwd: session.cwd, since, dir: this.transcriptsDir(session) });
       if (recovered.unreadable) return { ids: [], unreadable: true };
       const messageIds = new Set(history.messages.map((m) => m.id));
       const storedTools = new Map(history.toolEvents.map((t) => [t.toolUseId, t]));
@@ -270,6 +367,7 @@ export class AgentSession {
       tasks: [...this.tasks.values()],
       mcpServers: this.mcpServers,
       skills: this.skills,
+      skillsKnown: this.skillsKnown,
       usage: this.usage,
     };
   }
@@ -311,7 +409,21 @@ export class AgentSession {
   }
 
   processAlive(): boolean {
-    return this.process !== null || this.terminalOpen;
+    return this.transport !== null || this.terminalOpen;
+  }
+
+  /** The open chat's engine keeps its calls in an OS sandbox. */
+  sandboxed(): boolean {
+    return this.session !== null && this.session.foreignEngine === undefined && ENGINE_CAPABILITIES[this.session.engine].hardSandbox;
+  }
+
+  /** The tools the open chat's engine runs without asking the gate: opencode's rules allow its reads and idecore's tools. */
+  exempt(): (toolName: string) => boolean {
+    return this.session?.engine === 'opencode' ? opencodeExempt : none;
+  }
+
+  engineOf(): EngineId | null {
+    return this.session?.engine ?? null;
   }
 
   // The chat's process takes a message after an interrupt; a terminal's input belongs to the user.
@@ -402,8 +514,8 @@ export class AgentSession {
     // The chat's stream closes its turns; only the answer to the end of one is the hook's.
     if (!this.terminalOpen) return event?.type === 'turn-end' && !event.failed && this.fromAgent(raw) ? this.turnEndBlock() : null;
     // Only the terminal's claude runs the event hooks, so its SessionStart names the conversation it is in: after /clear or /resume a new one.
-    if (event?.type === 'conversation' && event.claudeSessionId !== session.claudeSessionId) {
-      this.update({ claudeSessionId: event.claudeSessionId, conversationStarted: false });
+    if (event?.type === 'conversation' && event.engineSessionId !== session.engineSessionId) {
+      this.update({ engineSessionId: event.engineSessionId, conversationStarted: false });
       const moved = event.source === 'clear' ? 'The conversation was cleared in the terminal' : event.source === 'resume' ? 'The terminal switched to another conversation' : null;
       if (moved) this.apply(this.tracker.notice(`${moved}; the chat goes on with that one.`));
     }
@@ -422,8 +534,8 @@ export class AgentSession {
   }
 
   private fromAgent(raw: unknown): boolean {
-    const claudeSessionId = (raw as { session_id?: unknown } | null)?.session_id;
-    return claudeSessionId === this.session?.claudeSessionId;
+    const engineSessionId = (raw as { session_id?: unknown } | null)?.session_id;
+    return engineSessionId === this.session?.engineSessionId;
   }
 
   private answerHook(event: AgentEvent, hookName: string, signal: AbortSignal = NEVER_ABORTED, waited = false): object | null | Promise<object | null> {
@@ -520,7 +632,11 @@ export class AgentSession {
     const images = options.images ?? [];
     if (text.trim() === '' && images.length === 0) throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
-    if (this.refused) throw new SessionError('hook-off');
+    if (this.refused) {
+      // Codex's checks run again with the next message (signed in meanwhile, a configuration fixed); claude's hook-off holds until a restart.
+      if (this.session === null || this.session.engine === 'claude') throw new SessionError('hook-off', this.refusal ?? undefined);
+      this.clearRefusal();
+    }
     if (this.terminalOpen) {
       // The terminal's input belongs to the user: CodeRay's own message goes with the user's next one.
       if (options.fromUser !== false || images.length > 0) throw new SessionError('in-terminal');
@@ -529,25 +645,36 @@ export class AgentSession {
     }
     const injected = this.tracker.hasOpenTurn();
     if (!this.session || this.session.status === 'ended') this.begin();
-    if (!this.process) this.spawn();
-    if (!this.process) throw new SessionError('no-gate');
+    if (!this.transport) this.spawn();
+    if (!this.transport) throw new SessionError('no-gate', this.session?.engine === 'claude' ? undefined : 'CodeRay could not get the gate ready, so the agent was not started.');
     if (options.fromUser !== false) notify(this.userMessageListeners);
     const notes = this.notes.splice(0);
     const message = userMessage([...notes, text].filter((part) => part !== '').join('\n\n'), images);
     try {
-      if (this.hookReady) this.process.write(message);
+      if (this.hookReady) this.transport.send(message);
       else this.pendingSends.push(message);
     } catch (error) {
       this.notes.unshift(...notes);
       throw error;
     }
+    this.clearPending = false;
+    this.clearedTo = null;
     const shown = images.length > 0 ? [text, `[${images.length} image${images.length > 1 ? 's' : ''} attached]`].filter((part) => part !== '').join('\n') : text;
-    this.apply(injected ? this.tracker.injectedMessage(shown) : this.tracker.userMessage(shown));
+    const changes = injected ? this.tracker.injectedMessage(shown) : this.tracker.userMessage(shown);
+    const refs = this.storeImages(images.map((image) => image.data), MAX_CHAT_IMAGES);
+    this.apply(refs.length === 0 ? changes : changes.map((change) =>
+      change.kind === 'message' && change.message.role === 'user' ? { ...change, message: { ...change.message, images: refs } } : change));
     for (const note of notes) this.apply(this.tracker.notice(note));
   }
 
   notice(text: string): void {
     this.apply(this.tracker.notice(text));
+  }
+
+  // A failure each attempt meets again is said once, until something else happens in the chat.
+  private noticeOnce(text: string): void {
+    const last = [...this.items.values()].reduce<ChatItem | null>((latest, item) => (latest === null || item.seq > latest.seq ? item : latest), null);
+    if (last?.kind !== 'notice' || last.text !== text) this.apply(this.tracker.notice(text));
   }
 
   queueNote(text: string): void {
@@ -558,16 +685,16 @@ export class AgentSession {
   sendAbsorbed(text: string): void {
     if (text.trim() === '') throw new SessionError('empty');
     if (this.terminating) throw new SessionError('restarting');
-    if (this.refused) throw new SessionError('hook-off');
+    if (this.refused) throw new SessionError(this.session === null || this.session.engine === 'claude' ? 'hook-off' : 'refused', this.refusal ?? undefined);
     if (this.terminalOpen) {
       if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
       this.absorbed.push(text);
       this.apply(this.tracker.notice('CodeRay note sent to the agent'));
       return;
     }
-    if (!this.process) throw new SessionError('no-gate', 'The agent is not running.');
+    if (!this.transport) throw new SessionError('no-gate', 'The agent is not running.');
     if (!this.tracker.hasOpenTurn()) throw new SessionError('no-turn');
-    if (this.hookReady) this.process.write(userMessage(text, []));
+    if (this.hookReady) this.transport.send(userMessage(text, []));
     else this.pendingSends.push(userMessage(text, []));
     this.apply(this.tracker.notice('CodeRay note sent to the agent'));
   }
@@ -579,15 +706,15 @@ export class AgentSession {
       this.options.terminalInput('\x1b');
       return true;
     }
-    if (!this.process || !this.tracker.canInterrupt()) return false;
-    this.process.write({ type: 'control_request', request_id: `interrupt-${randomUUID()}`, request: { subtype: 'interrupt' } });
+    if (!this.transport || !this.tracker.canInterrupt()) return false;
+    this.transport.interrupt();
     notify(this.interruptListeners);
     return true;
   }
 
   stopTask(taskId: string): boolean {
-    if (!this.process) return false;
-    this.process.write({ type: 'control_request', request_id: `stop-task-${randomUUID()}`, request: { subtype: 'stop_task', task_id: taskId } });
+    if (!this.transport) return false;
+    this.transport.stopTask(taskId);
     return true;
   }
 
@@ -597,25 +724,33 @@ export class AgentSession {
 
   answerPrompt(requestId: string, answer: PromptAnswer): void {
     const pending = this.pendingPrompts.get(requestId);
-    if (!pending || !this.process) throw new SessionError('prompt-gone');
+    if (!pending || !this.transport) throw new SessionError('prompt-gone');
     const problem = answerProblem(pending.body, answer);
     if (problem) throw new SessionError('bad-answer', problem);
     this.pendingPrompts.delete(requestId);
-    this.process.write({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: requestId, response: promptResponse(pending.input, answer) },
-    });
+    this.transport.respond({ subtype: 'success', request_id: requestId, response: promptResponse(pending.input, answer) });
     this.apply(this.tracker.promptAnswered(requestId, answer));
   }
 
   async restart(): Promise<void> {
     await this.terminate('restart');
     this.clearRefusal();
+    if (this.session && this.unused(this.session)) this.warm();
   }
 
-  async newSession(): Promise<void> {
+  async newSession(pick: { modelChoice: string; effort: string | null } | null = null): Promise<void> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
+    const chosen = pick === null ? null : this.checkedPick(pick.modelChoice, pick.effort);
+    const current = this.session;
+    if (current && current.foreignEngine === undefined && this.unused(current)) {
+      this.clearRefusal();
+      if (chosen) await this.configure(chosen.modelChoice, chosen.effort);
+      this.warm();
+      return;
+    }
     await this.terminate('new');
+    // A second New chat while the first one waited: the first already opened the new chat.
+    if (this.session?.id !== current?.id) return;
     this.clearRefusal();
     if (this.session && this.session.status !== 'ended') this.update({ status: 'ended' });
     this.notes = [];
@@ -623,12 +758,38 @@ export class AgentSession {
     this.previous = this.session ?? this.previous;
     this.setActive('');
     this.reset(null);
+    this.warm(chosen);
+  }
+
+  // A new chat's claude starts before its first message, so its skills are listed by the time the user types "/".
+  private warm(pick: ChatPick | null = null): void {
+    if (this.closed || this.terminalOpen || this.terminating || this.transport || this.refused || (pick ?? this.nextPick()) === null) return;
+    try {
+      if (!this.session || this.session.status === 'ended') this.begin(pick);
+      this.spawn();
+    } catch (error) {
+      if (error instanceof SessionError && this.session) this.apply(this.tracker.notice(error.message));
+      else console.error('agent: could not start the agent of a new chat', error);
+    }
+  }
+
+  // Neither the user nor the agent has written to the chat yet, so dropping it loses nothing.
+  private unused(session: SessionRecord): boolean {
+    if (session.conversationStarted || (session.engine === 'claude' && existsSync(this.transcript(session)))) return false;
+    if (session.id === this.session?.id && [...this.items.values()].some((item) => item.kind !== 'notice')) return false;
+    const { store } = this.options;
+    if (store.manualTitle(session.id)) return false;
+    const history = store.history(session.id);
+    // The file watcher records the user's own edits into the open chat, and a revert the user makes lands there too.
+    return history.messages.every((message) => message.role === 'notice') && history.toolEvents.length === 0 && history.prompts.length === 0
+      && store.watchdogEvents(session.id).length === 0 && store.changes(session.id, 1).length === 0 && store.reverts(session.id).length === 0;
   }
 
   async deleteSession(id: string): Promise<void> {
     if (!this.options.store.session(id)) throw new SessionError('no-chat');
     if (this.session?.id !== id) {
       this.options.store.deleteSession(id);
+      this.sweepBlobs();
       return;
     }
     await this.discardActive(() => this.options.store.deleteSession(id));
@@ -650,6 +811,9 @@ export class AgentSession {
     await this.terminate('close');
     this.clearRefusal();
     this.notes = [];
+    // A chat opened and left without a word would only clutter the list.
+    const left = this.session;
+    if (left && left.id !== target.id && this.unused(left)) this.persist(() => this.options.store.deleteSession(left.id));
     notify(this.newSessionListeners);
     this.load(target);
     this.apply(this.tracker.processExited());
@@ -659,64 +823,132 @@ export class AgentSession {
     this.emit({ type: 'session.snapshot', state: this.state() });
   }
 
-  async configure(modelChoice: string | null, effort: EffortLevel | null): Promise<void> {
-    if (modelChoice !== null && !isModelChoice(modelChoice)) throw new SessionError('bad-model');
-    if (effort !== null && !EFFORT_LEVELS.includes(effort)) throw new SessionError('bad-effort');
+  async configure(modelChoice: string | null, effort: string | null): Promise<void> {
+    const pick = this.checkedPick(modelChoice, effort);
+    // An effort alone names no model, and with nothing to inherit a chat would start on none.
+    if (pick.modelChoice === null && this.nextPick() === null) throw new SessionError('no-model');
     if (this.terminating) throw new SessionError('restarting');
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (!this.isIdle()) throw new SessionError('busy-configure');
-    if (!this.session || this.session.status === 'ended') this.begin();
-    if (this.session?.modelChoice === modelChoice && this.session.effort === effort) return;
-    this.update({ modelChoice, effort });
-    if (this.process) await this.restart();
+    if (!this.session || this.session.status === 'ended') this.begin(this.nextPick() === null ? pick : null);
+    const session = this.session;
+    if (!session || (session.engine === pick.engine && session.modelChoice === pick.modelChoice && session.effort === pick.effort)) return;
+    // The conversation lives in its engine: once the chat is in use, another engine needs a new chat; a chat of an unknown engine never changes.
+    if (session.foreignEngine !== undefined || (session.engine !== pick.engine && !this.unused(session))) throw new SessionError('engine-locked');
+    // An effort change restarts claude: its only live path, applyFlagSettings, writes the settings layer that also carries the gate's hooks.
+    const liveModel = session.engine === pick.engine && session.effort === pick.effort;
+    const swap = session.engine !== pick.engine;
+    const running = this.transport !== null;
+    // The old engine's agent stops before the chat names the new engine, so none of its last events land under that name.
+    if (swap && running) await this.terminate('restart');
+    if (swap) {
+      // The unused chat moves to the new engine's active account and its windows; a refusal was the old engine's.
+      this.update({ engine: pick.engine, modelChoice: pick.modelChoice, effort: pick.effort, accountId: this.activeAccount(pick.engine) });
+      this.showLimits();
+      this.clearRefusal();
+      // As restart() does: only an agent that was running is started again, on the new engine.
+      if (running) this.warm();
+      return;
+    }
+    this.update({ engine: pick.engine, modelChoice: pick.modelChoice, effort: pick.effort });
+    if (!this.transport) return;
+    if (liveModel) {
+      try {
+        await this.transport.setModel(modelOf(pick.modelChoice));
+        return;
+      } catch (error) {
+        console.error('agent: claude did not switch the model, so it restarts with it', error);
+      }
+    }
+    await this.restart();
   }
 
-  // An idle claude still runs under the previous account, so it is stopped and the next message starts one under the new account.
-  async changeAccount(change: () => void | Promise<void>): Promise<void> {
+  // A null model keeps the engine of the chat it would apply to.
+  private checkedPick(modelChoice: string | null, effort: string | null): ChatPick {
+    const engine = modelChoice === null ? ((this.session ?? this.previous)?.engine ?? 'claude') : parseModelId(modelChoice)?.engine;
+    if (engine === undefined) throw new SessionError('bad-model');
+    if (!this.engines.get(engine)) throw new SessionError('no-engine');
+    if (effort !== null && !isEffortFor(engine, effort)) throw new SessionError('bad-effort');
+    return { engine, modelChoice, effort };
+  }
+
+  // An idle agent still runs under the previous account, so it is stopped and the next message starts one under the new account.
+  async changeAccount(engine: EngineId, change: () => void | Promise<void>): Promise<void> {
     if (this.terminating) throw new SessionError('restarting');
-    if (!this.isIdle()) throw new SessionError('busy-account');
+    const affected = this.session?.engine === engine;
+    if (affected && !this.isIdle()) throw new SessionError('busy-account');
     await change();
-    if (this.process && this.isIdle() && this.session?.accountId !== this.activeAccount()) await this.restart();
+    if (affected && this.transport && this.isIdle() && this.session?.accountId !== this.activeAccount(engine)) await this.restart();
   }
 
   async close(): Promise<void> {
+    this.closed = true;
     await this.terminate('close');
   }
 
-  private activeAccount(): string | null {
-    return this.options.accounts?.activeId() ?? null;
+  private activeAccount(engine: EngineId): string | null {
+    return this.options.accounts?.[engine]?.activeId() ?? null;
+  }
+
+  // A chat of an engine this CodeRay does not know is kept, never run: claude would resume that engine's conversation id.
+  private refuseForeign(session: SessionRecord | null): void {
+    if (session?.foreignEngine !== undefined) throw new SessionError('no-engine', `This chat runs on ${session.foreignEngine}, which this CodeRay does not have.`);
   }
 
   private clearRefusal(): void {
     if (!this.refused) return;
     this.refused = false;
+    this.refusal = null;
     if (this.session?.status === 'refused') this.update({ status: 'stopped' });
   }
 
-  private async awaitCanary(child: ClaudeProcess, sessionId: string, canary: NonNullable<SessionGate['canary']>): Promise<void> {
+  private async awaitCanary(transport: AgentTransport, sessionId: string, canary: NonNullable<SessionGate['canary']>): Promise<void> {
     const reported = await canary.wait(sessionId, this.options.canaryMs ?? CANARY_MS);
-    if (this.process !== child) return;
+    if (this.transport !== transport) return;
     if (reported) {
       this.hookReady = true;
-      for (const message of this.pendingSends.splice(0)) child.write(message);
+      for (const message of this.pendingSends.splice(0)) transport.send(message);
       return;
     }
+    await this.refuseChat(HOOK_OFF_NOTICE);
+  }
+
+  // The chat's agent may not run (the gate is not demonstrably on): it is stopped, and the chat says why.
+  private async refuseChat(reason: string): Promise<void> {
+    if (this.refused) return;
     this.pendingSends = [];
     this.refused = true;
-    this.apply(this.tracker.notice(HOOK_OFF_NOTICE));
+    this.refusal = reason;
+    this.apply(this.tracker.notice(reason));
     await this.terminate('close');
   }
 
-  private begin(): void {
-    const from = this.session ?? this.previous;
+  private begin(pick: ChatPick | null = null): void {
+    const chosen = pick ?? this.nextPick();
+    if (chosen === null) throw new SessionError('no-model');
     const session: SessionRecord = {
-      id: randomUUID(), claudeSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
-      modelChoice: from?.modelChoice ?? 'sonnet', effort: from?.effort ?? 'medium', cliVersion: null,
-      pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(),
+      id: randomUUID(), engine: chosen.engine, engineSessionId: randomUUID(), cwd: this.options.root, status: 'stopped', model: null,
+      modelChoice: chosen.modelChoice, effort: chosen.effort, cliVersion: null,
+      pid: null, launchId: null, conversationStarted: false, startedAt: Date.now(), accountId: this.activeAccount(chosen.engine),
     };
     this.persist(() => this.options.store.saveSession(session));
     this.setActive(session.id);
     this.reset(session);
+  }
+
+  /** What a new chat starts with: the open or previous chat's engine, model and effort, else the default model; null when nothing names one. */
+  nextPick(): ChatPick | null {
+    // A chat, or a default model, of an engine this CodeRay does not know, or does not run, names nothing it can start.
+    const runs = (engine: EngineId): boolean => this.engines.get(engine) !== undefined;
+    const chat = [this.session, this.previous].find((candidate): candidate is SessionRecord =>
+      candidate !== null && candidate.foreignEngine === undefined && runs(candidate.engine));
+    const fallback = this.options.defaultModel;
+    const from = chat ?? (fallback !== undefined && runs(fallback.engine) ? fallback : null);
+    if (from === null) return null;
+    // An earlier Claude chat with no model or effort ran on claude's defaults; the chat after it names them, as it always has.
+    return from.engine === 'claude'
+      ? { engine: 'claude', modelChoice: from.modelChoice ?? 'sonnet', effort: from.effort ?? 'medium' }
+      : { engine: from.engine, modelChoice: from.modelChoice, effort: from.effort };
   }
 
   private setActive(id: string): void {
@@ -731,9 +963,12 @@ export class AgentSession {
     this.tasks = new Map();
     this.mcpServers = [];
     this.skills = [];
+    this.skillsKnown = false;
     this.permissionMode = null;
-    this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
+    this.usage = { ...EMPTY_USAGE, limits: this.limits.get(limitKey(session)) ?? [] };
     this.pendingPrompts.clear();
+    this.clearPending = false;
+    this.clearedTo = null;
     this.decisions.clear();
     this.emit({ type: 'session.snapshot', state: this.state() });
   }
@@ -745,9 +980,12 @@ export class AgentSession {
     this.turns = new Map(history.turns.map((turn) => [turn.id, turn]));
     this.mcpServers = [];
     this.skills = [];
+    this.skillsKnown = false;
     this.permissionMode = null;
-    this.usage = { ...EMPTY_USAGE, fiveHour: this.usage.fiveHour, sevenDay: this.usage.sevenDay };
+    this.usage = { ...EMPTY_USAGE, limits: this.limits.get(limitKey(session)) ?? [] };
     this.pendingPrompts.clear();
+    this.clearPending = false;
+    this.clearedTo = null;
     this.decisions.clear();
     for (const decision of history.decisions) this.decisions.set(decision.toolUseId, decision);
     this.items = new Map([
@@ -773,6 +1011,11 @@ export class AgentSession {
     if (this.terminalOpen) throw new SessionError('in-terminal');
     if (this.terminating) throw new SessionError('restarting');
     if (!this.isIdle()) throw new SessionError('busy-terminal');
+    const open = this.session && this.session.status !== 'ended' ? this.session : null;
+    this.refuseForeign(open);
+    const engine = (open ?? this.nextPick())?.engine ?? 'claude';
+    if (!this.engines.get(engine)) throw new SessionError('no-engine');
+    if (!ENGINE_CAPABILITIES[engine].terminalView) throw new SessionError('no-terminal');
     await this.terminate('close');
     this.clearRefusal();
     if (!this.session || this.session.status === 'ended') this.begin();
@@ -803,7 +1046,7 @@ export class AgentSession {
     }
     return {
       kind: 'agent', title: 'claude', file: files.claude.command, cwd: session.cwd, env: files.claude.env ?? {},
-      args: [...files.claude.args, ...conversationArgs(session, session.conversationStarted || existsSync(this.transcript(session)), files.configPath, files.gateArgs)],
+      args: [...files.claude.args, ...conversationArgs(session, this.resumable(session), files.configPath, gateArgs(files.gate))],
     };
   }
 
@@ -829,7 +1072,7 @@ export class AgentSession {
     canary.expect(session.id);
     const probe = startClaude(
       files.claude,
-      ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--no-session-persistence', '--strict-mcp-config', ...files.gateArgs],
+      ['-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--no-session-persistence', '--strict-mcp-config', ...gateArgs(files.gate)],
       session.cwd, () => {}, { killGraceMs: this.options.killGraceMs },
     );
     try {
@@ -840,30 +1083,38 @@ export class AgentSession {
   }
 
   private transcriptsDir(session: SessionRecord): string {
-    const configDir = this.options.accounts?.configDir(session.accountId) ?? null;
+    const configDir = this.accountHome('claude', session.accountId).dir;
     return this.options.transcriptsDir ?? (configDir === null ? defaultTranscriptsDir() : join(configDir, 'projects'));
   }
 
   private transcript(session: SessionRecord): string {
-    return transcriptPath(this.transcriptsDir(session), session.cwd, session.claudeSessionId);
+    return transcriptPath(this.transcriptsDir(session), session.cwd, session.engineSessionId);
+  }
+
+  // claude refuses to resume a conversation with no transcript yet, so a new one starts with --session-id; the id an init gives after /clear already has one.
+  private resumable(session: SessionRecord): boolean {
+    return session.conversationStarted || (session.engine === 'claude' && existsSync(this.transcript(session)));
   }
 
   private syncAccount(): void {
-    if (!this.session) return;
-    const accountId = this.activeAccount();
-    if (this.session.accountId === accountId) return;
-    const resumable = this.session.conversationStarted;
-    this.update({ accountId, claudeSessionId: randomUUID(), conversationStarted: false });
-    if (resumable) this.apply(this.tracker.notice(`Switched to account ${this.options.accounts?.label(accountId) ?? 'System'}; Claude starts a fresh conversation.`));
+    const session = this.session;
+    if (!session) return;
+    const accountId = this.activeAccount(session.engine);
+    if (session.accountId === accountId) return;
+    this.update({ accountId, engineSessionId: randomUUID(), conversationStarted: false });
+    this.showLimits();
+    if (!session.conversationStarted) return;
+    const label = this.options.accounts?.[session.engine]?.label(accountId) ?? 'System';
+    this.apply(this.tracker.notice(`Switched to account ${label}; ${ENGINE_NAMES[session.engine]} starts a fresh conversation.`));
   }
 
   // Writes the MCP config and the gate's hook settings claude starts with; null when the hook settings could not be written.
   private launchFiles(session: SessionRecord, terminal = false): LaunchFiles | null {
-    let gateArgs: string[] = [];
+    let gate: GateLaunch | null = null;
     if (this.options.gate) {
       try {
         const { settingsPath } = this.options.gate.write(session.id, terminal);
-        gateArgs = ['--settings', settingsPath, '--append-system-prompt', this.options.gate.systemPrompt(), '--system-prompt-snapshot', 'off'];
+        gate = { settingsPath, appendSystemPrompt: this.options.gate.systemPrompt(CLAUDE_PROMPT_NAMES) };
       } catch (error) {
         console.error('agent: could not write the hook settings', error);
         this.apply(this.tracker.notice(`CodeRay could not write the hook settings for claude (${(error as Error).message}), so the agent was not started.`));
@@ -876,39 +1127,141 @@ export class AgentSession {
     const configPath = this.configPath(session.id);
     rmSync(configPath, { force: true });
     writeFileSync(configPath, JSON.stringify({ mcpServers: this.options.mcpServers?.() ?? {} }), { mode: PRIVATE_FILE_MODE });
-    const accountDir = this.options.accounts?.configDir(session.accountId) ?? null;
-    const claude = accountDir === null ? this.options.claude : { ...this.options.claude, env: { ...this.options.claude.env, CLAUDE_CONFIG_DIR: accountDir } };
-    return { claude, configPath, gateArgs };
+    const claude = claudeUnder(this.options.claude, this.accountHome('claude', session.accountId));
+    return { claude, configPath, gate };
+  }
+
+  // Claude's part of a launch: the MCP config and the gate's settings it starts with; null when the settings could not be written.
+  private prepareClaude(session: SessionRecord): ClaudeLaunch | null {
+    const files = this.launchFiles(session);
+    if (!files) return null;
+    return {
+      engine: session.engine, cwd: session.cwd, engineSessionId: session.engineSessionId, resume: this.resumable(session),
+      model: claudeModel(session.modelChoice),
+      effort: session.effort !== null && isClaudeEffort(session.effort) ? session.effort : null,
+      claude: files.claude, mcpConfigPath: files.configPath, disallowedTools: DISALLOWED_TOOLS, gate: files.gate,
+      killGraceMs: this.options.killGraceMs, pidDir: runDir(this.options.home),
+    };
+  }
+
+  // Codex's part of a launch: its command under the chat's account, the IDE's MCP list in its dialect, the instructions and the gate.
+  private prepareCodex(session: SessionRecord): CodexLaunch | null {
+    const codex = this.options.codex;
+    if (!codex) throw new SessionError('no-engine');
+    const gate = this.options.gate;
+    try {
+      gate?.check?.();
+    } catch (error) {
+      this.noticeOnce(`CodeRay could not get the gate ready for Codex (${(error as Error).message}).`);
+      return null;
+    }
+    let mcp: ReturnType<typeof codexMcp>;
+    try {
+      mcp = codexMcp(this.options.mcpServers?.() ?? {});
+    } catch (error) {
+      throw new SessionError('no-gate', `CodeRay could not give Codex its MCP servers (${(error as Error).message}), so the agent was not started.`);
+    }
+    const home = this.accountHome('codex', session.accountId);
+    return {
+      engine: 'codex', cwd: session.cwd, engineSessionId: session.engineSessionId, resume: session.conversationStarted,
+      model: modelOf(session.modelChoice), effort: session.effort,
+      codex: codexUnder(codex, home),
+      // The transport switches codex's apps and plugins off and keeps these secrets out of the model's shell, whatever the launch says.
+      servers: mcp.names, config: mcp.config, env: mcp.env,
+      developerInstructions: codexInstructions(gate?.systemPrompt(CODEX_PROMPT_NAMES) ?? null),
+      signedOutHint: signedOutHint(home), keyRejectedHint: keyRejectedHint(home),
+      ...(gate?.decide ? { decide: (calls: GateCall[], signal: AbortSignal) => gate.decide!(calls, signal) } : {}),
+      killGraceMs: this.options.killGraceMs, pidDir: runDir(this.options.home),
+    };
+  }
+
+  // opencode's part of a launch: its command under the chat's account, the IDE's MCP list in its dialect, the shell wrapper, the system text and the gate.
+  private prepareOpencode(session: SessionRecord): OpencodeLaunch | null {
+    const opencode = this.options.opencode;
+    if (!opencode) throw new SessionError('no-engine');
+    const gate = this.options.gate;
+    try {
+      gate?.check?.();
+    } catch (error) {
+      this.noticeOnce(`CodeRay could not get the gate ready for opencode (${(error as Error).message}).`);
+      return null;
+    }
+    let mcp: OpencodeMcp;
+    try {
+      mcp = opencodeMcp(this.options.mcpServers?.() ?? {});
+    } catch (error) {
+      throw new SessionError('no-gate', `CodeRay could not give opencode its MCP servers (${(error as Error).message}), so the agent was not started.`);
+    }
+    const system = opencodeSystem(gate?.systemPrompt(OPENCODE_PROMPT_NAMES) ?? null, projectInstructions(session.cwd));
+    if (system.endsWith(INSTRUCTIONS_CUT)) this.noticeOnce("The project's instructions (AGENTS.md, CLAUDE.md) are longer than 64 KB: opencode gets only their first 64 KB.");
+    const home = this.accountHome('opencode', session.accountId);
+    const dir = runDir(this.options.home);
+    return {
+      engine: 'opencode', cwd: session.cwd, engineSessionId: session.engineSessionId, resume: session.conversationStarted,
+      model: modelOf(session.modelChoice), effort: session.effort,
+      opencode: opencodeUnder(opencode, home),
+      // Q11-quiet: the transport reads the user's servers from a server started without CodeRay's.
+      servers: mcp.names, mcp, userServers: null,
+      shell: shellWrapper(dir), system, providerHint: (providerID) => providerHint(providerID, home),
+      ...(gate?.decide ? { decide: (calls: GateCall[], signal: AbortSignal) => gate.decide!(calls, signal) } : {}),
+      killGraceMs: this.options.killGraceMs, pidDir: dir,
+    };
   }
 
   private spawn(): void {
-    if (!this.session) return;
+    if (!this.session || this.closed) return;
+    this.refuseForeign(this.session);
+    const engine = this.engines.get(this.session.engine);
+    if (!engine) throw new SessionError('no-engine');
     this.syncAccount();
     const session = this.session;
-    const files = this.launchFiles(session);
-    if (!files) return;
-    const child = startClaude(files.claude, claudeArgs(session, files.configPath, files.gateArgs), session.cwd, (line) => this.onLine(line), {
-      killGraceMs: this.options.killGraceMs,
-    });
-    this.process = child;
+    const launch = session.engine === 'codex' ? this.prepareCodex(session) : session.engine === 'opencode' ? this.prepareOpencode(session) : this.prepareClaude(session);
+    if (!launch) return;
+    // A stopped claude's last events may arrive while the next one starts; they no longer belong to the chat.
+    const sink: TransportSink = { event: (event) => { if (this.transport === transport) this.onStreamEvent(event); } };
+    const transport = engine.start(launch, sink);
+    this.transport = transport;
     this.exitReason = null;
     this.versionChecked = false;
-    this.update({ status: 'running', pid: child.pid ?? null, launchId: session.claudeSessionId });
-    const canary = this.options.gate?.canary;
+    this.update({ status: 'running', pid: transport.pid ?? null, launchId: session.engineSessionId });
+    const canary = session.engine === 'claude' ? this.options.gate?.canary : undefined;
     this.hookReady = canary === undefined;
     this.pendingSends = [];
     if (canary) {
       canary.expect(session.id);
-      void this.awaitCanary(child, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
+      void this.awaitCanary(transport, session.id, canary).catch((error: unknown) => console.error('agent: could not check the hook canary', error));
     }
-    void child.exited.then((exit) => this.onExit(child, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
+    // Claude lists its skills in init only after the first message; until then the chat shows this list, and init's replaces it.
+    void transport.skills().then((skills) => {
+      if (this.transport !== transport || this.skillsKnown) return;
+      this.skills = skills;
+      this.skillsKnown = true;
+      this.emit({ type: 'session.patch', patch: { skills, skillsKnown: true } });
+    }, (error: unknown) => {
+      if (this.transport !== transport) return;
+      console.error('agent: could not list the skills before claude\'s init', error);
+      if (this.skillsKnown) return;
+      // The chat stops saying it is loading them; init still lists them after the first message.
+      this.skillsKnown = true;
+      this.emit({ type: 'session.patch', patch: { skillsKnown: true } });
+    });
+    void transport.exited.then((exit) => this.onExit(transport, exit)).catch((error: unknown) => console.error('agent: could not process claude exit', error));
   }
 
-  private onLine(line: string): void {
+  private onStreamEvent(event: StreamEvent): void {
     try {
-      const event = parseStreamLine(line);
-      this.trackUsage(line);
-      if (!event) return;
+      if (event.type === 'usage') {
+        this.trackUsage(event.update);
+        return;
+      }
+      if (event.type === 'notice') {
+        this.apply(this.tracker.notice(event.text));
+        return;
+      }
+      if (event.type === 'refused') {
+        void this.refuseChat(event.reason).catch((error: unknown) => console.error('agent: could not refuse the chat', error));
+        return;
+      }
       if (event.type === 'text_delta') {
         // Subagent text is shown only once it is complete.
         if (event.parentToolUseId === null) this.emit({ type: 'session.delta', text: event.text });
@@ -925,27 +1278,74 @@ export class AgentSession {
     }
   }
 
-  private trackUsage(line: string): void {
-    const update = parseUsage(line, this.session?.model ?? null);
-    if (!update) return;
-    const usage = { ...this.usage, ...update };
+  private trackUsage(update: UsageUpdate): void {
+    const key = limitKey(this.session);
+    const limits = update.limits ? mergeLimits(this.limits.get(key) ?? [], update.limits) : this.usage.limits;
+    if (update.limits) this.limits.set(key, limits);
+    const usage = { ...this.usage, ...update, limits };
     if (JSON.stringify(usage) === JSON.stringify(this.usage)) return;
     this.usage = usage;
     this.emit({ type: 'session.patch', patch: { usage } });
   }
 
+  // The meter shows the windows of the chat's engine and account: another account's never stay after a switch.
+  private showLimits(): void {
+    const limits = this.limits.get(limitKey(this.session)) ?? [];
+    if (JSON.stringify(limits) === JSON.stringify(this.usage.limits)) return;
+    this.usage = { ...this.usage, limits };
+    this.emit({ type: 'session.patch', patch: { usage: this.usage } });
+  }
+
   private handle(event: StreamEvent): Change[] {
+    if (event.type === 'conversation_reset') {
+      this.clearPending = true;
+      return [];
+    }
     if (event.type === 'control_request') return this.controlRequest(event);
+    // opencode's chat runs on the second server it starts; the first only read the user's MCP servers.
+    const pid = this.transport?.pid ?? null;
+    if (event.type === 'init' && pid !== this.session?.pid) this.update({ pid });
     const changes = this.tracker.event(event);
+    if (event.type === 'user') this.attachResultImages(event.toolResults, changes);
     if (event.type === 'init' && !this.versionChecked) {
       this.versionChecked = true;
-      if (event.cliVersion !== null && isOlderVersion(event.cliVersion, MIN_CLAUDE_VERSION)) {
+      const engine = this.session?.engine ?? 'claude';
+      const floor = MIN_VERSIONS[engine];
+      if (event.cliVersion !== null && isOlderVersion(event.cliVersion, floor)) {
         changes.push(...this.tracker.notice(
-          `claude ${event.cliVersion} is older than ${MIN_CLAUDE_VERSION}, the version CodeRay was verified with; tool names and stream events may differ.`,
+          `${ENGINE_BINARIES[engine]} ${event.cliVersion} is older than ${floor}, the version CodeRay was verified with; tool names and stream events may differ.`,
         ));
       }
     }
     return changes;
+  }
+
+  // A call's images are kept once it ends; its item carries only their refs.
+  private attachResultImages(results: ToolResultBlock[], changes: Change[]): void {
+    for (const result of results) {
+      if (result.images.length === 0) continue;
+      const index = changes.findIndex((change) => change.kind === 'tool' && change.tool.toolUseId === result.toolUseId);
+      const change = changes[index];
+      if (change?.kind !== 'tool') continue;
+      const images = this.storeImages(result.images, MAX_RESULT_IMAGES);
+      if (images.length > 0) changes[index] = { kind: 'tool', tool: { ...change.tool, images } };
+    }
+  }
+
+  // Parts that are not a png, jpeg, gif or webp, or are too large to keep, are left out.
+  private storeImages(images: string[], limit: number): ImageRef[] {
+    const refs: ImageRef[] = [];
+    for (const data of images) {
+      if (refs.length >= limit) break;
+      if (data.length > MAX_STORED_BASE64) continue;
+      try {
+        const ref = this.blobs.put(Buffer.from(data, 'base64'));
+        if (ref) refs.push(ref);
+      } catch (error) {
+        console.error('agent: could not keep an image of the chat', error);
+      }
+    }
+    return refs;
   }
 
   private controlRequest(event: Extract<StreamEvent, { type: 'control_request' }>): Change[] {
@@ -959,22 +1359,22 @@ export class AgentSession {
       ? `CodeRay does not answer permission prompts for ${event.toolName ?? 'this tool'}.`
       : `CodeRay does not handle "${event.subtype}" requests.`;
     console.warn(`agent: refused a ${event.subtype} request from claude: ${reason}`);
-    const response = event.subtype === 'can_use_tool'
+    const response: ControlResponse = event.subtype === 'can_use_tool'
       ? { subtype: 'success', request_id: event.requestId, response: { behavior: 'deny', message: reason } }
       : { subtype: 'error', request_id: event.requestId, error: reason };
-    this.process?.write({ type: 'control_response', response });
+    this.transport?.respond(response);
     return this.tracker.notice(`Refused a "${event.subtype}" request from claude: ${reason}`);
   }
 
-  private onExit(child: ClaudeProcess, exit: ProcessExit): void {
-    if (this.process !== child || !this.session) return;
-    this.process = null;
+  private onExit(transport: AgentTransport, exit: ProcessExit): void {
+    if (this.transport !== transport || !this.session) return;
+    this.transport = null;
     this.terminating = false;
     rmSync(this.configPath(this.session.id), { force: true });
     this.options.gate?.remove(this.session.id);
     const reason = this.exitReason;
     this.apply(this.tracker.processExited());
-    if (reason === null) this.apply(this.tracker.notice(crashNotice(exit)));
+    if (reason === null) this.apply(this.tracker.notice(crashNotice(exit, this.session.engine)));
     const status = reason === null ? 'crashed' : reason === 'new' ? 'ended' : this.refused ? 'refused' : 'stopped';
     this.update({ status, pid: null, launchId: null });
     notify(this.exitListeners);
@@ -982,9 +1382,12 @@ export class AgentSession {
 
   private async discardActive(remove: () => void): Promise<void> {
     if (this.terminalOpen) throw new SessionError('in-terminal');
+    // New chat or a restart waiting for the old claude would start the next one into the chat this drops.
+    if (this.terminating) throw new SessionError('restarting');
     await this.terminate('close');
     this.clearRefusal();
     remove();
+    this.sweepBlobs();
     this.notes = [];
     notify(this.newSessionListeners);
     this.previous = this.session ?? this.previous;
@@ -992,12 +1395,26 @@ export class AgentSession {
     this.reset(null);
   }
 
+  // Chats share blobs, so one goes only when no remaining row refers to it. The sweep runs in one go, so no image stored meanwhile can lose its row.
+  private sweepBlobs(): void {
+    if (this.sweepPending) return;
+    this.sweepPending = true;
+    setImmediate(() => {
+      this.sweepPending = false;
+      try {
+        this.blobs.sweep(() => this.options.store.imageIds());
+      } catch (error) {
+        console.error('agent: could not remove the images of deleted chats', error);
+      }
+    });
+  }
+
   private async terminate(reason: ExitReason): Promise<void> {
-    const child = this.process;
-    if (!child) return;
+    const transport = this.transport;
+    if (!transport) return;
     this.terminating = true;
     this.exitReason = reason;
-    await child.kill();
+    await transport.kill();
   }
 
   private update(changes: SessionUpdate): void {
@@ -1049,20 +1466,27 @@ export class AgentSession {
         this.permissionMode = change.permissionMode;
         patch.session = sessionView(this.session ?? session, change.permissionMode);
       } else {
+        const engineSessionId = change.engineSessionId || session.engineSessionId;
+        if (this.clearPending) {
+          this.clearPending = false;
+          this.clearedTo = engineSessionId;
+        }
         const updated: SessionRecord = {
           ...(this.session ?? session),
-          claudeSessionId: change.claudeSessionId || session.claudeSessionId,
+          engineSessionId,
           model: change.model,
           cliVersion: change.cliVersion,
-          conversationStarted: true,
+          conversationStarted: engineSessionId !== this.clearedTo,
         };
         this.session = updated;
         this.persist(() => store.saveSession(updated));
         this.mcpServers = change.mcpServers;
         this.skills = change.skills;
+        this.skillsKnown = true;
         patch.session = sessionView(updated, this.permissionMode);
         patch.mcpServers = change.mcpServers;
         patch.skills = change.skills;
+        patch.skillsKnown = true;
       }
     }
     this.emit({ type: 'session.patch', patch });
@@ -1112,42 +1536,54 @@ function notify<Args extends unknown[]>(listeners: Set<(...args: Args) => void>,
   }
 }
 
-function userMessage(text: string, images: ChatImage[]): object {
-  if (images.length === 0) return { type: 'user', message: { role: 'user', content: text } };
-  const blocks = images.map((image) => ({ type: 'image', source: { type: 'base64', media_type: image.mediaType, data: image.data } }));
-  return { type: 'user', message: { role: 'user', content: text === '' ? blocks : [...blocks, { type: 'text', text }] } };
+// Each file once: CLAUDE.md is often a link to AGENTS.md.
+function projectInstructions(cwd: string): { path: string; text: string }[] {
+  const files = PROJECT_INSTRUCTIONS.flatMap((path) => {
+    try {
+      return [{ path, text: readFileSync(join(cwd, path), 'utf8') }];
+    } catch {
+      return [];
+    }
+  });
+  return files.filter((file, index) => files.findIndex((other) => other.text === file.text) === index);
 }
 
-function claudeArgs(session: SessionRecord, mcpConfigPath: string, gateArgs: string[]): string[] {
-  return [
-    '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-    ...conversationArgs(session, session.conversationStarted, mcpConfigPath, gateArgs),
-    '--permission-prompt-tool', 'stdio',
-  ];
+// The model as its engine names it, without the engine's prefix.
+const modelOf = (modelChoice: string | null): string | null => (modelChoice === null ? null : (parseModelId(modelChoice)?.model ?? null));
+
+// Claude's windows stay one set across its accounts and with no chat open, as before engines; another engine's are its account's own.
+const limitKey = (session: SessionRecord | null): string =>
+  (session === null || session.engine === 'claude' ? 'claude' : `${session.engine}:${session.accountId ?? 'system'}`);
+
+// The model as claude's --model takes it; null for no model, or for one of another engine.
+function claudeModel(modelChoice: string | null): string | null {
+  const ref = modelChoice === null ? null : parseModelId(modelChoice);
+  return ref?.engine === 'claude' ? ref.model : null;
 }
 
-function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateArgs: string[]): string[] {
+function conversationArgs(session: SessionRecord, resume: boolean, mcpConfigPath: string, gateFlags: string[]): string[] {
+  const model = claudeModel(session.modelChoice);
   return [
-    resume ? '--resume' : '--session-id', session.claudeSessionId,
-    ...(session.modelChoice !== null && isModelChoice(session.modelChoice) ? ['--model', session.modelChoice] : []),
-    ...(session.effort !== null && EFFORT_LEVELS.includes(session.effort) ? ['--effort', session.effort] : []),
+    resume ? '--resume' : '--session-id', session.engineSessionId,
+    ...(model !== null ? ['--model', model] : []),
+    ...(session.effort !== null && isClaudeEffort(session.effort) ? ['--effort', session.effort] : []),
     '--mcp-config', mcpConfigPath,
     '--disallowedTools', DISALLOWED_TOOLS.join(','),
-    ...gateArgs,
+    ...gateFlags,
     '--dangerously-skip-permissions',
   ];
 }
 
 function sessionView(session: SessionRecord, permissionMode: string | null): SessionView {
   return {
-    id: session.id, claudeSessionId: session.claudeSessionId, status: session.status,
+    id: session.id, engine: session.engine, engineSessionId: session.engineSessionId, status: session.status,
     model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, permissionMode, startedAt: session.startedAt,
   };
 }
 
 function messageItem(message: MessageRecord): ChatItem {
   const base = { id: message.id, seq: message.seq, turnId: message.turnId, parentToolUseId: message.parentToolUseId, text: message.text, ts: message.ts };
-  return message.role === 'notice' ? { kind: 'notice', ...base } : { kind: 'message', role: message.role, ...base };
+  return message.role === 'notice' ? { kind: 'notice', ...base } : { kind: 'message', role: message.role, ...base, ...(message.images ? { images: message.images } : {}) };
 }
 
 function toolItem(event: ToolEventRecord, root: string, decision?: ToolDecisionRecord): ChatItem {
@@ -1155,6 +1591,7 @@ function toolItem(event: ToolEventRecord, root: string, decision?: ToolDecisionR
     kind: 'tool', id: event.toolUseId, seq: event.seq, turnId: event.turnId, parentToolUseId: event.parentToolUseId,
     tool: event.tool, summary: summarizeToolInput(event.input, root), status: event.status, startedAt: event.toolUseAt, endedAt: event.endedAt,
     decision: decision?.decision ?? null, targets: decision?.targets ?? [],
+    ...(event.images ? { images: event.images } : {}),
   };
 }
 
@@ -1165,17 +1602,18 @@ function promptItem(prompt: PromptRecord): ChatItem {
   };
 }
 
-function crashNotice(exit: ProcessExit): string {
+function crashNotice(exit: ProcessExit, engine: EngineId): string {
   const reason = exit.error ?? (exit.signal ? `signal ${exit.signal}` : `exit code ${exit.code}`);
   const lastLine = exit.stderr.trim().split('\n').at(-1);
-  return `claude stopped unexpectedly (${reason})${lastLine ? `: ${lastLine}` : ''}`;
+  return `${ENGINE_BINARIES[engine]} stopped unexpectedly (${reason})${lastLine ? `: ${lastLine}` : ''}`;
 }
 
 async function stopStale(session: SessionRecord, graceMs: number): Promise<void> {
   const { pid, launchId } = session;
   if (pid === null || launchId === null) return;
-  const launchedWith = new RegExp(`--(?:session-id|resume) ${launchId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`);
-  const isStale = () => launchedWith.test(commandLine(pid) ?? '');
+  const launchedWith = new RegExp(`--(?:session-id|resume)[ =]${launchId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s|$)`);
+  // A core started from that claude's Bash would stop itself with it.
+  const isStale = () => launchedWith.test(commandLine(pid) ?? '') && !reaches(pid, process.pid);
   if (!isStale()) return;
   signal(pid, 'SIGTERM');
   const deadline = Date.now() + graceMs;

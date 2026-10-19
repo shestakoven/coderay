@@ -186,7 +186,7 @@ export function ReviewDiff({ file, state, result, noRequest, onRetry, mode, onMo
           </div>
           <span className="rv-spacer" />
           {diff && <button className="rv-btn ghost" onClick={() => compose(firstChangedAnchor(diff, Math.min(activeHunk, hunks - 1)))} title="Comment on this hunk (c)"><Icon name="comment" size={14} /><span className="rv-label">Comment</span><Kbd>c</Kbd></button>}
-          <button className="rv-btn ghost" onClick={onMap} title="Show on the map"><Icon name="map" size={14} /><span className="rv-label">Map</span></button>
+          <button className="rv-btn ghost" onClick={onMap} title="Show on the project map"><Icon name="map" size={14} /><span className="rv-label">Project map</span></button>
         </div>
       </header>
       {error && <div className="rv-error" role="alert"><Icon name="alert" size={14} /><span>{error}</span><button className="rv-icon" onClick={onDismissError} aria-label="Dismiss"><Icon name="close" size={13} /></button></div>}

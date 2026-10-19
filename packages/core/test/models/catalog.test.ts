@@ -4,6 +4,8 @@ import { describe, expect, it } from 'vitest';
 import { fetchModels, parseModels } from '../../src/models/catalog';
 import { tempDir } from '../helpers';
 
+const CLAUDE_EFFORTS = ['low', 'medium', 'high', 'xhigh', 'max'];
+
 const response = (models: unknown[], requestId = 'models') => JSON.stringify({
   type: 'control_response', response: { subtype: 'success', request_id: requestId, response: { models } },
 });
@@ -15,11 +17,25 @@ describe('parseModels', () => {
       { value: 'sonnet', displayName: 'Sonnet 5.5' },
       { value: 'claude-opus-4-6', displayName: 'Opus 4.6' },
     ]);
-    expect(parseModels(line)).toEqual([{ value: 'sonnet', name: 'Sonnet 5.5' }, { value: 'claude-opus-4-6', name: 'Opus 4.6' }]);
+    expect(parseModels(line)).toEqual([
+      { value: 'sonnet', name: 'Sonnet 5.5', engine: 'claude', efforts: CLAUDE_EFFORTS },
+      { value: 'claude-opus-4-6', name: 'Opus 4.6', engine: 'claude', efforts: CLAUDE_EFFORTS },
+    ]);
   });
 
   it('skips entries without a string value or display name', () => {
-    expect(parseModels(response([{ value: 'opus' }, { displayName: 'X' }, null, { value: 'haiku', displayName: 'Haiku 4.5' }]))).toEqual([{ value: 'haiku', name: 'Haiku 4.5' }]);
+    expect(parseModels(response([{ value: 'opus' }, { displayName: 'X' }, null, { value: 'haiku', displayName: 'Haiku 4.5' }])))
+      .toEqual([{ value: 'haiku', name: 'Haiku 4.5', engine: 'claude', efforts: CLAUDE_EFFORTS }]);
+  });
+
+  it("offers the effort levels claude names for a model, none when it names none or only levels CodeRay does not know, and all five when it says nothing", () => {
+    const line = response([
+      { value: 'opus', displayName: 'Opus 5.5', supportedEffortLevels: ['low', 'high', 'ultra'] },
+      { value: 'haiku', displayName: 'Haiku 4.5', supportedEffortLevels: [] },
+      { value: 'fable', displayName: 'Fable 5.1', supportedEffortLevels: ['ultra'] },
+      { value: 'sonnet', displayName: 'Sonnet 5.5' },
+    ]);
+    expect(parseModels(line)?.map((model) => [model.value, model.efforts])).toEqual([['opus', ['low', 'high']], ['haiku', []], ['fable', []], ['sonnet', CLAUDE_EFFORTS]]);
   });
 
   it.each([
@@ -47,7 +63,7 @@ describe('fetchModels', () => {
         console.log(JSON.stringify({ type: 'control_response', response: { subtype: 'success', request_id: request.request_id, response: { models: [{ value: request.request.subtype, displayName: 'Asked ' + request.request.subtype }] } } }));
       }
     `);
-    expect(await fetchModels(claude, tempDir('ide-cwd-'))).toEqual([{ value: 'initialize', name: 'Asked initialize' }]);
+    expect(await fetchModels(claude, tempDir('ide-cwd-'))).toEqual([{ value: 'initialize', name: 'Asked initialize', engine: 'claude', efforts: CLAUDE_EFFORTS }]);
   });
 
   it('returns an empty list when claude exits without answering', async () => {

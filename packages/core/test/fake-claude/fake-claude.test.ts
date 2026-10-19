@@ -12,9 +12,9 @@ import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { startServer, type RunningServer } from '../../src/server/server';
 import { openStore } from '../../src/store/store';
 import { FAKE_CLAUDE, fakeClaude, readRecords } from './fake';
-import { tempDir, waitFor } from '../helpers';
+import { SONNET, tempDir, waitFor } from '../helpers';
 
-const INIT = { type: 'system', subtype: 'init', cwd: '$CWD', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.282' };
+const INIT = { type: 'system', subtype: 'init', cwd: '$CWD', session_id: '$SESSION', mcp_servers: [], model: 'claude-haiku-4-5-20251001', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' };
 const text = (value: string) => ({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: value }] }, parent_tool_use_id: null, session_id: '$SESSION' });
 const RESULT = { type: 'result', subtype: 'success', is_error: false, result: 'done', session_id: '$SESSION' };
 const AWAIT = { fake: 'await-user' };
@@ -40,7 +40,7 @@ async function run(lines: object[]) {
   });
   const recordFile = join(home, 'record.jsonl');
   const session = new AgentSession({
-    root, home, store, claude: fakeClaude(scenarioFile(lines), recordFile),
+    root, home, store, claude: fakeClaude(scenarioFile(lines), recordFile), defaultModel: SONNET,
     mcpServers: () => ({ idecore: runtime.mcpEntry() }), gate: runtime.sessionGate,
   });
   runtime.attach(session);
@@ -224,6 +224,40 @@ describe('the fake claude', { timeout: 20_000 }, () => {
       ['system', 'task_notification', 'stopped'],
       ['control_response', null, null],
     ]);
+  });
+
+  function direct(lines: object[], args: string[] = []) {
+    const record = join(tempDir('ide-fake-'), 'record.jsonl');
+    const child = spawn(process.execPath, [FAKE_CLAUDE, ...args], {
+      cwd: tempDir('ide-cwd-'), env: { ...process.env, FAKE_CLAUDE_SCENARIO: scenarioFile(lines), FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_HOOKS: 'off' },
+      stdio: ['pipe', 'pipe', 'ignore'],
+    });
+    onTestFinished(() => {
+      child.kill('SIGKILL');
+    });
+    const seen: Record<string, unknown>[] = [];
+    createInterface({ input: child.stdout }).on('line', (line) => seen.push(JSON.parse(line)));
+    const send = (message: object) => child.stdin.write(`${JSON.stringify(message)}\n`);
+    return { child, seen, send, records: () => readRecords(record) };
+  }
+  const go = { type: 'user', message: { role: 'user', content: 'go' }, parent_tool_use_id: null };
+
+  it('answers the SDK handshake and set_model, reads --name=value flags, and records the handshake apart from the input', async () => {
+    const f = direct([AWAIT, INIT, RESULT, AWAIT], ['--session-id=s-eq', '--model=haiku']);
+    f.send({ type: 'control_request', request_id: 'init-1', request: { subtype: 'initialize', appendSystemPrompt: 'APPEND', systemPromptSnapshot: false } });
+    f.send({ type: 'control_request', request_id: 'model-1', request: { subtype: 'set_model', model: 'opus' } });
+    f.send(go);
+    await waitFor(() => f.seen.some((event) => event.type === 'result'), 'turn answered');
+    const answers = f.seen.flatMap((event) => (event.type === 'control_response' ? [event.response] : []));
+    expect(answers).toMatchObject([{ subtype: 'success', request_id: 'init-1', response: {
+      commands: expect.arrayContaining([expect.objectContaining({ builtin: true }), expect.not.objectContaining({ builtin: true })]), models: [],
+    } }, { subtype: 'success', request_id: 'model-1' }]);
+    expect(f.seen.filter((event) => event.type === 'user' || event.type === 'control_response').map((event) => event.type)).toEqual(['control_response', 'user', 'control_response']);
+    expect(f.seen.find((event) => event.type === 'user')).toMatchObject({ isReplay: true, message: { content: '<local-command-stdout>Set model to `opus`</local-command-stdout>' } });
+    expect(f.seen.find((event) => event.type === 'system')?.session_id).toBe('s-eq');
+    const records = f.records();
+    expect([records.find((r) => r.initialize)?.initialize, records.find((r) => r.setModel !== undefined)?.setModel, records.flatMap((r) => (r.stdin ? [r.stdin.type] : []))])
+      .toEqual([{ appendSystemPrompt: 'APPEND', systemPromptSnapshot: false, pid: f.child.pid }, 'opus', ['control_request', 'user']]);
   });
 
   it('answers a denied prompt with a denial, not the approval', async () => {

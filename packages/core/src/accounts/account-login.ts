@@ -1,13 +1,31 @@
-import { execFile, spawn, type ChildProcess } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import type { AccountLoginView } from '@ide/protocol';
-import { isRecord, parseJson } from '../json';
-import { killGroup } from '../models/claude-cli';
-import { AccountError, accountEnv, type AccountStore } from './account-store';
+import { ENGINE_NAMES, LOGIN_METHODS, type AccountLoginView, type EngineId, type LoginMethod } from '@ide/protocol';
+import type { SignedHome } from './account-homes';
+import { AccountError, type AccountStore } from './account-store';
+
+export type FlowUpdate =
+  | { kind: 'waiting'; url: string | null; userCode: string | null }
+  | { kind: 'checking' }
+  | { kind: 'done'; email: string; plan: string | null }
+  | { kind: 'failed'; error: string };
+
+export interface FlowRun {
+  submitCode?(code: string): void;
+  cancel(): void;
+  /** Settles once the engine's process has stopped; until then it can write into the account's directory. */
+  stopped?: Promise<unknown>;
+}
+
+/**
+ * One engine's way of signing a new account's home in. A report made before `start` returns is heard once it has; it never logs the URL, the code or the key.
+ * `secret` is the API key of the `api-key` way, the name of an opencode `profile`, and null otherwise.
+ */
+export interface LoginFlow {
+  start(home: SignedHome, method: LoginMethod, secret: string | null, report: (update: FlowUpdate) => void): FlowRun;
+}
 
 export interface AccountLoginOptions {
-  accounts: AccountStore;
-  claude: string;
+  engines: Partial<Record<EngineId, { store: AccountStore; flow: LoginFlow }>>;
   onChange: () => void;
   timeoutMs?: number;
   now?: () => number;
@@ -15,29 +33,21 @@ export interface AccountLoginOptions {
 
 interface Attempt {
   id: string;
-  dir: string;
-  child: ChildProcess;
+  engine: EngineId;
+  method: LoginMethod;
+  store: AccountStore;
+  run: FlowRun | null;
   timer: NodeJS.Timeout | undefined;
-  output: string;
 }
 
 const LOGIN_TIMEOUT_MS = 10 * 60_000;
-const STATUS_TIMEOUT_MS = 30_000;
-const MAX_OUTPUT_CHARS = 64 * 1024;
-// OSC sequences (claude prints the URL as an OSC 8 hyperlink) end with BEL or ST; CSI sequences are colours and cursor moves.
-const ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g;
-// The URL must be followed by a separator, so one cut off at the end of a chunk is not taken.
-const URL_PATTERN = /https:\/\/[^\s\x00-\x1f"'<>]+(?=[\s\x00-\x1f])/;
+const IDLE: AccountLoginView = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
 
-export function loginUrl(output: string): string | null {
-  return URL_PATTERN.exec(output.replace(ESCAPES, ''))?.[0] ?? null;
-}
-
-// The URL, the pasted code and claude's output can carry sign-in secrets: none of them is logged or written anywhere.
+// The URL, the pasted code, a key and the engine's output can carry sign-in secrets: none of them is logged or written anywhere.
 export class AccountLogin {
   private readonly options: AccountLoginOptions;
   private attempt: Attempt | null = null;
-  private current: AccountLoginView = { state: 'idle', url: null, error: null };
+  private current: AccountLoginView = IDLE;
 
   constructor(options: AccountLoginOptions) {
     this.options = options;
@@ -47,92 +57,93 @@ export class AccountLogin {
     return this.current;
   }
 
-  start(): void {
+  start(engine: EngineId, method: LoginMethod, secret: string | null = null): void {
     if (this.attempt) throw new AccountError('A sign-in is already running; finish or cancel it first.');
+    const target = this.options.engines[engine];
+    if (!target || !LOGIN_METHODS[engine].includes(method)) throw new AccountError(`CodeRay cannot sign ${ENGINE_NAMES[engine]} in that way.`);
     const id = randomUUID();
-    const dir = this.options.accounts.createDir(id);
-    let child: ChildProcess;
+    const dir = target.store.createDir(id);
+    const attempt: Attempt = { id, engine, method, store: target.store, run: null, timer: undefined };
+    this.attempt = attempt;
+    // Flows report only after `start` returns; one that reports sooner is heard once its run, timer and view are in place, so none leaks.
+    const early: FlowUpdate[] = [];
+    const report = (update: FlowUpdate): void => {
+      if (attempt.run === null) early.push(update);
+      else this.report(attempt, update);
+    };
     try {
-      // Detached so that cancelling stops claude's whole process group.
-      child = spawn(this.options.claude, ['auth', 'login'], { env: accountEnv(dir), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      attempt.run = target.flow.start({ ...target.store.home(id), dir }, method, secret, report);
     } catch (error) {
-      this.options.accounts.discardDir(id);
+      this.attempt = null;
+      target.store.discardDir(id);
       throw error;
     }
-    const attempt: Attempt = { id, dir, child, timer: undefined, output: '' };
-    this.attempt = attempt;
-    attempt.timer = setTimeout(() => this.fail(attempt, 'The sign-in timed out after 10 minutes.'), this.options.timeoutMs ?? LOGIN_TIMEOUT_MS);
-    const read = (chunk: string): void => {
-      if (this.attempt !== attempt || this.current.url !== null) return;
-      attempt.output = (attempt.output + chunk).slice(0, MAX_OUTPUT_CHARS);
-      const url = loginUrl(attempt.output);
-      if (url !== null) this.set({ state: 'waiting', url, error: null });
-    };
-    child.stdout?.setEncoding('utf8');
-    child.stdout?.on('data', read);
-    child.stderr?.setEncoding('utf8');
-    child.stderr?.on('data', read);
-    child.stdin?.on('error', () => {});
-    // A core that dies without its shutdown path must not leave a sign-in running that could still save credentials.
-    const onCoreExit = (): void => killGroup(child);
-    if (child.pid !== undefined) process.on('exit', onCoreExit);
-    child.once('error', () => this.fail(attempt, `CodeRay could not run ${this.options.claude}.`));
-    child.once('exit', (code) => {
-      process.removeListener('exit', onCoreExit);
-      if (code === 0) this.check(attempt);
-      else this.fail(attempt, `The sign-in did not finish (claude exited with ${code === null ? 'a signal' : `code ${code}`}).`);
-    });
-    this.set({ state: 'waiting', url: null, error: null });
+    this.arm(attempt);
+    this.set({ state: 'waiting', engine, method, url: null, userCode: null, error: null });
+    for (const update of early) this.report(attempt, update);
   }
 
   submitCode(code: string): void {
-    const stdin = this.attempt?.child.stdin;
-    if (this.current.state !== 'waiting' || !stdin?.writable) throw new AccountError('No sign-in is waiting for a code.');
-    stdin.write(`${code}\n`);
+    const run = this.attempt?.run;
+    if (this.current.state !== 'waiting' || !run?.submitCode) throw new AccountError('No sign-in is waiting for a code.');
+    run.submitCode(code);
   }
 
   cancel(): void {
     if (this.attempt) this.discard(this.attempt);
-    if (this.current.state !== 'idle') this.set({ state: 'idle', url: null, error: null });
+    if (this.current.state !== 'idle') this.set(IDLE);
   }
 
-  private check(attempt: Attempt): void {
+  private report(attempt: Attempt, update: FlowUpdate): void {
     if (this.attempt !== attempt) return;
-    clearTimeout(attempt.timer);
-    this.set({ state: 'checking', url: null, error: null });
-    const child = execFile(this.options.claude, ['auth', 'status', '--json'], { env: accountEnv(attempt.dir), timeout: STATUS_TIMEOUT_MS }, (_error, stdout) => {
-      if (this.attempt !== attempt) return;
-      // A signed-out claude exits with code 1 but still prints its status.
-      const status = parseJson(String(stdout));
-      if (!isRecord(status) || status.loggedIn !== true) {
-        this.fail(attempt, 'claude finished, but the new account is not signed in.');
-        return;
-      }
-      const email = typeof status.email === 'string' && status.email !== '' ? status.email : 'unknown email';
+    if (update.kind === 'waiting') {
+      // A flow that waits for the user again after a check gets its full time once more.
+      if (attempt.timer === undefined) this.arm(attempt);
+      this.set({ ...this.current, state: 'waiting', url: update.url, userCode: update.userCode, error: null });
+    } else if (update.kind === 'checking') {
+      clearTimeout(attempt.timer);
+      attempt.timer = undefined;
+      this.set({ ...this.current, state: 'checking', url: null, userCode: null, error: null });
+    } else if (update.kind === 'failed') {
+      this.fail(attempt, update.error);
+    } else {
       try {
-        this.options.accounts.add({ id: attempt.id, email, createdAt: (this.options.now ?? Date.now)() });
+        attempt.store.add({ id: attempt.id, email: update.email, ...(update.plan === null ? {} : { plan: update.plan }), createdAt: (this.options.now ?? Date.now)() });
       } catch (error) {
         this.fail(attempt, `CodeRay could not save the account (${(error as Error).message}).`);
         return;
       }
+      clearTimeout(attempt.timer);
       this.attempt = null;
-      this.set({ state: 'idle', url: null, error: null });
-    });
-    child.stdin?.end();
+      this.set(IDLE);
+    }
+  }
+
+  private arm(attempt: Attempt): void {
+    attempt.timer = setTimeout(() => this.fail(attempt, 'The sign-in timed out after 10 minutes.'), this.options.timeoutMs ?? LOGIN_TIMEOUT_MS);
   }
 
   private fail(attempt: Attempt, error: string): void {
     if (this.attempt !== attempt) return;
     this.discard(attempt);
-    this.set({ state: 'error', url: null, error });
+    this.set({ ...IDLE, state: 'error', engine: attempt.engine, method: attempt.method, error });
   }
 
   private discard(attempt: Attempt): void {
     this.attempt = null;
     clearTimeout(attempt.timer);
-    if (attempt.child.exitCode === null && attempt.child.signalCode === null) killGroup(attempt.child);
+    attempt.run?.cancel();
+    this.removeDir(attempt);
+    // codex writes its state into its home until it stops, even into one removed under it: what it left goes then.
+    const again = (): void => this.removeDir(attempt);
+    void attempt.run?.stopped?.then(again, again);
+  }
+
+  // Only a directory under the engine's accounts that no saved account owns.
+  private removeDir(attempt: Attempt): void {
     try {
-      this.options.accounts.discardDir(attempt.id);
+      if (attempt.store.list().accounts.some((account) => account.id === attempt.id)) return;
+      attempt.store.discardDir(attempt.id);
     } catch (error) {
       console.error('accounts: could not remove an unfinished sign-in directory', error);
     }

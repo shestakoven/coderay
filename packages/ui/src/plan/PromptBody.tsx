@@ -39,6 +39,19 @@ function Preview({ preview }: { preview: GatePreview }) {
       </pre>
     );
   }
+  if (preview.kind === 'patch') {
+    return (
+      <pre className="oop-diff">
+        {preview.diff.replace(/\n$/, '').split('\n').map((line, index) => (
+          <span key={index} className={line.startsWith('+') ? 'add' : line.startsWith('-') ? 'del' : line.startsWith('@@') ? 'muted' : undefined}>
+            {index > 0 && '\n'}
+            {line}
+          </span>
+        ))}
+        {more}
+      </pre>
+    );
+  }
   if (preview.kind === 'write') return <pre className="oop-diff"><span className="add">{prefixed('+ ', preview.content)}</span>{more}</pre>;
   if (preview.kind === 'command') return <pre className="oop-diff">{preview.command}{more}</pre>;
   return <pre className="oop-diff">{preview.text}{more}</pre>;

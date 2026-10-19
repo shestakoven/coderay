@@ -15,7 +15,7 @@ const text = (value: string, parentToolUseId: string | null = null): StreamEvent
 const toolUse = (id: string, name = 'Bash', parentToolUseId: string | null = null): StreamEvent =>
   ({ type: 'assistant', parentToolUseId, blocks: [{ kind: 'tool_use', id, name, input: {} }] });
 const toolResult = (toolUseId: string, body = '', isError = false): StreamEvent =>
-  ({ type: 'user', parentToolUseId: null, toolResults: [{ toolUseId, isError, text: body }] });
+  ({ type: 'user', parentToolUseId: null, toolResults: [{ toolUseId, isError, text: body, images: [] }] });
 const result = (subtype = 'success', origin: string | null = null): StreamEvent => ({ type: 'result', subtype, origin });
 const taskStarted = (taskId: string, toolUseId: string, backgrounded = true): StreamEvent =>
   ({ type: 'task_started', taskId, toolUseId, backgrounded, description: 'Create sub.txt' });
@@ -93,6 +93,12 @@ describe('TurnTracker', () => {
     expect(turns.map((turn) => [turn.kind, turn.closedAt === null])).toEqual([['agent-initiated', false]]);
   });
 
+  it('shows no thinking block, neither as a message nor as a tool call', () => {
+    const thinking: StreamEvent = { type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'thinking', text: 'why' }, { kind: 'text', text: 'ok' }] };
+    const { messages, tools } = run(tracker(), ['hi', init, thinking, result()]);
+    expect([messages.map((m) => m.text), tools]).toEqual([['hi', 'ok'], []]);
+  });
+
   it('reports the skills of an init in its init change', () => {
     const changes = tracker().event({ ...init, skills: ['wiki', 'superpowers:brainstorming'] });
     expect(changes.flatMap((change) => (change.kind === 'init' ? [change.skills] : []))).toEqual([['wiki', 'superpowers:brainstorming']]);
@@ -109,11 +115,12 @@ describe('TurnTracker', () => {
 
   it('records tool results as ok, error or rejected', () => {
     const { tools } = run(tracker(), [
-      'go', init, toolUse('a'), toolUse('b'), toolUse('c'),
+      'go', init, toolUse('a'), toolUse('b'), toolUse('c'), toolUse('d'),
       toolResult('a', 'fine'), toolResult('b', 'boom', true),
       toolResult('c', "The user doesn't want to proceed with this tool use. The tool use was rejected", true),
+      { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'd', isError: true, rejected: true, text: 'declined', images: [] }] },
     ]);
-    expect(tools.map((t) => [t.toolUseId, t.status])).toEqual([['a', 'ok'], ['b', 'error'], ['c', 'rejected']]);
+    expect(tools.map((t) => [t.toolUseId, t.status])).toEqual([['a', 'ok'], ['b', 'error'], ['c', 'rejected'], ['d', 'rejected']]);
   });
 
   it("closes a turn's tool calls that got no result when the turn ends", () => {

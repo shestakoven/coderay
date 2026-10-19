@@ -51,12 +51,11 @@ function placementLine({ embeddingPlacement }: MapStatus): string {
 }
 
 function groupingChip({ sending }: MapStatus): StatusChip {
-  if (!sending) return { text: 'grouping…', tone: 'muted', title: 'Waiting for embeddings before asking Haiku' };
+  if (!sending) return { text: 'grouping…', tone: 'muted', title: 'Waiting for embeddings' };
   return {
     text: `grouping… sent ${plural(sending.paths, 'path')}, ${plural(sending.symbols, 'symbol name')}, ${plural(sending.links, 'dependency count')}`,
     tone: 'muted',
-    title:
-      'Haiku receives the project name, file paths, exported symbol names, import counts between groups, and the names and summaries of previous components. File contents are never sent.',
+    title: 'Grouping files into components',
   };
 }
 

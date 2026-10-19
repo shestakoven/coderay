@@ -57,7 +57,7 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     const b = await build({ scenario: OUT_OF_PLAN });
     await b.send();
     const event = await pendingEvent(b);
-    await b.session.close();
+    await b.session.restart();
     b.rt.hold.release();
     b.session.send('again');
     await waitFor(() => b.rt.hold.waiting() > 0, 'the new process held');
@@ -362,8 +362,9 @@ describe('the execution runtime', { timeout: 30_000 }, () => {
     const b = await build({ scenario: OUT_OF_PLAN });
     await b.send();
     await pendingEvent(b);
+    const old = b.session.sessionId()!;
     await b.session.newSession();
-    expect([b.rt.hold.isHeld(), b.events().map((event) => [event.phase, event.resolution])]).toEqual([false, [['resolved', 'dropped']]]);
+    expect([b.rt.hold.isHeld(), b.store.watchdogEvents(old).map((event) => [event.phase, event.resolution])]).toEqual([false, [['resolved', 'dropped']]]);
   });
 
   it('tells the user once, not on every scan, that the project cannot be scanned', async () => {

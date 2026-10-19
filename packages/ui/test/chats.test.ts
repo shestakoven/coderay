@@ -1,63 +1,14 @@
 import { describe, expect, it } from 'vitest';
-import {
-  chatTitle, configureMessage, effortLabel, effortOptions, isEffort, modelLabel, modelOptions, relativeTime,
-} from '../src/chat/chats';
-
-const values = (current: string | null) => modelOptions(current).map((option) => option.value);
-
-describe('modelOptions', () => {
-  it('lists the known aliases in order, with their versions', () => {
-    expect(modelOptions(null)).toEqual([
-      { value: 'fable', label: 'Fable 5.1' },
-      { value: 'opus', label: 'Opus 5.5' },
-      { value: 'sonnet', label: 'Sonnet 5.5' },
-      { value: 'haiku', label: 'Haiku 4.5' },
-    ]);
-  });
-
-  it('appends an unknown current id exactly once, labelled by the id itself, after the known aliases', () => {
-    const options = modelOptions('claude-opus-5-5');
-    expect(options.at(-1)).toEqual({ value: 'claude-opus-5-5', label: 'claude-opus-5-5' });
-    expect(options.filter((option) => option.value === 'claude-opus-5-5')).toHaveLength(1);
-    expect(values('claude-opus-5-5')).toEqual(['fable', 'opus', 'sonnet', 'haiku', 'claude-opus-5-5']);
-  });
-
-  it('does not duplicate a known alias that is the current choice', () => {
-    expect(values('sonnet')).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
-  });
-
-  it('does not append an empty id', () => {
-    expect(values('')).toEqual(['fable', 'opus', 'sonnet', 'haiku']);
-  });
-});
+import { canOpenTerminal, chatMeta, chatTitle, configureMessage, effortLabel, modelLabel, relativeTime } from '../src/chat/chats';
 
 describe('models from the core', () => {
   const models = [
-    { value: 'sonnet', name: 'Sonnet 5.5' },
-    { value: 'claude-opus-4-6', name: 'Opus 4.6' },
+    { value: 'sonnet', name: 'Sonnet 5.5', engine: 'claude' as const, efforts: [] },
+    { value: 'claude-opus-4-6', name: 'Opus 4.6', engine: 'claude' as const, efforts: [] },
   ];
-
-  it('replaces the built-in list, old models included', () => {
-    expect(modelOptions('sonnet', models)).toEqual([
-      { value: 'sonnet', label: 'Sonnet 5.5' },
-      { value: 'claude-opus-4-6', label: 'Opus 4.6' },
-    ]);
-  });
-
-  it('still appends a current id the core did not list, once', () => {
-    expect(modelOptions('claude-gone', models).map((option) => option.value)).toEqual(['sonnet', 'claude-opus-4-6', 'claude-gone']);
-  });
 
   it('labels by the core name, and an id it does not know by the id itself', () => {
     expect([modelLabel('claude-opus-4-6', models), modelLabel('opus', models)]).toEqual(['Opus 4.6', 'opus']);
-  });
-});
-
-describe('effortOptions', () => {
-  it('lists every effort level in protocol order', () => {
-    expect(effortOptions.map((option) => [option.value, option.label])).toEqual([
-      ['low', 'low'], ['medium', 'medium'], ['high', 'high'], ['xhigh', 'xhigh'], ['max', 'max'],
-    ]);
   });
 });
 
@@ -146,12 +97,18 @@ describe('configureMessage', () => {
   });
 });
 
-describe('isEffort', () => {
-  it('accepts every effort level', () => {
-    expect(['low', 'medium', 'high', 'xhigh', 'max'].map(isEffort)).toEqual([true, true, true, true, true]);
+describe('canOpenTerminal', () => {
+  it('offers the terminal view only for an engine that has one', () => {
+    expect([canOpenTerminal('claude'), canOpenTerminal('codex'), canOpenTerminal('opencode')]).toEqual([true, false, false]);
   });
+});
 
-  it('rejects other strings, including wrong case and the empty string', () => {
-    expect(['', 'HIGH', 'ultra', 'default', ' high'].map(isEffort)).toEqual([false, false, false, false, false]);
+describe('chatMeta', () => {
+  it("names each chat's engine in its row, and Claude for a chat a core older than the engines sent", () => {
+    const chat = { id: 'c', title: 't', startedAt: 0, lastActivityAt: 0, status: 'stopped', engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: 'high', messages: 1 } as const;
+    expect([
+      chatMeta(chat, [{ value: 'codex:gpt-6-luna', name: 'GPT-6-Luna', engine: 'codex', efforts: [] }], 10_000),
+      chatMeta({ ...chat, engine: undefined as never, modelChoice: 'sonnet', effort: 'medium' }, [], 10_000),
+    ]).toEqual(['just now · Codex · GPT-6-Luna · high', 'just now · Claude · Sonnet 5.5 · medium']);
   });
 });

@@ -1,11 +1,14 @@
 import { createHash } from 'node:crypto';
+import { chmodSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { stringify } from 'yaml';
 import type { C4Container, C4Link, C4Model, ExternalKind, MapComponent } from '@ide/protocol';
 import type { Classification, Classify, Identifier } from '../../src/c4/classify';
+import { watchDeploy } from '../../src/c4/deploy';
 import { buildC4, isNetworkCall } from '../../src/c4/model';
 import type { IndexedFile } from '../../src/model';
-import { indexed, tempDir, writeTree } from '../helpers';
+import { indexed, k8sWorkload, tempDir, writeTree } from '../helpers';
 
 interface Project {
   root: string;
@@ -878,5 +881,272 @@ describe('buildC4: generic systems', () => {
   it('keeps a generic system that no single specific system can own', async () => {
     const model = await run(compose({ backend: API }), ['sqlalchemy', 'snowflake.connector', 'oracledb']);
     expect(model.externals.map((e) => e.name)).toContain('SQL database');
+  });
+});
+
+describe('buildC4: containers from Dockerfiles', () => {
+  const PY = (cmd: string[]) => `FROM python:3.12\nCMD ${JSON.stringify(cmd)}\n`;
+
+  it.each([
+    ['builds a service', compose({ backend: API })],
+    ['runs a command over a mounted source directory', compose({ backend: { image: 'python:3.12', volumes: ['./backend:/app'], command: 'uvicorn app.main:app' } })],
+  ])('draws the same model, whatever Dockerfiles and manifests there are, when the root compose file %s', async (_, deploy) => {
+    const extras = {
+      'tools/Dockerfile': PY(['python', '-m', 'tools.main']),
+      'tools/docker-compose.yml': stringify({ services: { tools: { build: '.', environment: { API_URL: 'http://backend:8000' } } } }),
+      'k8s/backend.yaml': k8sWorkload('Deployment', [{ name: 'backend', image: 'acme/backend:1', env: [{ name: 'REDIS_URL', value: 'redis://cache:6379' }] }]),
+    };
+    const sources = [MAIN, 'tools/tools/main.py'];
+    const plain = build(await project(deploy, sources)).model;
+    expect(build(await project({ ...deploy, ...extras }, sources)).model).toEqual(plain);
+  });
+
+  it('links a subdirectory compose service through its own environment, not through that of a root image service', async () => {
+    const p = await project(
+      {
+        ...compose({ api: { image: 'ghcr.io/acme/api:1.4', environment: { DATABASE_URL: 'postgresql://postgres:5432/app' } }, postgres: { image: 'postgres:16' } }),
+        'api/Dockerfile': PY(['uvicorn', 'app.main:app']),
+        'api/docker-compose.yml': stringify({
+          services: {
+            backend: { build: '.', environment: { REDIS_URL: 'redis://cache:6379/0' } },
+            cache: { image: 'redis:7' },
+            'api-tests': { build: '.', command: 'pytest -q' },
+          },
+        }),
+      },
+      ['api/app/main.py'],
+    );
+    const { model } = build(p, { classify: names({ postgres: system('PostgreSQL', 'database'), redis: system('Redis', 'cache') }).classify });
+    expect([model.containers.map((c) => c.name), model.tooling, targetsOf(model, 'backend')]).toEqual([['backend'], ['api-tests'], ['Redis']]);
+  });
+
+  const targets = (model: C4Model) => Object.fromEntries(model.containers.map((c) => [c.name, targetsOf(model, c.name)]));
+  const SYSTEMS = { postgres: system('PostgreSQL', 'database'), redis: system('Redis', 'cache') };
+
+  it('draws each compose service that builds a shared Dockerfile as a container of its own, linked through its own environment and manifest', async () => {
+    const p = await project(
+      {
+        'backend/Dockerfile': PY(['uvicorn', 'app.main:app']),
+        'web/Dockerfile': NGINX,
+        'deploy/docker-compose.yml': stringify({
+          services: {
+            api: { build: '../backend', ports: ['8000:8000'], environment: { DATABASE_URL: 'postgresql://db:5432/app' } },
+            worker: { build: '../backend', command: 'celery -A app.tasks worker', environment: { REDIS_URL: 'redis://cache:6379/0' } },
+            web: { build: '../web', ports: ['80:80'], environment: { API_URL: 'http://api:8000' } },
+            db: { image: 'postgres:16' },
+            cache: { image: 'redis:7' },
+          },
+        }),
+        'k8s/worker.yaml': k8sWorkload('Deployment', [{ name: 'worker', image: 'acme/backend:1', env: [{ name: 'DATABASE_URL', value: 'postgresql://db:5432/app' }] }]),
+      },
+      ['backend/app/main.py', 'backend/app/tasks.py', 'web/src/main.ts'],
+    );
+    expect(targets(build(p, { classify: names(SYSTEMS).classify }).model)).toEqual({ api: ['PostgreSQL'], worker: ['PostgreSQL', 'Redis'], web: ['api'] });
+  });
+
+  it('groups three workers that a compose file in a subdirectory builds from one Dockerfile', async () => {
+    const worker = (name: string) => ({ build: '../backend', command: `python -m app.workers.${name}` });
+    const p = await project(
+      { 'backend/Dockerfile': PY(['python', '-m', 'app.workers.chat']), 'deploy/docker-compose.yml': stringify({ services: { chat: worker('chat'), mail: worker('mail'), sync: worker('sync') } }) },
+      ['chat', 'mail', 'sync'].map((name) => `backend/app/workers/${name}.py`),
+    );
+    const groups = build(p).model.containers.map((c) => c.group);
+    expect([groups.length, new Set(groups).size, groups[0] !== null]).toEqual([3, 1, true]);
+  });
+
+  it('prefixes same-named compose services with their directory and links each within its own compose file', async () => {
+    const stack = (dir: string) =>
+      compose(
+        {
+          api: { build: './api', command: 'uvicorn app.main:app', environment: { DATABASE_URL: 'postgresql://db:5432/app' } },
+          web: { build: './web', command: 'nginx -g "daemon off;"', environment: { API_URL: 'http://api:8000' } },
+          db: { image: 'postgres:16' },
+        },
+        `${dir}/docker-compose.yml`,
+      );
+    const p = await project({ ...stack('shop'), ...stack('blog') }, ['shop/api/app/main.py', 'blog/api/app/main.py']);
+    expect(targets(build(p, { classify: names(SYSTEMS).classify }).model)).toEqual({
+      'shop-api': ['PostgreSQL'],
+      'shop-web': ['shop-api'],
+      'blog-api': ['PostgreSQL'],
+      'blog-web': ['blog-api'],
+    });
+  });
+
+  it('prefixes Dockerfiles in same-named directories with their parent, each entered through its own files', async () => {
+    const p = await project({ 'x/api/Dockerfile': PY(['uvicorn', 'app.main:app']), 'y/api/Dockerfile': PY(['uvicorn', 'app.main:app']) }, [
+      'x/api/app/main.py',
+      'y/api/app/main.py',
+    ]);
+    const { model } = build(p);
+    expect([Object.fromEntries(model.containers.map((c) => [c.name, c.entryFiles])), model.warnings]).toEqual([
+      { 'x-api': ['x/api/app/main.py'], 'y-api': ['y/api/app/main.py'] },
+      [],
+    ]);
+  });
+
+  it.each([
+    ['the root compose file', 'docker-compose.yml', './api'],
+    ['a test compose file beside the Dockerfile', 'api/docker-compose.test.yml', '.'],
+  ])('keeps the Dockerfile container when %s only runs tests', async (_, file, context) => {
+    const p = await project(
+      { 'api/Dockerfile': PY(['uvicorn', 'app.main:app']), [file]: stringify({ services: { tests: { build: context, command: 'pytest -q' } } }) },
+      ['api/app/main.py'],
+    );
+    const { model } = build(p);
+    expect([model.containers.map((c) => c.name), model.tooling]).toEqual([['api'], ['tests']]);
+  });
+
+  // chmod cannot take read access away from root, nor on Windows.
+  const canDenyRead = process.platform !== 'win32' && process.getuid?.() !== 0;
+  const unreadable = (path: string) => (root: string) => chmodSync(join(root, path), 0o000);
+  const directory = (path: string) => (root: string) => mkdirSync(join(root, path), { recursive: true });
+  type Spoiled = [label: string, deploy: Record<string, string>, spoil: (root: string) => void, path: string];
+  const spoiled: Spoiled[] = [
+    ['a root compose file', compose({ api: { build: { context: './api', dockerfile: 'docker' } } }), directory('api/docker'), 'api/docker'],
+    ['a compose file in a subdirectory', { 'deploy/docker-compose.yml': stringify({ services: { api: { build: { context: '../api', dockerfile: 'docker' } } } }) }, directory('api/docker'), 'api/docker'],
+    ...(canDenyRead ? [['no compose file', { 'api/Dockerfile': PY(['uvicorn', 'app.main:app']) }, unreadable('api/Dockerfile'), 'api/Dockerfile'] as Spoiled] : []),
+  ];
+  it.each(spoiled)('warns about a Dockerfile it cannot read, named by %s, and still draws its container', async (_, deploy, spoil, path) => {
+    const p = await project(deploy, ['api/app/main.py']);
+    spoil(p.root);
+    const { model } = build(p);
+    await watchDeploy(p.root, () => {}).close();
+    expect([model.containers.map((c) => c.name), model.warnings.filter((w) => w.startsWith(`${path}: E`)).length]).toEqual([['api'], 1]);
+  });
+
+  it('draws an image service and the Dockerfile of its name as one container, linked through the service environment', async () => {
+    const p = await project(
+      {
+        'api/Dockerfile': PY(['uvicorn', 'app.main:app']),
+        'deploy/docker-compose.yml': stringify({
+          services: { api: { image: 'ghcr.io/acme/api:1', environment: { DATABASE_URL: 'postgresql://db:5432/app' } }, db: { image: 'postgres:16' } },
+        }),
+      },
+      ['api/app/main.py'],
+    );
+    const { model } = build(p, { classify: names(SYSTEMS).classify });
+    expect([targets(model), model.externals.map((e) => e.name), containerNamed(model, 'api').evidence]).toEqual([
+      { api: ['PostgreSQL'] },
+      ['PostgreSQL'],
+      [
+        { path: 'deploy/docker-compose.yml', note: 'service api' },
+        { path: 'api/Dockerfile', note: 'build' },
+      ],
+    ]);
+  });
+
+  it('links Users only to the ui containers whose manifests publish ports', async () => {
+    const p = await project(
+      { 'web/Dockerfile': NGINX, 'admin/Dockerfile': NGINX, 'k8s/web.yaml': k8sWorkload('Deployment', [{ name: 'web', image: 'acme/web:1', ports: [{ containerPort: 80 }] }]) },
+      ['web/src/main.ts', 'admin/src/main.ts'],
+    );
+    expect(targetsOf(build(p).model, 'users')).toEqual(['web']);
+  });
+
+  it('reports an unparsable compose file in a subdirectory among the warnings', async () => {
+    const p = await project({ 'api/Dockerfile': PY(['uvicorn', 'app.main:app']), 'api/docker-compose.yml': 'services:\n  b: [unclosed\n' }, ['api/app/main.py']);
+    expect(build(p).model.warnings.some((w) => w.includes('api/docker-compose.yml'))).toBe(true);
+  });
+
+  it('cites each manifest container once, and the Dockerfile as the build', async () => {
+    const container = { name: 'main', image: 'ghcr.io/acme/acme-worker:1.0' };
+    const p = await project(
+      { 'worker/Dockerfile': PY(['python', '-m', 'app.worker']), 'k8s/worker.yaml': `${k8sWorkload('Deployment', [container])}---\n${k8sWorkload('CronJob', [container])}` },
+      ['worker/app/worker.py'],
+    );
+    expect(containerNamed(build(p).model, 'worker').evidence).toEqual([
+      { path: 'k8s/worker.yaml', note: 'service main' },
+      { path: 'worker/Dockerfile', note: 'build' },
+    ]);
+  });
+});
+
+describe('buildC4: Next.js', () => {
+  const STANDALONE = 'FROM node:20-alpine\nCOPY .next/standalone ./\nCMD ["node", "server.js"]\n';
+  const ROUTES = ['web/app/layout.tsx', 'web/app/page.tsx', 'web/app/api/health/route.ts', 'web/middleware.ts', 'web/instrumentation.ts'];
+  const CONFIG = 'web/next.config.mjs';
+  const web = (sources: string[], deploy: Record<string, string> = {}) => project({ 'web/Dockerfile': STANDALONE, ...deploy }, sources);
+
+  it.each([
+    ['a next.config file', [CONFIG], {}],
+    ['a dependency on next', [], { 'web/package.json': JSON.stringify({ dependencies: { next: '15.5.0', react: '19.1.0' } }) }],
+  ])('treats a container built from a context with %s as a Next.js ui entered through its layout, middleware and instrumentation', async (_, extra, deploy) => {
+    const c = containerNamed(build(await web([...ROUTES, ...extra], deploy)).model, 'web');
+    expect([c.role, c.tech, [...c.entryFiles].sort()]).toEqual(['ui', 'Next.js', ['web/app/layout.tsx', 'web/instrumentation.ts', 'web/middleware.ts']]);
+  });
+
+  it('reaches every route file and what they import, and nothing else', async () => {
+    const db = 'web/lib/db.ts';
+    const p = await web([CONFIG, ...ROUTES, db, 'web/app/_components/nav.tsx', 'web/scripts/seed.ts']);
+    expect(containerNamed(build(p, { imports: [['web/app/page.tsx', db]] }).model, 'web').files).toBe(ROUTES.length + 1);
+  });
+
+  it('does not warn about the server.js that a standalone Next.js build writes', async () => {
+    expect(build(await web([CONFIG, ...ROUTES])).model.warnings).toEqual([]);
+  });
+
+  it('counts a custom server.js as an entry of a Next.js app', async () => {
+    expect(containerNamed(build(await web([CONFIG, 'web/server.js', ...ROUTES])).model, 'web').entryFiles).toContain('web/server.js');
+  });
+
+  it.each([
+    ['uvicorn app.main:app', [CONFIG, 'web/app/main.py'], {}, 'api', 'Python · uvicorn'],
+    ['python app/run.py', [CONFIG, 'web/app/run.py'], {}, 'worker', 'Python'],
+    ['node dist/main.js', ['web/src/main.ts'], { 'web/package.json': JSON.stringify({ dependencies: { express: '4.21.0' } }) }, 'service', 'Node'],
+    ['node scripts/worker.js', [CONFIG, 'web/scripts/worker.js'], compose({ web: { build: './web' } }), 'service', 'Node'],
+  ])('does not take a container launched with %s for a Next.js app', async (command, sources, deploy, role, tech) => {
+    const p = await project({ 'web/Dockerfile': `FROM python:3.12\nCMD ${JSON.stringify(command.split(' '))}\n`, ...deploy }, sources);
+    const c = containerNamed(build(p).model, 'web');
+    expect([c.role, c.tech]).toEqual([role, tech]);
+  });
+});
+
+describe('buildC4: cron and start scripts', () => {
+  it.each([
+    ['cron -f', 'worker', 'cron'],
+    ['crond -f -l 2', 'worker', 'cron'],
+    ['supercronic /app/crontab', 'worker', 'cron'],
+    ['exec cron -f', 'worker', 'cron'],
+    ['sh -c "printenv > /etc/environment && cron -f"', 'worker', 'cron'],
+    ['sh -c "printenv > /etc/environment; exec supercronic /app/crontab"', 'worker', 'cron'],
+    ['crontab -l', 'service', 'Process'],
+    ['tail -F /var/log/cron', 'service', 'Process'],
+    ['cron.sh', 'service', 'Process'],
+  ])('gives a container launched with %s the %s role and %s tech', async (command, role, tech) => {
+    const p = await project(compose({ jobs: { build: './jobs', command } }), ['jobs/app/report.py']);
+    const c = containerNamed(build(p).model, 'jobs');
+    expect([c.role, c.tech]).toEqual([role, tech]);
+  });
+
+  it.each([
+    ['python -m app.worker', ['backend/app/worker.py']],
+    ['sh -c "alembic upgrade head && uvicorn app.main:app"', [MAIN]],
+  ])('finds the entry of %s run behind a python -m entrypoint', async (command, entries) => {
+    const p = await project(compose({ backend: { build: './backend', entrypoint: ['python', '-m'], command } }), [MAIN, 'backend/app/worker.py']);
+    const c = containerNamed(build(p).model, 'backend');
+    expect([c.entryFiles, c.entryMissing]).toEqual([entries, []]);
+  });
+
+  const jobs = (run: string) =>
+    project(
+      {
+        'jobs/Dockerfile': 'FROM debian:12\nRUN apt-get update && apt-get install -y cron\nCOPY docker/start.sh /start.sh\nCMD ["/start.sh"]\n',
+        'jobs/docker/start.sh': `#!/bin/sh\n# python3 runs the jobs listed in /etc/cron.d\nprintenv > /etc/environment\n${run}\n`,
+      },
+      ['jobs/app/main.py'],
+    );
+
+  it('shows the commands of a start script without its comments', async () => {
+    expect(containerNamed(build(await jobs('cron -f')).model, 'jobs').launch).toEqual(['/start.sh', 'cron -f']);
+  });
+
+  it.each([
+    ['cron -f', ['jobs/docker/start.sh']],
+    ['exec uvicorn app.main:app', ['jobs/app/main.py']],
+    ['# exec uvicorn old.main:app\nexec python -m app.main', ['jobs/app/main.py']],
+  ])('enters a container whose start script runs %j through %j alone', async (run, entries) => {
+    const c = containerNamed(build(await jobs(run)).model, 'jobs');
+    expect([c.entryFiles, c.entryMissing]).toEqual([entries, []]);
   });
 });

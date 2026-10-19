@@ -188,6 +188,9 @@
 .rv .rv-mode button { display: grid; place-items: center; width: 28px; height: 22px; padding: 0; border: 0; border-radius: 5px; background: none; color: var(--muted); transition: background 0.15s, color 0.15s; }
 .rv .rv-mode button:not(:disabled):hover { color: var(--fg); }
 .rv .rv-mode button.on { background: var(--rv-ghost-hover); color: var(--fg); }
+.rv-view-bar { display: flex; align-items: center; padding: 8px 16px 0; background: var(--bg); }
+.rv .rv-view button { display: inline-flex; align-items: center; gap: 6px; width: auto; padding: 0 10px; font-size: 12px; font-weight: 500; }
+.rv-map { position: relative; flex: 1; min-height: 0; animation: rv-fade 0.16s ease; }
 .rv-error span { flex: 1; min-width: 0; }
 .rv-error { display: flex; align-items: center; gap: 8px; margin: 8px 16px 0; padding: 7px 10px; border-radius: 6px; color: var(--error); background: color-mix(in srgb, var(--error) 13%, transparent); }
 
@@ -351,6 +354,8 @@
 .rv .rv-files-button:hover { color: var(--fg); }
 .rv-files-button b { font: 600 11.5px var(--font-mono); color: var(--fg); }
 .rv.compact .rv-file-head, .rv.compact .rv-diff { padding-left: 10px; padding-right: 10px; }
+.rv.compact .rv-view-bar { gap: 12px; padding-left: 10px; padding-right: 10px; }
+.rv .rv-view-bar .rv-files-button { height: 28px; padding: 0 2px; }
 .rv.compact .rv-context { margin-left: 10px; margin-right: 10px; }
 .rv.compact .rv-keys span:nth-child(n+3):not(.rv-spacer) { display: none; }
 .rv.compact .rv-label, .rv.compact .rv-file-bar .rv-btn kbd { display: none; }

@@ -51,6 +51,12 @@ describe('historyReducer', () => {
     state = historyReducer(state, { type: 'forget', requestId: 'r1' });
     expect(Object.keys(state.results)).toEqual(['r2']);
   });
+
+  it('keeps the graph of a result', () => {
+    const graph = { parts: [], links: [], partial: null };
+    const next = historyReducer(initialHistoryState, { type: 'result', requestId: 'r1', error: null, graph });
+    expect(next.results.r1).toEqual({ error: null, diff: undefined, preview: undefined, graph });
+  });
 });
 
 describe('pendingEvent', () => {

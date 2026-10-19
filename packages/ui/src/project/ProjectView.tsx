@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type SettingsView } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type ReviewGraphFile, type SettingsView } from '@ide/protocol';
 import { createPortal } from 'react-dom';
 import { BranchChip } from '../git/BranchChip';
 import { GitClient } from '../git/git-client';
@@ -10,6 +10,7 @@ import { GitPanel, type GitSelection } from '../git/GitPanel';
 import { ErrorBoundary } from '../layout/ErrorBoundary';
 import { ChatPanel, type AgentView } from '../chat/ChatPanel';
 import { canSend, chatReducer, initialChatState, toolSummary } from '../chat/chat-state';
+import { ImageStore } from '../chat/image-store';
 import { dialogEvent, eventFilePaths } from '../history/dialog-state';
 import { changeIndex, latestPlanVersion, historyReducer, initialHistoryState, type TimelineItem } from '../history/history-state';
 import { WatchdogDialog } from '../history/WatchdogDialog';
@@ -31,11 +32,13 @@ import { PlanDock } from '../plan/PlanDock';
 import { chimeKey, finishedWorking, playChime, playDone, type Activity } from '../plan/chime';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, waitsForUser } from '../plan/plan-state';
 import { C4View } from '../c4/C4View';
+import { OverviewPending, OverviewView } from '../overview/OverviewView';
 import { PlanFlowView } from '../plan-flow/PlanFlowView';
 import { flowOf } from '../plan-flow/flow-model';
 import { availableModes, resolveMode, type MapMode } from '../plan-flow/map-mode';
 import { describeMapStatus, describeProgress } from '../map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from '../net/socket';
+import type { ProviderList } from '../settings/accounts';
 import { SettingsPanel, type SettingsResult } from '../settings/SettingsPanel';
 import { Icon } from '../layout/Icon';
 import { DetailsSlotContext } from '../layout/DetailsSlot';
@@ -74,6 +77,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
+  const [providers, setProviders] = useState<Record<string, ProviderList>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>('connecting');
   const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
@@ -91,8 +95,10 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [gitStatus, setGitStatus] = useState<GitStatus | null>(null);
   const [gitSelection, setGitSelection] = useState<GitSelection | null>(null);
   const git = useMemo(() => new GitClient((message) => sendRef.current(message)), []);
+  const images = useMemo(() => new ImageStore((message) => sendRef.current(message)), []);
+  useEffect(() => () => images.dispose(), [images]);
   const [sizes, setSizes] = useState<PanelSizes>(() => loadSizes(storage()));
-  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [] });
+  const [chats, setChats] = useState<ChatList>({ activeId: null, sessions: [], models: [], engines: [] });
   const [reviewMode, setReviewMode] = useState(false);
   const [chatFocus, setChatFocus] = useState<{ id: string; nonce: number } | null>(null);
   const [detailsEl, setDetailsEl] = useState<HTMLElement | null>(null);
@@ -126,6 +132,11 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
         case 'settings.result':
           setSettingsResult({ requestId: message.requestId, error: message.error });
           break;
+        case 'settings.providers': {
+          const { id, providers: list, loginCommand, error } = message;
+          setProviders((lists) => ({ ...lists, [id]: { loading: false, providers: list, loginCommand, error } }));
+          break;
+        }
         case 'plans.snapshot':
           dispatchPlans({ type: 'plans', plans: message.plans });
           break;
@@ -139,7 +150,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           dispatchHist({ type: 'patch', patch: message.patch });
           break;
         case 'history.result':
-          dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview });
+          dispatchHist({ type: 'result', requestId: message.requestId, error: message.error, diff: message.diff, preview: message.preview, graph: message.graph });
           break;
         case 'git.snapshot':
           setGitStatus(message.status);
@@ -164,10 +175,17 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           hub.closed(message.id);
           break;
         case 'sessions.snapshot':
-          setChats((previous) => ({ ...previous, activeId: message.activeId, sessions: message.sessions }));
+          setChats((previous) => ({ ...previous, activeId: message.activeId, sessions: message.sessions, next: message.next }));
           break;
         case 'models.snapshot':
-          setChats((previous) => ({ ...previous, models: message.models }));
+          setChats((previous) => ({ ...previous, models: message.models, pending: message.pending ?? [], failed: message.failed ?? [] }));
+          break;
+        case 'engines.snapshot':
+          setChats((previous) => ({ ...previous, engines: message.engines }));
+          break;
+        case 'image.data':
+        case 'image.failed':
+          images.handle(message);
           break;
         case 'error':
           dispatchChat({ type: 'error', message: message.message });
@@ -177,11 +195,12 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       setConnection(next);
       if (next !== 'open') setTerminalsKnown(false);
       if (next !== 'open') git.dropAll();
+      images.setOnline(next === 'open');
       if (next === 'open') link.current?.send({ type: 'models.list' });
     }, url);
     link.current = current;
     return () => current.close();
-  }, [token, url, hub, git]);
+  }, [token, url, hub, git, images]);
 
   const send = (message: ClientMessage): boolean => {
     if (!fitsFrame(message)) {
@@ -198,6 +217,13 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
 
   sendRef.current = (message) => link.current?.send(message) ?? false;
 
+  const loadProviders = (id: string): void => {
+    const sent = send({ type: 'account.providers', requestId: crypto.randomUUID(), id });
+    setProviders((lists) => ({
+      ...lists,
+      [id]: { providers: [], loginCommand: '', ...lists[id], loading: sent, error: sent ? null : 'Not connected to the core. Check the connection and try again.' },
+    }));
+  };
   const openSettings = (): void => {
     send({ type: 'settings.get' });
     setSettingsOpen(true);
@@ -309,6 +335,10 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
     const requestId = crypto.randomUUID();
     return send({ type: 'history.diff', requestId, path, before, after }) ? requestId : null;
   };
+  const requestGraph = (files: ReviewGraphFile[], planId: string | null): string | null => {
+    const requestId = crypto.randomUUID();
+    return send({ type: 'review.graph', requestId, planId, files }) ? requestId : null;
+  };
   const changes = useMemo(() => changeIndex(hist.history, snapshot), [hist.history, snapshot]);
   const latestPlan = useMemo(() => (shown ? latestPlanVersion(plans.plans, shown.id) : null), [plans.plans, shown]);
   const selectTimelineItem = (item: TimelineItem): void => {
@@ -326,7 +356,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const overlay: PlanOverlay = { marks, dimOthers: waitsForUser(shown), focus, prompt, prompts: pendingPrompts(plans.prompts), eventFiles, changes, highlight, answerPrompt, onAnchor: setAnchored };
   const c4 = snapshot?.c4 && snapshot.c4.containers.length > 0 ? snapshot.c4 : null;
   const flowPlan = flowOf(shown) === null ? null : shown;
-  const modeInput = { hasC4: c4 !== null, hasFlow: flowPlan !== null };
+  const modeInput = { hasC4: c4 !== null, hasFlow: flowPlan !== null, hasOverview: snapshot?.overview !== undefined };
   const [preferredMode, setPreferredMode] = useState<MapMode | null>(null);
   const modes = availableModes(modeInput);
   const mode = resolveMode(preferredMode, modeInput);
@@ -426,13 +456,21 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
               <button type="button" onClick={() => send({ type: 'map.regroup' })}>Regroup</button>
             </div>
             <PlanOverlayContext.Provider value={overlay}>
-              {showC4 && snapshot && c4 ? (
+              {mode === 'overview' && snapshot ? (
+                <ReactFlowProvider>
+                  {snapshot.overview && snapshot.overview.groups.length > 0 ? (
+                    <OverviewView snapshot={snapshot} overview={snapshot.overview} onRebuild={() => send({ type: 'map.overview' })} />
+                  ) : (
+                    <OverviewPending overview={snapshot.overview} onRebuild={() => send({ type: 'map.overview' })} />
+                  )}
+                </ReactFlowProvider>
+              ) : showC4 && snapshot && c4 ? (
                 <ReactFlowProvider>
                   <C4View snapshot={snapshot} model={c4} />
                 </ReactFlowProvider>
               ) : mode === 'flow' && flowPlan?.flow ? (
                 <ReactFlowProvider>
-                  <PlanFlowView plan={flowPlan} flow={flowPlan.flow} hoverStep={hoverStep} />
+                  <PlanFlowView plan={flowPlan} flow={flowPlan.flow} hoverStep={hoverStep} onAnswer={answerPlan} keys={active && !reviewMode} working={activity.busy} />
                 </ReactFlowProvider>
               ) : (
                 <ReactFlowProvider>
@@ -448,8 +486,14 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 results={hist.results}
                 chatItems={chat.items}
                 requestDiff={requestDiff}
+                requestGraph={requestGraph}
+                forgetResult={(requestId) => dispatchHist({ type: 'forget', requestId })}
                 send={send}
                 root={project.root}
+                onOpenChat={() => {
+                  dispatchPanels({ type: 'right-tab', tab: 'agent' });
+                  dispatchChat({ type: 'filter', filter: null });
+                }}
                 onShowInChat={(id) => {
                   dispatchPanels({ type: 'right-tab', tab: 'agent' });
                   dispatchChat({ type: 'filter', filter: null });
@@ -460,6 +504,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   showPathsOnMap(paths);
                 }}
                 onExit={() => setReviewMode(false)}
+                active={active}
               />
             )}
             {gitSelection && gitStatus && <GitDiffView selection={gitSelection} status={gitStatus} client={git} onClose={() => setGitSelection(null)} />}
@@ -490,6 +535,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   onFocusTargets={showPathsOnMap}
                   view={agentView}
                   onView={changeAgentView}
+                  images={images}
+                  imagesLive={active && showRight && panels.rightTab === 'agent'}
                   terminal={(
                     <AgentTerminal
                       hub={hub}
@@ -572,6 +619,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           <SettingsPanel
             settings={settings}
             lastResult={settingsResult}
+            providers={providers}
+            loadProviders={loadProviders}
             sessionServers={chat.mcpServers}
             send={send}
             onClose={() => setSettingsOpen(false)}

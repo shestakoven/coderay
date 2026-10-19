@@ -1,0 +1,10 @@
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"","phase":"final_answer"}}}
+{"method":"item/agentMessage/delta","params":{"threadId":"$THREAD","turnId":"$TURN","itemId":"msg-1","delta":"O"}}
+{"method":"item/agentMessage/delta","params":{"threadId":"$THREAD","turnId":"$TURN","itemId":"msg-1","delta":"K"}}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"OK","phase":"final_answer"}}}
+{"method":"thread/tokenUsage/updated","params":{"threadId":"$THREAD","turnId":"$TURN","tokenUsage":{"total":{"totalTokens":18222,"inputTokens":18217,"cachedInputTokens":11008,"cacheWriteInputTokens":0,"outputTokens":5,"reasoningOutputTokens":0},"last":{"totalTokens":18222,"inputTokens":18217,"cachedInputTokens":11008,"cacheWriteInputTokens":0,"outputTokens":5,"reasoningOutputTokens":0},"modelContextWindow":258400}}}
+{"method":"account/rateLimits/updated","params":{"rateLimits":{"limitId":"codex","limitName":null,"primary":{"usedPercent":3,"windowDurationMins":43200,"resetsAt":4102444800},"secondary":null,"credits":null,"planType":"plus","rateLimitReachedType":null}}}
+{"fake":"await-turn"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-2","text":"42","phase":"final_answer"}}}
+{"fake":"await-turn"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-3","text":"Again.","phase":"final_answer"}}}

@@ -1,29 +1,11 @@
-import { EFFORT_LEVELS, type ChatSummary, type ClientMessage, type EffortLevel, type ModelInfo, type SessionView } from '@ide/protocol';
+import { ENGINE_CAPABILITIES, ENGINE_NAMES, type ChatSummary, type ClientMessage, type EngineId, type ModelInfo, type SessionView } from '@ide/protocol';
+import { catalogOf } from './model-picker';
 
-export interface Choice<T> {
-  value: T | null;
-  label: string;
-}
+export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalogOf(models).find((model) => model.value === choice)?.name ?? choice ?? '—';
 
-const FALLBACK_MODELS: Choice<string>[] = [
-  { value: 'fable', label: 'Fable 5.1' },
-  { value: 'opus', label: 'Opus 5.5' },
-  { value: 'sonnet', label: 'Sonnet 5.5' },
-  { value: 'haiku', label: 'Haiku 4.5' },
-];
+export const effortLabel = (effort: string | null): string => effort ?? '—';
 
-const catalog = (models: ModelInfo[]): Choice<string>[] => (models.length === 0 ? FALLBACK_MODELS : models.map((model) => ({ value: model.value, label: model.name })));
-
-export function modelOptions(current: string | null, models: ModelInfo[] = []): Choice<string>[] {
-  const options = catalog(models);
-  return [...options, ...(current && !options.some((option) => option.value === current) ? [{ value: current, label: current }] : [])];
-}
-
-export const effortOptions: Choice<EffortLevel>[] = EFFORT_LEVELS.map((level) => ({ value: level, label: level }));
-
-export const modelLabel = (choice: string | null, models: ModelInfo[] = []): string => catalog(models).find((option) => option.value === choice)?.label ?? choice ?? '—';
-
-export const effortLabel = (effort: EffortLevel | null): string => effort ?? '—';
+export const canOpenTerminal = (engine: EngineId): boolean => ENGINE_CAPABILITIES[engine].terminalView;
 
 export const chatTitle = (chat: Pick<ChatSummary, 'title'>): string => (chat.title.trim() === '' ? 'New chat' : chat.title);
 
@@ -40,9 +22,13 @@ export function relativeTime(ts: number, now: number): string {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
+/** A chat's row: when it was used, and its engine, model and effort; a core older than the engines sends no engine. */
+export const chatMeta = (chat: ChatSummary, models: ModelInfo[], now: number): string =>
+  `${relativeTime(chat.lastActivityAt, now)} · ${ENGINE_NAMES[chat.engine ?? 'claude']} · ${modelLabel(chat.modelChoice, models)} · ${effortLabel(chat.effort)}`;
+
 export function configureMessage(
   session: Pick<SessionView, 'modelChoice' | 'effort'> | null,
-  change: { modelChoice: string | null } | { effort: EffortLevel | null },
+  change: { modelChoice: string | null } | { effort: string | null },
 ): ClientMessage {
   return {
     type: 'session.configure',
@@ -50,5 +36,3 @@ export function configureMessage(
     effort: 'effort' in change ? change.effort : (session?.effort ?? null),
   };
 }
-
-export const isEffort = (value: string): value is EffortLevel => (EFFORT_LEVELS as readonly string[]).includes(value);

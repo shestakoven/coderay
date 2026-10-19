@@ -13,7 +13,7 @@ import type {
 } from '@ide/protocol';
 import type { IndexedFile } from '../model';
 import { identifierKey, type Classification, type Classify, type Identifier } from './classify';
-import { readDeploy, type ServiceDef } from './deploy';
+import { deploysFromBuilds, isTooling, readBuilds, readDeploy, runsCode, type ServiceDef } from './deploy';
 import { readXcode } from './xcode';
 
 // Literal URL hosts are names like package names; file contents never leave this process.
@@ -87,8 +87,13 @@ const KIND_PROTOCOL: Record<ExternalKind, string> = {
 };
 
 const NEAR_DEPTH = 2;
-const TOOLING_NAME = /(^|[-_])(test|tests|e2e|lint|migrate|migrations?)([-_]|$)/;
-const RUNNERS = new Set(['uvicorn', 'gunicorn', 'hypercorn', 'celery', 'pytest', 'alembic', 'pip']);
+// An image whose ENTRYPOINT is `python -m` runs a compose command such as `python -m x` or `sh -c "…"` behind it.
+const RUNNERS = new Set(['uvicorn', 'gunicorn', 'hypercorn', 'celery', 'pytest', 'alembic', 'pip', 'python', 'python3', 'sh', 'bash']);
+const CRON = /(?:^|&&|\|\||[;|("'])\s*(?:exec\s+)?(?:cron|crond|supercronic)\b(?!\.)/m;
+const NEXT_CONFIG = /^next\.config\.[cm]?[jt]s$/;
+const NEXT_ENTRY = /^(?:src\/)?(?:app\/layout|pages\/_app|middleware|proxy|instrumentation)\.[jt]sx?$/;
+const NEXT_ROUTE =
+  /^(?:src\/)?(?:app\/(?:.+\/)?(?:page|layout|route|template|default|error|global-error|not-found|loading|icon|apple-icon|opengraph-image|twitter-image|sitemap|robots|manifest)|pages\/.+|middleware|proxy|instrumentation)\.[jt]sx?$/;
 
 interface Entry {
   role: ContainerRole;
@@ -118,6 +123,19 @@ export function buildC4(
   const out = new Map<string, string[]>();
   for (const edge of edges) out.set(edge.from, [...(out.get(edge.from) ?? []), edge.to]);
   const hasSources = (dir: string) => paths.some((p) => dir === '' || p.startsWith(`${dir}/`));
+  const fallback = deploysFromBuilds(deploy.services, hasSources);
+  const builds = fallback ? readBuilds(root) : null;
+  const services = new Map(deploy.services);
+  for (const [name, defs] of builds?.services ?? []) services.set(name, [...(services.get(name) ?? []), ...defs]);
+  warnings.push(...(builds?.warnings ?? []));
+  // Each compose project names its services in its own files: an environment value names a service of the same directory first.
+  const projectNames = new Map<string, Map<string, string>>();
+  for (const [name, defs] of services) {
+    for (const def of defs) {
+      const dir = posix.dirname(def.file);
+      projectNames.set(dir, (projectNames.get(dir) ?? new Map<string, string>()).set(def.name, name));
+    }
+  }
 
   const containers: C4Container[] = [];
   const closures = new Map<string, Set<string>>();
@@ -144,10 +162,10 @@ export function buildC4(
     return id;
   };
 
-  for (const [name, defs] of deploy.services) {
-    const repoCode = defs.some((d) => d.build !== null) || defs.some((d) => d.mounts.some((m) => hasSources(m) && d.commands.length > 0));
+  for (const [name, defs] of services) {
+    const repoCode = runsCode(defs, hasSources);
     const commands = defs.flatMap((d) => d.commands);
-    if (repoCode && (TOOLING_NAME.test(name) || commands.some((c) => /\b(pytest|vitest|jest)\b/.test(c)))) {
+    if (repoCode && isTooling(name, commands)) {
       tooling.push(name);
       continue;
     }
@@ -160,6 +178,12 @@ export function buildC4(
     const entryFiles = new Set<string>();
     const entryMissing: string[] = [];
     const scope = defs.flatMap((d) => [d.build?.context ?? '', ...d.mounts]).filter((dir) => dir !== '');
+    const nextJs = fallback && entry.modules.length === 0 && !entry.paths.some((p) => p.endsWith('.py')) ? nextApp(root, defs, paths) : null;
+    if (nextJs) {
+      entry.role = 'ui';
+      entry.tech = 'Next.js';
+      for (const path of nextJs.entries) entryFiles.add(path);
+    }
     for (const module of entry.modules) {
       const hit = resolveModule(module, paths, scope);
       if (hit) entryFiles.add(hit);
@@ -168,16 +192,19 @@ export function buildC4(
     for (const path of entry.paths) {
       const hit = paths.find((p) => p === path || p.endsWith(`/${path.replace(/^\.\//, '')}`));
       if (hit) entryFiles.add(hit);
-      else entryMissing.push(path);
+      // The server.js a Next.js image runs is written by its build.
+      else if (!nextJs) entryMissing.push(path);
     }
+    // A container that runs no code module is entered through the repository scripts its launch runs.
+    const scripts = entry.modules.length + entry.paths.length === 0 && !entry.devServer && !nextJs ? defs.flatMap((d) => d.scripts) : [];
     const closure = new Set<string>();
     if (entry.devServer) {
       for (const dir of defs.flatMap((d) => d.mounts).filter((m) => m !== '' && hasSources(m))) {
         for (const p of paths) if (p.startsWith(`${dir}/`)) closure.add(p);
       }
     }
-    const depth = new Map<string, number>([...entryFiles].map((p) => [p, 0]));
-    const queue = [...entryFiles];
+    const depth = new Map<string, number>([...entryFiles, ...(nextJs?.routes ?? [])].map((p) => [p, 0]));
+    const queue = [...depth.keys()];
     for (let i = 0; i < queue.length; i += 1) {
       const path = queue[i]!;
       closure.add(path);
@@ -192,21 +219,22 @@ export function buildC4(
     if (entryMissing.length > 0) warnings.push(`${name}: entry not found: ${entryMissing.join(', ')}`);
     closures.set(name, closure);
     const def = defs[0]!;
+    const built = def.build ? posix.join(def.build.context, def.build.dockerfile) : null;
     containers.push({
       id: `container:${name}`,
       name,
       role: entry.role,
       tech: entry.tech,
       launch: [...new Set(commands.flatMap(launchLines))],
-      entryFiles: [...entryFiles],
+      entryFiles: [...entryFiles, ...new Set(scripts)],
       entryMissing,
       files: closure.size,
       components: [],
       componentLinks: [],
       group: null,
       evidence: [
-        ...[...new Set(defs.map((d) => d.file))].map((file) => ({ path: file, note: `service ${name}` })),
-        ...(def.build ? [{ path: posix.join(def.build.context, def.build.dockerfile), note: `build${def.build.target ? ` target ${def.build.target}` : ''}` }] : []),
+        ...new Map(defs.filter((d) => d.file !== built).map((d) => [`${d.file}\0${d.name}`, { path: d.file, note: `service ${d.name}` }])).values(),
+        ...(built ? [{ path: built, note: `build${def.build!.target ? ` target ${def.build!.target}` : ''}` }] : []),
       ],
     });
   }
@@ -310,9 +338,11 @@ export function buildC4(
         link(container.id, to, protocolOf(to, externals, protocols), { path, note: `calls ${host}` });
       }
     }
-    for (const def of deploy.services.get(container.name) ?? []) {
+    for (const def of services.get(container.name) ?? []) {
+      const local = projectNames.get(posix.dirname(def.file));
+      const serviceNamed = (host: string): string | undefined => local?.get(host) ?? (services.has(host) ? host : undefined);
       for (const [key, value] of def.env) {
-        const target = hostOf(key, value, deploy.services);
+        const target = hostOf(key, value, serviceNamed);
         if (!target) continue;
         const note = `${key} in ${def.file}`;
         if (containerNames.has(target.host)) {
@@ -332,7 +362,7 @@ export function buildC4(
     [...links.values()].filter((l) => containers.some((c) => c.id === l.from && c.role === 'ui')).map((l) => l.to),
   );
   const entrances = containers.filter(
-    (c) => c.role === 'ui' && !behindUi.has(c.id) && deploy.services.get(c.name)?.some((d) => d.ports),
+    (c) => c.role === 'ui' && !behindUi.has(c.id) && services.get(c.name)?.some((d) => d.ports),
   );
   const fromUsers = entrances.length > 0 ? entrances : containers.filter((c) => c.role === 'ui' && !nativeApps.has(c.id));
   for (const container of fromUsers) {
@@ -344,7 +374,7 @@ export function buildC4(
 
   const byBuild = new Map<string, C4Container[]>();
   for (const container of containers.filter((c) => c.role === 'worker')) {
-    const def = deploy.services.get(container.name)?.find((d) => d.build);
+    const def = services.get(container.name)?.find((d) => d.build);
     const key = def?.build ? `${def.build.context}|${def.build.dockerfile}` : container.name;
     byBuild.set(key, [...(byBuild.get(key) ?? []), container]);
   }
@@ -408,7 +438,7 @@ function isPublicHost(host: string): boolean {
 
 function launchLines(command: string): string[] {
   const lines = command.split('\n').map((l) => l.trim()).filter(Boolean);
-  const useful = lines.length === 1 ? lines : lines.filter((l) => /\b(uvicorn|gunicorn|python3?|node|celery|npm|pnpm|nginx|alembic|exec)\b/.test(l));
+  const useful = lines.length === 1 ? lines : lines.filter((l) => /\b(uvicorn|gunicorn|python3?|node|celery|npm|pnpm|nginx|alembic|exec)\b/.test(l) || CRON.test(l));
   return useful.map((l) => l.slice(0, 160));
 }
 
@@ -429,7 +459,7 @@ function detectEntry(commands: string[]): Entry {
     if (role === 'service') role = 'worker';
     tech = 'Python · Celery';
   }
-  for (const m of text.matchAll(/\bpython3?(?:\.\d+)?\s+-m\s+([\w.]+)/g)) {
+  for (const m of text.matchAll(/\bpython3?(?:\.\d+)?\s+-m\s+(?=([\w.]+))/g)) {
     if (RUNNERS.has(m[1]!)) continue;
     modules.push(m[1]!);
     if (role === 'service') role = 'worker';
@@ -439,6 +469,10 @@ function detectEntry(commands: string[]): Entry {
     paths.push(m[1]!);
     if (role === 'service') role = 'worker';
     if (tech === 'Process') tech = 'Python';
+  }
+  if (CRON.test(text)) {
+    if (role === 'service') role = 'worker';
+    if (tech === 'Process') tech = 'cron';
   }
   for (const m of text.matchAll(/\bnode\s+([\w./-]+\.[cm]?js)\b/g)) {
     paths.push(m[1]!);
@@ -454,6 +488,30 @@ function detectEntry(commands: string[]): Entry {
     tech = 'nginx';
   }
   return { role, tech, modules: [...new Set(modules)], paths: [...new Set(paths)], devServer };
+}
+
+// A Next.js app built from a context holding next.config.* or depending on next is entered through its route files.
+function nextApp(root: string, defs: ServiceDef[], paths: string[]): { entries: string[]; routes: string[] } | null {
+  for (const def of defs) {
+    if (!def.build) continue;
+    const prefix = def.build.context === '.' ? '' : `${def.build.context}/`;
+    const local = paths.filter((p) => p.startsWith(prefix)).map((p) => p.slice(prefix.length));
+    if (!local.some((p) => NEXT_CONFIG.test(p)) && !dependsOnNext(join(root, prefix, 'package.json'))) continue;
+    return {
+      entries: local.filter((p) => NEXT_ENTRY.test(p)).map((p) => prefix + p),
+      routes: local.filter((p) => NEXT_ROUTE.test(p)).map((p) => prefix + p),
+    };
+  }
+  return null;
+}
+
+function dependsOnNext(packageJson: string): boolean {
+  try {
+    const pkg = JSON.parse(readFileSync(packageJson, 'utf8')) as { dependencies?: Record<string, unknown> };
+    return pkg.dependencies?.next !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 function resolveModule(module: string, paths: string[], scope: string[]): string | null {
@@ -475,11 +533,9 @@ function protocolOf(id: string, externals: Map<string, C4External>, protocols: M
   return protocols.get(id) ?? (external.kind === 'broker' ? external.name : KIND_PROTOCOL[external.kind]);
 }
 
-function hostOf(key: string, value: string, services: Map<string, ServiceDef[]>): { host: string; scheme: string } | null {
+function hostOf(key: string, value: string, serviceNamed: (host: string) => string | undefined): { host: string; scheme: string } | null {
   const url = /^([a-z][a-z0-9+.-]*):\/\/(?:[^@/\s]*@)?([^:/?#\s]+)/i.exec(value);
-  if (url) return services.has(url[2]!) ? { host: url[2]!, scheme: url[1]!.toLowerCase() } : null;
-  const hostPort = /^([a-z0-9][a-z0-9_.-]*):\d+$/i.exec(value);
-  if (hostPort) return services.has(hostPort[1]!) ? { host: hostPort[1]!, scheme: '' } : null;
-  if (/(HOST|ENDPOINT|SERVER|ADDR)$/.test(key) && services.has(value)) return { host: value, scheme: '' };
-  return null;
+  const host = url?.[2] ?? /^([a-z0-9][a-z0-9_.-]*):\d+$/i.exec(value)?.[1] ?? (/(HOST|ENDPOINT|SERVER|ADDR)$/.test(key) ? value : undefined);
+  const service = host === undefined ? undefined : serviceNamed(host);
+  return service === undefined ? null : { host: service, scheme: url?.[1]!.toLowerCase() ?? '' };
 }

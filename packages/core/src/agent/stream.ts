@@ -1,14 +1,20 @@
 import type { McpServerState } from '@ide/protocol';
 import { isRecord } from '../json';
+import type { UsageUpdate } from './usage';
 
 export interface ToolResultBlock {
   toolUseId: string;
   isError: boolean;
   text: string;
+  // The base64 data of the result's image parts, in order; their claimed media type is not kept, the bytes decide.
+  images: string[];
+  /** The user or the gate refused the call (Codex says so in the item's status; claude in its result text). */
+  rejected?: boolean;
 }
 
 export type AssistantBlock =
   | { kind: 'text'; text: string }
+  | { kind: 'thinking'; text: string }
   | { kind: 'tool_use'; id: string; name: string; input: unknown };
 
 export type StreamEvent =
@@ -21,29 +27,32 @@ export type StreamEvent =
   | { type: 'task_started'; taskId: string; toolUseId: string | null; backgrounded: boolean; description: string }
   | { type: 'task_notification'; taskId: string; toolUseId: string | null; status: string }
   | { type: 'task_updated'; taskId: string; status: string | null }
+  | { type: 'conversation_reset'; trigger: string | null }
+  | { type: 'compact_boundary'; trigger: string | null; preTokens: number | null; postTokens: number | null }
+  | { type: 'command_output'; text: string }
+  | { type: 'usage'; update: UsageUpdate }
+  | { type: 'notice'; text: string }
+  | { type: 'refused'; reason: string }
   | { type: 'control_request'; requestId: string; subtype: string; toolName: string | null; input: unknown }
   | { type: 'control_cancel'; requestId: string }
   | { type: 'ignored' }
   | { type: 'unknown'; label: string };
 
-const IGNORED_TYPES = new Set(['rate_limit_event', 'control_response', 'tool_progress']);
+const IGNORED_TYPES = new Set(['rate_limit_event', 'control_response', 'tool_progress', 'active_goal', 'autocompact_state']);
 const IGNORED_SYSTEM = new Set([
   'hook_started', 'hook_progress', 'hook_response', 'thinking_tokens', 'status',
-  'task_progress', 'background_tasks_changed', 'compact_boundary', 'commands_changed',
+  'task_progress', 'background_tasks_changed', 'commands_changed',
+  // The agent SDK's run bookkeeping, which it hands over too; the session keeps its own.
+  'session_state_changed', 'post_turn_summary', 'task_summary', 'session_metadata',
 ]);
 
 type Json = Record<string, unknown>;
 
 const text = (value: unknown): string | null => (typeof value === 'string' ? value : null);
+const count = (value: unknown): number | null => (typeof value === 'number' && Number.isFinite(value) ? value : null);
 
-export function parseStreamLine(line: string): StreamEvent | null {
-  if (line.trim() === '') return null;
-  let event: unknown;
-  try {
-    event = JSON.parse(line);
-  } catch {
-    return { type: 'unknown', label: 'invalid JSON' };
-  }
+/** One message as claude prints it on its stream-json output, which is also what the agent SDK hands over. */
+export function parseStreamMessage(event: unknown): StreamEvent {
   if (!isRecord(event)) return { type: 'unknown', label: 'not an object' };
   const type = text(event.type) ?? 'missing type';
   const parentToolUseId = text(event.parent_tool_use_id);
@@ -60,6 +69,8 @@ export function parseStreamLine(line: string): StreamEvent | null {
       const origin = event.origin;
       return { type: 'result', subtype: text(event.subtype) ?? 'unknown', origin: isRecord(origin) ? (text(origin.kind) ?? 'unknown') : null };
     }
+    case 'conversation_reset':
+      return { type: 'conversation_reset', trigger: text(event.trigger) };
     case 'control_request': {
       const request = isRecord(event.request) ? event.request : {};
       return {
@@ -108,6 +119,11 @@ function parseSystem(event: Json): StreamEvent {
     const patch = isRecord(event.patch) ? event.patch : {};
     return { type: 'task_updated', taskId: text(event.task_id) ?? '', status: text(patch.status) };
   }
+  if (subtype === 'compact_boundary') {
+    const meta = isRecord(event.compact_metadata) ? event.compact_metadata : {};
+    return { type: 'compact_boundary', trigger: text(meta.trigger), preTokens: count(meta.pre_tokens), postTokens: count(meta.post_tokens) };
+  }
+  if (subtype === 'local_command_output') return { type: 'command_output', text: text(event.content) ?? '' };
   const permissionMode = text(event.permissionMode);
   if (subtype === 'status' && permissionMode !== null) return { type: 'mode', permissionMode };
   return IGNORED_SYSTEM.has(subtype) ? { type: 'ignored' } : { type: 'unknown', label: `system/${subtype}` };
@@ -120,6 +136,7 @@ function contentBlocks(event: Json): Json[] {
 
 function assistantBlock(block: Json): AssistantBlock[] {
   if (block.type === 'text') return [{ kind: 'text', text: text(block.text) ?? '' }];
+  if (block.type === 'thinking') return [{ kind: 'thinking', text: text(block.thinking) ?? '' }];
   if (block.type === 'tool_use') return [{ kind: 'tool_use', id: text(block.id) ?? '', name: text(block.name) ?? '?', input: block.input }];
   return [];
 }
@@ -127,8 +144,14 @@ function assistantBlock(block: Json): AssistantBlock[] {
 function toolResult(block: Json): ToolResultBlock[] {
   if (block.type !== 'tool_result') return [];
   const content = block.content;
-  const body = typeof content === 'string'
-    ? content
-    : Array.isArray(content) ? content.filter(isRecord).map((part) => text(part.text) ?? '').join('\n') : '';
-  return [{ toolUseId: text(block.tool_use_id) ?? '', isError: block.is_error === true, text: body }];
+  const parts = Array.isArray(content) ? content.filter(isRecord) : [];
+  const body = typeof content === 'string' ? content : parts.map((part) => text(part.text) ?? '').join('\n');
+  return [{ toolUseId: text(block.tool_use_id) ?? '', isError: block.is_error === true, text: body, images: parts.flatMap(imageData) }];
+}
+
+function imageData(part: Json): string[] {
+  const source = part.source;
+  if (part.type !== 'image' || !isRecord(source) || source.type !== 'base64') return [];
+  const data = text(source.data);
+  return data === null || data === '' ? [] : [data];
 }

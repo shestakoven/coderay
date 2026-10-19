@@ -3,27 +3,44 @@ import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { onTestFinished } from 'vitest';
-import type { Lang, MapStatus } from '@ide/protocol';
+import { onTestFinished, type TestContext } from 'vitest';
+import { stringify } from 'yaml';
+import type { ChatPick, Lang, MapStatus } from '@ide/protocol';
 import type { IndexedFile } from '../src/model';
 import type { SessionRecord } from '../src/store/store';
 
 export const fixture = (name: string): string => fileURLToPath(new URL(`./fixtures/${name}`, import.meta.url));
 
+// Turns a current history back into one written before chat engines (schema 9).
+export const BEFORE_ENGINES = 'ALTER TABLE sessions RENAME COLUMN engine_session_id TO claude_session_id; ALTER TABLE sessions DROP COLUMN engine;';
+
 export function sessionRecord(id: string, cwd: string): SessionRecord {
   return {
-    id, claudeSessionId: `claude-${id}`, cwd, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+    id, engine: 'claude', engineSessionId: `claude-${id}`, cwd, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
     pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null,
   };
 }
+
+// What a test chat starts with when nothing else names a model, as IDE_DEFAULT_MODEL does for the app.
+export const SONNET: ChatPick = { engine: 'claude', modelChoice: 'sonnet', effort: 'medium' };
+export const LUNA: ChatPick = { engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: 'medium' };
+export const NEMOTRON: ChatPick = { engine: 'opencode', modelChoice: 'opencode:opencode/nemotron-3.5-lightning-free', effort: null };
 
 export function indexed(path: string, lang: Lang, imports: string[], overrides: Partial<IndexedFile> = {}): IndexedFile {
   return { path, lang, contentHash: path, imports, symbols: [], parseError: false, ...overrides };
 }
 
-export function tempDir(prefix: string): string {
+// A Kubernetes workload manifest whose pod runs the given containers.
+export function k8sWorkload(kind: 'Deployment' | 'StatefulSet' | 'CronJob', containers: Record<string, unknown>[]): string {
+  const pod = { spec: { containers } };
+  const spec = kind === 'CronJob' ? { schedule: '0 3 * * *', jobTemplate: { spec: { template: pod } } } : { replicas: 1, template: pod };
+  return stringify({ apiVersion: kind === 'CronJob' ? 'batch/v1' : 'apps/v1', kind, metadata: { name: 'app' }, spec });
+}
+
+// A concurrent test passes its context: the global onTestFinished may bind the removal to another test running alongside.
+export function tempDir(prefix: string, context?: Pick<TestContext, 'onTestFinished'>): string {
   const dir = realpathSync(mkdtempSync(join(tmpdir(), prefix)));
-  onTestFinished(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+  (context?.onTestFinished ?? onTestFinished)(() => rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
   return dir;
 }
 

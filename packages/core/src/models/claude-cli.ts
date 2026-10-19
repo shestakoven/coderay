@@ -9,7 +9,7 @@ export interface ClaudeCliOptions {
   model: string;
   runDir: string;
   claudePath?: string;
-  env?: () => Record<string, string>;
+  env?: () => Readonly<Record<string, string>>;
   timeoutMs?: number;
   retryDelaysMs?: number[];
   wait?: (ms: number, signal?: AbortSignal) => Promise<unknown>;
@@ -50,7 +50,7 @@ export class ClaudeCliModel implements StructuredModel {
   private readonly model: string;
   private readonly runDir: string;
   private readonly claudePath: string;
-  private readonly env: (() => Record<string, string>) | undefined;
+  private readonly env: (() => Readonly<Record<string, string>>) | undefined;
   private readonly timeoutMs: number;
   private readonly retryDelaysMs: number[];
   private readonly wait: (ms: number, signal?: AbortSignal) => Promise<unknown>;

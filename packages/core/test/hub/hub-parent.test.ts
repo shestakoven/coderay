@@ -19,7 +19,7 @@ function startHub(base: string, flags: string[], projects: string[] = []) {
   mkdirSync(join(base, 'user-home'));
   writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const child = spawn(process.execPath, ['--import', 'tsx', MAIN, '--hub', ...projects.flatMap((root) => ['--project', root]),
-    '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--allow-origin', ORIGIN, '--claude', join(bin, 'claude'), ...flags], {
+    '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--allow-origin', ORIGIN, '--claude', join(bin, 'claude'), '--no-codex', '--no-opencode', ...flags], {
     cwd: REPO,
     env: { ...process.env, HOME: join(base, 'user-home'), PATH: `${bin}:${process.env.PATH ?? ''}` },
     stdio: ['pipe', 'pipe', 'pipe'],

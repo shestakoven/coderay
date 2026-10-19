@@ -2,22 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { ChatItem } from '@ide/protocol';
-import { AccountStore } from '../../src/accounts/account-store';
-import { AgentSession, SessionError } from '../../src/agent/agent-session';
+import type { ChatItem, EngineId } from '@ide/protocol';
+import { AccountStore, claudeAccounts } from '../../src/accounts/account-store';
+import { AgentSession, SessionError, type SessionAccounts } from '../../src/agent/agent-session';
 import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
 import { accountsDir, fakeCli, seedAccounts, withEnv, type SeededAccount } from '../accounts/fake-cli';
-import { fakeClaude, readRecords } from '../fake-claude/fake';
-import { tempDir, waitFor } from '../helpers';
+import { argValue, fakeClaude, hasArg, readRecords } from '../fake-claude/fake';
+import { SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
   session: AgentSession;
   store: Store;
   accounts: AccountStore;
   close: () => Promise<void>;
-  spawns: () => { argv: string[]; configDir: string | null; pid: number }[];
+  spawns: () => { argv: string[]; configDir: string | null; pid: number; credentials: string[] | null }[];
 }
 
 interface World {
@@ -33,14 +33,14 @@ function world(active: number | null): World {
   const home = tempDir('ide-home-');
   const root = tempDir('ide-root-');
   const seeded = seedAccounts(home, ['a@example.com', 'b@example.com'], active);
-  const accounts = new AccountStore({ home, claude: fakeCli().command });
+  const accounts = claudeAccounts(home, fakeCli().command);
   return { home, root, seeded, accounts, dirOf: (account) => join(accountsDir(home), account.id) };
 }
 
-async function harness(w: World, scenario = 'multi-turn'): Promise<Harness> {
+async function harness(w: World, scenario = 'multi-turn', others: Partial<Record<EngineId, SessionAccounts>> = {}): Promise<Harness> {
   const store = openStore(projectDir(w.home, w.root));
   const recordFile = join(w.home, `record-${randomUUID()}.jsonl`);
-  const session = new AgentSession({ root: w.root, home: w.home, store, claude: fakeClaude(scenario, recordFile), accounts: w.accounts });
+  const session = new AgentSession({ root: w.root, home: w.home, store, claude: fakeClaude(scenario, recordFile), accounts: { claude: w.accounts, ...others }, defaultModel: SONNET });
   let closed = false;
   const close = async () => {
     if (closed) return;
@@ -52,22 +52,22 @@ async function harness(w: World, scenario = 'multi-turn'): Promise<Harness> {
   await session.start();
   return {
     session, store, accounts: w.accounts, close,
-    spawns: () => readRecords(recordFile).flatMap((r) => (r.argv ? [{ argv: r.argv, configDir: r.configDir ?? null, pid: r.pid ?? -1 }] : [])),
+    spawns: () => readRecords(recordFile).flatMap((r) => (r.argv ? [{ argv: r.argv, configDir: r.configDir ?? null, pid: r.pid ?? -1, credentials: r.credentials ?? null }] : [])),
   };
 }
 
-const flag = (argv: string[] | undefined, name: string) => (argv?.includes(name) ? argv[argv.indexOf(name) + 1] : undefined);
+const flag = argValue;
 const closedTurns = (h: Harness) => h.session.state().turns.filter((turn) => turn.closedAt !== null).length;
 const itemTexts = (items: ChatItem[]) => items.flatMap((item) => (item.kind === 'tool' || item.kind === 'prompt' ? [] : [item.text]));
 const switchNotices = (h: Harness) => itemTexts(h.session.state().items).filter((text) => text.includes('Switched to account'));
 
-async function firstTurn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number }> {
+async function firstTurn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number; credentials: string[] | null }> {
   h.session.send('Remember the number 42. Reply with only: OK');
   await waitFor(() => closedTurns(h) === 1, 'first turn closed');
   return h.spawns()[0]!;
 }
 
-async function nextSpawn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number }> {
+async function nextSpawn(h: Harness): Promise<{ argv: string[]; configDir: string | null; pid: number; credentials: string[] | null }> {
   const count = h.spawns().length;
   h.session.send('What number did I ask you to remember?');
   const spawns = await waitFor(() => h.spawns().length === count + 1 && h.spawns(), 'claude spawned again');
@@ -86,9 +86,26 @@ describe('AgentSession under a Claude account', () => {
     const w = world(1);
     const h = await harness(w);
     const first = await firstTurn(h);
-    expect([first.configDir, h.store.latestSession()?.accountId, typeof flag(first.argv, '--session-id')]).toStrictEqual([
-      w.dirOf(w.seeded[1]!), w.seeded[1]!.id, 'string',
+    // The claude that lists the models runs under the account too.
+    await h.session.engines.get('claude')?.listModels();
+    expect([first.configDir, h.store.latestSession()?.accountId, typeof flag(first.argv, '--session-id'), h.spawns().at(-1)?.configDir]).toStrictEqual([
+      w.dirOf(w.seeded[1]!), w.seeded[1]!.id, 'string', w.dirOf(w.seeded[1]!),
     ]);
+  });
+
+  it("takes the core's Anthropic credentials away from claude under an account and leaves them to a System session", async () => {
+    const names = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'];
+    for (const name of names) vi.stubEnv(name, 'not-a-real-credential');
+    onTestFinished(() => {
+      vi.unstubAllEnvs();
+    });
+    const w = world(0);
+    const h = await harness(w);
+    const first = await firstTurn(h);
+    await h.session.restart();
+    w.accounts.setActive(null);
+    const second = await nextSpawn(h);
+    expect([first.credentials, second.credentials]).toEqual([[], names]);
   });
 
   it('resumes the same claude session under the same account after a restart', async () => {
@@ -97,7 +114,7 @@ describe('AgentSession under a Claude account', () => {
     const first = await firstTurn(h);
     await h.session.restart();
     const second = await nextSpawn(h);
-    expect([flag(second.argv, '--resume'), second.argv.includes('--session-id'), second.configDir, switchNotices(h)]).toStrictEqual([
+    expect([flag(second.argv, '--resume'), hasArg(second.argv, '--session-id'), second.configDir, switchNotices(h)]).toStrictEqual([
       flag(first.argv, '--session-id'), false, w.dirOf(w.seeded[0]!), [],
     ]);
   });
@@ -110,10 +127,10 @@ describe('AgentSession under a Claude account', () => {
     w.accounts.setActive(w.seeded[1]!.id);
     const second = await nextSpawn(h);
     const fresh = flag(second.argv, '--session-id');
-    expect([second.argv.includes('--resume'), fresh === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), fresh === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
-    expect(h.store.latestSession()).toMatchObject({ claudeSessionId: fresh, accountId: w.seeded[1]!.id });
+    expect(h.store.latestSession()).toMatchObject({ engineSessionId: fresh, accountId: w.seeded[1]!.id });
   });
 
   it('tells the user it switched to the new account', async () => {
@@ -134,7 +151,7 @@ describe('AgentSession under a Claude account', () => {
     await h.session.restart();
     w.accounts.setActive(w.seeded[0]!.id);
     const second = await nextSpawn(h);
-    expect([second.argv.includes('--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[0]!),
     ]);
     expect(switchNotices(h)[0]).toContain('Switched to account a@example.com');
@@ -147,7 +164,7 @@ describe('AgentSession under a Claude account', () => {
     await h.session.restart();
     w.accounts.setActive(null);
     const second = await nextSpawn(h);
-    expect([second.argv.includes('--resume'), second.configDir, h.store.latestSession()?.accountId]).toStrictEqual([false, null, null]);
+    expect([hasArg(second.argv, '--resume'), second.configDir, h.store.latestSession()?.accountId]).toStrictEqual([false, null, null]);
     expect(switchNotices(h)[0]).toContain('Switched to account System');
   });
 
@@ -159,7 +176,7 @@ describe('AgentSession under a Claude account', () => {
     w.accounts.setActive(w.seeded[1]!.id);
     const after = await harness(w);
     const second = await nextSpawn(after);
-    expect([second.argv.includes('--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
   });
@@ -187,14 +204,14 @@ describe('AgentSession.changeAccount', () => {
     const w = world(0);
     const h = await busy(w);
     const change = vi.fn(() => w.accounts.setActive(w.seeded[1]!.id));
-    await expect(h.session.changeAccount(change)).rejects.toThrow(new SessionError('busy-account'));
+    await expect(h.session.changeAccount('claude', change)).rejects.toThrow(new SessionError('busy-account'));
     expect([change.mock.calls.length, w.accounts.activeId(), isAlive(h.spawns()[0]!.pid), h.session.isIdle()]).toStrictEqual([0, w.seeded[0]!.id, true, false]);
   });
 
   it('refuses to remove an account while the agent is working, and the account stays', async () => {
     const w = world(0);
     const h = await busy(w);
-    await expect(h.session.changeAccount(() => w.accounts.remove(w.seeded[0]!.id))).rejects.toThrow(new SessionError('busy-account'));
+    await expect(h.session.changeAccount('claude', () => w.accounts.remove(w.seeded[0]!.id))).rejects.toThrow(new SessionError('busy-account'));
     expect([w.accounts.list().accounts.map((account) => account.id), existsSync(w.dirOf(w.seeded[0]!))]).toStrictEqual([
       [w.seeded[0]!.id, w.seeded[1]!.id], true,
     ]);
@@ -205,7 +222,7 @@ describe('AgentSession.changeAccount', () => {
     const h = await harness(w);
     const first = await firstTurn(h);
     expect(isAlive(first.pid)).toBe(true);
-    await h.session.changeAccount(() => w.accounts.setActive(w.seeded[1]!.id));
+    await h.session.changeAccount('claude', () => w.accounts.setActive(w.seeded[1]!.id));
     expect(w.accounts.activeId()).toBe(w.seeded[1]!.id);
     await waitFor(() => !isAlive(first.pid), 'idle claude stopped');
   });
@@ -214,9 +231,9 @@ describe('AgentSession.changeAccount', () => {
     const w = world(0);
     const h = await harness(w);
     const first = await firstTurn(h);
-    await h.session.changeAccount(() => w.accounts.setActive(w.seeded[1]!.id));
+    await h.session.changeAccount('claude', () => w.accounts.setActive(w.seeded[1]!.id));
     const second = await nextSpawn(h);
-    expect([second.argv.includes('--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
+    expect([hasArg(second.argv, '--resume'), flag(second.argv, '--session-id') === flag(first.argv, '--session-id'), second.configDir]).toStrictEqual([
       false, false, w.dirOf(w.seeded[1]!),
     ]);
   });
@@ -225,8 +242,56 @@ describe('AgentSession.changeAccount', () => {
     const w = world(0);
     const h = await harness(w);
     await firstTurn(h);
-    await h.session.changeAccount(() => w.accounts.remove(w.seeded[0]!.id));
+    await h.session.changeAccount('claude', () => w.accounts.remove(w.seeded[0]!.id));
     const second = await nextSpawn(h);
-    expect([w.accounts.activeId(), second.configDir, second.argv.includes('--resume')]).toStrictEqual([null, null, false]);
+    expect([w.accounts.activeId(), second.configDir, hasArg(second.argv, '--resume')]).toStrictEqual([null, null, false]);
+  });
+});
+
+describe('AgentSession accounts per engine', () => {
+  it('lists the models under the active account without the credential variables, as a chat runs', async () => {
+    const w = world(1);
+    withEnv('ANTHROPIC_API_KEY', 'not-a-real-key');
+    const h = await harness(w);
+    await h.session.engines.get('claude')!.listModels();
+    expect(h.spawns().map((spawn) => [spawn.configDir, spawn.credentials])).toEqual([[w.dirOf(w.seeded[1]!), []]]);
+  });
+
+  it("names the active account beside the engine state once the engine has accounts, and only then", async () => {
+    const w = world(1);
+    const h = await harness(w);
+    const named = await h.session.engines.get('claude')!.status();
+    await h.session.changeAccount('claude', async () => {
+      await w.accounts.remove(w.seeded[0]!.id);
+      await w.accounts.remove(w.seeded[1]!.id);
+    });
+    expect([named.account, (await h.session.engines.get('claude')!.status()).account]).toEqual(['b@example.com', undefined]);
+  });
+
+  it("switches another engine's account while a Claude chat works or idles, and leaves the Claude agent running", async () => {
+    const w = world(0);
+    const codex = new AccountStore({ home: w.home, engine: 'codex', logout: async () => {} });
+    const h = await harness(w, 'interrupt-bash', { codex });
+    h.session.send('run it');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'the agent working');
+    await h.session.changeAccount('codex', () => codex.setActive(null));
+    const working = [h.session.hasOpenTurn(), isAlive(h.spawns()[0]!.pid)];
+    h.session.stop();
+    await waitFor(() => h.session.isIdle(), 'turn stopped');
+    await h.session.changeAccount('codex', () => codex.setActive(null));
+    expect([working, isAlive(h.spawns()[0]!.pid), h.spawns().length]).toEqual([[true, true], true, 1]);
+  });
+
+  it('goes on under the active account with a fresh conversation and today\'s switch notice when the account a chat ran under was removed', async () => {
+    const w = world(0);
+    const h = await harness(w);
+    const first = await firstTurn(h);
+    await h.session.changeAccount('claude', () => w.accounts.remove(w.seeded[0]!.id));
+    h.session.send('again');
+    await waitFor(() => closedTurns(h) === 2, 'second turn closed');
+    const last = h.spawns().at(-1)!;
+    expect([itemTexts(h.session.state().items).filter((text) => text.startsWith('Switched to account')), last.configDir, flag(last.argv, '--session-id') === flag(first.argv, '--session-id')]).toEqual([
+      ['Switched to account System; Claude starts a fresh conversation.'], null, false,
+    ]);
   });
 });

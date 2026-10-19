@@ -29,10 +29,10 @@ export function mapActivities(progress: MapProgress, status: MapStatus | null): 
     const sending = status.sending;
     list.push({
       key: 'grouping',
-      label: 'Grouping files into components with Haiku',
+      label: 'Grouping files into components',
       detail: sending
-        ? `Sent ${plural(sending.paths, 'path')}, ${plural(sending.symbols, 'symbol name')}, ${plural(sending.links, 'dependency count')}. File contents are never sent.`
-        : 'Waiting for embeddings before asking Haiku',
+        ? `Sent ${plural(sending.paths, 'path')}, ${plural(sending.symbols, 'symbol name')}, ${plural(sending.links, 'dependency count')}`
+        : 'Waiting for embeddings',
       fraction: null,
     });
   }

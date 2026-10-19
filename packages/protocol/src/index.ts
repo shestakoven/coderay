@@ -8,9 +8,11 @@ import type { ChatClientMessage, SessionServerMessage } from './session';
 import type { SettingsClientMessage, SettingsServerMessage } from './settings';
 
 export * from './session';
+export * from './engines';
 export * from './settings';
 export * from './plans';
 export * from './history';
+export * from './review';
 export * from './git';
 export * from './hub';
 export * from './project';
@@ -151,6 +153,59 @@ export interface C4Model {
   warnings: string[];
 }
 
+export type OverviewLane = 'interface' | 'core' | 'integrations' | 'platform' | 'noise';
+
+export interface OverviewPart {
+  id: string;
+  name: string;
+  summary: string;
+  files: number;
+  dirs: string[];
+  noise: boolean;
+}
+
+export interface OverviewComponent {
+  id: string;
+  name: string;
+  role: string;
+  files: number;
+  langs: string[];
+  noise: boolean;
+  parts: OverviewPart[];
+}
+
+export interface OverviewGroup {
+  id: string;
+  name: string;
+  summary: string;
+  lane: OverviewLane;
+  noise: boolean;
+  files: number;
+  components: OverviewComponent[];
+}
+
+// Imports between parts (from imports to); the UI sums them up to whatever level is open.
+export interface OverviewLink {
+  from: string;
+  to: string;
+  count: number;
+}
+
+export interface OverviewLabel {
+  from: string;
+  to: string;
+  label: string;
+}
+
+export interface MapOverview {
+  state: 'waiting' | 'running' | 'ready' | 'failed';
+  error: string | null;
+  basedOnCurrentMap: boolean;
+  groups: OverviewGroup[];
+  links: OverviewLink[];
+  labels: OverviewLabel[];
+}
+
 export interface MapSnapshot {
   version: number;
   projectName: string;
@@ -159,6 +214,7 @@ export interface MapSnapshot {
   fileEdges: FileEdge[];
   status: MapStatus;
   c4?: C4Model;
+  overview?: MapOverview;
 }
 
 export interface MapProgress {
@@ -187,4 +243,5 @@ export type ClientMessage =
   | ProjectClientMessage
   | HubClientMessage
   | TerminalClientMessage
-  | { type: 'map.regroup' };
+  | { type: 'map.regroup' }
+  | { type: 'map.overview' };

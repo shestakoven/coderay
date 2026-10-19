@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "manual": [
+    { "id": "shell", "name": "Shell", "summary": "App entry", "description": "Boots the app.", "files": [], "globs": ["src/*.ts", "src/*.js"] },
+    { "id": "views", "name": "Views", "summary": "Screens", "description": "Screens and chrome.", "files": [], "globs": ["src/views/**"] },
+    { "id": "state", "name": "State", "summary": "Store", "description": "Client state.", "files": [], "globs": ["src/state/**"] },
+    { "id": "api", "name": "API client", "summary": "Backend calls", "description": "Talks to the backend.", "files": [], "globs": ["src/api/**"] }
+  ]
+}

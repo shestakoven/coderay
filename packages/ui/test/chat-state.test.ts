@@ -4,7 +4,7 @@ import { canSend, canStop, chatReducer, childItems, decisionLabel, initialChatSt
 import { matchSkills } from '../src/chat/skills';
 
 const session = {
-  id: 's1', claudeSessionId: 'c1', status: 'running' as const, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.281', permissionMode: 'bypassPermissions', startedAt: 1,
+  id: 's1', engine: 'claude' as const, engineSessionId: 'c1', status: 'running' as const, model: 'haiku', modelChoice: null, effort: null, cliVersion: '2.1.281', permissionMode: 'bypassPermissions', startedAt: 1,
 };
 const turn = (id: string, kind: TurnView['kind'], state: 'waiting' | 'running' | 'closed' = 'closed'): TurnView => ({
   id, kind, openedAt: 1, startedAt: state === 'waiting' ? null : 2, closedAt: state === 'closed' ? 3 : null, resultSubtype: state === 'closed' ? 'success' : null,
@@ -40,8 +40,9 @@ describe('chatReducer skills', () => {
     expect(initialChatState.skills).toEqual([]);
   });
 
-  it('takes the skills from a snapshot', () => {
-    expect(chat({ skills: ['wiki', 'superpowers:brainstorming'] }).skills).toEqual(['wiki', 'superpowers:brainstorming']);
+  it('takes the skills, and whether the agent has said them, from a snapshot', () => {
+    const after = chat({ skills: ['wiki', 'superpowers:brainstorming'], skillsKnown: true });
+    expect([after.skills, after.skillsKnown]).toEqual([['wiki', 'superpowers:brainstorming'], true]);
   });
 
   it('replaces the skills on a snapshot, including with an empty list', () => {
@@ -51,16 +52,18 @@ describe('chatReducer skills', () => {
     expect([next.skills, cleared.skills]).toEqual([['review'], []]);
   });
 
-  it('replaces the skills with the ones in a patch', () => {
-    expect(patch(chat({ skills: ['wiki'] }), { skills: ['review', 'p:deploy'] }).skills).toEqual(['review', 'p:deploy']);
+  it('replaces the skills with the ones in a patch, and learns that they are known', () => {
+    const after = patch(chat({ skills: ['wiki'] }), { skills: ['review', 'p:deploy'], skillsKnown: true });
+    expect([after.skills, after.skillsKnown]).toEqual([['review', 'p:deploy'], true]);
   });
 
   it('clears the skills with an empty list in a patch', () => {
     expect(patch(chat({ skills: ['wiki'] }), { skills: [] }).skills).toEqual([]);
   });
 
-  it('keeps the skills on a patch that has none', () => {
-    expect(patch(chat({ skills: ['wiki'] }), { turns: [turn('t1', 'user')] }).skills).toEqual(['wiki']);
+  it('keeps the skills, and that they are known, on a patch that has none', () => {
+    const after = patch(chat({ skills: ['wiki'], skillsKnown: true }), { turns: [turn('t1', 'user')] });
+    expect([after.skills, after.skillsKnown]).toEqual([['wiki'], true]);
   });
 
   it('keeps the skills on a patch that only carries the usage or the MCP servers', () => {
@@ -77,8 +80,9 @@ describe('chatReducer skills', () => {
     const { skills: _skills, ...oldState } = { session, turns: [], items: [], tasks: [], mcpServers: [], skills: ['wiki'], usage: EMPTY_USAGE };
     const oldSnapshot = (before = initialChatState) => chatReducer(before, { type: 'snapshot', state: oldState as unknown as SessionState });
 
-    it('has an empty skill list after a snapshot without the skills field', () => {
-      expect(oldSnapshot(chat({ skills: ['wiki'] })).skills).toEqual([]);
+    it('has an empty skill list, not known, after a snapshot without the skills fields', () => {
+      const after = oldSnapshot(chat({ skills: ['wiki'], skillsKnown: true }));
+      expect([after.skills, after.skillsKnown]).toEqual([[], false]);
     });
 
     it('keeps the empty skill list on a later patch and matches nothing for the slash menu', () => {

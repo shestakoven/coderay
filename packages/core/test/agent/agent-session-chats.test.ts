@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { EMPTY_USAGE, type SessionServerMessage } from '@ide/protocol';
@@ -7,8 +7,8 @@ import { AgentSession, SessionError, type AgentSessionOptions } from '../../src/
 import { projectDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type SessionRecord, type Store } from '../../src/store/store';
-import { fakeClaude, readRecords } from '../fake-claude/fake';
-import { tempDir, waitFor } from '../helpers';
+import { argValue, fakeClaude, hasArg, readRecords } from '../fake-claude/fake';
+import { fixture, SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
   session: AgentSession;
@@ -18,6 +18,7 @@ interface Harness {
   broadcasts: SessionServerMessage[];
   argvs: () => string[][];
   pids: () => number[];
+  setModels: () => (string | null)[];
 }
 
 async function harness(scenario: string, overrides: Partial<AgentSessionOptions> = {}, scenarioFile?: string): Promise<Harness> {
@@ -27,7 +28,7 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
   if (!overrides.store) onTestFinished(() => store.close());
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
   const claude = fakeClaude(scenarioFile ?? scenario, recordFile);
-  const session = new AgentSession({ root, home, store, claude, ...overrides });
+  const session = new AgentSession({ root, home, store, claude, defaultModel: SONNET, ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(() => session.close());
@@ -36,10 +37,11 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
     session, store, home, root, broadcasts,
     argvs: () => readRecords(recordFile).flatMap((r) => (r.argv ? [r.argv] : [])),
     pids: () => readRecords(recordFile).flatMap((r) => (r.pid ? [r.pid] : [])),
+    setModels: () => readRecords(recordFile).flatMap((r) => (r.setModel !== undefined ? [r.setModel] : [])),
   };
 }
 
-const flag = (argv: string[] | undefined, name: string) => argv?.[argv.indexOf(name) + 1];
+const flag = argValue;
 const closedTurns = (h: Harness) => h.session.state().turns.filter((turn) => turn.closedAt !== null);
 const texts = (h: Harness) => h.session.state().items.flatMap((item) => (item.kind === 'message' ? [item.text] : []));
 const current = (h: Harness) => {
@@ -62,13 +64,23 @@ async function twoChats(h: Harness) {
   return { a, b: current(h) };
 }
 
+// The usage scenario with the account's two windows in events of their own, as claude reports a window when it changes.
+function windowsApart(): string {
+  const limit = (type: string, utilization: number, resetsAt: number) =>
+    JSON.stringify({ type: 'rate_limit_event', rate_limit_info: { status: 'allowed', rateLimitType: type, utilization, resetsAt }, session_id: '$SESSION' });
+  const file = join(tempDir('ide-scenario-'), 'usage-windows-apart.jsonl');
+  writeFileSync(file, readFileSync(fixture('stream/usage.jsonl'), 'utf8').split('\n')
+    .flatMap((line) => (line.includes('"rate_limit_event"') ? [limit('five_hour', 0.42, 1790898600), limit('seven_day', 0.07, 1791482400)] : [line])).join('\n'));
+  return file;
+}
+
 function longBackgroundShell(): string {
   const S = '$SESSION';
   const line = (o: object) => JSON.stringify(o);
   const file = join(tempDir('ide-scenario-'), 'long-background-shell.jsonl');
   writeFileSync(file, [
     line({ fake: 'await-user' }),
-    line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+    line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' }),
     line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: 'Bash', input: { command: 'sleep 500', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
     line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 500', is_backgrounded: true, task_type: 'local_bash', session_id: S }),
     line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),
@@ -79,7 +91,7 @@ function longBackgroundShell(): string {
 }
 
 const record = (id: string, startedAt: number, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
-  id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
+  id, engine: 'claude', engineSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
   pid: null, launchId: null, conversationStarted: true, startedAt, accountId: null, ...overrides,
 });
 
@@ -109,7 +121,7 @@ describe('claude flags for the model and effort', () => {
     expect(h.argvs()).toEqual([]);
     h.session.send('hi');
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
-    expect([flag(argv, '--model'), flag(argv, '--effort'), flag(argv, '--session-id')]).toEqual(['opus', 'high', current(h).claudeSessionId]);
+    expect([flag(argv, '--model'), flag(argv, '--effort'), flag(argv, '--session-id')]).toEqual(['opus', 'high', current(h).engineSessionId]);
   });
 
   it('passes only --model when no effort is chosen and only --effort when no model is chosen', async () => {
@@ -121,7 +133,7 @@ describe('claude flags for the model and effort', () => {
     await effortOnly.session.configure(null, 'low');
     effortOnly.session.send('hi');
     const [b] = await waitFor(() => effortOnly.argvs().length === 1 && effortOnly.argvs(), 'claude spawned');
-    expect([a?.includes('--model'), a?.includes('--effort'), flag(a, '--model'), b?.includes('--model'), b?.includes('--effort'), flag(b, '--effort')]).toEqual([
+    expect([hasArg(a, '--model'), hasArg(a, '--effort'), flag(a, '--model'), hasArg(b, '--model'), hasArg(b, '--effort'), flag(b, '--effort')]).toEqual([
       true, false, 'claude-haiku-4-5-20251001', false, true, 'low',
     ]);
   });
@@ -183,8 +195,8 @@ describe('AgentSession.configure', () => {
     await ask(h, 'again', 2);
     const argvs = h.argvs();
     expect(argvs).toHaveLength(2);
-    expect([flag(argvs[1], '--resume'), argvs[1]?.includes('--session-id'), flag(argvs[1], '--model'), flag(argvs[1], '--effort')]).toEqual([
-      before.claudeSessionId, false, 'sonnet', 'low',
+    expect([flag(argvs[1], '--resume'), hasArg(argvs[1], '--session-id'), flag(argvs[1], '--model'), flag(argvs[1], '--effort')]).toEqual([
+      before.engineSessionId, false, 'sonnet', 'low',
     ]);
   });
 
@@ -196,6 +208,15 @@ describe('AgentSession.configure', () => {
     expect(h.argvs()).toHaveLength(1);
   });
 
+  it('starts the claude of a chat nobody wrote to again at once, with the new effort', async () => {
+    const h = await harness('multi-turn');
+    await h.session.newSession();
+    await waitFor(() => h.argvs().length === 1, "the new chat's claude started");
+    await h.session.configure('sonnet', 'low');
+    const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude started again');
+    expect([current(h).status, flag(argvs[1], '--effort'), h.pids().filter(isAlive).length]).toEqual(['running', 'low', 1]);
+  });
+
   it('does not restart claude when nothing changes', async () => {
     const h = await harness('multi-turn');
     await h.session.configure('opus', 'high');
@@ -204,17 +225,31 @@ describe('AgentSession.configure', () => {
     expect([current(h).status, h.argvs().length]).toEqual(['running', 1]);
   });
 
-  it('restarts when only the effort changes and when only the model changes', async () => {
+  it('restarts claude when the effort changes and switches the model inside the running claude', async () => {
     const h = await harness('multi-turn');
     await h.session.configure('opus', 'high');
     await ask(h, 'hi');
-    await h.session.configure('opus', 'low');
+    await h.session.configure('sonnet', 'low');
     expect(current(h).status).toBe('stopped');
     await ask(h, 'again', 2);
     await h.session.configure('haiku', 'low');
-    expect(current(h).status).toBe('stopped');
+    expect([current(h).status, current(h).modelChoice, h.setModels()]).toEqual(['running', 'haiku', ['haiku']]);
     await ask(h, 'third', 3);
-    expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['opus', 'low'], ['haiku', 'low']]);
+    expect(h.argvs().map((argv) => [flag(argv, '--model'), flag(argv, '--effort')])).toEqual([['opus', 'high'], ['sonnet', 'low']]);
+    await h.session.configure(null, 'low');
+    expect(h.setModels()).toEqual(['haiku', null]);
+  });
+
+  it('ignores the echo claude prints for a model switch: no turn, no prompt, no message', async () => {
+    const h = await harness('multi-turn');
+    await h.session.configure('opus', 'high');
+    await ask(h, 'hi');
+    await h.session.configure('haiku', 'high');
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    expect([h.setModels(), h.session.state().turns.map((turn) => turn.kind), h.session.hasOpenTurn()]).toEqual([['haiku'], ['user'], false]);
+    await ask(h, 'again', 2);
+    const { items } = h.session.state();
+    expect([items.filter((item) => item.kind === 'prompt').length, texts(h).some((text) => text.includes('Set model'))]).toEqual([0, false]);
   });
 
   it('removes the flags again when the choice goes back to the default', async () => {
@@ -224,7 +259,7 @@ describe('AgentSession.configure', () => {
     await h.session.configure(null, null);
     await ask(h, 'again', 2);
     const second = h.argvs()[1];
-    expect([second?.includes('--model'), second?.includes('--effort')]).toEqual([false, false]);
+    expect([hasArg(second, '--model'), hasArg(second, '--effort')]).toEqual([false, false]);
   });
 
   it('saves the model and effort in the history', async () => {
@@ -258,10 +293,10 @@ describe('AgentSession.configure', () => {
     await h.session.newSession();
     await h.session.configure('haiku', null);
     const fresh = current(h);
-    expect([fresh.status, fresh.modelChoice, fresh.effort, h.store.listSessions()]).toMatchObject(['stopped', 'haiku', null, [{ id: fresh.id }, {}]]);
-    h.session.send('hello');
-    const argv = await waitFor(() => h.argvs()[1], 'second claude spawned');
-    expect([flag(argv, '--session-id'), flag(argv, '--model'), argv.includes('--effort')]).toEqual([fresh.claudeSessionId, 'haiku', false]);
+    expect([fresh.status, fresh.modelChoice, fresh.effort, h.store.listSessions()]).toMatchObject(['running', 'haiku', null, [{ id: fresh.id }, {}]]);
+    await ask(h, 'hello');
+    const argv = h.argvs().at(-1);
+    expect([flag(argv, '--session-id'), flag(argv, '--model'), hasArg(argv, '--effort')]).toEqual([fresh.engineSessionId, 'haiku', false]);
   });
 });
 
@@ -301,6 +336,32 @@ describe('a new chat inherits the model and effort', () => {
   });
 });
 
+describe('AgentSession.newSession', () => {
+  it('keeps a chat nobody wrote to: starts its claude when it has none, and starts no second one', async () => {
+    const h = await harness('multi-turn');
+    await h.session.configure('opus', 'high');
+    const chat = current(h).id;
+    await h.session.newSession();
+    const status = current(h).status;
+    await h.session.newSession();
+    await ask(h, 'hi');
+    expect([status, current(h).id, h.store.listSessions().map((summary) => summary.id), h.argvs().map((argv) => flag(argv, '--effort'))]).toEqual([
+      'running', chat, [chat], ['high'],
+    ]);
+  });
+
+  it('opens one new chat when New session comes again while the old claude is still stopping', async () => {
+    const h = await harness('multi-turn');
+    await ask(h, 'hi');
+    const old = current(h).id;
+    await Promise.all([h.session.newSession(), h.session.newSession()]);
+    const pids = await waitFor(() => h.pids().length === 2 && h.pids(), "the new chat's claude started");
+    expect([h.session.listChats().sessions.map((chat) => [chat.id === old, chat.status]), current(h).status, pids.map(isAlive)]).toEqual([
+      [[false, 'running'], [true, 'ended']], 'running', [false, true],
+    ]);
+  });
+});
+
 describe('AgentSession.listChats', () => {
   it('lists the stored chats with the open one marked, newest activity first', async () => {
     const h = await harness('multi-turn');
@@ -310,13 +371,14 @@ describe('AgentSession.listChats', () => {
     expect(sessions.map((chat) => [chat.id, chat.title, chat.messages])).toEqual([[b.id, 'second question', 2], [a.id, 'first question', 2]]);
   });
 
-  it('has no open chat after New session but still lists the ended chat', async () => {
+  it('opens a fresh chat on New session and still lists the ended chat', async () => {
     const h = await harness('multi-turn');
     await ask(h, 'hi');
     const { id } = current(h);
     await h.session.newSession();
+    const fresh = current(h).id;
     const { activeId, sessions } = h.session.listChats();
-    expect([activeId, sessions.map((chat) => [chat.id, chat.status])]).toEqual([null, [[id, 'ended']]]);
+    expect([activeId, sessions.map((chat) => [chat.id, chat.status])]).toEqual([fresh, [[fresh, 'running'], [id, 'ended']]]);
   });
 
   it('has nothing for a project without chats', async () => {
@@ -344,6 +406,36 @@ describe('AgentSession.switchSession', () => {
     expect(h.store.session(b.id)).toMatchObject({ status: 'stopped', pid: null });
   });
 
+  it("deletes a chat nobody wrote to when it leaves it, and stops its claude, but keeps one holding the user's edit, a revert or a name", async () => {
+    const traces: Record<string, (h: Harness, id: string) => void> = {
+      nothing: () => {},
+      "the user's own edit": (h, id) => h.store.saveChange(id, {
+        id: 'c1', path: 'notes.md', beforeHash: null, afterHash: 'a'.repeat(40), at: 2, origin: 'human', enforcement: 'recorded', outOfPlan: false,
+        toolUseIds: [], planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: 1, removed: null, stored: true, unreadable: false, beforeMode: null,
+      }),
+      'a revert': (h, id) => h.store.saveRevert(id, { id: 'r1', kind: 'review', eventId: null, planId: null, stepKey: null, changeIds: ['c0'], files: [], ts: 2, undoneAt: null }),
+      'a name the user gave it': (h, id) => h.session.renameSession(id, 'Release notes'),
+    };
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, trace] of Object.entries(traces)) {
+      const h = await harness('multi-turn');
+      await ask(h, 'hi');
+      const first = current(h).id;
+      await h.session.newSession();
+      const left = current(h).id;
+      const [, pid] = await waitFor(() => h.pids().length === 2 && h.pids(), "the new chat's claude started");
+      trace(h, left);
+      await h.session.switchSession(first);
+      outcomes[label] = [h.store.listSessions().map((chat) => (chat.id === first ? 'first' : chat.id === left ? 'left' : chat.id)).sort(), isAlive(pid ?? -1)];
+    }
+    expect(outcomes).toEqual({
+      nothing: [['first'], false],
+      "the user's own edit": [['first', 'left'], false],
+      'a revert': [['first', 'left'], false],
+      'a name the user gave it': [['first', 'left'], false],
+    });
+  });
+
   it('starts the next message of the opened chat with --resume of its own claude session', async () => {
     const h = await harness('multi-turn');
     const { a, b } = await twoChats(h);
@@ -351,7 +443,7 @@ describe('AgentSession.switchSession', () => {
     expect(h.argvs()).toHaveLength(2);
     await ask(h, 'back again', 2);
     const argv = h.argvs()[2];
-    expect([flag(argv, '--resume'), argv?.includes('--session-id'), flag(argv, '--resume') === b.claudeSessionId]).toEqual([a.claudeSessionId, false, false]);
+    expect([flag(argv, '--resume'), hasArg(argv, '--session-id'), flag(argv, '--resume') === b.engineSessionId]).toEqual([a.engineSessionId, false, false]);
     expect(texts(h)).toEqual(['first question', 'OK', 'back again', 'OK']);
   });
 
@@ -362,7 +454,7 @@ describe('AgentSession.switchSession', () => {
     await ask(h, 'in a', 2);
     await h.session.switchSession(b.id);
     await ask(h, 'in b', 2);
-    expect(h.argvs().slice(2).map((argv) => flag(argv, '--resume'))).toEqual([a.claudeSessionId, b.claudeSessionId]);
+    expect(h.argvs().slice(2).map((argv) => flag(argv, '--resume'))).toEqual([a.engineSessionId, b.engineSessionId]);
     expect(texts(h)).toEqual(['second question', 'OK', 'in b', 'OK']);
   });
 
@@ -376,7 +468,7 @@ describe('AgentSession.switchSession', () => {
     expect([current(h).status, h.store.session(old.id)?.status]).toEqual(['stopped', 'stopped']);
     await ask(h, 'more', 2);
     const argv = h.argvs()[1];
-    expect([flag(argv, '--resume'), argv?.includes('--session-id')]).toEqual([old.claudeSessionId, false]);
+    expect([flag(argv, '--resume'), hasArg(argv, '--session-id')]).toEqual([old.engineSessionId, false]);
   });
 
   it('opens a chat when no chat is open', async () => {
@@ -384,6 +476,7 @@ describe('AgentSession.switchSession', () => {
     await ask(h, 'hi');
     const { id } = current(h);
     await h.session.newSession();
+    await h.session.deleteSession(current(h).id);
     expect(h.session.state().session).toBeNull();
     await h.session.switchSession(id);
     expect([current(h).id, texts(h), h.store.meta('activeSessionId')]).toEqual([id, ['hi', 'OK'], id]);
@@ -422,7 +515,7 @@ describe('AgentSession.switchSession', () => {
     const { a } = await twoChats(h);
     expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
     await h.session.switchSession(a.id);
-    expect(h.session.state().skills).toEqual([]);
+    expect([h.session.state().skills, h.session.state().skillsKnown]).toEqual([[], false]);
   });
 
   it('sends clients an empty skills list in the snapshot of the chat it switches to', async () => {
@@ -525,7 +618,7 @@ describe('AgentSession.start with several chats', () => {
     const { home, root, store } = seededStore();
     store.setMeta('activeSessionId', '');
     const h = await harness('multi-turn', { home, root, store });
-    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE }, null]);
+    expect([h.session.state(), h.session.sessionId()]).toEqual([{ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], skillsKnown: false, usage: EMPTY_USAGE }, null]);
   });
 
   it('opens no chat when the active chat was ended', async () => {
@@ -536,12 +629,13 @@ describe('AgentSession.start with several chats', () => {
     expect(h.session.state().session).toBeNull();
   });
 
-  it('remembers the chat created by the first message as the active chat, and clears it on New session', async () => {
+  it('remembers the chat created by the first message as the active chat, and the chat New session opens after it', async () => {
     const h = await harness('multi-turn');
     await ask(h, 'hi');
-    expect(h.store.meta('activeSessionId')).toBe(current(h).id);
+    const first = current(h).id;
+    expect(h.store.meta('activeSessionId')).toBe(first);
     await h.session.newSession();
-    expect(h.store.meta('activeSessionId')).toBe('');
+    expect([h.store.meta('activeSessionId'), current(h).id === first]).toEqual([current(h).id, false]);
   });
 
   it('keeps a new chat as the active one after a core restart', async () => {
@@ -621,7 +715,8 @@ describe('AgentSession usage', () => {
     const h = await harness('usage');
     await ask(h, 'hi');
     expect(h.session.state().usage).toEqual({
-      contextTokens: 96_010, contextWindow: 200_000, fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 },
+      contextTokens: 96_010, contextWindow: 200_000,
+      limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }],
     });
     const patches = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.usage ? [message.patch.usage] : []));
     expect(patches.at(-1)).toEqual(h.session.state().usage);
@@ -632,12 +727,24 @@ describe('AgentSession usage', () => {
     const h = await harness('usage');
     await ask(h, 'hi');
     await h.session.newSession();
-    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, fiveHour: { utilization: 0.42, resetsAt: 1790898600 }, sevenDay: { utilization: 0.07, resetsAt: 1791482400 } });
+    expect(h.session.state().usage).toEqual({
+      contextTokens: null, contextWindow: null,
+      limits: [{ label: '5h', name: 'five-hour', minutes: 300, utilization: 0.42, resetsAt: 1790898600 }, { label: '7d', name: 'seven-day', minutes: 10_080, utilization: 0.07, resetsAt: 1791482400 }],
+    });
     expect(lastSnapshot(h)).toMatchObject({ state: { usage: { contextTokens: null } } });
+  });
+
+  it('keeps each limit window as it arrives on its own, and the account limits on a chat it switches to', async () => {
+    const h = await harness('usage', {}, windowsApart());
+    await ask(h, 'hi');
+    const first = current(h).id;
+    await h.session.newSession();
+    await h.session.switchSession(first);
+    expect(h.session.state().usage.limits.map((window) => [window.label, window.utilization])).toEqual([['5h', 0.42], ['7d', 0.07]]);
   });
 
   it('shows no usage before the agent has said anything', async () => {
     const h = await harness('usage');
-    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, fiveHour: null, sevenDay: null });
+    expect(h.session.state().usage).toEqual({ contextTokens: null, contextWindow: null, limits: [] });
   });
 });

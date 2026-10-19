@@ -1,0 +1,2 @@
+{"ask":"task","callID":"call_fresh","patterns":["general"],"input":{"description":"look","prompt":"Look at src/other.ts","subagent_type":"general"},"metadata":{"description":"look","subagent_type":"general"},"output":"<task state=\"completed\">\n<task_result>\nLooked.\n</task_result>\n</task>"}
+{"ask":"task","callID":"call_resume","patterns":["general"],"input":{"description":"read on","prompt":"Say what we discussed","subagent_type":"general","task_id":"ses_other_chat"},"metadata":{"description":"read on","subagent_type":"general"}}

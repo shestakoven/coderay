@@ -18,7 +18,7 @@ const withRaw = <T,>(save: (store: Memory) => void, load: (store: Memory) => T, 
   store.data.set(key!, raw);
   return load(store);
 };
-const defaults: ReviewPrefs = { mode: 'unified', listWidth: 320, showContext: true };
+const defaults: ReviewPrefs = { mode: 'unified', listWidth: 320, showContext: true, view: 'diff' };
 
 describe('loadRequested and saveRequested', () => {
   const rawRequested = (raw: string) => withRaw((s) => saveRequested(s, '/proj', {}), (s) => loadRequested(s, '/proj'), raw);
@@ -167,29 +167,29 @@ describe('loadPrefs and savePrefs', () => {
 
   it('returns what was saved', () => {
     const store = memory();
-    savePrefs(store, { mode: 'split', listWidth: 444, showContext: false });
-    expect(loadPrefs(store)).toEqual({ mode: 'split', listWidth: 444, showContext: false });
+    savePrefs(store, { mode: 'split', listWidth: 444, showContext: false, view: 'diff' });
+    expect(loadPrefs(store)).toEqual({ mode: 'split', listWidth: 444, showContext: false, view: 'diff' });
   });
 
   it('returns the latest save', () => {
     const store = memory();
-    savePrefs(store, { mode: 'split', listWidth: 300, showContext: false });
-    savePrefs(store, { mode: 'unified', listWidth: 350, showContext: true });
-    expect(loadPrefs(store)).toEqual({ mode: 'unified', listWidth: 350, showContext: true });
+    savePrefs(store, { mode: 'split', listWidth: 300, showContext: false, view: 'diff' });
+    savePrefs(store, { mode: 'unified', listWidth: 350, showContext: true, view: 'diff' });
+    expect(loadPrefs(store)).toEqual({ mode: 'unified', listWidth: 350, showContext: true, view: 'diff' });
   });
 
   it('does not mix up with the requested changes saved in the same storage', () => {
     const store = memory();
-    savePrefs(store, { mode: 'split', listWidth: 400, showContext: false });
+    savePrefs(store, { mode: 'split', listWidth: 400, showContext: false, view: 'diff' });
     saveRequested(store, '/proj', { 'a.ts': 'h' });
-    expect(loadPrefs(store)).toEqual({ mode: 'split', listWidth: 400, showContext: false });
+    expect(loadPrefs(store)).toEqual({ mode: 'split', listWidth: 400, showContext: false, view: 'diff' });
     expect(loadRequested(store, '/proj')).toEqual({ 'a.ts': 'h' });
   });
 
-  it('stores a JSON object with the three preferences', () => {
+  it('stores a JSON object with the preferences', () => {
     const store = memory();
-    savePrefs(store, { mode: 'split', listWidth: 400, showContext: false });
-    expect(JSON.parse([...store.data.values()][0]!)).toEqual({ mode: 'split', listWidth: 400, showContext: false });
+    savePrefs(store, { mode: 'split', listWidth: 400, showContext: false, view: 'diff' });
+    expect(JSON.parse([...store.data.values()][0]!)).toEqual({ mode: 'split', listWidth: 400, showContext: false, view: 'diff' });
   });
 
   it.each(['{not json', '', '{', 'undefined'])('returns the defaults for unparsable data %j', (raw) => {
@@ -253,6 +253,13 @@ describe('loadPrefs and savePrefs', () => {
     it.each([['400'], [null], [true], [[400]], [{}], ['']])('uses the default for %j', (listWidth) => {
       expect(prefs({ listWidth }).listWidth).toBe(LIST_WIDTH.initial);
     });
+  });
+
+  it('reads the view preference and falls back to the diff', () => {
+    const storage = (value: unknown) => ({ getItem: () => JSON.stringify(value) });
+    expect(loadPrefs(storage({ view: 'map' })).view).toBe('map');
+    expect(loadPrefs(storage({ view: 'nonsense' })).view).toBe('diff');
+    expect(loadPrefs(undefined).view).toBe('diff');
   });
 
   describe('showContext', () => {

@@ -88,3 +88,31 @@ test('plan flow: a plan without a flow has no Plan flow button and no view switc
   await expect(page.getByTestId('plan-flow')).toHaveCount(0);
   await expect(page.locator('.view-switch')).toHaveCount(0);
 });
+
+test('request changes: Enter on blank text keeps the box open, Shift+Enter adds a line, Enter sends it', async ({ page }) => {
+  core = await startCore('gate-big-plan');
+  await page.goto(core.url);
+  await sendMessage(page, 'fix them');
+  const panel = page.getByTestId('plan-panel');
+  await expect(panel).toContainText('Plan v1 · waiting for you');
+  await panel.getByRole('button', { name: 'Request changes' }).click();
+  const feedback = panel.locator('.plan-feedback');
+  await expect(feedback).toBeFocused();
+
+  await page.keyboard.press('Enter');
+  await feedback.fill('   ');
+  await page.keyboard.press('Enter');
+  await expect(feedback).toBeVisible();
+  await expect(panel).toContainText('Plan v1 · waiting for you');
+
+  await feedback.fill('first line');
+  await page.keyboard.press('Shift+Enter');
+  await page.keyboard.type('second line');
+  await expect(feedback).toHaveValue('first line\nsecond line');
+  await expect(panel).toContainText('Plan v1 · waiting for you');
+
+  await page.keyboard.press('Enter');
+  await expect(feedback).toHaveCount(0);
+  await expect(panel).toContainText('Plan v1 · changes requested');
+  await expect(panel).toContainText('first line second line');
+});

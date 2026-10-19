@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, onTestFinished } from 'vitest';
-import { spawnCore } from '../../src/hub/core-process';
+import { childCoreArgs, spawnCore } from '../../src/hub/core-process';
 import { takeNodeLauncher } from '../../src/node-exec';
 import { recordingLauncher, waitFor } from '../helpers';
 
@@ -14,5 +14,16 @@ describe('spawnCore', () => {
     const ran = await waitFor(launcher.ran, 'the launcher to run', 5000);
     expect([ran.argv[0], ...ran.argv.slice(-4)]).toEqual([launcher.path, '--project', '/work/app', '--port', '4401']);
     expect([ran.ideNode, ran.home]).toEqual([launcher.path, process.env.HOME ?? 'unset']);
+  });
+});
+
+describe('childCoreArgs', () => {
+  it('hands each project core the codex and the opencode the hub was given, or none, so a test hub never starts the real ones', () => {
+    const target = { root: '/work/app', port: 4401, home: '/h', hubPort: 4317 };
+    const flags = { claude: '/bin/claude', noMapMcp: false, noAgentSearch: false, allowedOrigins: [] };
+    const engines = (args: string[]) => args.filter((arg, at) => /^--(no-)?(codex|opencode)$/.test(arg) || /^--(codex|opencode)$/.test(args[at - 1] ?? ''));
+    expect([engines(childCoreArgs(target, { ...flags, codex: null, opencode: null })), engines(childCoreArgs(target, { ...flags, codex: '/opt/codex', opencode: '/opt/opencode' }))]).toEqual([
+      ['--no-codex', '--no-opencode'], ['--codex', '/opt/codex', '--opencode', '/opt/opencode'],
+    ]);
   });
 });

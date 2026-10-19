@@ -1,22 +1,35 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs';
-import { basename, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import { EMPTY_USAGE, type ChatItem, type SessionServerMessage } from '@ide/protocol';
+import { EMPTY_USAGE, type ChangeView, type ChatItem, type RevertRecordView, type SessionServerMessage } from '@ide/protocol';
 import { AgentSession, SessionError, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
 import { CLI_REJECTION } from '../../src/agent/prompts';
+import { startSdkTransport } from '../../src/agent/sdk-transport';
 import type { ToolEndInfo } from '../../src/agent/tracker';
 import { systemPrompt } from '../../src/agent/system-prompt';
 import { projectDir, runDir } from '../../src/home';
 import { aliveRoute, Canary } from '../../src/gate/canary';
-import { UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
+import { transcriptPath, UNCLEAN_STOP_KEY } from '../../src/watchdog/recovery';
 import { removeGateFiles, writeGateFiles } from '../../src/hook/gate-files';
-import { isAlive } from '../../src/os-process';
+import { commandLine, isAlive } from '../../src/os-process';
 import { startServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
-import { FAKE_CLAUDE, fakeClaude, readRecords } from '../fake-claude/fake';
-import { fixture, tempDir, waitFor } from '../helpers';
+import { argValue, FAKE_CLAUDE, fakeClaude, hasArg, launches, readRecords, writePidRecord, type Launched } from '../fake-claude/fake';
+import { fixture, SONNET, tempDir, waitFor } from '../helpers';
+
+// Unchanged behaviour; it only lets a test reach the sink of a transport the session no longer runs.
+vi.mock('../../src/agent/sdk-transport', async (original) => {
+  const actual = await original<typeof import('../../src/agent/sdk-transport')>();
+  return { ...actual, startSdkTransport: vi.fn(actual.startSdkTransport) };
+});
+
+// Unchanged behaviour; it only lets a test give an ancestor of the core a claude's command line.
+vi.mock('../../src/os-process', async (original) => {
+  const actual = await original<typeof import('../../src/os-process')>();
+  return { ...actual, commandLine: vi.fn(actual.commandLine) };
+});
 
 interface Harness {
   session: AgentSession;
@@ -25,6 +38,7 @@ interface Harness {
   root: string;
   broadcasts: SessionServerMessage[];
   argvs: () => string[][];
+  launches: () => Launched[];
   stdin: () => { type: string; [key: string]: unknown }[];
 }
 
@@ -34,7 +48,7 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
   const store = overrides.store ?? openStore(projectDir(home, root));
   const recordFile = join(home, `record-${randomUUID()}.jsonl`);
   const claude = fakeClaude(scenario, recordFile);
-  const session = new AgentSession({ root, home, store, claude: { ...claude, env: { ...claude.env, ...fakeEnv } }, ...overrides });
+  const session = new AgentSession({ root, home, store, claude: { ...claude, env: { ...claude.env, ...fakeEnv } }, defaultModel: SONNET, ...overrides });
   const broadcasts: SessionServerMessage[] = [];
   session.onMessage((message) => broadcasts.push(message));
   onTestFinished(async () => {
@@ -46,27 +60,37 @@ async function harness(scenario: string, overrides: Partial<AgentSessionOptions>
   return {
     session, store, home, root, broadcasts,
     argvs: () => records().flatMap((r) => (r.argv ? [r.argv] : [])),
+    launches: () => launches(records()),
     stdin: () => records().flatMap((r) => (r.stdin ? [r.stdin] : [])),
   };
 }
 
 interface Seed {
-  claudeSessionId: string;
+  engineSessionId: string;
   pid: number;
 }
 
 function seedRunningSession(home: string, root: string, seed: Seed): void {
   const store = openStore(projectDir(home, root));
   store.saveSession({
-    id: 'session-1', claudeSessionId: seed.claudeSessionId, cwd: root, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
-    pid: seed.pid, launchId: seed.claudeSessionId, conversationStarted: true, startedAt: 1, accountId: null,
+    id: 'session-1', engine: 'claude', engineSessionId: seed.engineSessionId, cwd: root, status: 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+    pid: seed.pid, launchId: seed.engineSessionId, conversationStarted: true, startedAt: 1, accountId: null,
   });
   store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
   store.close();
 }
 
-function spawnHanging(claudeSessionId: string, scenario = 'hang', recordFile = '') {
-  const child = spawn(process.execPath, [FAKE_CLAUDE, '--session-id', claudeSessionId], {
+type SpawnForm = 'space' | 'equals' | 'glued' | 'resume' | 'resume-equals';
+
+function spawnHanging(engineSessionId: string, scenario = 'hang', recordFile = '', form: SpawnForm = 'space') {
+  const idArgs = {
+    space: ['--session-id', engineSessionId],
+    equals: [`--session-id=${engineSessionId}`],
+    glued: [`--session-id-${engineSessionId}`],
+    resume: ['--resume', engineSessionId],
+    'resume-equals': [`--resume=${engineSessionId}`],
+  }[form];
+  const child = spawn(process.execPath, [FAKE_CLAUDE, ...idArgs], {
     env: { ...process.env, FAKE_CLAUDE_SCENARIO: fixture(`stream/${scenario}.jsonl`), FAKE_CLAUDE_RECORD: recordFile },
     stdio: ['pipe', 'ignore', 'ignore'],
     detached: true,
@@ -88,33 +112,95 @@ const exitSignal = (child: ReturnType<typeof spawn>) =>
 const closedTurns = (h: Harness) => h.session.state().turns.filter((turn) => turn.closedAt !== null);
 const texts = (items: ChatItem[]) =>
   items.map((item) => (item.kind === 'tool' ? `${item.tool}:${item.status}` : item.kind === 'prompt' ? `prompt:${item.status}` : item.text));
-const flag = (argv: string[] | undefined, name: string) => argv?.[argv.indexOf(name) + 1];
+const flag = argValue;
 const pendingPrompt = (h: Harness) =>
   waitFor(() => h.session.state().items.find((item) => item.kind === 'prompt' && item.status === 'pending'), 'prompt shown');
 const controlResponse = (h: Harness) => h.stdin().find((message) => message.type === 'control_response');
+// The SDK adds the call's toolUseID to an answer; CodeRay's decision is the rest.
+const promptAnswer = (h: Harness) => {
+  const written = h.stdin().find((message) => message.type === 'control_response') as
+    { response: { subtype: string; request_id: string; response?: Record<string, unknown> } } | undefined;
+  if (!written) return undefined;
+  const decision = { ...written.response.response };
+  delete decision.toolUseID;
+  return { subtype: written.response.subtype, requestId: written.response.request_id, decision };
+};
+const settled = () => new Promise((resolve) => setImmediate(resolve));
+const humanEdit: ChangeView = {
+  id: 'c1', path: 'notes.md', beforeHash: null, afterHash: 'a'.repeat(40), at: 2, origin: 'human', enforcement: 'recorded', outOfPlan: false,
+  toolUseIds: [], planId: null, planVersion: null, stepKey: null, eventId: null, resolution: null, added: 1, removed: null, stored: true, unreadable: false, beforeMode: null,
+};
+const revert: RevertRecordView = { id: 'r1', kind: 'review', eventId: null, planId: null, stepKey: null, changeIds: ['c0'], files: [], ts: 2, undoneAt: null };
+
+interface HeldSkills {
+  resolve: (skills: string[]) => void;
+  reject: (error: Error) => void;
+}
+
+// Each claude started from here on answers the skills list only when the test settles its entry.
+function heldSkills(): HeldSkills[] {
+  const start = vi.mocked(startSdkTransport);
+  const real = start.getMockImplementation()!;
+  const answers: HeldSkills[] = [];
+  start.mockImplementation((launch, sink) => {
+    const transport = real(launch, sink);
+    const answer = new Promise<string[]>((resolve, reject) => answers.push({ resolve, reject }));
+    transport.skills = () => answer;
+    return transport;
+  });
+  onTestFinished(() => {
+    start.mockImplementation(real);
+  });
+  return answers;
+}
+
+// Each claude asked to stop from here on stops only once the test releases it; call it after harness(), so its cleanup runs before the session closes.
+function heldStops(): { release: () => void } {
+  const start = vi.mocked(startSdkTransport);
+  const real = start.getMockImplementation()!;
+  const waiting: (() => void)[] = [];
+  let finished = false;
+  const release = () => {
+    for (const stop of waiting.splice(0)) stop();
+  };
+  start.mockImplementation((launch, sink) => {
+    const transport = real(launch, sink);
+    const kill = transport.kill;
+    transport.kill = async () => {
+      if (!finished) await new Promise<void>((resolve) => waiting.push(resolve));
+      return kill();
+    };
+    return transport;
+  });
+  onTestFinished(() => {
+    finished = true;
+    release();
+    start.mockImplementation(real);
+  });
+  return { release };
+}
 
 describe('AgentSession', () => {
-  it('spawns claude in stream-json mode with a per-session MCP config, the disallowed tools, bypass permissions and prompts on stdio', async () => {
+  it('starts claude for the chat with its session id, sonnet and medium, its MCP config, the disallowed tools, bypass, prompts on stdio and partial messages', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
-    const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
+    const [launch] = await waitFor(() => h.launches().length === 1 && h.launches()[0]?.systemPromptSnapshot !== null && h.launches(), "claude spawned and got the SDK's handshake");
     const session = h.session.state().session;
-    expect(argv).toEqual([
-      '-p', '--verbose', '--input-format', 'stream-json', '--output-format', 'stream-json', '--include-partial-messages',
-      '--session-id', session?.claudeSessionId,
-      '--model', 'sonnet', '--effort', 'medium',
-      '--mcp-config', join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
-      '--disallowedTools', 'SendMessage,CronCreate,CronDelete,CronList,ScheduleWakeup,RemoteTrigger,Workflow,EnterWorktree,ExitWorktree,DesignSync,PushNotification',
-      '--dangerously-skip-permissions',
-      '--permission-prompt-tool', 'stdio',
-    ]);
+    expect(launch).toMatchObject({
+      sessionId: session?.engineSessionId, resume: undefined, model: 'sonnet', effort: 'medium',
+      mcpConfig: join(runDir(h.home), `${basename(projectDir(h.home, h.root))}-${session?.id}.mcp.json`),
+      disallowedTools: ['SendMessage', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger', 'Workflow', 'EnterWorktree', 'ExitWorktree', 'DesignSync', 'PushNotification'],
+      bypass: true, promptsOnStdio: true, partialMessages: true, appendSystemPrompt: null, systemPromptSnapshot: false,
+    });
+    const [argv] = h.argvs();
+    expect([flag(argv, '--input-format'), flag(argv, '--output-format'), hasArg(argv, '--verbose')]).toEqual(['stream-json', 'stream-json', true]);
   });
 
   it("writes the user's message to claude and records the answer in a closed user turn", async () => {
     const h = await harness('multi-turn');
     h.session.send('Remember the number 42. Reply with only: OK');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(h.stdin()).toEqual([{ type: 'user', message: { role: 'user', content: 'Remember the number 42. Reply with only: OK' } }]);
+    expect(h.stdin()).toEqual([{ type: 'user', message: { role: 'user', content: 'Remember the number 42. Reply with only: OK' }, parent_tool_use_id: null }]);
     expect(texts(h.session.state().items)).toEqual(['Remember the number 42. Reply with only: OK', 'OK']);
     expect(closedTurns(h)).toMatchObject([{ kind: 'user', resultSubtype: 'success' }]);
   });
@@ -133,6 +219,7 @@ describe('AgentSession', () => {
           { type: 'text', text: 'what is this?' },
         ],
       },
+      parent_tool_use_id: null,
     }]);
   });
 
@@ -143,6 +230,7 @@ describe('AgentSession', () => {
     expect(h.stdin()).toEqual([{
       type: 'user',
       message: { role: 'user', content: [{ type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'AAEC' } }] },
+      parent_tool_use_id: null,
     }]);
   });
 
@@ -165,7 +253,7 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(h.session.state().session).toMatchObject({
-      status: 'running', model: 'claude-haiku-4-5-20251001', cliVersion: '2.1.281', permissionMode: 'bypassPermissions',
+      status: 'running', model: 'claude-haiku-4-5-20251001', cliVersion: '2.1.296', permissionMode: 'bypassPermissions',
     });
     expect(h.session.state().mcpServers).toEqual([{ name: 'spike', status: 'connected' }]);
   });
@@ -189,10 +277,10 @@ describe('AgentSession', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     const patched = h.broadcasts.flatMap((message) => (message.type === 'session.patch' && message.patch.skills ? [message.patch.skills] : []));
-    expect(patched).toEqual([['repo-probe', 'superpowers:brainstorming']]);
+    expect(patched.at(-1)).toEqual(['repo-probe', 'superpowers:brainstorming']);
   });
 
-  it('forgets the skills on New session and sends the empty list in the snapshot', async () => {
+  it('forgets the skills on New session and sends the empty list, not yet known, in the snapshot', async () => {
     const h = await harness('skills-init');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
@@ -200,7 +288,7 @@ describe('AgentSession', () => {
     h.broadcasts.length = 0;
     await h.session.newSession();
     const snapshot = h.broadcasts.find((message) => message.type === 'session.snapshot');
-    expect([h.session.state().skills, snapshot?.type === 'session.snapshot' ? snapshot.state.skills : null]).toEqual([[], []]);
+    expect([h.session.state().skills, snapshot?.type === 'session.snapshot' ? [snapshot.state.skills, snapshot.state.skillsKnown] : null]).toEqual([[], [[], false]]);
   });
 
   it('lists the skills again once the next claude after New session reports them', async () => {
@@ -211,6 +299,54 @@ describe('AgentSession', () => {
     h.session.send('hello again');
     await waitFor(() => closedTurns(h).length === 1 && h.session.state().skills.length === 2, 'skills reported by the second claude');
     expect(h.session.state().skills).toEqual(['repo-probe', 'superpowers:brainstorming']);
+  });
+
+  it('ignores a skills list that comes late: from a claude the chat no longer runs, listed or failed, or after an init that listed none', async () => {
+    const errors = vi.spyOn(console, 'error');
+    onTestFinished(() => errors.mockRestore());
+    const answers = heldSkills();
+    const h = await harness('multi-turn');
+    await h.session.newSession();
+    await h.session.restart();
+    await h.session.restart();
+    answers[0]?.resolve(['stale']);
+    answers[1]?.reject(new Error('stopped'));
+    await settled();
+    const afterStale = [h.session.state().skills, h.session.state().skillsKnown, errors.mock.calls.length];
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    answers[2]?.resolve(['late']);
+    await settled();
+    expect([answers.length, afterStale, h.session.state().skills]).toEqual([3, [[], false, 0], []]);
+  });
+
+  it('knows which skills the chat has once its claude said so: by the early list, even an empty one, by that list failing, or by init', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    onTestFinished(() => errors.mockRestore());
+    const ways: Record<string, [scenario: string, said: (h: Harness, answer: HeldSkills | undefined) => Promise<void>]> = {
+      'an empty early list': ['multi-turn', async (_h, answer) => answer?.resolve([])],
+      'the early list failing': ['multi-turn', async (_h, answer) => answer?.reject(new Error('no commands'))],
+      init: ['skills-init', async (h) => {
+        h.session.send('hi');
+        await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+      }],
+    };
+    const answers = heldSkills();
+    const outcomes: Record<string, unknown> = {};
+    for (const [way, [scenario, said]] of Object.entries(ways)) {
+      const h = await harness(scenario);
+      await h.session.newSession();
+      const before = h.session.state().skillsKnown;
+      await said(h, answers.at(-1));
+      await settled();
+      const told = h.broadcasts.some((message) => message.type === 'session.patch' && message.patch.skillsKnown === true);
+      outcomes[way] = [before, h.session.state().skills, h.session.state().skillsKnown, told];
+    }
+    expect(outcomes).toEqual({
+      'an empty early list': [false, [], true, true],
+      'the early list failing': [false, [], true, true],
+      init: [false, ['repo-probe', 'superpowers:brainstorming'], true, true],
+    });
   });
 
   it('sends clients a snapshot for a new session and then the chat items as patches', async () => {
@@ -267,6 +403,16 @@ describe('AgentSession', () => {
     expect(h.session.processAlive()).toBe(false);
   });
 
+  it('keeps a pid file in the shared run directory for the running claude, naming this core, and removes it when claude exits', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    const pid = await waitFor(() => h.store.latestSession()?.pid, 'claude started');
+    const file = join(runDir(h.home), `claude-${pid}.pid.json`);
+    expect(JSON.parse(readFileSync(file, 'utf8'))).toMatchObject({ pid, owner: process.pid });
+    await h.session.close();
+    expect(existsSync(file)).toBe(false);
+  });
+
   it('answers the next message after a stop', async () => {
     const h = await harness('interrupt-bash');
     h.session.send('run it');
@@ -297,6 +443,14 @@ describe('AgentSession', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(h.session.stop()).toBe(false);
     expect(h.stdin().filter((message) => message.type === 'control_request')).toEqual([]);
+  });
+
+  it('writes a stop_task request for the task to claude', async () => {
+    const h = await harness('interrupt-bash');
+    h.session.send('run it');
+    expect(h.session.stopTask('t1')).toBe(true);
+    const request = await waitFor(() => h.stdin().find((message) => message.type === 'control_request'), 'stop_task written');
+    expect(request).toEqual({ type: 'control_request', request_id: expect.stringMatching(/^\S+$/), request: { subtype: 'stop_task', task_id: 't1' } });
   });
 
   it('an agent-initiated turn does not shift turn matching', async () => {
@@ -335,7 +489,47 @@ describe('AgentSession', () => {
     h.session.send('again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude respawned');
     expect(flag(argvs[1], '--resume')).toBe(flag(argvs[0], '--session-id'));
-    expect(argvs[1]).not.toContain('--session-id');
+    expect(hasArg(argvs[1], '--session-id')).toBe(false);
+  });
+
+  // claude names the conversation /clear starts twice: in the reset and in the init after it; only the init's id has a transcript.
+  const CLEARED = '7c0de5e1-0000-4000-8000-00000000c1ea';
+  const clearChat = async (h: Harness) => {
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
+    h.session.send('/clear');
+    await waitFor(() => closedTurns(h).length === 2, 'clear turn closed');
+  };
+  const nextLaunch = async (h: Harness) => {
+    await h.session.restart();
+    h.session.send('after');
+    return waitFor(() => h.argvs()[1], 'claude restarted');
+  };
+
+  it('follows /clear to the conversation of the next init and starts it fresh when claude restarts before the next message', async () => {
+    const h = await harness('clear-then-resume');
+    await clearChat(h);
+    expect(h.session.state().session?.engineSessionId).toBe(CLEARED);
+    const argv = await nextLaunch(h);
+    expect([flag(argv, '--session-id'), hasArg(argv, '--resume')]).toEqual([CLEARED, false]);
+  });
+
+  it('resumes the cleared conversation once a message was sent in it', async () => {
+    const h = await harness('clear-then-resume');
+    await clearChat(h);
+    h.session.send('next');
+    await waitFor(() => closedTurns(h).length === 3, 'turn in the new conversation closed');
+    expect(flag(await nextLaunch(h), '--resume')).toBe(CLEARED);
+  });
+
+  it('resumes the cleared conversation when claude already wrote its transcript', async () => {
+    const transcripts = tempDir('ide-transcripts-');
+    const h = await harness('clear-then-resume', { transcriptsDir: transcripts });
+    await clearChat(h);
+    const transcript = transcriptPath(transcripts, h.root, CLEARED);
+    mkdirSync(dirname(transcript), { recursive: true });
+    writeFileSync(transcript, '');
+    expect(flag(await nextLaunch(h), '--resume')).toBe(CLEARED);
   });
 
   it('keeps the chat history and resumes the same claude session after a core restart', async () => {
@@ -355,10 +549,10 @@ describe('AgentSession', () => {
   it('stops the stale claude of a session that was running when the core died and closes its turn as crashed', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    const claudeSessionId = randomUUID();
-    const stale = spawnHanging(claudeSessionId);
+    const engineSessionId = randomUUID();
+    const stale = spawnHanging(engineSessionId);
     const staleExit = exitSignal(stale);
-    seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+    seedRunningSession(home, root, { engineSessionId, pid: stale.pid ?? -1 });
 
     const h = await harness('multi-turn', { home, root });
 
@@ -367,15 +561,28 @@ describe('AgentSession', () => {
     expect(h.session.state().turns).toMatchObject([{ id: 'turn-1', resultSubtype: 'crashed' }]);
   });
 
+  it('recognizes a stale claude the agent SDK started or resumed: --session-id=<id>, --resume <id> or --resume=<id>', async () => {
+    for (const form of ['equals', 'resume', 'resume-equals'] as const) {
+      const home = tempDir('ide-home-');
+      const root = tempDir('ide-root-');
+      const engineSessionId = randomUUID();
+      const stale = spawnHanging(engineSessionId, 'hang', '', form);
+      const staleExit = exitSignal(stale);
+      seedRunningSession(home, root, { engineSessionId, pid: stale.pid ?? -1 });
+      await harness('multi-turn', { home, root });
+      expect(await staleExit).toBe('SIGTERM');
+    }
+  });
+
   it('kills a stale claude that ignores SIGTERM, and its child processes, once the grace time is over', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    const claudeSessionId = randomUUID();
+    const engineSessionId = randomUUID();
     const record = join(home, 'stale-record.jsonl');
-    const stale = spawnHanging(claudeSessionId, 'stubborn', record);
+    const stale = spawnHanging(engineSessionId, 'stubborn', record);
     const staleExit = exitSignal(stale);
     const sleeper = await waitFor(() => readRecords(record).find((r) => r.sleeperPid)?.sleeperPid, 'sleeper started');
-    seedRunningSession(home, root, { claudeSessionId, pid: stale.pid ?? -1 });
+    seedRunningSession(home, root, { engineSessionId, pid: stale.pid ?? -1 });
 
     await harness('multi-turn', { home, root, killGraceMs: 200 });
 
@@ -383,12 +590,24 @@ describe('AgentSession', () => {
     await waitFor(() => !isAlive(sleeper), 'sleeper stopped');
   });
 
+  it('stops the orphaned claude of a dead core before it opens the chat', async () => {
+    const home = tempDir('ide-home-');
+    mkdirSync(runDir(home), { recursive: true });
+    const record = join(home, 'orphan-record.jsonl');
+    const orphan = spawnHanging(randomUUID(), 'orphan-mid-tool', record);
+    const orphanExit = exitSignal(orphan);
+    await waitFor(() => readRecords(record).some((r) => r.sleeperPid), 'orphan ignores SIGTERM');
+    writePidRecord(runDir(home), orphan.pid ?? -1, await deadPid(), 'node /gone/core/main.ts');
+    await harness('multi-turn', { home, killGraceMs: 200 });
+    expect(await orphanExit).toBe('SIGKILL');
+  });
+
   it('leaves alone a live process whose command line does not name the recorded session', async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
     const unrelated = spawnHanging(randomUUID());
     const unrelatedExit = exitSignal(unrelated);
-    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: unrelated.pid ?? -1 });
+    seedRunningSession(home, root, { engineSessionId: randomUUID(), pid: unrelated.pid ?? -1 });
 
     await harness('multi-turn', { home, root });
     expect(isAlive(unrelated.pid ?? -1)).toBe(true);
@@ -397,10 +616,41 @@ describe('AgentSession', () => {
     expect(await unrelatedExit).toBe('SIGTERM');
   });
 
+  it('leaves alone a live process whose command line only resembles the recorded id', async () => {
+    const engineSessionId = randomUUID();
+    const lookalikes = [
+      spawnHanging(`${engineSessionId}0`, 'hang', '', 'space'),
+      spawnHanging(`${engineSessionId}0`, 'hang', '', 'equals'),
+      spawnHanging(engineSessionId, 'hang', '', 'glued'),
+    ];
+    for (const lookalike of lookalikes) {
+      const home = tempDir('ide-home-');
+      const root = tempDir('ide-root-');
+      seedRunningSession(home, root, { engineSessionId, pid: lookalike.pid ?? -1 });
+      await harness('multi-turn', { home, root });
+      expect(isAlive(lookalike.pid ?? -1)).toBe(true);
+    }
+  });
+
+  it('never signals a stale claude that the core itself runs under', async () => {
+    const home = tempDir('ide-home-');
+    const root = tempDir('ide-root-');
+    const engineSessionId = randomUUID();
+    vi.mocked(commandLine).mockImplementation((pid) => (pid === process.ppid ? `claude --session-id ${engineSessionId}` : null));
+    const kill = vi.spyOn(process, 'kill').mockImplementation(() => true);
+    onTestFinished(() => {
+      kill.mockRestore();
+      vi.mocked(commandLine).mockReset();
+    });
+    seedRunningSession(home, root, { engineSessionId, pid: process.ppid });
+    const h = await harness('multi-turn', { home, root, killGraceMs: 100 });
+    expect([kill.mock.calls.filter(([, name]) => name !== 0), h.session.state().session?.status]).toEqual([[], 'crashed']);
+  });
+
   it("deletes a stale session's MCP config file at core start", async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: await deadPid() });
+    seedRunningSession(home, root, { engineSessionId: randomUUID(), pid: await deadPid() });
     const stalePath = join(runDir(home), `${basename(projectDir(home, root))}-session-1.mcp.json`);
     mkdirSync(runDir(home), { recursive: true });
     writeFileSync(stalePath, '{"mcpServers":{}}');
@@ -411,7 +661,7 @@ describe('AgentSession', () => {
   });
 
   it('writes the MCP servers into a config only the user can read and deletes it when the session ends', async () => {
-    const servers = { docs: { type: 'http', url: 'http://127.0.0.1:1/mcp' } };
+    const servers = { docs: { type: 'http' as const, url: 'http://127.0.0.1:1/mcp' } };
     const h = await harness('multi-turn', { mcpServers: () => servers });
     h.session.send('hi');
     const [argv] = await waitFor(() => h.argvs().length === 1 && h.argvs(), 'claude spawned');
@@ -444,23 +694,20 @@ describe('AgentSession', () => {
     h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S, M' } });
 
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: {
-        subtype: 'success',
-        request_id: 'req_fx_ask',
-        response: {
-          behavior: 'allow',
-          updatedInput: {
-            questions: [
-              { question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'Red color' }, { label: 'Blue', description: 'Blue color' }], multiSelect: false },
-              {
-                question: 'Which sizes?', header: 'Sizes', multiSelect: true,
-                options: [{ label: 'S', description: 'Small' }, { label: 'M', description: 'Medium' }, { label: 'L', description: 'Large' }],
-              },
-            ],
-            answers: { 'Which color?': 'Blue', 'Which sizes?': 'S, M' },
-          },
+    expect(promptAnswer(h)).toEqual({
+      subtype: 'success',
+      requestId: 'req_fx_ask',
+      decision: {
+        behavior: 'allow',
+        updatedInput: {
+          questions: [
+            { question: 'Which color?', header: 'Color', options: [{ label: 'Red', description: 'Red color' }, { label: 'Blue', description: 'Blue color' }], multiSelect: false },
+            {
+              question: 'Which sizes?', header: 'Sizes', multiSelect: true,
+              options: [{ label: 'S', description: 'Small' }, { label: 'M', description: 'Medium' }, { label: 'L', description: 'Large' }],
+            },
+          ],
+          answers: { 'Which color?': 'Blue', 'Which sizes?': 'S, M' },
         },
       },
     });
@@ -480,12 +727,9 @@ describe('AgentSession', () => {
     expect(h.session.state().session?.permissionMode).toBe('plan');
     h.session.answerPrompt(prompt.id, { kind: 'allow' });
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: {
-        subtype: 'success', request_id: 'req_fx_plan',
-        response: { behavior: 'allow', updatedInput: { plan: '1. Create plan.txt containing hello.\n', planFilePath: '/fake/home/.claude/plans/fx-plan.md' } },
-      },
+    expect(promptAnswer(h)).toEqual({
+      subtype: 'success', requestId: 'req_fx_plan',
+      decision: { behavior: 'allow', updatedInput: { plan: '1. Create plan.txt containing hello.\n', planFilePath: '/fake/home/.claude/plans/fx-plan.md' } },
     });
     expect(h.session.state().session?.permissionMode).toBe('bypassPermissions');
     expect(texts(h.session.state().items)).toEqual([
@@ -500,11 +744,8 @@ describe('AgentSession', () => {
     h.session.send('plan it');
     const prompt = await pendingPrompt(h);
     h.session.answerPrompt(prompt.id, { kind: 'deny', feedback: '' });
-    await waitFor(() => controlResponse(h), 'answer written');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: 'req_fx_plan', response: { behavior: 'deny', message: CLI_REJECTION } },
-    });
+    await waitFor(() => promptAnswer(h), 'answer written');
+    expect(promptAnswer(h)).toEqual({ subtype: 'success', requestId: 'req_fx_plan', decision: { behavior: 'deny', message: CLI_REJECTION } });
   });
 
   it('drops a pending prompt when Stop ends its turn and refuses a late answer', async () => {
@@ -517,28 +758,50 @@ describe('AgentSession', () => {
     expect(() => h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'blue' } })).toThrow(SessionError);
   });
 
+  it('drops a prompt pending at a restart and refuses its late answer as prompt-gone', async () => {
+    const h = await harness('ask-user-question');
+    h.session.send('ask me');
+    const prompt = await pendingPrompt(h);
+    await h.session.restart();
+    expect(h.session.state().items.find((item) => item.id === prompt.id)).toMatchObject({ status: 'dropped' });
+    expect(() => h.session.answerPrompt(prompt.id, { kind: 'answers', answers: { 'Which color?': 'Blue', 'Which sizes?': 'S' } }))
+      .toThrow(expect.objectContaining({ code: 'prompt-gone' }));
+  });
+
+  it('drops what a claude it no longer runs prints, as after a restart', async () => {
+    const h = await harness('multi-turn');
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const [, stale] = vi.mocked(startSdkTransport).mock.calls.at(-1)!;
+    await h.session.restart();
+    stale.event({ type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'text', text: 'stale' }] });
+    expect(texts(h.session.state().items)).toEqual(['hi', 'OK']);
+  });
+
   it('denies a permission prompt for any other tool and says why in the chat', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     onTestFinished(() => warn.mockRestore());
     const h = await harness('unexpected-prompt');
     h.session.send('write the settings');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(controlResponse(h)).toEqual({
-      type: 'control_response',
-      response: { subtype: 'success', request_id: 'req_fx_settings', response: { behavior: 'deny', message: 'CodeRay does not answer permission prompts for Write.' } },
+    expect(promptAnswer(h)).toEqual({
+      subtype: 'success', requestId: 'req_fx_settings', decision: { behavior: 'deny', message: 'CodeRay does not answer permission prompts for Write.' },
     });
     expect(texts(h.session.state().items)).toContain('Refused a "can_use_tool" request from claude: CodeRay does not answer permission prompts for Write.');
   });
 
-  it('ends the session on New session and starts a fresh claude conversation with the next message', async () => {
+  it('ends the session on New session and starts a fresh claude conversation at once', async () => {
     const h = await harness('multi-turn');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const ended = h.session.sessionId();
     await h.session.newSession();
-    expect(h.session.state()).toEqual({ session: null, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE });
+    expect(h.session.state()).toMatchObject({ session: { status: 'running' }, turns: [], items: [], tasks: [], mcpServers: [], skills: [], usage: EMPTY_USAGE });
+    expect(h.session.sessionId()).not.toBe(ended);
     h.session.send('hello again');
     const argvs = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'second claude spawned');
     expect(flag(argvs[1], '--session-id')).not.toBe(flag(argvs[0], '--session-id'));
+    expect(hasArg(argvs[1], '--resume')).toBe(false);
   });
 
   it('refuses a message while the session is restarting', async () => {
@@ -550,12 +813,55 @@ describe('AgentSession', () => {
     await restarting;
   });
 
+  it('refuses to delete the open chat or every chat while New session or a restart waits for the old claude to stop', async () => {
+    const h = await harness('multi-turn');
+    const stops = heldStops();
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const outcome = (attempt: Promise<void>) => Promise.race([attempt.then(() => 'deleted', (error: SessionError) => error.code), settled().then(() => 'waiting')]);
+    const deletes = async () => [await outcome(h.session.deleteSession(h.session.sessionId()!)), await outcome(h.session.deleteAllSessions())];
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, waits] of [['New session', () => h.session.newSession()], ['restart', () => h.session.restart()]] as const) {
+      const waiting = waits();
+      outcomes[label] = await deletes();
+      stops.release();
+      await waiting;
+    }
+    expect([outcomes, h.store.listSessions().map((chat) => chat.status), h.session.processAlive()]).toEqual([
+      { 'New session': ['restarting', 'restarting'], restart: ['restarting', 'restarting'] }, ['running', 'ended'], true,
+    ]);
+  });
+
+  it('starts no claude once closed: neither for a New session that waited for the old claude nor for a restart, New session or message after', async () => {
+    const h = await harness('multi-turn');
+    const stops = heldStops();
+    h.session.send('hi');
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    const started = vi.mocked(startSdkTransport).mock.calls.length;
+    const fresh = h.session.newSession();
+    const closing = h.session.close();
+    stops.release();
+    await Promise.all([fresh, closing]);
+    await h.session.restart();
+    await h.session.newSession();
+    const chats = h.store.listSessions().length;
+    const sent = (() => {
+      try {
+        h.session.send('again');
+        return 'sent';
+      } catch (error) {
+        return (error as SessionError).code;
+      }
+    })();
+    expect([vi.mocked(startSdkTransport).mock.calls.length - started, chats, sent, h.session.processAlive()]).toEqual([0, 1, 'no-gate', false]);
+  });
+
   it('notes in the chat when claude is older than the minimum version', async () => {
     const h = await harness('old-cli');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     expect(texts(h.session.state().items)).toContain(
-      'claude 2.1.100 is older than 2.1.281, the version CodeRay was verified with; tool names and stream events may differ.',
+      'claude 2.1.100 is older than 2.1.296, the version CodeRay was verified with; tool names and stream events may differ.',
     );
   });
 
@@ -625,20 +931,20 @@ const decision = (toolUseId: string) => ({
 });
 
 describe('AgentSession with the gate', () => {
-  it('passes the hook settings, CodeRay system prompt and a fresh system prompt before the permission flags, on the first spawn and on resume', async () => {
+  it("passes the gate's hook settings and adds CodeRay's system prompt, recorded fresh, on the first spawn and on resume", async () => {
     const h = await gatedHarness('multi-turn');
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'first turn closed');
     await h.session.restart();
     h.session.send('again');
-    const [first, resumed] = await waitFor(() => h.argvs().length === 2 && h.argvs(), 'claude resumed');
+    const [first, resumed] = await waitFor(() => {
+      const all = h.launches();
+      return all.length === 2 && all.every((launch) => launch.appendSystemPrompt !== null) && all;
+    }, 'claude resumed');
     const files = gateFiles(h.home, h.root, h.session.sessionId());
-    const tail = (argv: string[] | undefined) => argv?.slice(argv.indexOf('--disallowedTools') + 2);
-    const expected = [
-      '--settings', files[0], '--append-system-prompt', systemPrompt(COMPONENTS), '--system-prompt-snapshot', 'off',
-      '--dangerously-skip-permissions', '--permission-prompt-tool', 'stdio',
-    ];
-    expect([flag(resumed, '--resume'), tail(first), tail(resumed)]).toEqual([flag(first, '--session-id'), expected, expected]);
+    const gated = (launch: Launched | undefined) => [launch?.settings, launch?.appendSystemPrompt, launch?.systemPromptSnapshot, launch?.bypass];
+    const expected = [files[0], systemPrompt(COMPONENTS), false, true];
+    expect([resumed?.resume, gated(first), gated(resumed)]).toEqual([first?.sessionId, expected, expected]);
     expect(files.map((file) => existsSync(file))).toEqual([true, true]);
   });
 
@@ -677,7 +983,7 @@ describe('AgentSession with the gate', () => {
   it("deletes a stale session's gate files at core start", async () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
-    seedRunningSession(home, root, { claudeSessionId: randomUUID(), pid: await deadPid() });
+    seedRunningSession(home, root, { engineSessionId: randomUUID(), pid: await deadPid() });
     realGate(home, root).write('session-1');
     const files = gateFiles(home, root, 'session-1');
 
@@ -876,6 +1182,20 @@ describe('AgentSession waiting for the session-start hook', () => {
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
   });
 
+  it("starts a new chat's claude before its first message: its skills are listed, the message waits for the hook and goes once, and init's skills replace the list", async () => {
+    const h = await canaryHarness('skills-init', 'off', 5000);
+    await h.session.newSession();
+    const listed = await waitFor(() => h.session.state().skills.length > 0 && h.session.state().skills, 'skills listed');
+    h.session.send('hi');
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const held = userMessages(h).length;
+    await h.ping();
+    await waitFor(() => closedTurns(h).length === 1, 'turn closed');
+    expect([listed, held, userMessages(h).map((message) => (message.message as { content: unknown }).content), h.session.state().skills]).toEqual([
+      ['repo-probe', 'superpowers:brainstorming', 'omc-plan'], 0, ['hi'], ['repo-probe', 'superpowers:brainstorming'],
+    ]);
+  });
+
   it('delivers the message at once when the real hook of the fake claude reports', async () => {
     const h = await canaryHarness('multi-turn', 'on', 5000);
     h.session.send('hi');
@@ -912,7 +1232,7 @@ describe('AgentSession feeds for the watchdog', () => {
     const file = join(tempDir('ide-scenario-'), 'background-shell.jsonl');
     writeFileSync(file, [
       line({ fake: 'await-user' }),
-      line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.281' }),
+      line({ type: 'system', subtype: 'init', cwd: '/fake/project', session_id: S, mcp_servers: [], model: 'm', permissionMode: 'bypassPermissions', claude_code_version: '2.1.296' }),
       line({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', id: 'toolu_sh', name: kind === 'monitor' ? 'Monitor' : 'Bash', input: { command: 'sleep 5', run_in_background: true } }] }, parent_tool_use_id: null, session_id: S }),
       line({ type: 'system', subtype: 'task_started', task_id: 'task_sh', tool_use_id: 'toolu_sh', description: 'sleep 5', is_backgrounded: true, task_type: kind === 'monitor' ? 'monitor' : 'local_bash', session_id: S }),
       line({ type: 'user', message: { role: 'user', content: [{ tool_use_id: 'toolu_sh', type: 'tool_result', content: 'started' }] }, parent_tool_use_id: null, session_id: S }),
@@ -1063,7 +1383,7 @@ describe('AgentSession notes from the watchdog', () => {
     h.session.queueNote('[CodeRay] The user kept a.ts.');
     h.session.send('continue please');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
-    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[CodeRay] The user kept a.ts.\n\ncontinue please' } }]);
+    expect(userWrites(h)).toEqual([{ type: 'user', message: { role: 'user', content: '[CodeRay] The user kept a.ts.\n\ncontinue please' }, parent_tool_use_id: null }]);
     const items = h.session.state().items;
     expect(items.find((item) => item.kind === 'message' && item.role === 'user')).toMatchObject({ text: 'continue please' });
     expect(items.find((item) => item.kind === 'notice')).toMatchObject({ text: '[CodeRay] The user kept a.ts.' });
@@ -1077,11 +1397,11 @@ describe('AgentSession notes from the watchdog', () => {
     h.session.send('hi');
     await waitFor(() => closedTurns(h).length === 1, 'turn closed');
     h.session.queueNote('[CodeRay] note');
-    const child = (h.session as unknown as { process: { write: (m: object) => void } }).process;
-    const write = child.write.bind(child);
-    child.write = () => { throw new Error('pipe closed'); };
+    const transport = (h.session as unknown as { transport: { send: (m: object) => void } }).transport;
+    const send = transport.send.bind(transport);
+    transport.send = () => { throw new Error('pipe closed'); };
     expect(() => h.session.send('again')).toThrow('pipe closed');
-    child.write = write;
+    transport.send = send;
     h.session.send('again');
     await waitFor(() => closedTurns(h).length === 2, 'second turn closed');
     expect(userWrites(h)[1]).toMatchObject({ message: { content: '[CodeRay] note\n\nagain' } });
@@ -1094,7 +1414,7 @@ describe('AgentSession notes from the watchdog', () => {
     const turnsBefore = h.session.state().turns.length;
     h.session.sendAbsorbed('[CodeRay] note');
     await waitFor(() => userWrites(h).length === 2, 'note delivered');
-    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[CodeRay] note' } });
+    expect(userWrites(h)[1]).toEqual({ type: 'user', message: { role: 'user', content: '[CodeRay] note' }, parent_tool_use_id: null });
     const state = h.session.state();
     expect(state.turns).toHaveLength(turnsBefore);
     expect(state.items.filter((item) => item.kind === 'message' && item.role === 'user')).toHaveLength(1);
@@ -1129,10 +1449,10 @@ describe('AgentSession after a core crash', () => {
     const home = tempDir('ide-home-');
     const root = tempDir('ide-root-');
     const transcriptsDir = tempDir('ide-transcripts-');
-    const claudeSessionId = randomUUID();
+    const engineSessionId = randomUUID();
     const store = openStore(projectDir(home, root));
     store.saveSession({
-      id: 'session-1', claudeSessionId, cwd: root, status: o.status ?? 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
+      id: 'session-1', engine: 'claude', engineSessionId, cwd: root, status: o.status ?? 'running', model: null, modelChoice: null, effort: null, cliVersion: null,
       pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null,
     });
     store.saveTurn('session-1', { id: 'turn-1', kind: 'user', openedAt: 2, startedAt: 3, closedAt: null, resultSubtype: null });
@@ -1150,13 +1470,13 @@ describe('AgentSession after a core crash', () => {
     if (o.transcript !== null) {
       const dir = join(transcriptsDir, realpathSync(root).replace(/[^A-Za-z0-9]/g, '-'));
       mkdirSync(dir, { recursive: true });
-      const body = o.body ? o.body(claudeSessionId, root) : o.unparsable
+      const body = o.body ? o.body(engineSessionId, root) : o.unparsable
         ? 'torn\nalso torn\n'
-        : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', claudeSessionId).replaceAll('$CWD', root);
-      writeFileSync(join(dir, `${claudeSessionId}.jsonl`), body);
+        : readFileSync(fixture('transcripts/crash-gap.jsonl'), 'utf8').replaceAll('$SESSION', engineSessionId).replaceAll('$CWD', root);
+      writeFileSync(join(dir, `${engineSessionId}.jsonl`), body);
     }
     store.close();
-    return { home, root, transcriptsDir, claudeSessionId };
+    return { home, root, transcriptsDir, engineSessionId };
   }
 
   const GAP = [
@@ -1172,6 +1492,70 @@ describe('AgentSession after a core crash', () => {
     expect(b.session.startedFromCrash()).toBe(false);
     const fresh = await harness('multi-turn');
     expect(fresh.session.startedFromCrash()).toBe(false);
+  });
+
+  it('drops a chat nobody wrote to instead of recovering it, and recovers one that holds any trace of the conversation', async () => {
+    type Trace = (store: Store, s: { engineSessionId: string; root: string; transcriptsDir: string }) => void;
+    const at = (seq: number) => ({ seq, turnId: null, parentToolUseId: null });
+    const traces: Record<string, [status: 'running' | 'stopped', trace: Trace]> = {
+      'running, a notice only': ['running', () => {}],
+      'stopped, a notice only': ['stopped', () => {}],
+      'a notice only, an earlier crash still unrecovered': ['running', (store) => store.setMeta(UNCLEAN_STOP_KEY, '1')],
+      'a user message': ['running', (store) => store.saveMessage('session-1', { id: 'm2', ...at(2), role: 'user', text: 'hi', ts: 2 })],
+      'a tool call': ['running', (store) => store.saveToolEvent('session-1', {
+        toolUseId: 'toolu_1', ...at(2), tool: 'Read', input: {}, status: 'ok', toolUseAt: 2, endedAt: 3,
+      })],
+      'a prompt': ['running', (store) => store.savePrompt('session-1', {
+        requestId: 'req_1', ...at(2), body: { tool: 'ExitPlanMode', plan: 'p' }, status: 'pending', answer: null, ts: 2,
+      })],
+      'a watchdog event': ['running', (store) => store.saveWatchdogEvent('session-1', {
+        id: 'ev-1', kind: 'watchdog', mode: 'B', phase: 'resolved', resolution: 'kept', changes: [], toolCalls: [], interrupted: false, paused: false,
+        runningSubagents: 0, backgroundShell: false, unknownOrigin: false, snapshotSha: null, canExpand: false, defaultAction: 'revert', reason: '', ts: 2, resolvedAt: 3,
+      })],
+      "claude's transcript": ['running', (_store, s) => {
+        const file = transcriptPath(s.transcriptsDir, s.root, s.engineSessionId);
+        mkdirSync(dirname(file), { recursive: true });
+        writeFileSync(file, '');
+      }],
+      'a started conversation': ['running', (store) => store.saveSession({ ...store.session('session-1')!, conversationStarted: true })],
+      "the user's own edit": ['running', (store) => store.saveChange('session-1', humanEdit)],
+      'a revert': ['running', (store) => store.saveRevert('session-1', revert)],
+      'a name the user gave it': ['running', (store) => store.setSessionTitle('session-1', 'Release notes', true)],
+    };
+    const outcomes: Record<string, unknown> = {};
+    for (const [label, [status, trace]] of Object.entries(traces)) {
+      const home = tempDir('ide-home-');
+      const root = tempDir('ide-root-');
+      const transcriptsDir = tempDir('ide-transcripts-');
+      const engineSessionId = randomUUID();
+      const store = openStore(projectDir(home, root));
+      store.saveSession({
+        id: 'session-1', engine: 'claude', engineSessionId, cwd: root, status, model: null, modelChoice: null, effort: null, cliVersion: null,
+        pid: null, launchId: null, conversationStarted: false, startedAt: 1, accountId: null,
+      });
+      store.saveMessage('session-1', { id: 'm1', ...at(1), role: 'notice', text: 'CodeRay hook did not start', ts: 1 });
+      trace(store, { engineSessionId, root, transcriptsDir });
+      store.close();
+      const h = await harness('multi-turn', { home, root, transcriptsDir });
+      outcomes[label] = [
+        h.store.session('session-1') ? 'kept' : 'dropped', h.session.startedFromCrash(), h.store.meta(UNCLEAN_STOP_KEY), h.session.state().session?.status ?? null,
+      ];
+    }
+    const kept = ['kept', true, '1', 'crashed'];
+    expect(outcomes).toEqual({
+      'running, a notice only': ['dropped', false, null, null],
+      'stopped, a notice only': ['dropped', false, null, null],
+      'a notice only, an earlier crash still unrecovered': ['dropped', false, '1', null],
+      'a user message': kept,
+      'a tool call': kept,
+      'a prompt': kept,
+      'a watchdog event': kept,
+      "claude's transcript": kept,
+      'a started conversation': kept,
+      "the user's own edit": kept,
+      'a revert': kept,
+      'a name the user gave it': kept,
+    });
   });
 
   it('adds the calls made in the gap after the last stored row, marked recovered, without duplicating a stored call', async () => {

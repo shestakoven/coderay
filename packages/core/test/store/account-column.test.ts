@@ -3,10 +3,10 @@ import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { openStore, type SessionRecord } from '../../src/store/store';
 import { DatabaseSync } from '../../src/store/sqlite';
-import { tempDir } from '../helpers';
+import { BEFORE_ENGINES, tempDir } from '../helpers';
 
 const session = (id: string, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
-  id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
+  id, engine: 'claude', engineSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
   pid: null, launchId: null, conversationStarted: true, startedAt: 1, accountId: null, ...overrides,
 });
 
@@ -22,7 +22,7 @@ function schemaSixHistory(): string {
   first.saveSession(session('old', { startedAt: 7 }));
   first.close();
   const db = new DatabaseSync(join(dir, 'history.sqlite'));
-  db.exec('ALTER TABLE sessions DROP COLUMN account_id; ALTER TABLE baselines DROP COLUMN sig; PRAGMA user_version = 6');
+  db.exec(`${BEFORE_ENGINES} ALTER TABLE sessions DROP COLUMN account_id; ALTER TABLE baselines DROP COLUMN sig; ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 6`);
   db.close();
   return dir;
 }
@@ -62,7 +62,7 @@ describe('schema 7 migration', () => {
   it('moves a version 6 history to the current version', () => {
     const dir = schemaSixHistory();
     freshStore(dir).close();
-    expect(userVersion(dir)).toBe(8);
+    expect(userVersion(dir)).toBe(10);
   });
 
   it('stores an account on a migrated history', () => {

@@ -1,0 +1,10 @@
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"Ready.","phase":"final_answer"}}}
+{"fake":"await-turn"}
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"fileChange","id":"patch-1","changes":[{"path":"$CWD/src/other.ts","kind":{"type":"update","move_path":null},"diff":"@@ -1 +1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n"}],"status":"inProgress"}}}
+{"request":"item/fileChange/requestApproval","params":{"threadId":"$THREAD","turnId":"$TURN","itemId":"patch-1","reason":null,"grantRoot":null}}
+{"fake":"write","path":"src/other.ts","content":"export const other = 'hello';\n","when":"accept"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"fileChange","id":"patch-1","changes":[{"path":"$CWD/src/other.ts","kind":{"type":"update","move_path":null},"diff":""}],"status":"completed"}},"when":"accept"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"fileChange","id":"patch-1","changes":[{"path":"$CWD/src/other.ts","kind":{"type":"update","move_path":null},"diff":""}],"status":"declined"}},"when":"decline"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-2","text":"Done.","phase":"final_answer"}}}
+{"fake":"await-turn"}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-3","text":"Again.","phase":"final_answer"}}}

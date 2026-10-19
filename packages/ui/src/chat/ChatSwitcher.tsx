@@ -1,12 +1,19 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChatSummary, ClientMessage, ModelInfo } from '@ide/protocol';
+import type { ChatPick, ChatSummary, ClientMessage, EngineId, EngineStatus, ModelInfo } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
-import { chatTitle, effortLabel, modelLabel, relativeTime } from './chats';
+import { chatMeta, chatTitle } from './chats';
 
 export interface ChatList {
   activeId: string | null;
   sessions: ChatSummary[];
   models: ModelInfo[];
+  engines: EngineStatus[];
+  /** The engines whose models are still coming; absent from a core that waits for every engine. */
+  pending?: EngineId[];
+  /** The engines that could not list their models. */
+  failed?: EngineId[];
+  /** What a new chat starts with; null when a model must be chosen first, absent from a core older than the engines. */
+  next?: ChatPick | null;
 }
 
 export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLeave: boolean; send: (message: ClientMessage) => boolean }) {
@@ -87,9 +94,7 @@ export function ChatSwitcher({ chats, canLeave, send }: { chats: ChatList; canLe
                 }}
               >
                 <span className="chat-list-title">{chatTitle(chat)}</span>
-                <span className="chat-list-meta muted">
-                  {relativeTime(chat.lastActivityAt, now)} · {modelLabel(chat.modelChoice, chats.models)} · {effortLabel(chat.effort)}
-                </span>
+                <span className="chat-list-meta muted">{chatMeta(chat, chats.models, now)}</span>
               </button>
               )}
               <button className="chat-delete" onClick={() => setRenaming({ id: chat.id, text: chatTitle(chat) })} title="Rename this chat" aria-label="Rename chat"><Icon name="pencil" size={14} /></button>

@@ -2,8 +2,9 @@ import { execFileSync } from 'node:child_process';
 import { request } from 'node:http';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
-import { describe, expect, it, onTestFinished } from 'vitest';
-import { idecoreRoute } from '../../src/idecore/mcp-server';
+import { isJSONRPCNotification, isJSONRPCRequest, type JSONRPCMessage } from '@modelcontextprotocol/sdk/types.js';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { type IdecoreRouteOptions, idecoreRoute, KEEP_ALIVE_MS } from '../../src/idecore/mcp-server';
 import { reviewPlan } from '../../src/plans/freeze';
 import type { ComponentRef } from '../../src/plans/plan-input';
 import { PlanService } from '../../src/plans/plan-service';
@@ -21,7 +22,7 @@ const flow = {
 };
 const big = { goal: 'Rework app', steps: [{ key: 'edit', title: 'Edit', rationale: '', targets: [{ componentId: 'app', op: 'modify' }] }] };
 
-async function setup() {
+async function setup(overrides: Partial<IdecoreRouteOptions> = {}) {
   const root = tempDir('ide-idecore-');
   await writeTree(root, { 'src/app.ts': '', 'src/other.ts': '' });
   execFileSync('git', ['init', '-q'], { cwd: root });
@@ -31,23 +32,42 @@ async function setup() {
     root, store, sessionId: () => 's1', components: () => components,
     review: (steps) => reviewPlan(steps, { root, policy: DEFAULT_POLICY, components, tempRoots: [] }),
   });
-  const route = idecoreRoute({ secret: SECRET, plans });
+  const route = idecoreRoute({ secret: SECRET, plans, ...overrides });
   const server = await startServer({ port: 0, token: 'ui-token', snapshot: () => null, routes: [route] });
   onTestFinished(async () => {
     await route.close();
     await server.close();
     store.close();
   });
-  return { plans, port: server.port };
+  return { plans, port: server.port, route };
 }
 
-async function connect(port: number, secret = SECRET): Promise<Client> {
+async function connect(port: number, secret = SECRET, path = '/mcp'): Promise<Client> {
   const client = new Client({ name: 'test', version: '0.0.0' });
-  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}/mcp`), {
+  await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}${path}`), {
     requestInit: { headers: { Authorization: `Bearer ${secret}` } },
   }));
   onTestFinished(() => client.close());
   return client;
+}
+
+/** A client that records the messages it sends and every message it receives, notifications included. */
+async function tap(port: number, path: string) {
+  const client = await connect(port, SECRET, path);
+  const transport = client.transport!;
+  const sent: JSONRPCMessage[] = [];
+  const heard: JSONRPCMessage[] = [];
+  const send = transport.send.bind(transport);
+  transport.send = (message, options) => {
+    sent.push(message);
+    return send(message, options);
+  };
+  const receive = transport.onmessage;
+  transport.onmessage = (message, extra) => {
+    heard.push(message);
+    receive?.(message, extra);
+  };
+  return { client, sent, heard };
 }
 
 const text = (result: unknown) => (((result as { content?: unknown }).content ?? []) as { text?: string }[]).map((part) => part.text ?? '').join('');
@@ -171,5 +191,51 @@ describe('idecore', () => {
     const { port } = await setup();
     const result = await rawPost(port, { authorization: `Bearer ${SECRET}`, 'mcp-session-id': 'nope' }, '{}');
     expect(result.status).toBe(404);
+  });
+});
+
+describe('idecore for Codex', () => {
+  it('marks every tool read-only for a client that asks for the hints, and none for claude', async () => {
+    const { port } = await setup();
+    const annotated = async (path: string) => {
+      const client = new Client({ name: 'test', version: '0.0.0' });
+      await client.connect(new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${port}${path}`), { requestInit: { headers: { Authorization: `Bearer ${SECRET}` } } }));
+      onTestFinished(() => client.close());
+      return (await client.listTools()).tools.map((tool) => [tool.name, tool.annotations?.readOnlyHint ?? null]);
+    };
+    expect([await annotated('/mcp?readOnlyHints=1'), await annotated('/mcp')]).toEqual([
+      [['propose_plan', true], ['step', true]], [['propose_plan', null], ['step', null]],
+    ]);
+  });
+});
+
+describe('idecore for opencode', () => {
+  it("sends progress every 20 s while propose_plan or search_code waits, under the call's token or else its request id, stops at the answer, and sends none without ?keepAlive=1", async () => {
+    const holds: (() => void)[] = [];
+    const held = <T>(value: T) => new Promise<T>((resolve) => holds.push(() => resolve(value)));
+    const { port, route } = await setup({
+      plans: { propose: () => held({ ok: true, value: { status: 'approved' } }) } as unknown as PlanService,
+      search: () => held({ ok: true, hits: [], indexed: 0, total: 0 }),
+    });
+    const opencode = await tap(port, '/mcp?keepAlive=1');
+    const claude = await tap(port, '/mcp');
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    onTestFinished(() => void vi.useRealTimers());
+    const answers = Promise.all([
+      opencode.client.callTool({ name: 'propose_plan', arguments: small, _meta: { progressToken: 'tok-1' } }),
+      opencode.client.callTool({ name: 'search_code', arguments: { query: 'q' } }),
+      claude.client.callTool({ name: 'propose_plan', arguments: small, _meta: { progressToken: 'tok-2' } }),
+    ]);
+    await waitFor(() => holds.length === 3, 'all three calls held');
+    vi.advanceTimersByTime(3 * KEEP_ALIVE_MS);
+    const tokens = (heard: JSONRPCMessage[]) => heard.filter(isJSONRPCNotification).filter((m) => m.method === 'notifications/progress').map((m) => m.params?.progressToken);
+    await waitFor(() => tokens(opencode.heard).length >= 6, 'the frames of both opencode calls');
+    for (const release of holds) release();
+    const texts = (await answers).map(text);
+    await route.close(); // clears the SDK's own SSE comment timers, so only a keep-alive left running is counted
+    const searchId = opencode.sent.filter(isJSONRPCRequest).find((m) => m.params?.name === 'search_code')?.id;
+    expect([tokens(opencode.heard).sort(), tokens(claude.heard), texts, vi.getTimerCount()]).toEqual([
+      [searchId, searchId, searchId, 'tok-1', 'tok-1', 'tok-1'], [], ['{"status":"approved"}', '[]', '{"status":"approved"}'], 0,
+    ]);
   });
 });

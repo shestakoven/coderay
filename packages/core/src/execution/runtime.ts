@@ -1,4 +1,4 @@
-import { lstat } from 'node:fs/promises';
+import { lstat, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import ignore from 'ignore';
 import type { ChangeView } from '@ide/protocol';
@@ -13,15 +13,17 @@ import { toolClass } from '../gate/tools';
 import { Baselines, newScanCache, ScanAborted, ScanError, scanTree } from '../history/baselines';
 import { ChangeService } from '../history/changes';
 import { Checkpoints } from '../history/checkpoints';
-import { DiffService } from '../history/diff';
+import { DiffService, validPath } from '../history/diff';
 import { GitOps } from '../history/git-ops';
 import { HistoryService } from '../history/history-service';
 import { IdeWrites } from '../history/ide-writes';
 import { RevertService } from '../history/revert';
 import { ShadowRepo } from '../history/shadow';
 import { Summarizer } from '../history/summarizer';
+import type { LanguageAdapter } from '../lang/types';
 import type { IndexedFile } from '../model';
 import type { ModelProvider } from '../models/types';
+import { ReviewGraphService } from '../review/review-graph-service';
 import { ActivityLedger } from '../watchdog/activity';
 import { busyReason } from './agent-busy';
 import { recoverBaselines } from '../watchdog/recovery';
@@ -39,6 +41,7 @@ export interface ExecutionRuntimeOptions extends GateRuntimeOptions {
   watchdogSettleMs?: number;
   provider: Pick<ModelProvider, 'fast'>;
   files: () => IndexedFile[];
+  adapters?: () => LanguageAdapter[];
   reconcileMs?: number;
   slowReconcileMs?: number;
   ledgerGraceMs?: number;
@@ -156,6 +159,8 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     },
     watchdog,
     record: (record) => session?.recordDecision(record),
+    sandboxed: () => session?.sandboxed() ?? false,
+    exempt: () => session?.exempt() ?? (() => false),
   });
 
   let policyKey = '';
@@ -178,10 +183,18 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     components: () => o.components(), isProtected, debounceMs: o.summaryDebounceMs,
   });
   const diff = new DiffService({ shadow, changes: () => changes.changes(), baselines, checkpoints });
+  const reviewGraph = new ReviewGraphService({
+    files: o.files,
+    components: () => o.components(),
+    adapters: () => o.adapters?.() ?? [],
+    plans: () => gate.plans.plans(),
+    content: (path, hash) => diff.content(path, hash),
+    readNow: async (path) => (validPath(path) ? readFile(join(o.root, path), 'utf8').catch(() => null) : null),
+  });
   let settle!: () => void;
   const settled = new Promise<void>((resolve) => { settle = resolve; });
   const history = new HistoryService({
-    store: o.store, sessionId, changes, watchdog, reverts, checkpoints, summarizer, diff, gate: gate.gate, plans: gate.plans,
+    store: o.store, sessionId, changes, watchdog, reverts, checkpoints, summarizer, diff, reviewGraph, gate: gate.gate, plans: gate.plans,
     ready: () => settled, unavailable: () => failure,
   });
   upserted.add((list) => history.upsertChanges(list));
@@ -339,12 +352,16 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     }
   });
 
+  const check = (): void => {
+    if (failure !== null) throw new Error(`the watchdog is unavailable (${failure}), so the agent was not started`);
+    if (!ready) throw new Error('the watchdog is not ready yet, so the agent was not started');
+    syncHold();
+  };
   const sessionGate: SessionGate = {
     ...gate.sessionGate,
+    check,
     write(id, events) {
-      if (failure !== null) throw new Error(`the watchdog is unavailable (${failure}), so the agent was not started`);
-      if (!ready) throw new Error('the watchdog is not ready yet, so the agent was not started');
-      syncHold();
+      check();
       return gate.sessionGate.write(id, events);
     },
   };

@@ -3,33 +3,46 @@ import { readFileSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { AGENT_TERMINAL_ID, type ClientMessage, type MapSnapshot, type ModelInfo, type ServerMessage } from '@ide/protocol';
+import {
+  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage, type EngineAccountsView, type EngineId, type MapSnapshot, type ModelInfo,
+  type ServerMessage,
+} from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
-import { AccountStore } from './accounts/account-store';
+import { AccountError, AccountStore, claudeAccounts } from './accounts/account-store';
+import { claudeLogin } from './accounts/claude-login';
+import { codexLogin, codexLogout } from './accounts/codex-login';
+import { answerProviders, opencodeLogin, type OpencodeProfiles } from './accounts/opencode-login';
 import { AgentSession } from './agent/agent-session';
+import { codexCommand } from './agent/codex/command';
+import { opencodeCommand } from './agent/opencode/command';
+import { hideSecrets } from './agent/codex/secrets';
+import type { Engine } from './agent/engines/registry';
 import { createExecutionRuntime } from './execution/runtime';
 import { GitService } from './git/git-service';
 import { computeFileEdges, unresolvedImports } from './graph/edges';
 import { defaultIdeHome, projectDir, runDir } from './home';
 import { startHub, type RunningHub } from './hub/hub';
 import { followParent } from './hub/parent';
+import { BlobStore } from './images/blob-store';
+import { ImageRequests } from './images/image-requests';
 import { Indexer } from './indexer/indexer';
 import { createCAdapter, createCppAdapter } from './lang/c-family';
 import { createCSharpAdapter } from './lang/csharp';
 import { createPythonAdapter } from './lang/python';
 import { createSwiftAdapter } from './lang/swift';
 import { createTypeScriptAdapter } from './lang/typescript';
+import type { LanguageAdapter } from './lang/types';
 import { acquireCoreLock } from './lock';
 import { takeNodeLauncher } from './node-exec';
 import { descendants, isAlive, signal as sendSignal } from './os-process';
 import { MapService } from './map/map-service';
+import { OverviewService } from './map/overview';
 import { buildSnapshot } from './map/snapshot';
 import { IdentifierClassifier } from './c4/classify';
 import { watchDeploy } from './c4/deploy';
 import { buildC4 } from './c4/model';
 import { claudeJsonPath } from './mcp/claude-code';
 import { McpRegistry } from './mcp/registry';
-import { fetchModels } from './models/catalog';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
@@ -41,9 +54,36 @@ import { takeLaunchToken } from './project/token';
 import { projectBusy, successorArgs, validateProjectPath } from './project/switch';
 import { ProgressReporter } from './progress';
 import { routeClientMessage, type SettingsClientMessage } from './server/router';
-import { startServer, type RunningServer } from './server/server';
+import { startServer, type Reply, type RunningServer } from './server/server';
 import { openStore } from './store/store';
 import { TerminalService } from './terminal/terminal-service';
+
+// IDE_DEFAULT_MODEL names the model a project's first chat starts with; without it the user picks one first.
+function defaultModel(value: string | undefined): ChatPick | undefined {
+  const ref = value ? parseModelId(value) : null;
+  return ref && value ? { engine: ref.engine, modelChoice: value, effort: null } : undefined;
+}
+
+/**
+ * Every engine's answer; or, once `ms` have passed and some engines have answered, theirs, with `waiting` naming the others' places
+ * and `late` bringing every answer when the slow ones come. With none answered by then it waits for all, as an empty first answer would tell nothing.
+ */
+async function answeredBy<T>(answers: Promise<T>[], ms: number): Promise<{ answered: T[]; waiting: number[]; late: Promise<T[]> | null }> {
+  const all = Promise.all(answers);
+  const known: ({ value: T } | null)[] = answers.map(() => null);
+  answers.forEach((answer, at) => void answer.then((value) => { known[at] = { value }; }, () => {}));
+  let timer: NodeJS.Timeout | undefined;
+  const expired = new Promise<null>((resolveExpired) => { timer = setTimeout(resolveExpired, ms, null); });
+  try {
+    const every = await Promise.race([all, expired]);
+    if (every !== null) return { answered: every, waiting: [], late: null };
+  } finally {
+    clearTimeout(timer);
+  }
+  const answered = known.flatMap((entry) => (entry ? [entry.value] : []));
+  const waiting = known.flatMap((entry, at) => (entry ? [] : [at]));
+  return answered.length === 0 ? { answered: await all, waiting: [], late: null } : { answered, waiting, late: all };
+}
 
 const { values } = parseArgs({
   options: {
@@ -54,6 +94,10 @@ const { values } = parseArgs({
     'ide-home': { type: 'string' },
     'token-stdin': { type: 'boolean', default: false },
     claude: { type: 'string', default: 'claude' },
+    codex: { type: 'string', default: 'codex' },
+    'no-codex': { type: 'boolean', default: false },
+    opencode: { type: 'string', default: 'opencode' },
+    'no-opencode': { type: 'boolean', default: false },
     'no-map-mcp': { type: 'boolean', default: false },
     'no-agent-search': { type: 'boolean', default: false },
     hub: { type: 'boolean', default: false },
@@ -64,6 +108,7 @@ const exitWithParent = values['exit-with-parent'];
 const HUB_OWNS_PROJECTS = 'This core runs inside CodeRay hub: open and close projects through the hub.';
 const PARENT_GONE_DEADLINE_MS = 10_000;
 const SHUTDOWN_DEADLINE_MS = 30_000;
+const SLOW_ENGINE_MS = 3_000;
 
 const port = Number(values.port);
 if (!Number.isInteger(port) || port < 0 || port > 65535) {
@@ -103,7 +148,10 @@ if (values.hub) {
       allowedOrigins: values['allow-origin'],
       home,
       projects: values.project.map((path) => resolve(path)),
-      child: { claude: values.claude, noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'] },
+      child: {
+        claude: values.claude, codex: values['no-codex'] ? null : values.codex, opencode: values['no-opencode'] ? null : values.opencode,
+        noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'],
+      },
     });
   } catch (error) {
     console.error(`CodeRay core failed to start: ${(error as Error).message}`);
@@ -181,9 +229,23 @@ try {
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
   let indexer: Indexer | undefined;
-  const accounts = new AccountStore({ home, claude: values.claude });
+  // --no-codex, --no-opencode: a core for tests and the e2e, which never run the real codex or opencode.
+  const codex = values['no-codex'] ? undefined : codexCommand(values.codex);
+  const opencode = values['no-opencode'] ? undefined : opencodeCommand(values.opencode);
+  // A profile keeps everything in its directory: removing that removes it.
+  const opencodeAccounts = opencode ? new AccountStore({ home, engine: 'opencode', logout: async () => {} }) : undefined;
+  const accountStores: Partial<Record<EngineId, AccountStore>> = {
+    claude: claudeAccounts(home, values.claude),
+    ...(codex ? { codex: new AccountStore({ home, engine: 'codex', logout: codexLogout(() => codex) }) } : {}),
+    ...(opencodeAccounts ? { opencode: opencodeAccounts } : {}),
+  };
+  const accounts = accountStores.claude!;
   const login = new AccountLogin({
-    accounts, claude: values.claude,
+    engines: {
+      claude: { store: accounts, flow: claudeLogin(values.claude) },
+      ...(codex && accountStores.codex ? { codex: { store: accountStores.codex, flow: codexLogin(() => codex, runDir(home)) } } : {}),
+      ...(opencodeAccounts ? { opencode: { store: opencodeAccounts, flow: opencodeLogin() } } : {}),
+    },
     onChange: () => {
       try {
         server?.broadcast(settingsSnapshot());
@@ -192,7 +254,8 @@ try {
       }
     },
   });
-  const models = createModelProvider(home, () => accounts.claudeEnv());
+  const models = createModelProvider(home, () => accounts.activeEnv());
+  let languageAdapters: LanguageAdapter[] = [];
   const rt = createExecutionRuntime({
     root, home, store,
     policy: () => policy.effective(),
@@ -208,18 +271,22 @@ try {
     shadowDir: join(projectDir(home, root), 'shadow.git'),
     provider: models,
     files: () => indexer?.files() ?? [],
+    adapters: () => languageAdapters,
     notice: (text) => (session ? session.notice(text) : console.warn(text)),
   });
   const git = new GitService({ root, ideWrites: rt.ideWrites, agentBusy: () => rt.agentBusy() });
   const registry = new McpRegistry({
     home, root, builtins: () => ({ idecore: rt.gate.mcpEntry() }),
     expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
-    claudeJsonPath: () => claudeJsonPath(accounts.configDir(accounts.activeId())),
+    claudeJsonPath: () => claudeJsonPath(accounts.homeDir(accounts.activeId())),
   });
   const agent = new AgentSession({
     root, home, store,
     claude: { command: values.claude, args: [] },
-    accounts,
+    ...(codex ? { codex } : {}),
+    ...(opencode ? { opencode } : {}),
+    accounts: accountStores,
+    defaultModel: defaultModel(process.env.IDE_DEFAULT_MODEL),
     mcpServers: () => registry.sessionServers(),
     ...rt.sessionOptions,
     canLeave: () => rt.canLeave(),
@@ -227,6 +294,7 @@ try {
   });
   session = agent;
   rt.attach(agent);
+  const images = new ImageRequests({ root, blobs: new BlobStore(projectDir(home, root)) });
   // A closed agent terminal ends its terminal mode once claude is gone, so the chat never runs a second claude beside it.
   terminals.onMessage((message) => {
     if (message.type === 'terminal.exit' && message.id === AGENT_TERMINAL_ID) agent.terminalClosed();
@@ -253,13 +321,22 @@ try {
     }
   })();
 
+  const accountViews = (): EngineAccountsView[] => agent.engines.all().flatMap((engine) => {
+    const store = accountStores[engine.id];
+    return store ? [{ engine: engine.id, ...store.list() }] : [];
+  });
+  const accountsOf = (engine: EngineId): AccountStore => {
+    const store = accountStores[engine];
+    if (!store) throw new AccountError(`${ENGINE_NAMES[engine]} has no accounts in this CodeRay.`);
+    return store;
+  };
   const settingsSnapshot = (): ServerMessage => ({
     type: 'settings.snapshot',
-    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), login: login.view() } },
+    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), engines: accountViews(), login: login.view() } },
   });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
-  const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats() });
+  const sessionsSnapshot = (): ServerMessage => ({ type: 'sessions.snapshot', ...agent.listChats(), next: agent.nextPick() });
   const broadcastSessions = (): void => {
     try {
       server?.broadcast(sessionsSnapshot());
@@ -289,7 +366,7 @@ try {
         policy.confirmExternalEdits(message.hashes);
         return;
       case 'account.login.start':
-        login.start();
+        login.start(message.engine ?? 'claude', message.method ?? 'browser', message.apiKey ?? null);
         return;
       case 'account.login.code':
         login.submitCode(message.code);
@@ -297,14 +374,28 @@ try {
       case 'account.login.cancel':
         login.cancel();
         return;
-      case 'account.select':
-        await agent.changeAccount(() => accounts.setActive(message.id));
-        modelList = undefined;
+      case 'account.select': {
+        const engine = message.engine ?? 'claude';
+        await changeAccount(engine, () => accountsOf(engine).setActive(message.id));
         return;
-      case 'account.remove':
-        await agent.changeAccount(() => accounts.remove(message.id));
-        modelList = undefined;
+      }
+      case 'account.remove': {
+        const engine = message.engine ?? 'claude';
+        await changeAccount(engine, () => accountsOf(engine).remove(message.id));
         return;
+      }
+    }
+  };
+  // The windows hear of an applied change even when restarting the agent after it fails.
+  const changeAccount = async (engine: EngineId, change: () => void | Promise<void>): Promise<void> => {
+    let applied = false;
+    try {
+      await agent.changeAccount(engine, async () => {
+        await change();
+        applied = true;
+      });
+    } finally {
+      if (applied) refreshEngines();
     }
   };
 
@@ -312,19 +403,73 @@ try {
   let afterClose: (() => Promise<void>) | undefined;
   let mapService: MapService | undefined;
   let classifier: IdentifierClassifier | undefined;
+  let overviews: OverviewService | undefined;
   let deployWatch: { close(): Promise<void> } | undefined;
   const progress = new ProgressReporter((current) => server?.broadcast({ type: 'map.progress', progress: current }));
 
-  let modelList: Promise<ModelInfo[]> | undefined;
-  const modelCatalog = (): Promise<ModelInfo[]> => {
-    modelList ??= fetchModels({ command: values.claude, args: [], env: accounts.claudeEnv() }, root).then((list) => {
-      if (list.length === 0) modelList = undefined;
-      return list;
-    });
-    return modelList;
+  // Each engine's list is kept once it names a model; one that failed or named none is asked again next time, without the others,
+  // and one engine that cannot list its models never empties the others' lists. A failure is logged once until the engine lists again.
+  const engineModels = new Map<EngineId, Promise<ModelInfo[]>>();
+  const unlisted = new Set<EngineId>();
+  const modelsOf = (engine: Engine): Promise<ModelInfo[]> => {
+    const known = engineModels.get(engine.id);
+    if (known) return known;
+    const forget = (): void => {
+      if (engineModels.get(engine.id) === pending) engineModels.delete(engine.id);
+    };
+    const pending: Promise<ModelInfo[]> = engine.listModels().then(
+      (list) => {
+        unlisted.delete(engine.id);
+        if (list.length === 0) forget();
+        return list;
+      },
+      (error: unknown) => {
+        forget();
+        if (!unlisted.has(engine.id)) console.error(`CodeRay core: could not list the ${ENGINE_NAMES[engine.id]} models (${hideSecrets((error as Error).message)})`);
+        unlisted.add(engine.id);
+        return [];
+      },
+    );
+    engineModels.set(engine.id, pending);
+    return pending;
   };
+  let refreshes = 0;
+  // The engines and the models each go out once every engine has answered, or after SLOW_ENGINE_MS with the engines that have, so a
+  // slow engine (a codex that hangs) never holds Claude's back; the full list follows to every window unless a later change sent newer.
+  const sendEngines = (first: (message: ServerMessage) => void): void => {
+    const generation = refreshes;
+    const late = (message: ServerMessage): void => {
+      if (generation === refreshes) server?.broadcast(message);
+    };
+    void answeredBy(agent.engines.all().map((engine) => engine.status()), SLOW_ENGINE_MS)
+      .then(({ answered, late: rest }) => {
+        first({ type: 'engines.snapshot', engines: answered });
+        return rest?.then((engines) => late({ type: 'engines.snapshot', engines }));
+      })
+      .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
+    const engines = agent.engines.all();
+    const modelsSnapshot = (lists: ModelInfo[][], pending: EngineId[]): ServerMessage => {
+      const failed = engines.filter((engine) => !pending.includes(engine.id) && unlisted.has(engine.id)).map((engine) => engine.id);
+      return { type: 'models.snapshot', models: lists.flat(), ...(pending.length === 0 ? {} : { pending }), ...(failed.length === 0 ? {} : { failed }) };
+    };
+    void answeredBy(engines.map(modelsOf), SLOW_ENGINE_MS)
+      .then(({ answered, waiting, late: rest }) => {
+        first(modelsSnapshot(answered, waiting.map((at) => engines[at]!.id)));
+        return rest?.then((lists) => late(modelsSnapshot(lists, [])));
+      })
+      .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));
+  };
+  // An account change can sign an engine in or out and change its models, so every window gets both again, from the latest change only.
+  const refreshEngines = (): void => {
+    const generation = ++refreshes;
+    engineModels.clear();
+    sendEngines((message) => {
+      if (generation === refreshes) server?.broadcast(message);
+    });
+  };
+  const profiles: OpencodeProfiles | null = opencode && opencodeAccounts ? { command: opencode, runDir: runDir(home), store: opencodeAccounts, refreshEngines } : null;
 
-  const handle = async (message: ClientMessage, reply: (message: ServerMessage) => void): Promise<void> => {
+  const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {
       case 'chat.send':
         if (!watched) agent.notice('Checking the project files first; the agent starts when that is done.');
@@ -344,15 +489,20 @@ try {
       case 'map.regroup':
         void mapService?.regroup();
         return;
+      case 'map.overview':
+        overviews?.rebuild();
+        return;
       case 'session.new':
         await watching;
-        await agent.newSession();
+        await agent.newSession(message.modelChoice === undefined ? null : { modelChoice: message.modelChoice, effort: message.effort ?? null });
+        broadcastSessions();
         return;
       case 'session.list':
         reply(sessionsSnapshot());
         return;
       case 'models.list':
-        reply({ type: 'models.snapshot', models: await modelCatalog() });
+        // The status check runs claude each time; the cached models never wait for it.
+        sendEngines(reply);
         return;
       case 'session.switch':
         await watching;
@@ -378,6 +528,9 @@ try {
       case 'prompt.answer':
         agent.answerPrompt(message.requestId, message.answer);
         return;
+      case 'image.get':
+        await images.handle(message, reply);
+        return;
       case 'plan.answer':
         rt.gate.plans.answer(message.planId, message.version, message.answer);
         return;
@@ -386,6 +539,11 @@ try {
         return;
       case 'settings.get':
         reply(settingsSnapshot());
+        return;
+      case 'account.providers':
+      case 'account.provider.set':
+      case 'account.provider.remove':
+        await answerProviders(message, profiles, reply);
         return;
       case 'terminal.open':
         if (message.kind === 'agent') {
@@ -540,6 +698,7 @@ try {
     await git.close();
     progress.stop();
     classifier?.stop();
+    overviews?.stop();
     step = 'the deploy watch';
     await deployWatch?.close();
     const stopping = mapService?.stop();
@@ -593,6 +752,7 @@ try {
     createCSharpAdapter(),
     createSwiftAdapter(),
   ]);
+  languageAdapters = adapters;
   const index = new Indexer({ root, adapters, onProgress: (indexed) => progress.set({ indexing: { indexed } }) });
   indexer = index;
   await index.start();
@@ -613,6 +773,15 @@ try {
       },
     });
     classifier = names;
+    const overview = new OverviewService({
+      model: models.fast,
+      stateDir: projectDir(home, root),
+      projectName,
+      onChange: () => {
+        if (snapshot) publish();
+      },
+    });
+    overviews = overview;
     const service = new MapService({
       root,
       projectName,
@@ -632,9 +801,9 @@ try {
       const c4 = buildC4(root, files, edges, view.components, unresolved, names.lookup);
       names.request(c4.pending);
       const status = names.status();
-      if (status.waiting > 0) c4.model.warnings.push(`Classifying ${status.waiting} package, image and host names with Haiku (names only)`);
+      if (status.waiting > 0) c4.model.warnings.push(`Classifying ${status.waiting} package, image and host names`);
       if (status.failure) c4.model.warnings.push(`Could not classify names: ${status.failure}`);
-      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: c4.model };
+      snapshot = { ...buildSnapshot(version, projectName, files, edges, view), c4: c4.model, overview: overview.build(view.components, files, edges, view.status.layer === 'ai' && view.status.grouping !== 'running') };
       running.broadcast({ type: 'map.snapshot', snapshot });
       return snapshot;
     }

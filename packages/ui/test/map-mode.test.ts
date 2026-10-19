@@ -102,8 +102,23 @@ describe('resolveMode result', () => {
   });
 });
 
+describe('overview mode', () => {
+  it('comes first when the snapshot has an overview', () => {
+    expect(availableModes({ ...NEITHER, hasOverview: true })).toEqual(['overview', 'components']);
+  });
+
+  it('comes before C4, components and flow when all four are available', () => {
+    expect(availableModes({ ...BOTH, hasOverview: true })).toEqual(['overview', 'c4', 'components', 'flow']);
+  });
+
+  it('is the default without a C4 model, and C4 stays the default with one', () => {
+    expect(resolveMode(null, { ...NEITHER, hasOverview: true })).toBe('overview');
+    expect(resolveMode(null, { ...C4_ONLY, hasOverview: true })).toBe('c4');
+  });
+});
+
 describe('MODE_LABEL', () => {
-  it('labels the three modes C4, Components and Plan flow', () => {
-    expect(MODE_LABEL).toEqual({ c4: 'C4', components: 'Components', flow: 'Plan flow' });
+  it('labels the four modes Overview, C4, Components and Plan flow', () => {
+    expect(MODE_LABEL).toEqual({ overview: 'Overview', c4: 'C4', components: 'Components', flow: 'Plan flow' });
   });
 });

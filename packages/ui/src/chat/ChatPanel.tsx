@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { ChatItem, ClientMessage, GateAnswer, GatePromptView, ToolStatus } from '@ide/protocol';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ENGINE_CAPABILITIES, ENGINE_NAMES, PROTECTION, type ChatItem, type ClientMessage, type EngineId, type GateAnswer, type GatePromptView, type ImageRef, type ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget, targetLabel } from '../plan/prompt-text';
@@ -10,22 +10,32 @@ import { MarkdownText } from './MarkdownText';
 import { UsageMeter } from './UsageMeter';
 import { BackgroundTasks } from './BackgroundTasks';
 import { ModelControls } from './ModelControls';
+import { canOpenTerminal } from './chats';
 import { addAttachments, imageFiles, type Attachment } from './attachments';
 import { WorkingIndicator } from './WorkingIndicator';
 import { workingState } from './working';
 import { matchSkills, skillCommand, slashQuery } from './skills';
 import { SkillMenu, SkillMenuEmpty } from './SkillMenu';
+import { ChatImagesContext, type ChatImages } from './chat-images';
+import { ChatImage } from './ChatImage';
+import { attachmentName, toolImageName, userMessageText } from './image-source';
+import type { ImageStore } from './image-store';
+import { ImageViewer } from './ImageViewer';
 
 const RECOVERED = "recovered from claude's transcript";
 
 const STATUS_MARK: Record<ToolStatus, string> = { running: '…', ok: '✓', error: '✗', rejected: '⊘', unfinished: '–' };
-const TURN_END: Record<string, string> = { error_during_execution: 'stopped', crashed: 'ended: claude exited' };
+const TURN_END: Record<string, string> = { error_during_execution: 'stopped', failed: 'failed' };
+const turnEnd = (subtype: string, engine: EngineId): string | undefined => (subtype === 'crashed' ? `ended: ${engine} exited` : TURN_END[subtype]);
 const START_WAIT_MS = 15000;
+const PINNED_SLACK = 48;
 const BUSY = 'The agent is working: it reads your message at its next step. Enter sends.';
 
 export type AgentView = 'chat' | 'terminal';
 
-export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock, view, onView, terminal }: {
+const atBottom = (element: HTMLElement): boolean => element.scrollHeight - element.scrollTop - element.clientHeight < PINNED_SLACK;
+
+export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock, view, onView, terminal, images, imagesLive }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
@@ -41,6 +51,9 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   view: AgentView;
   onView: (view: AgentView) => void;
   terminal: ReactNode;
+  images: ImageStore;
+  // The chat is on screen: its images may load.
+  imagesLive: boolean;
 }) {
   const [draft, setDraft] = useState('');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -51,11 +64,19 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   const [skillsDismissed, setSkillsDismissed] = useState(false);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const end = useRef<HTMLDivElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const pinned = useRef({ at: true, top: 0 });
+  const [viewing, setViewing] = useState<HTMLElement | null>(null);
   const groups = turnGroups(chat);
   const itemCount = Object.keys(chat.items).length;
   const sendable = canSend(chat);
   const tasks = runningTasks(chat);
   const stop = stopControl(chat);
+  // A core older than the engines sends no `next`; the latest chat then stands in for it, as before.
+  const pick = chat.session ?? (chats.next === undefined ? (chats.sessions[0] ?? null) : chats.next);
+  const needsModel = chat.session === null && chats.next === null;
+  const started = Object.values(chat.items).some((item) => item.kind !== 'notice');
+  const [modelMenu, setModelMenu] = useState(false);
 
   const working = workingState(chat, sentAt);
   const active = working !== null;
@@ -76,6 +97,25 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     const timer = setTimeout(() => setSentAt(null), START_WAIT_MS);
     return () => clearTimeout(timer);
   }, [sentAt]);
+  const settle = useCallback(() => {
+    const element = log.current;
+    if (!element) return;
+    // A scroll this frame has not reported yet (a jump to a flashed item) counts too.
+    if (element.scrollTop !== pinned.current.top) pinned.current = { at: atBottom(element), top: element.scrollTop };
+    if (!pinned.current.at) return;
+    element.scrollTop = element.scrollHeight;
+    pinned.current.top = element.scrollTop;
+  }, []);
+  const live = imagesLive && view === 'chat';
+  const chatImages = useMemo<ChatImages>(() => ({ store: images, live, open: setViewing, settle }), [images, live, settle]);
+  useEffect(() => {
+    if (!live) setViewing(null);
+  }, [live]);
+  const closeViewer = (thumbnail: HTMLElement): void => {
+    const opener = viewing;
+    setViewing(null);
+    (thumbnail.isConnected ? thumbnail : opener)?.focus();
+  };
   useEffect(() => {
     if (sentAt !== null && (chat.error !== null || Object.values(chat.turns).some((turn) => turn.closedAt === null))) setSentAt(null);
   }, [sentAt, chat.error, chat.turns]);
@@ -86,10 +126,10 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     setAttachments(result.attachments);
     setAttachProblem(result.problem);
   };
-  const canSubmit = draft.trim() !== '' || attachments.length > 0;
+  const canSubmit = !needsModel && (draft.trim() !== '' || attachments.length > 0);
   const query = slashQuery(draft);
   const skillMatches = query === null ? [] : matchSkills(chat.skills, query);
-  const skillMenu = query !== null && !skillsDismissed && (chat.skills.length === 0 || skillMatches.length > 0);
+  const skillMenu = !modelMenu && query !== null && !skillsDismissed && (chat.skills.length === 0 || skillMatches.length > 0);
   const skillActive = Math.min(skillIndex, Math.max(skillMatches.length - 1, 0));
   const changeDraft = (text: string): void => {
     setDraft(text);
@@ -142,23 +182,29 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     <section className="chat">
       <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
+        {pick && <EngineChip engine={pick.engine ?? 'claude'} />}
         {(chat.session?.status === 'crashed' || chat.session?.status === 'refused') && (
           <span className={`chat-status ${chat.session?.status ?? 'none'}`} title={chat.session?.model ?? undefined}>
-            <i className="status-dot" />{chat.session.status === 'refused' ? 'hook off' : chat.session.status}
+            <i className="status-dot" />{chat.session.status === 'refused' ? ((chat.session.engine ?? 'claude') === 'claude' ? 'hook off' : 'refused') : chat.session.status}
           </span>
         )}
         {chat.session?.permissionMode === 'plan' && (
           <span className="badge plan" title="The agent explores and plans, and changes no files until you approve a plan.">plan mode</span>
         )}
         <span className="spacer" />
-        <div className="agent-view" role="radiogroup" aria-label="Agent view">
-          <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="CodeRay's chat">
-            <Icon name="comment" size={13} />Chat
-          </button>
-          <button role="radio" aria-checked={view === 'terminal'} className={view === 'terminal' ? 'on' : undefined} onClick={() => onView('terminal')} title="Claude Code's own terminal interface: every slash command works">
-            <Icon name="terminal" size={13} />Terminal
-          </button>
-        </div>
+        {canOpenTerminal(pick?.engine ?? 'claude') && (
+          <div className="agent-view" role="radiogroup" aria-label="Agent view">
+            <button role="radio" aria-checked={view === 'chat'} className={view === 'chat' ? 'on' : undefined} onClick={() => onView('chat')} title="CodeRay's chat">
+              <Icon name="comment" size={13} />Chat
+            </button>
+            <button
+              role="radio" aria-checked={view === 'terminal'} className={view === 'terminal' ? 'on' : undefined} onClick={() => onView('terminal')} disabled={needsModel}
+              title={needsModel ? 'Choose a model first' : "Claude Code's own terminal interface: every slash command works"}
+            >
+              <Icon name="terminal" size={13} />Terminal
+            </button>
+          </div>
+        )}
         {view === 'chat' && chat.session?.status === 'running' && <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>}
       </header>
       {dialog}
@@ -170,14 +216,22 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         </div>
       )}
       {view === 'terminal' && terminal}
-      <div className="chat-log" hidden={view === 'terminal'}>
+      <ChatImagesContext.Provider value={chatImages}>
+      <div
+        ref={log}
+        className="chat-log"
+        hidden={view === 'terminal'}
+        onScroll={(event) => {
+          pinned.current = { at: atBottom(event.currentTarget), top: event.currentTarget.scrollTop };
+        }}
+      >
         {groups.map((group) => ({ group, items: filterItems(group.items, chat.filter) })).filter(({ items }) => items.length > 0).map(({ group, items }) => (
           <div key={group.items[0]?.id} className={`turn ${group.turn?.kind ?? 'outside'}`}>
             {group.turn?.kind === 'agent-initiated' && <div className="turn-marker">↻ agent-initiated turn</div>}
             {!group.turn && group.items.some((item) => item.kind !== 'notice') && <div className="turn-marker">outside a turn</div>}
             {items.map((item) => <Item key={item.id} item={item} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
-            {group.turn?.resultSubtype && TURN_END[group.turn.resultSubtype] && (
-              <div className="turn-end">{TURN_END[group.turn.resultSubtype]}</div>
+            {group.turn?.resultSubtype && turnEnd(group.turn.resultSubtype, chat.session?.engine ?? 'claude') && (
+              <div className="turn-end">{turnEnd(group.turn.resultSubtype, chat.session?.engine ?? 'claude')}</div>
             )}
           </div>
         ))}
@@ -189,6 +243,8 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         {working && <WorkingIndicator key={working.since} working={working} />}
         <div ref={end} />
       </div>
+      </ChatImagesContext.Provider>
+      {viewing && log.current && <ImageViewer log={log.current} from={viewing} store={images} onClose={closeViewer} />}
       {prompts.map((prompt, index) => (
         <details key={prompt.id} className="prompt gate" open={!(index === 0 && promptAnchored)} data-testid="gate-card">
           <summary>
@@ -222,7 +278,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         {attachProblem && <div className="attach-problem">{attachProblem}</div>}
         {skillMenu && (skillMatches.length > 0
           ? <SkillMenu skills={skillMatches} active={skillActive} onPick={pickSkill} onHover={setSkillIndex} />
-          : <SkillMenuEmpty />)}
+          : <SkillMenuEmpty state={chat.skillsKnown ? 'none' : chat.session?.status === 'running' ? 'loading' : 'not-started'} />)}
         <div className="composer-box">
         <textarea
           ref={composer}
@@ -236,7 +292,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
             event.preventDefault();
             void attach(files);
           }}
-          placeholder={sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
+          placeholder={needsModel ? 'Choose a model to start the agent' : sendable ? 'Message the agent (Enter sends, Shift+Enter adds a line)' : BUSY}
         />
         <div className="composer-actions">
           <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/gif,image/webp" multiple hidden onChange={(event) => {
@@ -255,7 +311,7 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
           >
             <Icon name="skill" size={18} />
           </button>
-          <ModelControls current={chat.session ?? chats.sessions[0] ?? { modelChoice: null, effort: null }} models={chats.models} enabled={sendable} send={send} />
+          <ModelControls current={pick} models={chats.models} engines={chats.engines} pending={chats.pending} failed={chats.failed} started={started} enabled={sendable} send={send} onMenu={setModelMenu} onChosen={() => composer.current?.focus()} />
           <span className="spacer" />
           {!sendable && (
             <button className="composer-action stop" onClick={() => send({ type: 'chat.stop' })} disabled={!canStop(chat)} title={stop.title} aria-label={stop.label}>
@@ -263,14 +319,40 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
               {stop.label !== 'Stop' && <span>{stop.label.slice('Stop'.length).trim()}</span>}
             </button>
           )}
-          <button className="composer-action send" onClick={submit} disabled={!canSubmit} title="Send (Enter)" aria-label="Send">
+          <button className="composer-action send" onClick={submit} disabled={!canSubmit} title={needsModel ? 'Choose a model first' : 'Send (Enter)'} aria-label="Send">
             <Icon name="send" size={18} />
           </button>
         </div>
         </div>
-        <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} /><UsageMeter usage={chat.usage} /></div>
+        <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} canStop={ENGINE_CAPABILITIES[pick?.engine ?? 'claude'].backgroundTasks} /><UsageMeter usage={chat.usage} /></div>
       </footer>}
     </section>
+  );
+}
+
+// Focusable, so its explanation reaches the keyboard and a screen reader as well as the pointer; Escape puts the tooltip away.
+function EngineChip({ engine }: { engine: EngineId }) {
+  const why = useId();
+  const [quiet, setQuiet] = useState(false);
+  const { caption, short, title } = PROTECTION[engine];
+  return (
+    <span
+      className="engine-chip" tabIndex={0} aria-describedby={why} data-quiet={quiet || undefined}
+      onKeyDown={(event) => {
+        if (event.key !== 'Escape' || quiet) return;
+        event.stopPropagation();
+        setQuiet(true);
+      }}
+      onBlur={() => setQuiet(false)}
+      onMouseLeave={() => setQuiet(false)}
+    >
+      {ENGINE_NAMES[engine]}<span className="engine-protection">{caption}</span>
+      <span className="engine-short" aria-hidden="true">{short}</span>
+      <Icon name="shield" size={14} />
+      <span className="engine-why" role="tooltip">
+        <b aria-hidden="true">{ENGINE_NAMES[engine]} · {caption}</b> <span id={why}>{title}</span>
+      </span>
+    </span>
   );
 }
 
@@ -281,9 +363,16 @@ function Item({ item, chat, send, onFocusTargets }: {
   onFocusTargets: (paths: string[]) => void;
 }) {
   if (item.kind === 'message') {
+    const images = item.images ?? [];
+    const text = item.role === 'user' ? userMessageText(item.text, images.length) : item.text;
     return (
       <div className={`msg ${item.role}${item.role === 'assistant' ? ' rich' : ''}`} title={item.recovered ? RECOVERED : undefined}>
-        {item.role === 'assistant' ? <MarkdownText text={item.text} /> : item.text}
+        {images.length > 0 && (
+          <div className={`msg-images${text !== '' ? ' with-text' : ''}`}>
+            {images.map((image, index) => <ItemImage key={`${image.id}:${index}`} image={image} name={attachmentName(index, images.length)} small />)}
+          </div>
+        )}
+        {item.role === 'assistant' ? <MarkdownText text={text} scope={item.id} /> : text}
         {item.recovered && <span className="muted"> · {RECOVERED}</span>}
       </div>
     );
@@ -305,6 +394,13 @@ function Item({ item, chat, send, onFocusTargets }: {
       {item.targets.length > 0
         ? <button className="tool-row link-row" title={item.summary} onClick={() => onFocusTargets(item.targets)}>{row}</button>
         : <div className="tool-row" title={item.summary}>{row}</div>}
+      {item.images && item.images.length > 0 && (
+        <div className="tool-images">
+          {item.images.map((image, index, all) => (
+            <ItemImage key={`${image.id}:${index}`} image={image} name={toolImageName(item.tool, item.targets, index, all.length)} small={all.length > 1} />
+          ))}
+        </div>
+      )}
       {children.length > 0 && (
         <div className="tool-children">
           {children.map((child) => <Item key={child.id} item={child} chat={chat} send={send} onFocusTargets={onFocusTargets} />)}
@@ -312,4 +408,8 @@ function Item({ item, chat, send, onFocusTargets }: {
       )}
     </div>
   );
+}
+
+function ItemImage({ image, name, small }: { image: ImageRef; name: string; small: boolean }) {
+  return <ChatImage source={{ id: image.id }} image={image} title={name} name={name} size={small ? 'small' : 'large'} />;
 }

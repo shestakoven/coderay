@@ -13,6 +13,12 @@ export interface HttpRoute {
   handle(req: IncomingMessage, res: ServerResponse): void;
 }
 
+export interface Reply {
+  (message: ServerMessage): void;
+  // True once the client's ordered backlog can take `bytes` more without passing its limit; false if it does not drain in time or the client leaves.
+  room(bytes: number): Promise<boolean>;
+}
+
 export interface ServerOptions {
   port: number;
   token: string;
@@ -21,7 +27,7 @@ export interface ServerOptions {
   routes?: HttpRoute[];
   snapshot: () => MapSnapshot | null;
   greeting?: () => ServerMessage[];
-  onClientMessage?: (message: ClientMessage, reply: (message: ServerMessage) => void) => void;
+  onClientMessage?: (message: ClientMessage, reply: Reply) => void;
 }
 
 export interface RunningServer {
@@ -34,6 +40,8 @@ const HOST = '127.0.0.1';
 const MAX_BUFFERED_BYTES = 8 * 1024 * 1024;
 const MAX_ORDERED_BACKLOG_BYTES = 8 * 1024 * 1024;
 const CATCH_UP_INTERVAL_MS = 250;
+const ROOM_POLL_MS = 20;
+const ROOM_WAIT_MS = 10_000;
 const CONTENT_TYPES: Record<string, string> = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
@@ -71,14 +79,25 @@ export async function startServer(options: ServerOptions): Promise<RunningServer
     client.send(data, { binary: false }, () => orderedBacklog.set(client, (orderedBacklog.get(client) ?? data.length) - data.length));
   };
 
+  const room = async (client: WebSocket, bytes: number): Promise<boolean> => {
+    const deadline = Date.now() + ROOM_WAIT_MS;
+    while (client.readyState === client.OPEN) {
+      if ((orderedBacklog.get(client) ?? 0) + bytes <= MAX_ORDERED_BACKLOG_BYTES) return true;
+      if (Date.now() >= deadline) return false;
+      await new Promise((resolveWait) => setTimeout(resolveWait, ROOM_POLL_MS));
+    }
+    return false;
+  };
+
   wss.on('connection', (socket) => {
     socket.on('error', (error) => console.error('server: client error', error));
-    const reply = (message: ServerMessage): void => {
+    const send = (message: ServerMessage): void => {
       if (socket.readyState !== socket.OPEN) return;
       const data = Buffer.from(JSON.stringify(message));
       if (message.type === 'map.snapshot') socket.send(data, { binary: false });
       else sendOrdered(socket, data);
     };
+    const reply: Reply = Object.assign(send, { room: (bytes: number) => room(socket, bytes) });
     socket.on('message', (data, isBinary) => {
       const message = isBinary ? null : parseClientMessage(String(data));
       if (!message) {

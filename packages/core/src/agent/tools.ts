@@ -1,14 +1,18 @@
+import type { EngineId } from '@ide/protocol';
+
 export const DISALLOWED_TOOLS = [
   'SendMessage', 'CronCreate', 'CronDelete', 'CronList', 'ScheduleWakeup', 'RemoteTrigger',
   'Workflow', 'EnterWorktree', 'ExitWorktree', 'DesignSync', 'PushNotification',
 ];
 
-export const MIN_CLAUDE_VERSION = '2.1.281';
+export const MIN_CLAUDE_VERSION = '2.1.296';
+export const MIN_CODEX_VERSION = '0.160.0';
+export const MIN_OPENCODE_VERSION = '1.19.0';
 
-// The value becomes an argv entry for claude, so it must never start with '-' or carry anything but a model alias or id.
-const MODEL_CHOICE = /^[A-Za-z0-9][A-Za-z0-9._:\-[\]]{0,63}$/;
+/** The oldest version of each engine's binary CodeRay was verified with. */
+export const MIN_VERSIONS: Record<EngineId, string> = { claude: MIN_CLAUDE_VERSION, codex: MIN_CODEX_VERSION, opencode: MIN_OPENCODE_VERSION };
 
-export const isModelChoice = (value: string): boolean => MODEL_CHOICE.test(value);
+export const ENGINE_BINARIES: Record<EngineId, string> = { claude: 'claude', codex: 'codex', opencode: 'opencode' };
 
 const SUMMARY_FIELDS = ['skill', 'command', 'file_path', 'notebook_path', 'description', 'pattern', 'url', 'query', 'prompt'];
 const MAX_SUMMARY = 200;

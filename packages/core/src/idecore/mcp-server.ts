@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import type { RequestHandlerExtra } from '@modelcontextprotocol/sdk/shared/protocol.js';
+import type { ServerNotification, ServerRequest } from '@modelcontextprotocol/sdk/types.js';
 import type { MapSnapshot } from '@ide/protocol';
 import { PLAN_FLOW_EDGE_STATES, PLAN_FLOW_FILE_OPS, PLAN_FLOW_NODE_KINDS, PLAN_FLOW_NODE_STATES } from '@ide/protocol';
 import { z } from 'zod';
@@ -15,11 +17,12 @@ export interface IdecoreRoute extends HttpRoute {
 }
 
 const MAX_BODY_BYTES = 4 * 1024 * 1024;
+export const KEEP_ALIVE_MS = 20_000;
 
 const PROPOSE_DESCRIPTION = [
   'Show your plan to the user on CodeRay map before you change project files, and wait for the answer.',
   'Each step has a key, a title, a rationale and targets. A target is {"componentId": "<id from the system prompt>"} or {"path": "<project path>"}, with "op": "modify", "create" or "delete".',
-  'Also send "flow" when the change adds or rewires parts: nodes {id, title, sub, kind, state, steps, files} and edges {from, to, label, state, step} that draw what the plan builds, like client → POST /users → UserService → User → users table.',
+  'Also send "flow" with every plan, also when it only modifies or removes code: nodes {id, title, sub, kind, state, steps, files} and edges {from, to, label, state, step} that draw what the plan touches, like client → POST /users → UserService → User → users table.',
   'A node is "existing", "modify", "create" or "delete"; an edge is "existing", "new" or "removed"; "steps" and "step" are step keys. Use 5 to 12 nodes, one per responsibility, and label every new edge with what travels along it.',
   'Returns {"status": "approved" | "changes_requested" | "rejected", "feedback"?: "..."}.',
   'To change an approved plan, call it again with the whole plan and keep the active and done steps: a proposal that keeps the done steps extends the current plan, and the steps it adds are marked as added after approval.',
@@ -78,23 +81,36 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
   requireSecret(options.secret);
   const transports = new Map<string, StreamableHTTPServerTransport>();
 
-  const buildServer = (): McpServer => {
+  const buildServer = (hints: boolean, keepAlive: boolean): McpServer => {
+    // Codex asks before a tool without readOnlyHint; idecore's tools change no project file. Claude's session gets none.
+    const marked = <T extends object>(config: T): T => (hints ? { ...config, annotations: { ...(config as { annotations?: object }).annotations, readOnlyHint: true } } : config);
+    // opencode gives up on a tool call after about 300 s unless progress notifications arrive on the call's own stream.
+    const alive = <T>(extra: RequestHandlerExtra<ServerRequest, ServerNotification>, work: Promise<T>): Promise<T> => {
+      if (!keepAlive) return work;
+      const progressToken = extra._meta?.progressToken ?? extra.requestId;
+      const started = Date.now();
+      const timer = setInterval(() => {
+        extra.sendNotification({ method: 'notifications/progress', params: { progressToken, progress: Math.round((Date.now() - started) / 1000) } }).catch(() => undefined);
+      }, KEEP_ALIVE_MS);
+      timer.unref();
+      return work.finally(() => clearInterval(timer));
+    };
     const server = new McpServer({ name: 'idecore', version: '1.0.0' });
-    server.registerTool('propose_plan', { description: PROPOSE_DESCRIPTION, inputSchema: proposeInput }, async (input, extra) => {
-      const outcome = await options.plans.propose(input, extra.signal);
+    server.registerTool('propose_plan', marked({ description: PROPOSE_DESCRIPTION, inputSchema: proposeInput }), async (input, extra) => {
+      const outcome = await alive(extra, options.plans.propose(input, extra.signal));
       return outcome.ok ? result(outcome.value) : failure(outcome.error);
     });
-    server.registerTool('step', { description: STEP_DESCRIPTION, inputSchema: stepInput }, async (input) => {
+    server.registerTool('step', marked({ description: STEP_DESCRIPTION, inputSchema: stepInput }), async (input) => {
       const outcome = options.plans.step(input);
       return outcome.ok ? result({ ok: true }) : failure(outcome.error);
     });
     const { setTitle } = options;
     if (setTitle) {
-      server.registerTool('set_chat_title', { description: TITLE_DESCRIPTION, inputSchema: titleInput }, ({ title }) => result({ ok: setTitle(title) }));
+      server.registerTool('set_chat_title', marked({ description: TITLE_DESCRIPTION, inputSchema: titleInput }), ({ title }) => result({ ok: setTitle(title) }));
     }
     const { map } = options;
     if (map) {
-      server.registerTool('map_overview', { description: MAP_OVERVIEW_DESCRIPTION }, () => {
+      server.registerTool('map_overview', marked({ description: MAP_OVERVIEW_DESCRIPTION }), () => {
         const snapshot = map();
         if (!snapshot) return failure('The project map is not ready yet.');
         const owner = new Map(snapshot.files.map((file) => [file.path, file.componentId]));
@@ -108,7 +124,7 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
           id, name, summary, files: files.length, stale, dependsOn: [...(links.get(id) ?? [])],
         })));
       });
-      server.registerTool('map_component', { description: MAP_COMPONENT_DESCRIPTION, inputSchema: { id: z.string() } }, ({ id }) => {
+      server.registerTool('map_component', marked({ description: MAP_COMPONENT_DESCRIPTION, inputSchema: { id: z.string() } }), ({ id }) => {
         const snapshot = map();
         const component = snapshot?.components.find((item) => item.id === id);
         if (!snapshot || !component) return failure(`There is no component "${id}" on the map.`);
@@ -119,8 +135,8 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
     }
     const { search } = options;
     if (search) {
-      server.registerTool('search_code', { description: SEARCH_DESCRIPTION, inputSchema: searchInput }, async ({ query, limit }) => {
-        const outcome = await search(query, limit ?? DEFAULT_SEARCH_LIMIT);
+      server.registerTool('search_code', marked({ description: SEARCH_DESCRIPTION, inputSchema: searchInput }), async ({ query, limit }, extra) => {
+        const outcome = await alive(extra, search(query, limit ?? DEFAULT_SEARCH_LIMIT));
         if (!outcome.ok) return failure(outcome.error);
         const files = new Map(options.map?.()?.files.map((file) => [file.path, file]));
         const results = outcome.hits.map(({ path, similarity }) => ({
@@ -163,7 +179,8 @@ export function idecoreRoute(options: IdecoreRouteOptions): IdecoreRoute {
       created.onclose = () => {
         if (created.sessionId) transports.delete(created.sessionId);
       };
-      await buildServer().connect(created);
+      const query = new URL(req.url ?? '/', 'http://localhost').searchParams;
+      await buildServer(query.get('readOnlyHints') === '1', query.get('keepAlive') === '1').connect(created);
       transport = created;
     }
     await transport.handleRequest(req, res, body);

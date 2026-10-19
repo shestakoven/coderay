@@ -21,7 +21,7 @@ const WRAPPER = `#!/usr/bin/env node
 import { spawn } from 'node:child_process';
 import { appendFileSync, readFileSync } from 'node:fs';
 const log = (line) => appendFileSync(process.env.WRAPPER_LOG, line + '\\n');
-if (process.argv.includes('-p')) {
+if (process.argv.includes('--input-format')) {
   log((process.argv.includes('--no-session-persistence') ? 'probe ' : 'chat ') + process.pid);
 } else {
   log('start ' + process.pid);
@@ -72,14 +72,14 @@ async function startMain(mode: Mode, extraEnv: Record<string, string> = {}) {
   writeFileSync(transcript, '');
   const child: ChildProcess = spawn(
     process.execPath,
-    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', wrapper],
+    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', wrapper, '--no-codex', '--no-opencode'],
     {
       cwd: REPO,
       env: {
         ...process.env,
         PATH: `${bin}:${process.env.PATH ?? ''}`,
         FAKE_CLAUDE_SCENARIO: fixture('stream/text-then-wait.jsonl'), FAKE_CLAUDE_RECORD: record,
-        WRAPPER_LOG: log, WRAPPER_MODE: mode, WRAPPER_TRANSCRIPT: transcript, WRAPPED_CLAUDE: pathToFileURL(FAKE_CLAUDE).href, ...extraEnv,
+        WRAPPER_LOG: log, WRAPPER_MODE: mode, WRAPPER_TRANSCRIPT: transcript, WRAPPED_CLAUDE: pathToFileURL(FAKE_CLAUDE).href, IDE_DEFAULT_MODEL: 'sonnet', ...extraEnv,
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     },

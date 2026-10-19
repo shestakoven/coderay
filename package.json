@@ -7,6 +7,9 @@
   "scripts": {
     "test": "vitest run --allowOnly=false",
     "typecheck": "tsc -p packages/core && tsc -p packages/ui && tsc -p e2e",
+    "probe:sdk": "node --import tsx packages/core/scripts/sdk-probe.ts",
+    "parity:agent": "node --import tsx packages/core/scripts/agent-parity.ts",
+    "engines:smoke": "node --import tsx packages/core/scripts/engines-smoke.ts",
     "check": "node scripts/check-tests.mjs && pnpm typecheck && pnpm test",
     "e2e": "pnpm --filter @ide/ui build && playwright test",
     "dev:core": "node --watch --import tsx packages/core/src/main.ts --project . --allow-origin http://localhost:5173",

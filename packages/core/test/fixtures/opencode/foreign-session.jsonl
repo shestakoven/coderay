@@ -1,0 +1,4 @@
+{"type":"session.created","properties":{"sessionID":"ses_foreign","info":{"id":"ses_foreign","slug":"fake-session","version":"1.19.0","projectID":"global","directory":"$CWD","title":"New session","permission":[],"time":{"created":1,"updated":1}}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text1","type":"text","text":"","time":{"start":1}}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_text1","field":"text","delta":"42"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_text1","type":"text","text":"42","time":{"start":1,"end":2}}}}

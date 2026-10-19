@@ -2,10 +2,10 @@ import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { openStore, type GateEventRecord, type MessageRecord, type PlanRecord, type SessionRecord, type ToolDecisionRecord } from '../../src/store/store';
 import { DatabaseSync } from '../../src/store/sqlite';
-import { tempDir } from '../helpers';
+import { BEFORE_ENGINES, tempDir } from '../helpers';
 
 const session = (id: string, startedAt: number, overrides: Partial<SessionRecord> = {}): SessionRecord => ({
-  id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
+  id, engine: 'claude', engineSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
   pid: null, launchId: null, conversationStarted: false, startedAt, accountId: null, ...overrides,
 });
 
@@ -30,7 +30,7 @@ describe('schema 4 migration', () => {
     first.setMeta('keep', 'me');
     first.close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.exec('ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE plans DROP COLUMN flow; ALTER TABLE sessions DROP COLUMN account_id; ALTER TABLE baselines DROP COLUMN sig; PRAGMA user_version = 3');
+    db.exec(`${BEFORE_ENGINES} ALTER TABLE sessions DROP COLUMN model_choice; ALTER TABLE sessions DROP COLUMN effort; ALTER TABLE sessions DROP COLUMN title; ALTER TABLE sessions DROP COLUMN title_manual; ALTER TABLE plans DROP COLUMN flow; ALTER TABLE sessions DROP COLUMN account_id; ALTER TABLE baselines DROP COLUMN sig; ALTER TABLE messages DROP COLUMN images; ALTER TABLE tool_events DROP COLUMN images; PRAGMA user_version = 3`);
     db.close();
 
     const store = freshStore(dir);
@@ -44,16 +44,18 @@ describe('schema 4 migration', () => {
     const check = new DatabaseSync(join(dir, 'history.sqlite'));
     const version = (check.prepare('PRAGMA user_version').get() as { user_version: number }).user_version;
     check.close();
-    expect(version).toBe(8);
+    expect(version).toBe(10);
   });
 
   it('reads a session row written by an older CodeRay, with no model or effort, as the defaults', () => {
     const dir = tempDir('ide-store-');
     openStore(dir).close();
     const db = new DatabaseSync(join(dir, 'history.sqlite'));
-    db.prepare("INSERT INTO sessions (id, claude_session_id, cwd, status, conversation_started, started_at) VALUES ('old','c','/p','stopped',1,3)").run();
+    db.prepare("INSERT INTO sessions (id, engine_session_id, cwd, status, conversation_started, started_at) VALUES ('old','c','/p','stopped',1,3)").run();
     db.close();
-    expect(freshStore(dir).session('old')).toMatchObject({ modelChoice: null, effort: null, conversationStarted: true });
+    const old = freshStore(dir).session('old');
+    expect(old).toMatchObject({ engine: 'claude', engineSessionId: 'c', modelChoice: null, effort: null, conversationStarted: true });
+    expect(old).not.toHaveProperty('foreignEngine');
   });
 
   it('reads an effort CodeRay does not know as the default', () => {
@@ -116,7 +118,7 @@ describe('listSessions', () => {
     store.saveMessage('s1', message(1, 'user', 'first question', 20));
     store.saveMessage('s1', message(2, 'assistant', 'answer', 35));
     expect(store.listSessions()).toEqual([
-      { id: 's1', title: 'first question', startedAt: 10, lastActivityAt: 35, status: 'running', modelChoice: 'opus', effort: 'high', messages: 2 },
+      { id: 's1', title: 'first question', startedAt: 10, lastActivityAt: 35, status: 'running', engine: 'claude', modelChoice: 'opus', effort: 'high', messages: 2 },
     ]);
   });
 
@@ -331,5 +333,46 @@ describe('deleting a chat that has a plan', () => {
     withPlan(store, 'b');
     store.deleteAllSessions();
     expect([store.plans('b').plans, store.history('b').decisions, store.gateEvents('a'), store.listSessions()]).toEqual([[], [], [], []]);
+  });
+});
+
+describe('schema 10 migration', () => {
+  it('keeps every chat, its conversation id under the new name and its messages, and reads it as a Claude chat', () => {
+    const dir = tempDir('ide-store-');
+    const first = openStore(dir);
+    first.saveSession(session('s1', 5, { modelChoice: 'opus', effort: 'high' }));
+    first.saveMessage('s1', message(1, 'user', 'hello', 6));
+    first.close();
+    const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec(`${BEFORE_ENGINES} PRAGMA user_version = 9`);
+    db.close();
+
+    const store = freshStore(dir);
+    const chat = store.session('s1');
+    expect(chat).toMatchObject({ engine: 'claude', engineSessionId: 'claude-s1', modelChoice: 'opus', effort: 'high' });
+    expect(chat).not.toHaveProperty('foreignEngine');
+    expect([store.listSessions().map((chat) => [chat.id, chat.engine]), store.history('s1').messages.map((m) => m.text)]).toEqual([[['s1', 'claude']], ['hello']]);
+  });
+
+  it('never reads an engine it does not know as Claude, and writes it back unchanged, with its effort', () => {
+    const dir = tempDir('ide-store-');
+    const first = openStore(dir);
+    first.saveSession(session('s1', 5));
+    first.close();
+    const db = new DatabaseSync(join(dir, 'history.sqlite'));
+    db.exec("UPDATE sessions SET engine = 'gemini', effort = 'deep'");
+    db.close();
+
+    const store = freshStore(dir);
+    const read = store.session('s1');
+    store.saveSession({ ...read!, status: 'crashed' });
+    expect([read?.foreignEngine, store.session('s1')]).toMatchObject(['gemini', { foreignEngine: 'gemini', effort: 'deep', status: 'crashed' }]);
+  });
+
+  it("updates the engine and its conversation id when the session is saved again, and reads the effort as that engine names it", () => {
+    const store = freshStore();
+    store.saveSession(session('s1', 1));
+    store.saveSession(session('s1', 1, { engine: 'codex', engineSessionId: 'thread-1', effort: 'minimal' }));
+    expect(store.session('s1')).toMatchObject({ engine: 'codex', engineSessionId: 'thread-1', effort: 'minimal' });
   });
 });

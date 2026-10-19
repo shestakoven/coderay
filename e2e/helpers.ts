@@ -27,13 +27,21 @@ export const hookChecks = (record: string): number => recorded(record).filter((e
 
 // The conversation the chat's own headless claude was started on.
 export function chatConversation(record: string): string | undefined {
-  const chat = recorded(record).find((entry) => !entry.interactive && entry.argv?.includes('--session-id'));
+  const chat = recorded(record).find((entry) => !entry.interactive && entry.argv && hasFlag(entry.argv, '--session-id'));
   return chat?.argv ? flagOf(chat.argv, '--session-id') : undefined;
 }
 
+// Every chat agent the core has started, oldest first, as the model and effort it was started on.
+export const chatAgents = (record: string): (string | undefined)[][] =>
+  recorded(record).flatMap((entry) => (entry.argv && hasFlag(entry.argv, '--session-id') ? [[flagOf(entry.argv, '--model'), flagOf(entry.argv, '--effort')]] : []));
+
+export const hasFlag = (argv: string[], name: string): boolean => argv.some((arg) => arg === name || arg.startsWith(`${name}=`));
+
+// A flag's value in either form: `--name value` or `--name=value`.
 export function flagOf(argv: string[], name: string): string | undefined {
   const at = argv.indexOf(name);
-  return at === -1 ? undefined : argv[at + 1];
+  if (at !== -1) return argv[at + 1];
+  return argv.find((arg) => arg.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
 export function isAlive(pid: number): boolean {
@@ -43,4 +51,12 @@ export function isAlive(pid: number): boolean {
   } catch (error) {
     return (error as NodeJS.ErrnoException).code !== 'ESRCH';
   }
+}
+
+// Opens the model menu, filters it and takes the first match, as a person typing would.
+export async function chooseModel(page: Page, query: string): Promise<void> {
+  await page.locator('.model-button').click();
+  await page.getByRole('combobox', { name: 'Search models' }).fill(query);
+  await page.keyboard.press('Enter');
+  await expect(page.getByTestId('model-menu')).toHaveCount(0);
 }

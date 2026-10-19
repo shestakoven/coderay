@@ -13,7 +13,7 @@ export const CATEGORIES: Category[] = [
   { id: 'agent', label: 'Agent control', icon: 'shield', intro: 'What happens when the agent writes outside the plan you approved, and which plans go through without a click.' },
   { id: 'mcp', label: 'MCP servers', icon: 'server', intro: 'Tools the agent can call. Project servers run only after you approve them on this machine.' },
   { id: 'paths', label: 'Paths', icon: 'folder', intro: 'Which files CodeRay protects, which it only records, and which places outside the project the agent may write to.' },
-  { id: 'accounts', label: 'Accounts', icon: 'user', intro: 'The Claude sign-in every agent in CodeRay runs under.' },
+  { id: 'accounts', label: 'Accounts', icon: 'user', intro: 'The sign-in each engine runs under: System uses the engine\'s own, or add accounts of your own.' },
   { id: 'appearance', label: 'Appearance', icon: 'sliders', intro: 'How CodeRay looks on this machine. Changes apply at once and stay local.' },
 ];
 
@@ -21,7 +21,7 @@ export type BlockId =
   | 'mode' | 'auto-approve'
   | 'guarded' | 'harness' | 'outside-allowed'
   | 'mcp-servers' | 'claude-code-servers'
-  | 'accounts'
+  | 'accounts' | 'accounts-codex' | 'accounts-opencode'
   | 'density' | 'font-size' | 'reduced-motion' | 'canvas-dots';
 
 export interface Block {
@@ -41,6 +41,8 @@ export const BLOCKS: Block[] = [
   { id: 'mcp-servers', category: 'mcp', title: 'Servers you added', help: 'Configured in CodeRay for one project or for all of them. Changes apply when the session restarts.', keywords: ['mcp', 'server', 'tool', 'stdio', 'http', 'command', 'url', 'env', 'approve', 'trust'] },
   { id: 'claude-code-servers', category: 'mcp', title: 'From Claude Code', help: 'Loaded by Claude Code itself. Edit them with claude mcp.', keywords: ['claude code', 'plugin', 'mcp', 'claude mcp', 'read only'] },
   { id: 'accounts', category: 'accounts', title: 'Claude accounts', help: 'Choose the sign-in the agent runs under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'claude', 'oauth'] },
+  { id: 'accounts-codex', category: 'accounts', title: 'Codex accounts', help: 'Choose the ChatGPT sign-in or API key Codex chats run under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'codex', 'chatgpt', 'openai', 'api key', 'device code'] },
+  { id: 'accounts-opencode', category: 'accounts', title: 'opencode profiles', help: 'Choose the profile opencode chats run under, or add one and give its providers their keys.', keywords: ['account', 'profile', 'system', 'opencode', 'provider', 'api key', 'key', 'openai', 'anthropic', 'openrouter', 'oauth'] },
   { id: 'density', category: 'appearance', title: 'Density', help: 'How much room rows, tabs and panels take.', keywords: ['compact', 'comfortable', 'spacing', 'rows'] },
   { id: 'font-size', category: 'appearance', title: 'Text size', help: 'Scales the text across CodeRay.', keywords: ['font', 'size', 'zoom', 'larger', 'smaller', 'text'] },
   { id: 'reduced-motion', category: 'appearance', title: 'Reduce motion', help: 'Turns off animations and transitions.', keywords: ['animation', 'motion', 'accessibility', 'transition'] },

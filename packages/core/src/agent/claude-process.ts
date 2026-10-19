@@ -1,11 +1,15 @@
-import { spawn } from 'node:child_process';
+import { spawn, type ChildProcessByStdio } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import type { Readable, Writable } from 'node:stream';
+import type { AccountHome } from '../accounts/account-homes';
 import { forceKill, signal } from '../os-process';
+import { recordClaude, removePidFile, type PidName } from './reaper';
 
 export interface ClaudeCommand {
   command: string;
   args: string[];
   env?: Record<string, string>;
+  unset?: string[];
 }
 
 export interface ProcessExit {
@@ -17,6 +21,9 @@ export interface ProcessExit {
 
 export interface ClaudeProcessOptions {
   killGraceMs?: number;
+  // Where this claude's pid file goes, for the reaper of a core that dies without stopping it.
+  pidDir?: string;
+  pidName?: PidName;
 }
 
 export interface ClaudeProcess {
@@ -26,18 +33,34 @@ export interface ClaudeProcess {
   kill(): Promise<ProcessExit>;
 }
 
+export interface SpawnedClaude {
+  readonly child: ChildProcessByStdio<Writable, Readable, Readable>;
+  readonly exited: Promise<ProcessExit>;
+  kill(): Promise<ProcessExit>;
+}
+
 const STDERR_TAIL_CHARS = 2000;
 export const KILL_GRACE_MS = 3000;
 const CLOSE_AFTER_EXIT_MS = 1000;
 
-export function startClaude(
-  command: ClaudeCommand, args: string[], cwd: string, onLine: (line: string) => void, options: ClaudeProcessOptions = {},
-): ClaudeProcess {
+export function claudeEnv(command: ClaudeCommand): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env, ...command.env };
-  // claude refuses to start inside another Claude Code session, which is where this core runs when an agent launches it.
+  // Marks of the Claude Code session the core may run in: claude refuses to start inside one, and would report that session's entry point as its own.
   delete env.CLAUDECODE;
+  delete env.CLAUDE_CODE_ENTRYPOINT;
+  for (const name of command.unset ?? []) delete env[name];
+  return env;
+}
+
+/** claude under an account: pointed at the account's config directory, without the credentials that would win over its sign-in. */
+export function claudeUnder(base: ClaudeCommand, home: AccountHome): ClaudeCommand {
+  return home.dir === null ? base : { ...base, env: { ...base.env, ...home.env }, unset: [...(base.unset ?? []), ...home.unset] };
+}
+
+export function spawnClaude(file: string, args: string[], cwd: string, env: NodeJS.ProcessEnv, options: ClaudeProcessOptions = {}): SpawnedClaude {
   // Detached so that Ctrl+C in the core's terminal reaches the core only; the core stops claude itself.
-  const child = spawn(command.command, [...command.args, ...args], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  const child = spawn(file, args, { cwd, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+  const pidFile = options.pidDir !== undefined && child.pid !== undefined ? recordClaude(options.pidDir, child.pid, process.pid, options.pidName) : null;
   let stderr = '';
   let error: string | null = null;
   child.stderr.setEncoding('utf8');
@@ -46,13 +69,15 @@ export function startClaude(
   });
   // Writes after claude has exited fail with EPIPE; the exit itself is reported through `exited`.
   child.stdin.on('error', () => {});
-  createInterface({ input: child.stdout }).on('line', onLine);
   child.once('error', (spawnError) => {
     error = spawnError.message;
   });
   // A core that dies without its shutdown path must not leave the unguarded agent running; claude's SIGTERM handler stops its tools.
+  // opencode's does not stop a running shell command, which runs in its own group: the tree goes at once.
   const onCoreExit = (): void => {
-    if (child.pid !== undefined) signal(child.pid, 'SIGTERM');
+    if (child.pid === undefined) return;
+    if (options.pidName === 'opencode') forceKill(child.pid);
+    else signal(child.pid, 'SIGTERM');
   };
   // A failed spawn emits 'error' and 'close' but never 'exit', which would leave the listener behind.
   if (child.pid !== undefined) process.on('exit', onCoreExit);
@@ -65,17 +90,14 @@ export function startClaude(
     child.once('close', finish);
     child.once('exit', (code, exitSignal) => {
       process.removeListener('exit', onCoreExit);
+      if (pidFile) removePidFile(pidFile);
       // A process that inherited stdout can hold 'close' back; 'exit' alone means claude itself is gone.
       fallback = setTimeout(() => finish(code, exitSignal), CLOSE_AFTER_EXIT_MS);
     });
   });
-
   return {
-    pid: child.pid,
+    child,
     exited,
-    write(message) {
-      if (child.stdin.writable) child.stdin.write(`${JSON.stringify(message)}\n`);
-    },
     kill() {
       const pid = child.pid;
       if (child.exitCode === null && child.signalCode === null && pid !== undefined) {
@@ -85,5 +107,20 @@ export function startClaude(
       }
       return exited;
     },
+  };
+}
+
+export function startClaude(
+  command: ClaudeCommand, args: string[], cwd: string, onLine: (line: string) => void, options: ClaudeProcessOptions = {},
+): ClaudeProcess {
+  const claude = spawnClaude(command.command, [...command.args, ...args], cwd, claudeEnv(command), options);
+  createInterface({ input: claude.child.stdout }).on('line', onLine);
+  return {
+    pid: claude.child.pid,
+    exited: claude.exited,
+    write(message) {
+      if (claude.child.stdin.writable) claude.child.stdin.write(`${JSON.stringify(message)}\n`);
+    },
+    kill: () => claude.kill(),
   };
 }

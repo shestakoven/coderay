@@ -9,7 +9,7 @@ const LEAVE_PROMPT = 'Answer the waiting tool question before switching chats.';
 const LEAVE_WATCHDOG = 'Resolve the watchdog question before switching chats.';
 
 const chat = (id: string, startedAt: number): SessionRecord => ({
-  id, claudeSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
+  id, engine: 'claude', engineSessionId: `claude-${id}`, cwd: '/project', status: 'stopped', model: null, modelChoice: null, effort: null, cliVersion: null,
   pid: null, launchId: null, conversationStarted: true, startedAt, accountId: null,
 });
 

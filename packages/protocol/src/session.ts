@@ -1,13 +1,29 @@
+import type { ChatPick, EngineId, EngineStatus } from './engines';
 import type { ToolDecision } from './plans';
 
 export const MAX_CLIENT_FRAME_BYTES = 32 * 1024 * 1024;
 export const MAX_CHAT_IMAGES = 20;
 export const IMAGE_MEDIA_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'] as const;
 
+export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+// Largest image the core sends to the UI: the base64 frame must stay under the 8 MB per-client backlog.
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
 export interface ChatImage {
-  mediaType: (typeof IMAGE_MEDIA_TYPES)[number];
+  mediaType: ImageMediaType;
   data: string;
 }
+
+// An image the chat shows; its bytes live in the core's blob store and travel on request (`image.get`).
+export interface ImageRef {
+  id: string;
+  mediaType: ImageMediaType;
+  bytes: number;
+  width?: number;
+  height?: number;
+}
+
+export type ImageFailure = 'missing' | 'too-large' | 'not-image' | 'unreadable';
 
 export type SessionStatus = 'running' | 'stopped' | 'crashed' | 'ended' | 'refused';
 
@@ -16,8 +32,12 @@ export type EffortLevel = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export const EFFORT_LEVELS: readonly EffortLevel[] = ['low', 'medium', 'high', 'xhigh', 'max'];
 
 export interface ModelInfo {
+  /** The model id as session.configure takes it: bare for Claude, prefixed for the other engines. */
   value: string;
   name: string;
+  engine: EngineId;
+  /** The efforts the model supports, in the order to offer them; empty when it takes none. */
+  efforts: string[];
 }
 
 export interface ChatSummary {
@@ -26,18 +46,20 @@ export interface ChatSummary {
   startedAt: number;
   lastActivityAt: number;
   status: SessionStatus;
+  engine: EngineId;
   modelChoice: string | null;
-  effort: EffortLevel | null;
+  effort: string | null;
   messages: number;
 }
 
 export interface SessionView {
   id: string;
-  claudeSessionId: string;
+  engine: EngineId;
+  engineSessionId: string;
   status: SessionStatus;
   model: string | null;
   modelChoice: string | null;
-  effort: EffortLevel | null;
+  effort: string | null;
   cliVersion: string | null;
   permissionMode: string | null;
   startedAt: number;
@@ -69,6 +91,7 @@ export interface MessageItem extends ItemBase {
   text: string;
   ts: number;
   recovered?: boolean;
+  images?: ImageRef[];
 }
 
 export interface NoticeItem extends ItemBase {
@@ -87,6 +110,7 @@ export interface ToolItem extends ItemBase {
   decision: ToolDecision | null;
   targets: string[];
   recovered?: boolean;
+  images?: ImageRef[];
 }
 
 export interface AskOption {
@@ -140,6 +164,12 @@ export interface McpServerState {
 }
 
 export interface LimitWindow {
+  /** Short name the meter shows, such as "5h". */
+  label: string;
+  /** The window's name in a sentence, such as "five-hour". */
+  name: string;
+  /** Length of the window in minutes; windows are listed shortest first. */
+  minutes: number;
   /** Share of the window already used, 0 to 1. */
   utilization: number;
   /** Unix seconds. */
@@ -149,11 +179,11 @@ export interface LimitWindow {
 export interface UsageView {
   contextTokens: number | null;
   contextWindow: number | null;
-  fiveHour: LimitWindow | null;
-  sevenDay: LimitWindow | null;
+  /** The account's limit windows, shortest first; empty when the engine reports none. */
+  limits: LimitWindow[];
 }
 
-export const EMPTY_USAGE: UsageView = { contextTokens: null, contextWindow: null, fiveHour: null, sevenDay: null };
+export const EMPTY_USAGE: UsageView = { contextTokens: null, contextWindow: null, limits: [] };
 
 export interface SessionState {
   session: SessionView | null;
@@ -162,6 +192,8 @@ export interface SessionState {
   tasks: TaskView[];
   mcpServers: McpServerState[];
   skills: string[];
+  /** The chat's agent has said which skills it has (the list may be empty); false until it has, and in a chat whose agent has not run. */
+  skillsKnown?: boolean;
   usage: UsageView;
 }
 
@@ -172,6 +204,7 @@ export interface SessionPatch {
   tasks?: TaskView[];
   mcpServers?: McpServerState[];
   skills?: string[];
+  skillsKnown?: boolean;
   usage?: UsageView;
 }
 
@@ -179,8 +212,12 @@ export type SessionServerMessage =
   | { type: 'session.snapshot'; state: SessionState }
   | { type: 'session.patch'; patch: SessionPatch }
   | { type: 'session.delta'; text: string }
-  | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[] }
-  | { type: 'models.snapshot'; models: ModelInfo[] }
+  | { type: 'sessions.snapshot'; activeId: string | null; sessions: ChatSummary[]; next?: ChatPick | null }
+  /** `pending` names the engines whose models are still coming (a later snapshot brings them), `failed` those that could not list theirs. */
+  | { type: 'models.snapshot'; models: ModelInfo[]; pending?: EngineId[]; failed?: EngineId[] }
+  | { type: 'engines.snapshot'; engines: EngineStatus[] }
+  | { type: 'image.data'; key: string; image: ImageRef; data: string }
+  | { type: 'image.failed'; key: string; reason: ImageFailure }
   | { type: 'error'; message: string };
 
 export type ChatClientMessage =
@@ -189,11 +226,13 @@ export type ChatClientMessage =
   | { type: 'task.stop'; id: string }
   | { type: 'session.rename'; id: string; title: string }
   | { type: 'session.restart' }
-  | { type: 'session.new' }
+  | { type: 'session.new'; modelChoice?: string; effort?: string | null }
   | { type: 'session.list' }
   | { type: 'models.list' }
   | { type: 'session.switch'; id: string }
   | { type: 'session.delete'; id: string }
   | { type: 'session.delete-all' }
-  | { type: 'session.configure'; modelChoice: string | null; effort: EffortLevel | null }
-  | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer };
+  | { type: 'session.configure'; modelChoice: string | null; effort: string | null }
+  | { type: 'prompt.answer'; requestId: string; answer: PromptAnswer }
+  // Exactly one of `id` (a blob the core stores) or `path` (a file as the agent wrote it, relative to the project root or absolute); `key` comes back on the answer.
+  | { type: 'image.get'; key: string; id?: string; path?: string };

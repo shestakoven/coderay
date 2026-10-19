@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { ChangeView, ControlMode } from '@ide/protocol';
 import type { ToolEndInfo } from '../../src/agent/tracker';
-import { FailOpenDetector, NO_HOOK_TOOLS } from '../../src/gate/failopen';
+import { FailOpenDetector } from '../../src/gate/failopen';
 import { Hold } from '../../src/gate/hold';
 import { HookGate } from '../../src/gate/hook-gate';
 import { Baselines, scanTree } from '../../src/history/baselines';
@@ -164,14 +164,15 @@ describe('FailOpenDetector', () => {
     expect(f.watchdog.events().map((event) => event.phase === 'resolved')).toEqual([false, true]);
   });
 
-  it('exempts the tools it is told about, and the built-in set is empty', async () => {
-    expect([...NO_HOOK_TOOLS]).toEqual([]);
-    const f = await fixture({ detector: { exempt: new Set(['mcp__x__write']) } });
-    f.detector.toolEnded(end({}));
-    expect(f.decisions).toEqual([]);
-    const g = await fixture();
-    g.detector.toolEnded(end({}));
-    expect(g.decisions).toHaveLength(1);
+  it.each([
+    ["raises nothing for a read the chat's engine runs without asking the gate", 'Read', []],
+    ['raises nothing for an idecore tool it runs without asking', 'mcp__idecore__propose_plan', []],
+    ['raises a fail-open for a shell command of that engine that ran without a decision', 'Bash', ['hook-missing']],
+  ])('%s', async (_name, tool, decisions) => {
+    const f = await fixture({ detector: { exempt: () => (name) => name === 'Read' || name.startsWith('mcp__idecore__') } });
+    f.detector.toolEnded(end({ tool }));
+    await (decisions.length > 0 ? waitFor(() => f.watchdog.events()[0], 'event') : sleepMs(80));
+    expect([f.decisions.map((d) => d.decision), f.watchdog.events().map((event) => event.kind)]).toEqual([decisions, decisions.length > 0 ? ['fail-open'] : []]);
   });
 
   it('only flags a fail-open that changed no enforced file, without a hold', async () => {

@@ -22,23 +22,42 @@ export function signal(pid: number, name: NodeJS.Signals): void {
   }
 }
 
-export function descendants(pid: number): number[] {
-  if (!isProcessId(pid)) return [];
+interface ProcessRow {
+  pid: number;
+  ppid: number;
+  pgid: number;
+}
+
+function processTable(): ProcessRow[] {
   let table = '';
   try {
-    table = execFileSync('ps', ['-A', '-o', 'pid=,ppid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    table = execFileSync('ps', ['-A', '-o', 'pid=,ppid=,pgid='], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
     return [];
   }
+  return table.split('\n').flatMap((line) => {
+    const [pid, ppid, pgid] = line.trim().split(/\s+/).map(Number);
+    return pid === undefined || ppid === undefined || pgid === undefined || [pid, ppid, pgid].some(Number.isNaN) ? [] : [{ pid, ppid, pgid }];
+  });
+}
+
+function treeOf(table: ProcessRow[], pid: number): number[] {
   const children = new Map<number, number[]>();
-  for (const line of table.split('\n')) {
-    const [child, parent] = line.trim().split(/\s+/).map(Number);
-    if (child === undefined || parent === undefined || Number.isNaN(child) || Number.isNaN(parent)) continue;
-    children.set(parent, [...(children.get(parent) ?? []), child]);
-  }
+  for (const row of table) children.set(row.ppid, [...(children.get(row.ppid) ?? []), row.pid]);
   const found = [...(children.get(pid) ?? [])];
   for (let index = 0; index < found.length; index += 1) found.push(...(children.get(found[index] ?? -1) ?? []));
   return found;
+}
+
+export function descendants(pid: number): number[] {
+  return isProcessId(pid) ? treeOf(processTable(), pid) : [];
+}
+
+// Whether signals to the tree and the group of `pid` would hit `target`. An unreadable process table counts as a hit: nothing is signalled on a guess.
+export function reaches(pid: number, target: number): boolean {
+  if (!isProcessId(pid)) return false;
+  const table = processTable();
+  return table.length === 0 || treeOf(table, pid).includes(target) || table.some((row) => row.pgid === pid && row.pid === target);
 }
 
 // A child whose parent already exited has been re-parented and is not found here; claude's own SIGTERM handler is what stops its tools.
@@ -53,5 +72,15 @@ export function commandLine(pid: number): string | null {
     return execFileSync('ps', ['-o', 'command=', '-p', String(pid)], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
   } catch {
     return null;
+  }
+}
+
+// A detached process leads its own group, which outlives it while any member runs, so the group id cannot be reused meanwhile.
+export function signalGroup(pgid: number, name: NodeJS.Signals): void {
+  if (!isProcessId(pgid)) return;
+  try {
+    process.kill(-pgid, name);
+  } catch {
+    // ESRCH: no process of the group is left.
   }
 }

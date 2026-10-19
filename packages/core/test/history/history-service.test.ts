@@ -1,7 +1,8 @@
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
-import type { ChangeView, HistoryClientMessage, HistoryPatch, HistoryServerMessage, RevertRecordView } from '@ide/protocol';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import type { ChangeView, HistoryClientMessage, HistoryPatch, HistoryServerMessage, RevertRecordView, ReviewGraph } from '@ide/protocol';
+import { ReviewGraphService } from '../../src/review/review-graph-service';
 import { tempDir, waitFor } from '../helpers';
 import { build, OUT_OF_PLAN, pendingEvent, WAIT_TURN } from '../execution/harness';
 
@@ -137,6 +138,22 @@ describe('HistoryService', { timeout: 30_000 }, () => {
     await b.rt.history.handle({ type: 'history.diff', requestId: 'r1', path: 'notes.txt', before: change.beforeHash, after: change.afterHash }, reply);
     expect(replies).toHaveLength(1);
     expect(replies[0]).toMatchObject({ type: 'history.result', requestId: 'r1', error: null, diff: { binary: false, added: 1, removed: 1 } });
+  });
+
+  it('answers review.graph with the graph, and with an error when the service fails', async () => {
+    const b = await build({ scenario: WAIT_TURN });
+    const spy = vi.spyOn(ReviewGraphService.prototype, 'graph');
+    onTestFinished(() => spy.mockRestore());
+    const graph: ReviewGraph = { parts: [], links: [], partial: null };
+    spy.mockResolvedValueOnce(graph);
+    const files = [{ path: 'src/app.ts', before: null, after: 'h', step: 's1', external: false, added: 1, removed: 0 }];
+    const ok = collect();
+    await b.rt.history.handle({ type: 'review.graph', requestId: 'r1', planId: 'p1', files }, ok.reply);
+    expect([spy.mock.calls, ok.replies]).toEqual([[[{ planId: 'p1', files }]], [{ type: 'history.result', requestId: 'r1', error: null, graph }]]);
+    spy.mockRejectedValueOnce(new Error('boom'));
+    const bad = collect();
+    await b.rt.history.handle({ type: 'review.graph', requestId: 'r2', planId: null, files: [] }, bad.reply);
+    expect(bad.replies).toEqual([{ type: 'history.result', requestId: 'r2', error: 'boom' }]);
   });
 
   it('answers every message that has a requestId with exactly one history.result', async () => {

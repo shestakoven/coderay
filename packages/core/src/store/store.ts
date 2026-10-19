@@ -1,21 +1,24 @@
 import { chmodSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import {
-  EFFORT_LEVELS,
-  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EffortLevel, type FrozenScope, type GatePromptView, type PlanFlow, type PlanReview,
-  type PlanStatus, type PlanStep, type PromptAnswer, type PromptBody, type PromptStatus, type RevertRecordView, type SessionStatus, type StepStatus,
+  isEffortFor, isEngineId,
+  type ApprovedBy, type ChangeView, type ChatSummary, type ControlMode, type EngineId, type FrozenScope, type GatePromptView, type ImageRef, type PlanFlow,
+  type PlanReview, type PlanStatus, type PlanStep, type PromptAnswer, type PromptBody, type PromptStatus, type RevertRecordView, type SessionStatus, type StepStatus,
   type TaskKind, type TaskView, type ToolDecision, type ToolStatus, type TurnKind, type TurnView, type WatchdogEventView,
 } from '@ide/protocol';
 import { DatabaseSync } from './sqlite';
 
 export interface SessionRecord {
   id: string;
-  claudeSessionId: string;
+  engine: EngineId;
+  /** An engine this CodeRay does not know, as the history names it: such a chat is kept and written back, never run. */
+  foreignEngine?: string;
+  engineSessionId: string;
   cwd: string;
   status: SessionStatus;
   model: string | null;
   modelChoice: string | null;
-  effort: EffortLevel | null;
+  effort: string | null;
   cliVersion: string | null;
   pid: number | null;
   launchId: string | null;
@@ -32,6 +35,7 @@ export interface MessageRecord {
   role: 'user' | 'assistant' | 'notice';
   text: string;
   ts: number;
+  images?: ImageRef[];
 }
 
 export interface ToolEventRecord {
@@ -44,6 +48,7 @@ export interface ToolEventRecord {
   status: ToolStatus;
   toolUseAt: number;
   endedAt: number | null;
+  images?: ImageRef[];
 }
 
 export interface PromptRecord {
@@ -128,8 +133,11 @@ export interface Store {
   listSessions(limit?: number): ChatSummary[];
   saveSession(session: SessionRecord): void;
   setSessionTitle(id: string, title: string, manual: boolean): boolean;
+  manualTitle(id: string): boolean;
   deleteSession(id: string): void;
   deleteAllSessions(): void;
+  // The ids of the images every remaining chat refers to.
+  imageIds(): Set<string>;
   saveTurn(sessionId: string, turn: TurnView): void;
   saveMessage(sessionId: string, message: MessageRecord): void;
   saveToolEvent(sessionId: string, event: ToolEventRecord): void;
@@ -330,8 +338,18 @@ const SCHEMA_V8 = `
 ALTER TABLE baselines ADD COLUMN sig TEXT;
 `;
 
+const SCHEMA_V9 = `
+ALTER TABLE messages ADD COLUMN images TEXT;
+ALTER TABLE tool_events ADD COLUMN images TEXT;
+`;
+
+const SCHEMA_V10 = `
+ALTER TABLE sessions RENAME COLUMN claude_session_id TO engine_session_id;
+ALTER TABLE sessions ADD COLUMN engine TEXT NOT NULL DEFAULT 'claude';
+`;
+
 // MIGRATIONS[n] takes user_version n to n + 1.
-const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8];
+const MIGRATIONS = [SCHEMA_V1, SCHEMA_V2, SCHEMA_V3, SCHEMA_V4, SCHEMA_V5, SCHEMA_V6, SCHEMA_V7, SCHEMA_V8, SCHEMA_V9, SCHEMA_V10];
 
 const CHAT_TITLE_LENGTH = 60;
 const NEW_CHAT_TITLE = 'New chat';
@@ -341,8 +359,6 @@ const IMAGE_PLACEHOLDER = /^\[\d+ images? attached\]$/gm;
 const chatTitle = (text: string | null): string => text?.replace(IMAGE_PLACEHOLDER, '').replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd() || NEW_CHAT_TITLE;
 
 const cleanTitle = (title: string): string => title.replace(/\s+/g, ' ').trim().slice(0, CHAT_TITLE_LENGTH).trimEnd();
-
-const toEffort = (value: unknown): EffortLevel | null => (EFFORT_LEVELS.includes(value as EffortLevel) ? (value as EffortLevel) : null);
 
 function migrate(db: InstanceType<typeof DatabaseSync>): void {
   const row = db.prepare('PRAGMA user_version').get() as { user_version?: number } | undefined;
@@ -367,22 +383,32 @@ type Row = Record<string, unknown>;
 
 const optText = (value: unknown): string | null => (value === null || value === undefined ? null : String(value));
 const optNumber = (value: unknown): number | null => (value === null || value === undefined ? null : Number(value));
+const toEffort = (engine: EngineId, value: unknown): string | null => (typeof value === 'string' && isEffortFor(engine, value) ? value : null);
+const toImages = (value: unknown): { images?: ImageRef[] } => (value === null || value === undefined ? {} : { images: JSON.parse(String(value)) as ImageRef[] });
+const imagesColumn = (images: ImageRef[] | undefined): string | null => (images && images.length > 0 ? JSON.stringify(images) : null);
 
-const toSession = (row: Row): SessionRecord => ({
-  id: String(row.id),
-  claudeSessionId: String(row.claude_session_id),
-  cwd: String(row.cwd),
-  status: String(row.status) as SessionStatus,
-  model: optText(row.model),
-  modelChoice: optText(row.model_choice),
-  effort: toEffort(row.effort),
-  cliVersion: optText(row.cli_version),
-  pid: optNumber(row.pid),
-  launchId: optText(row.launch_id),
-  conversationStarted: row.conversation_started === 1,
-  startedAt: Number(row.started_at),
-  accountId: optText(row.account_id),
-});
+const toSession = (row: Row): SessionRecord => {
+  const engine = isEngineId(row.engine) ? row.engine : 'claude';
+  return {
+    id: String(row.id),
+    engine,
+    // Read as Claude's, another engine's conversation id would reach claude's --resume.
+    ...(isEngineId(row.engine) ? {} : { foreignEngine: String(row.engine) }),
+    engineSessionId: String(row.engine_session_id),
+    cwd: String(row.cwd),
+    status: String(row.status) as SessionStatus,
+    model: optText(row.model),
+    modelChoice: optText(row.model_choice),
+    // A foreign chat keeps its effort as written, since it is written back.
+    effort: isEngineId(row.engine) ? toEffort(engine, row.effort) : optText(row.effort),
+    cliVersion: optText(row.cli_version),
+    pid: optNumber(row.pid),
+    launchId: optText(row.launch_id),
+    conversationStarted: row.conversation_started === 1,
+    startedAt: Number(row.started_at),
+    accountId: optText(row.account_id),
+  };
+};
 
 const toTurn = (row: Row): TurnView => ({
   id: String(row.id),
@@ -401,6 +427,7 @@ const toMessage = (row: Row): MessageRecord => ({
   role: String(row.role) as MessageRecord['role'],
   text: String(row.text),
   ts: Number(row.ts),
+  ...toImages(row.images),
 });
 
 const toToolEvent = (row: Row): ToolEventRecord => ({
@@ -413,6 +440,7 @@ const toToolEvent = (row: Row): ToolEventRecord => ({
   status: String(row.status) as ToolStatus,
   toolUseAt: Number(row.tool_use_at),
   endedAt: optNumber(row.ended_at),
+  ...toImages(row.images),
 });
 
 const toTask = (row: Row): TaskView => ({
@@ -566,9 +594,9 @@ export function openStore(dir: string): Store {
   let open = true;
 
   const upsertSession = db.prepare(`
-    INSERT INTO sessions (id, claude_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at, account_id)
-    VALUES (:id, :claudeSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt, :accountId)
-    ON CONFLICT (id) DO UPDATE SET claude_session_id = excluded.claude_session_id, status = excluded.status,
+    INSERT INTO sessions (id, engine, engine_session_id, cwd, status, model, model_choice, effort, cli_version, pid, launch_id, conversation_started, started_at, account_id)
+    VALUES (:id, :engine, :engineSessionId, :cwd, :status, :model, :modelChoice, :effort, :cliVersion, :pid, :launchId, :conversationStarted, :startedAt, :accountId)
+    ON CONFLICT (id) DO UPDATE SET engine = excluded.engine, engine_session_id = excluded.engine_session_id, status = excluded.status,
       model = excluded.model, model_choice = excluded.model_choice, effort = excluded.effort, cli_version = excluded.cli_version, pid = excluded.pid,
       launch_id = excluded.launch_id, conversation_started = excluded.conversation_started, account_id = excluded.account_id`);
   const listSessions = db.prepare(`
@@ -592,13 +620,14 @@ export function openStore(dir: string): Store {
     VALUES (:id, :sessionId, :kind, :openedAt, :startedAt, :closedAt, :resultSubtype)
     ON CONFLICT (id) DO UPDATE SET kind = excluded.kind, started_at = excluded.started_at, closed_at = excluded.closed_at, result_subtype = excluded.result_subtype`);
   const insertMessage = db.prepare(`
-    INSERT INTO messages (id, session_id, seq, turn_id, parent_tool_use_id, role, text, ts)
-    VALUES (:id, :sessionId, :seq, :turnId, :parentToolUseId, :role, :text, :ts)
+    INSERT INTO messages (id, session_id, seq, turn_id, parent_tool_use_id, role, text, ts, images)
+    VALUES (:id, :sessionId, :seq, :turnId, :parentToolUseId, :role, :text, :ts, :images)
     ON CONFLICT (id) DO NOTHING`);
   const upsertToolEvent = db.prepare(`
-    INSERT INTO tool_events (session_id, tool_use_id, seq, turn_id, parent_tool_use_id, tool, input, status, tool_use_at, ended_at)
-    VALUES (:sessionId, :toolUseId, :seq, :turnId, :parentToolUseId, :tool, :input, :status, :toolUseAt, :endedAt)
-    ON CONFLICT (session_id, tool_use_id) DO UPDATE SET status = excluded.status, ended_at = excluded.ended_at`);
+    INSERT INTO tool_events (session_id, tool_use_id, seq, turn_id, parent_tool_use_id, tool, input, status, tool_use_at, ended_at, images)
+    VALUES (:sessionId, :toolUseId, :seq, :turnId, :parentToolUseId, :tool, :input, :status, :toolUseAt, :endedAt, :images)
+    ON CONFLICT (session_id, tool_use_id) DO UPDATE SET status = excluded.status, ended_at = excluded.ended_at,
+      images = COALESCE(excluded.images, tool_events.images)`);
   const upsertTask = db.prepare(`
     INSERT INTO background_tasks (session_id, id, tool_use_id, kind, description, status, started_at, ended_at)
     VALUES (:sessionId, :id, :toolUseId, :kind, :description, :status, :startedAt, :endedAt)
@@ -682,9 +711,12 @@ export function openStore(dir: string): Store {
         const session = toSession(row);
         return {
           id: session.id, title: optText(row.title) ?? chatTitle(optText(row.first_text)), startedAt: session.startedAt, lastActivityAt: Number(row.last_activity_at),
-          status: session.status, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
+          status: session.status, engine: session.engine, modelChoice: session.modelChoice, effort: session.effort, messages: Number(row.message_count),
         };
       });
+    },
+    manualTitle(id) {
+      return Number(db.prepare('SELECT title_manual FROM sessions WHERE id = ?').get(id)?.title_manual ?? 0) === 1;
     },
     setSessionTitle(id, title, manual) {
       const clean = cleanTitle(title);
@@ -699,9 +731,15 @@ export function openStore(dir: string): Store {
     deleteAllSessions() {
       deleteConversations(db, '', []);
     },
+    imageIds() {
+      const ids = new Set<string>();
+      const rows = db.prepare('SELECT images FROM messages WHERE images IS NOT NULL UNION ALL SELECT images FROM tool_events WHERE images IS NOT NULL').all();
+      for (const row of rows) for (const image of JSON.parse(String(row.images)) as ImageRef[]) ids.add(image.id);
+      return ids;
+    },
     saveSession(session) {
       upsertSession.run({
-        id: session.id, claudeSessionId: session.claudeSessionId, cwd: session.cwd, status: session.status,
+        id: session.id, engine: session.foreignEngine ?? session.engine, engineSessionId: session.engineSessionId, cwd: session.cwd, status: session.status,
         model: session.model, modelChoice: session.modelChoice, effort: session.effort, cliVersion: session.cliVersion, pid: session.pid,
         launchId: session.launchId, conversationStarted: session.conversationStarted ? 1 : 0, startedAt: session.startedAt, accountId: session.accountId,
       });
@@ -715,13 +753,14 @@ export function openStore(dir: string): Store {
     saveMessage(sessionId, message) {
       insertMessage.run({
         id: message.id, sessionId, seq: message.seq, turnId: message.turnId, parentToolUseId: message.parentToolUseId,
-        role: message.role, text: message.text, ts: message.ts,
+        role: message.role, text: message.text, ts: message.ts, images: imagesColumn(message.images),
       });
     },
     saveToolEvent(sessionId, event) {
       upsertToolEvent.run({
         sessionId, toolUseId: event.toolUseId, seq: event.seq, turnId: event.turnId, parentToolUseId: event.parentToolUseId,
         tool: event.tool, input: JSON.stringify(event.input ?? null), status: event.status, toolUseAt: event.toolUseAt, endedAt: event.endedAt,
+        images: imagesColumn(event.images),
       });
     },
     saveTask(sessionId, task) {

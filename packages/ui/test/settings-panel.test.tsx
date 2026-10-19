@@ -85,12 +85,12 @@ const settingsWith = (claudeCodeServers: SettingsView['claudeCodeServers'], proj
     edited: { ide: null, project: null }, problems: [],
   },
   claudeCodeServers,
-  accounts: { accounts: [], activeId: null, login: { state: 'idle', url: null, error: null } },
+  accounts: { engines: [{ engine: 'claude', accounts: [], activeId: null }], login: { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null } },
 });
 
 const render = (settings: SettingsView | null, sessionServers: McpServerState[] = [], initialCategory: CategoryId = 'mcp'): string =>
   renderToStaticMarkup(
-    <SettingsPanel settings={settings} lastResult={null} sessionServers={sessionServers} send={() => true} onClose={() => undefined} initialCategory={initialCategory} />,
+    <SettingsPanel settings={settings} lastResult={null} providers={{}} loadProviders={() => undefined} sessionServers={sessionServers} send={() => true} onClose={() => undefined} initialCategory={initialCategory} />,
   );
 
 const claude = settingsWith([
@@ -230,7 +230,8 @@ describe('Settings workspace', () => {
   });
 
   it.each(CATEGORIES.map((category) => category.id))('shows only the settings of the %s category', (id) => {
-    expect(settingTitles(parse(render(claude, claudeSession, id)))).toEqual(blocksOf(id).map((block) => block.title));
+    // The fixture's core runs Claude alone, so the accounts blocks of Codex and opencode stay hidden.
+    expect(settingTitles(parse(render(claude, claudeSession, id)))).toEqual(blocksOf(id).filter((block) => block.id !== 'accounts-codex' && block.id !== 'accounts-opencode').map((block) => block.title));
   });
 
   const modeGroup = (root: Element): Element[] => {
@@ -265,5 +266,16 @@ describe('Settings workspace', () => {
     expect(radioGroups.map((radios) => radios.filter((radio) => radio.attrs['aria-checked'] === 'true').length)).toEqual([1, 1]);
     const switches = all(root, (element) => element.attrs.role === 'switch');
     expect(switches.map((element) => [element.attrs['aria-label'], element.attrs['aria-checked']])).toEqual([['Reduce motion', 'false'], ['Dots on the map', 'true']]);
+  });
+});
+
+describe('Settings: accounts', () => {
+  it("shows the accounts and the running sign-in of a core from before engine-scoped accounts as Claude's", () => {
+    const account = { id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 };
+    const older = { ...claude, accounts: { accounts: [account], activeId: account.id, login: { state: 'waiting', url: 'https://claude.com/oauth', error: null } } };
+    const root = parse(render(older as unknown as SettingsView, claudeSession, 'accounts'));
+    const section = settingSection(root, 'Claude accounts');
+    expect([settingTitles(root), textOf(section).includes('a@example.com active'), all(section, (element) => element.tag === 'button' && textOf(element) === 'Open sign-in page').length])
+      .toEqual([['Claude accounts'], true, 1]);
   });
 });

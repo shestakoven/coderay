@@ -19,7 +19,7 @@ export type AgentEvent =
   | { type: 'turn-end'; lastMessage: string | null; failed: boolean; runningTaskIds: string[] | null }
   | { type: 'subagent-start'; agentId: string; agentType: string }
   | { type: 'subagent-stop'; agentId: string; lastMessage: string | null }
-  | { type: 'conversation'; claudeSessionId: string; source: string }
+  | { type: 'conversation'; engineSessionId: string; source: string }
   | { type: 'interrupted' }
   | { type: 'assistant-text'; text: string };
 
@@ -76,8 +76,8 @@ export function parseHookEvent(raw: unknown): AgentEvent | null {
     case 'Interrupt':
       return { type: 'interrupted' };
     case 'SessionStart': {
-      const claudeSessionId = str(raw.session_id);
-      return claudeSessionId ? { type: 'conversation', claudeSessionId, source: str(raw.source) ?? 'unknown' } : null;
+      const engineSessionId = str(raw.session_id);
+      return engineSessionId ? { type: 'conversation', engineSessionId, source: str(raw.source) ?? 'unknown' } : null;
     }
     default:
       return null;

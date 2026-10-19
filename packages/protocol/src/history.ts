@@ -1,3 +1,4 @@
+import type { ReviewGraph, ReviewGraphFile } from './review';
 import type { ControlMode } from './settings';
 
 export type ChangeOrigin = 'ide' | 'agent' | 'agent-tool' | 'git' | 'human' | 'unknown';
@@ -42,11 +43,12 @@ export interface FileDiff { binary: boolean; truncated: boolean; missing: boolea
 export type HistoryServerMessage =
   | { type: 'history.snapshot'; history: HistoryView }
   | { type: 'history.patch'; patch: HistoryPatch }
-  | { type: 'history.result'; requestId: string; error: string | null; diff?: FileDiff; preview?: RollbackPreview };
+  | { type: 'history.result'; requestId: string; error: string | null; diff?: FileDiff; preview?: RollbackPreview; graph?: ReviewGraph };
 export type HistoryClientMessage =
   | { type: 'watchdog.answer'; eventId: string; answer: WatchdogAnswer }
   | { type: 'watchdog.stop-agent'; eventId: string }
   | { type: 'history.diff'; requestId: string; path: string; before: string | null; after: string | null }
+  | { type: 'review.graph'; requestId: string; planId: string | null; files: ReviewGraphFile[] }
   | { type: 'revert.undo'; requestId: string; revertId: string }
   | { type: 'change.revert'; requestId: string; changeIds: string[] }
   | { type: 'step.rollback-preview'; requestId: string; planId: string; stepKey: string }

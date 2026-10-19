@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { parseStreamLine } from '../../src/agent/stream';
+import { parseStreamMessage } from '../../src/agent/stream';
 
 const line = (event: object) => JSON.stringify(event);
+const parseStreamLine = (text: string) => parseStreamMessage(JSON.parse(text));
 
-describe('parseStreamLine', () => {
+describe('parseStreamMessage', () => {
   it('reads the session id, model, CLI version, permission mode and MCP server statuses from init', () => {
     const event = line({
       type: 'system', subtype: 'init', session_id: 's1', model: 'claude-haiku-4-5-20251001', claude_code_version: '2.1.281',
@@ -53,14 +54,14 @@ describe('parseStreamLine', () => {
     const event = line({
       type: 'assistant', parent_tool_use_id: 'toolu_agent',
       message: { role: 'assistant', content: [
-        { type: 'thinking', thinking: '', signature: 'x' },
+        { type: 'thinking', thinking: 'why', signature: 'x' },
         { type: 'text', text: 'hi' },
         { type: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } },
       ] },
     });
     expect(parseStreamLine(event)).toEqual({
       type: 'assistant', parentToolUseId: 'toolu_agent',
-      blocks: [{ kind: 'text', text: 'hi' }, { kind: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } }],
+      blocks: [{ kind: 'thinking', text: 'why' }, { kind: 'text', text: 'hi' }, { kind: 'tool_use', id: 'toolu_1', name: 'Write', input: { file_path: '/p/a.ts' } }],
     });
   });
 
@@ -74,7 +75,28 @@ describe('parseStreamLine', () => {
     });
     expect(parseStreamLine(event)).toEqual({
       type: 'user', parentToolUseId: null,
-      toolResults: [{ toolUseId: 'a', isError: false, text: 'done' }, { toolUseId: 'b', isError: true, text: 'boom' }],
+      toolResults: [{ toolUseId: 'a', isError: false, text: 'done', images: [] }, { toolUseId: 'b', isError: true, text: 'boom', images: [] }],
+    });
+  });
+
+  it('keeps the base64 of a result\'s image parts in order beside its text, and drops parts that are not inline images', () => {
+    const image = (data: unknown, type = 'base64') => ({ type: 'image', source: { type, media_type: 'image/png', data } });
+    const blank = expect.stringMatching(/^\s*$/);
+    const event = line({
+      type: 'user', parent_tool_use_id: null,
+      message: { role: 'user', content: [
+        { type: 'tool_result', tool_use_id: 'only', content: [image('AAA')] },
+        { type: 'tool_result', tool_use_id: 'both', content: [{ type: 'text', text: 'Took a screenshot.' }, image('BBB'), image('CCC')] },
+        { type: 'tool_result', tool_use_id: 'junk', content: [image('https://x.test/a.png', 'url'), image(''), image(7), { type: 'document', source: { type: 'base64', data: 'DDD' } }] },
+      ] },
+    });
+    expect(parseStreamLine(event)).toEqual({
+      type: 'user', parentToolUseId: null,
+      toolResults: [
+        { toolUseId: 'only', isError: false, text: blank, images: ['AAA'] },
+        { toolUseId: 'both', isError: false, text: expect.stringMatching(/^Took a screenshot\.\s*$/), images: ['BBB', 'CCC'] },
+        { toolUseId: 'junk', isError: false, text: blank, images: [] },
+      ],
     });
   });
 
@@ -115,14 +137,25 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine(line({ type: 'control_cancel_request', request_id: 'r1' }))).toEqual({ type: 'control_cancel', requestId: 'r1' });
   });
 
-  it('ignores hook, token, status, rate-limit, progress and control response events', () => {
+  it("ignores hook, token, status, rate-limit, progress, control response and the SDK's run bookkeeping events", () => {
     const noise = [
       { type: 'system', subtype: 'hook_started' }, { type: 'system', subtype: 'thinking_tokens' }, { type: 'system', subtype: 'status', status: 'compacting' },
       { type: 'rate_limit_event' }, { type: 'system', subtype: 'task_progress' }, { type: 'system', subtype: 'background_tasks_changed' },
       { type: 'system', subtype: 'commands_changed' },
+      { type: 'system', subtype: 'session_state_changed', state: 'idle' }, { type: 'system', subtype: 'post_turn_summary' },
+      { type: 'system', subtype: 'task_summary' }, { type: 'system', subtype: 'session_metadata' },
+      { type: 'active_goal' }, { type: 'autocompact_state' },
       { type: 'control_response', response: { subtype: 'success', request_id: 'i1', response: { still_queued: [] } } },
     ];
     expect(noise.map((event) => parseStreamLine(line(event)))).toEqual(noise.map(() => ({ type: 'ignored' })));
+  });
+
+  it.each([
+    ['a conversation reset', { type: 'conversation_reset', new_conversation_id: 'c2', session_id: 'c1', trigger: 'clear' }, { type: 'conversation_reset', trigger: 'clear' }],
+    ['a compaction boundary', { type: 'system', subtype: 'compact_boundary', compact_metadata: { trigger: 'manual', pre_tokens: 183505, post_tokens: 5764 } }, { type: 'compact_boundary', trigger: 'manual', preTokens: 183505, postTokens: 5764 }],
+    ['the output of a local command', { type: 'system', subtype: 'local_command_output', content: 'Total cost: $0.0123' }, { type: 'command_output', text: 'Total cost: $0.0123' }],
+  ])('reads %s', (_name, event, expected) => {
+    expect(parseStreamLine(line(event))).toEqual(expected);
   });
 
   describe('streamed text', () => {
@@ -166,13 +199,9 @@ describe('parseStreamLine', () => {
     expect(parseStreamLine(JSON.stringify({ type: 'tool_progress', tool_use_id: 'toolu_1', heartbeat: true }))).toEqual({ type: 'ignored' });
   });
 
-  it('labels an unknown event or invalid JSON as unknown instead of throwing', () => {
+  it('labels an unknown event or a message that is not an object as unknown instead of throwing', () => {
     expect(parseStreamLine(line({ type: 'brand_new' }))).toEqual({ type: 'unknown', label: 'brand_new' });
     expect(parseStreamLine(line({ type: 'system', subtype: 'brand_new' }))).toEqual({ type: 'unknown', label: 'system/brand_new' });
-    expect(parseStreamLine('{not json')).toEqual({ type: 'unknown', label: 'invalid JSON' });
-  });
-
-  it('skips blank lines', () => {
-    expect(parseStreamLine('   ')).toBeNull();
+    expect(parseStreamMessage('{not json')).toEqual({ type: 'unknown', label: 'not an object' });
   });
 });

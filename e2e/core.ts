@@ -5,6 +5,8 @@ import { join, resolve } from 'node:path';
 
 const REPO = resolve(import.meta.dirname, '..');
 const FAKE_CLAUDE = join(REPO, 'packages/core/test/fake-claude/fake-claude.mjs');
+const FAKE_CODEX = join(REPO, 'packages/core/test/fake-codex/fake-codex.mjs');
+const FAKE_OPENCODE = join(REPO, 'packages/core/test/fake-opencode/fake-opencode.mjs');
 export const MODELS_CACHE = join(REPO, 'node_modules/.cache/ide-e2e/models');
 const stream = (scenario: string): string => join(REPO, `packages/core/test/fixtures/stream/${scenario}.jsonl`);
 
@@ -38,6 +40,10 @@ export interface Launcher {
 
 const userHomeOf = (base: string): string => join(base, 'user-home');
 
+// Every core's XDG homes are the scratch dir's: an opencode it starts never reads or writes the user's.
+const xdgHomes = (base: string): Record<string, string> =>
+  Object.fromEntries(['XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'].map((name) => [name, join(base, 'xdg', name.toLowerCase())]));
+
 function prepareHome(base: string): { home: string; bin: string } {
   const home = join(base, 'home');
   mkdirSync(MODELS_CACHE, { recursive: true });
@@ -56,7 +62,7 @@ async function spawnCore(base: string, args: string[], env: NodeJS.ProcessEnv): 
   mkdirSync(userHome, { recursive: true });
   const child = spawn(process.execPath, ['--import', 'tsx', join(REPO, 'packages/core/src/main.ts'), ...args], {
     cwd: REPO,
-    env: { ...process.env, HOME: userHome, ...env },
+    env: { ...process.env, HOME: userHome, IDE_DEFAULT_MODEL: 'sonnet', ...xdgHomes(base), ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   const exited = new Promise<void>((resolveExit) => child.once('exit', () => resolveExit()));
@@ -162,7 +168,7 @@ export async function startHub(names: string[]): Promise<Hub> {
   const { home, bin } = prepareHome(base);
   const hub = await spawnCore(
     base,
-    ['--hub', ...roots.flatMap((root) => ['--project', root]), '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    ['--hub', ...roots.flatMap((root) => ['--project', root]), '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, '--no-codex', '--no-opencode'],
     { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: stream('text-then-wait') },
   );
   const hubPid = hub.child.pid ?? -1;
@@ -185,17 +191,26 @@ export async function startHub(names: string[]): Promise<Hub> {
   };
 }
 
-export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}): Promise<Core> {
+// `codex` and `opencode` name a scenario of their fake; null runs the core without that engine.
+export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, fixture = 'tiny', codex: string | null = null, opencode: string | null = null): Promise<Core> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
   const root = join(base, 'project');
-  cpSync(join(REPO, 'e2e/fixtures/tiny'), root, { recursive: true });
+  cpSync(join(REPO, 'e2e/fixtures', fixture), root, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: root });
   const { home, bin } = prepareHome(base);
   const record = join(base, 'fake-claude-record.jsonl');
   const core = await spawnCore(
     base,
-    ['--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
-    { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario), ...env },
+    [
+      '--project', root, '--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE,
+      ...(codex === null ? ['--no-codex'] : ['--codex', FAKE_CODEX]), ...(opencode === null ? ['--no-opencode'] : ['--opencode', FAKE_OPENCODE]),
+    ],
+    {
+      PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_RECORD: record, FAKE_CLAUDE_SCENARIO: stream(scenario),
+      ...(codex === null ? {} : { FAKE_CODEX_SCENARIO: join(REPO, 'packages/core/test/fixtures/codex', `${codex}.jsonl`), FAKE_CODEX_RECORD: join(base, 'fake-codex-record.jsonl') }),
+      ...(opencode === null ? {} : { FAKE_OPENCODE_SCENARIO: join(REPO, 'packages/core/test/fixtures/opencode', `${opencode}.jsonl`), FAKE_OPENCODE_RECORD: join(base, 'fake-opencode-record.jsonl') }),
+      ...env,
+    },
   );
   return {
     url: core.url,
@@ -217,7 +232,7 @@ export async function startLauncher(): Promise<Launcher> {
   const { home, bin } = prepareHome(base);
   const core = await spawnCore(
     base,
-    ['--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE],
+    ['--ide-home', home, '--port', '0', '--ui', join(REPO, 'packages/ui/dist'), '--claude', FAKE_CLAUDE, '--no-codex', '--no-opencode'],
     { PATH: `${bin}:${process.env.PATH ?? ''}`, FAKE_CLAUDE_SCENARIO: stream('text-then-wait') },
   );
   return {

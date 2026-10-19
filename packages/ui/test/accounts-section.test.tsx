@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import type { AccountLoginView, AccountsView } from '@ide/protocol';
+import type { AccountLoginView, AccountView, EngineAccountsView, EngineId } from '@ide/protocol';
+import { profileNameProblem, providerKeyProblem, type ProviderList } from '../src/settings/accounts';
 import { AccountsSection } from '../src/settings/AccountsSection';
 
 interface Element {
@@ -41,11 +42,14 @@ const isDisabled = (element: Element): boolean => 'disabled' in element.attrs;
 const A = { id: '6f9619ff-8b86-4d01-b42d-00cf4fc964ff', email: 'a@example.com', createdAt: 1 };
 const B = { id: '0b5c1a6e-3d2f-4e8a-9c7b-1f2e3d4c5b6a', email: 'b@example.com', createdAt: 2 };
 const URL = 'https://claude.com/cai/oauth/authorize?code=true&client_id=c&state=secret-state-123';
-const idle: AccountLoginView = { state: 'idle', url: null, error: null };
+const idle: AccountLoginView = { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null };
+const claudeLogin = (login: Pick<AccountLoginView, 'state' | 'url' | 'error'>): AccountLoginView => ({ ...login, engine: 'claude', method: 'browser', userCode: null });
 
-function render(view: Partial<AccountsView> = {}, busy = false): Element {
-  const full: AccountsView = { accounts: [A, B], activeId: null, login: idle, ...view };
-  return parse(renderToStaticMarkup(<AccountsSection view={full} busy={busy} onRequest={() => undefined} />));
+function render(view: { accounts?: AccountView[]; activeId?: string | null; login?: Partial<AccountLoginView> } = {}, busy = false): Element {
+  const { login = {}, ...list } = view;
+  return parse(renderToStaticMarkup(
+    <AccountsSection engine="claude" view={{ engine: 'claude', accounts: [A, B], activeId: null, ...list }} login={{ ...idle, ...login }} busy={busy} onRequest={() => undefined} />,
+  ));
 }
 
 interface Row {
@@ -129,7 +133,7 @@ describe('AccountsSection sign-in', () => {
   });
 
   it('shows an enabled sign-in button, a code input, Submit, Cancel and a hint while waiting with a URL', () => {
-    const root = render({ login: { state: 'waiting', url: URL, error: null } });
+    const root = render({ login: claudeLogin({ state: 'waiting', url: URL, error: null }) });
     const codeInputs = all(root, (element) => element.tag === 'input' && !isRadio(element));
     expect([
       buttons(root, 'Open sign-in page').map(isDisabled),
@@ -142,21 +146,97 @@ describe('AccountsSection sign-in', () => {
   });
 
   it('never shows the sign-in URL as text', () => {
-    expect(textOf(render({ login: { state: 'waiting', url: URL, error: null } }))).not.toContain('secret-state-123');
+    expect(textOf(render({ login: claudeLogin({ state: 'waiting', url: URL, error: null }) }))).not.toContain('secret-state-123');
   });
 
   it('disables the sign-in button and says claude is starting while waiting without a URL', () => {
-    const root = render({ login: { state: 'waiting', url: null, error: null } });
+    const root = render({ login: claudeLogin({ state: 'waiting', url: null, error: null }) });
     expect([buttons(root, 'Open sign-in page').map(isDisabled), textOf(root).includes('Starting claude…')]).toStrictEqual([[true], true]);
   });
 
   it('says it is checking the account and offers no Add account while checking', () => {
-    const root = render({ login: { state: 'checking', url: null, error: null } });
+    const root = render({ login: claudeLogin({ state: 'checking', url: null, error: null }) });
     expect([textOf(root).includes('Checking account…'), buttons(root, 'Add account').length, buttons(root, 'Open sign-in page').length]).toStrictEqual([true, 0, 0]);
   });
 
   it('shows the error message of a failed sign-in', () => {
-    const root = render({ login: { state: 'error', url: null, error: 'Claude did not report a signed-in account.' } });
+    const root = render({ login: claudeLogin({ state: 'error', url: null, error: 'Claude did not report a signed-in account.' }) });
     expect(textOf(root)).toContain('Claude did not report a signed-in account.');
+  });
+});
+
+const WORK = { id: '3c1e8f5a-7d2b-4c6e-9a1f-2b3c4d5e6f70', email: 'work@example.com', plan: 'Plus', createdAt: 3 };
+
+function renderEngine(engine: EngineId, view: Partial<EngineAccountsView> = {}, login: AccountLoginView = idle, providers?: { lists: Record<string, ProviderList>; open: string }): Element {
+  return parse(renderToStaticMarkup(
+    <AccountsSection engine={engine} view={{ engine, accounts: [], activeId: null, ...view }} login={login} busy={false} onRequest={() => undefined} providers={providers?.lists} open={providers?.open} />,
+  ));
+}
+
+describe('AccountsSection per engine', () => {
+  it("names the engine in its account group and in System's note, and shows an account's plan beside its e-mail", () => {
+    const root = renderEngine('codex', { accounts: [WORK], activeId: WORK.id });
+    expect([all(root, (element) => element.attrs.role === 'radiogroup')[0]?.attrs['aria-label'], rows(root).map((row) => row.text)]).toStrictEqual([
+      'Codex account', ["System codex's own sign-in (codex login)", 'work@example.com Plus active Remove'],
+    ]);
+  });
+
+  it("offers each of the engine's ways to sign in, the first one as the primary", () => {
+    const ways = (engine: EngineId) => all(renderEngine(engine), (element) => element.tag === 'button' && (element.attrs.class ?? '').includes('account-add'))
+      .map((button) => [textOf(button), !(button.attrs.class ?? '').includes('ghost')]);
+    expect([ways('claude'), ways('codex')]).toStrictEqual([
+      [['Add account', true]], [['Sign in with ChatGPT', true], ['Use a device code', false], ['Use an API key', false]],
+    ]);
+  });
+
+  it('shows the code to enter, with a copy button, and never the page address as text, while a device-code sign-in waits', () => {
+    const root = renderEngine('codex', {}, { state: 'waiting', engine: 'codex', method: 'device-code', url: 'https://auth.example.test/codex/device?s=SECRET', userCode: 'ABCD-1234', error: null });
+    expect([buttons(root, 'Open the device page').map(isDisabled), textOf(root).includes('ABCD-1234'), buttons(root, 'Copy').length, textOf(root).includes('SECRET'), buttons(root, 'Cancel').length])
+      .toStrictEqual([[false], true, 1, false, 1]);
+  });
+});
+
+const NAME_RULE = 'A profile name is 1 to 40 characters without control characters.';
+const COMMAND = "XDG_DATA_HOME='/h/data' XDG_CONFIG_HOME='/h/config' XDG_STATE_HOME='/h/state' XDG_CACHE_HOME='/h/cache' opencode auth login";
+const hasClass = (name: string) => (element: Element): boolean => (element.attrs.class ?? '').split(/\s+/).includes(name);
+const labelled = (tag: string, label: string) => (element: Element): boolean => element.tag === tag && element.attrs['aria-label'] === label;
+
+describe('opencode profiles', () => {
+  it('offers "Add profile" under System with its note, and judges a name and a key as the core does', () => {
+    const root = renderEngine('opencode');
+    // The core's view waits for a moment while it makes a profile: that is no sign-in to show.
+    const making = renderEngine('opencode', {}, { ...idle, state: 'waiting', engine: 'opencode', method: 'profile' });
+    expect([
+      rows(root).map((row) => row.text), [root, making].map((section) => all(section, (element) => element.tag === 'button').map(textOf)),
+      profileNameProblem(` ${'x'.repeat(40)} `), profileNameProblem('   '), profileNameProblem('a\u0007b'), profileNameProblem('x'.repeat(41)),
+      providerKeyProblem('sk-test'), providerKeyProblem('has space'),
+    ]).toStrictEqual([
+      ["System opencode's own providers and keys active"], [['Add profile'], ['Add profile']],
+      null, NAME_RULE, NAME_RULE, NAME_RULE, null, 'A key is 1 to 512 characters without spaces.',
+    ]);
+  });
+
+  it("shows an open profile's providers: loading, then the connected ones first, a masked key field whose Save waits for a key, and the terminal command for an oauth-only one", () => {
+    const view = { accounts: [{ id: A.id, email: 'Work', createdAt: 1 }], activeId: A.id };
+    const list = (state: Partial<ProviderList>): Element => renderEngine('opencode', view, idle, { open: A.id, lists: { [A.id]: { loading: false, providers: [], loginCommand: '', error: null, ...state } } });
+    const loaded = list({ loginCommand: COMMAND, providers: [
+      { id: 'openai', name: 'OpenAI', connected: false, methods: ['api'], env: ['OPENAI_API_KEY'] },
+      { id: 'github-copilot', name: 'GitHub Copilot', connected: false, methods: ['oauth'], env: [] },
+      { id: 'openrouter', name: 'OpenRouter', connected: true, methods: ['api'], env: ['OPENROUTER_API_KEY'] },
+    ] });
+    const field = all(loaded, labelled('input', 'OpenAI API key'))[0]!;
+    const providerRows = all(loaded, hasClass('sw-provider-row'));
+    expect([
+      textOf(list({ loading: true })).includes('Loading providers…'),
+      all(loaded, (element) => element.tag === 'button' && 'aria-expanded' in element.attrs).map((button) => [textOf(button), button.attrs['aria-expanded']]),
+      providerRows.map((row) => [textOf(all(row, (element) => element.tag === 'b')[0]!), textOf(all(row, hasClass('sw-provider-state'))[0]!), all(row, (element) => element.tag === 'button').map((button) => textOf(button) || button.attrs['aria-label'])]),
+      [field.attrs.type, field.attrs.autocomplete, 'value' in field.attrs],
+      all(loaded, labelled('button', 'Save OpenAI key')).map(isDisabled),
+      [textOf(providerRows[1]!).includes('Sign in in a terminal'), all(loaded, (element) => element.tag === 'code').map(textOf)],
+    ]).toStrictEqual([
+      true, [['Providers', 'true']],
+      [['OpenRouter', 'connected', ['Save', 'Remove the OpenRouter key']], ['GitHub Copilot', 'not connected', ['Copy']], ['OpenAI', 'not connected', ['Save']]],
+      ['password', 'new-password', false], [true], [true, [COMMAND]],
+    ]);
   });
 });

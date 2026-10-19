@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { request } from 'node:http';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { ControlMode, PlanTarget } from '@ide/protocol';
+import type { ControlMode, GateAnswer, PlanTarget } from '@ide/protocol';
 import { GateError, HookGate, type GateContext } from '../../src/gate/hook-gate';
 import { Hold } from '../../src/gate/hold';
 import { ActivityLedger, type ToolCall } from '../../src/watchdog/activity';
@@ -174,6 +174,43 @@ describe('HookGate', () => {
     gate.answer((await pending()).id, 'expand-plan');
     expect((await answer)?.permissionDecision).toBe('allow');
     expect(plans.gate()).toMatchObject({ version: 2, scope: { paths: ['src/app.ts', 'src/other.ts'] } });
+  });
+
+  it('asks about calls that run together in turn, leaves nothing of the answers when a later one is denied or the request goes away, and expands the plan and records them once all are allowed', async () => {
+    const { root, gate, approve, plans, decisions, store } = await setup();
+    const allowed: ToolCall[] = [];
+    gate.onAllowed((call) => allowed.push(call));
+    await approve();
+    // A file twice, as a move that also edits asks about its destination twice.
+    const patch = ['src/other.ts', 'src/lib/util.ts', 'src/lib/util.ts'].map((path) => ({ tool_name: 'Write', tool_input: { file_path: join(root, path), content: 'x' }, tool_use_id: 'patch-1', cwd: root }));
+    const answer = async (replies: GateAnswer[], gone = false) => {
+      const request = new AbortController();
+      const answered = gate.evaluateAll(patch, request.signal);
+      for (const reply of replies) gate.answer((await waitFor(() => gate.pending()[0], 'a question')).id, reply);
+      if (gone) request.abort();
+      return (await answered)?.permissionDecision ?? null;
+    };
+    const left = () => {
+      const plan = plans.gate();
+      return [
+        plan.state === 'approved' ? plan.version : null, decisions.map((record) => [record.decision, record.planVersion]),
+        allowed.map((call) => [call.targets, call.allowedOnce]), store.gateEvents('s1').map((event) => event.resolution),
+      ];
+    };
+    expect([await answer(['expand-plan', 'deny']), left()]).toEqual(['deny', [1, [['ask-denied', 1]], [], ['dropped', 'denied']]]);
+    expect([await answer(['expand-plan', 'expand-plan', 'expand-plan'], true), left()]).toEqual([null, [1, [['ask-denied', 1]], [], ['dropped', 'denied', 'dropped', 'dropped', 'dropped']]]);
+    expect([await answer(['allow-once', 'expand-plan', 'expand-plan']), left(), plans.plans().at(-1)?.steps[0]?.targets.map((target) => target.path)]).toEqual(['allow', [
+      2, [['ask-denied', 1], ['ask-approved', 2], ['ask-approved', 2], ['ask-approved', 2]],
+      [[['src/other.ts'], true], [['src/lib/util.ts'], false], [['src/lib/util.ts'], false]],
+      ['dropped', 'denied', 'dropped', 'dropped', 'dropped', 'allowed-once', 'plan-expanded', 'plan-expanded'],
+    ], ['src/app.ts', 'src/lib/util.ts']]);
+  });
+
+  it('leaves no flag of a call when a later call that runs with it is denied', async () => {
+    const { root, gate, approve, decisions, store } = await setup({ mode: 'C' });
+    await approve();
+    const flagged = { tool_name: 'Write', tool_input: { file_path: join(root, 'src/other.ts'), content: 'x' }, tool_use_id: 'patch-1', cwd: root };
+    expect([(await gate.evaluateAll([flagged, {}], new AbortController().signal))?.permissionDecision, decisions, store.gateEvents('s1')]).toEqual(['deny', [], []]);
   });
 
   it('drops the Expand plan offer of a pending prompt when the plan changes', async () => {
@@ -472,7 +509,7 @@ describe('HookGate', () => {
       gate.withdrawPending('x');
       hold.release();
       const reply = await answer;
-      expect(reply?.permissionDecisionReason).toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
+      expect(reply).toMatchObject({ permissionDecisionReason: "CodeRay: the user did not respond in time. Stop and wait for the user's next message.", final: true });
       expect(gate.prompts().map((prompt) => prompt.status)).toEqual(['dropped']);
     });
 
@@ -521,6 +558,26 @@ describe('HookGate', () => {
       .toBe("CodeRay: the user did not respond in time. Stop and wait for the user's next message.");
   });
 
+  it("marks final the user's own denial and a call that ran out of time, not the guard's denial or a call that ended", async () => {
+    const live = await setup();
+    const other = { file_path: join(live.root, 'src/other.ts') };
+    const unplanned = await live.call('Write', other);
+    await live.approve();
+    const denied = live.call('Write', other, undefined, 'toolu_2');
+    live.gate.answer((await live.pending()).id, 'deny');
+    const ended = live.call('Write', other, undefined, 'toolu_3');
+    await live.pending();
+    live.gate.dropForTool('toolu_3');
+    const hold = new Hold();
+    const timed = await setup({ hold, holdMs: 50 });
+    await timed.approve();
+    const unanswered = await timed.call('Write', { file_path: join(timed.root, 'src/other.ts') });
+    hold.hold('event');
+    const held = await timed.call('Write', { file_path: join(timed.root, 'src/app.ts') });
+    expect([unplanned, await denied, await ended, unanswered, held].map((answer) => [answer?.permissionDecision, answer?.final]))
+      .toEqual([['deny', undefined], ['deny', true], ['deny', undefined], ['deny', true], ['deny', true]]);
+  });
+
   it('refuses a second answer to the same prompt', async () => {
     const { root, call, approve, pending, gate } = await setup();
     await approve();
@@ -546,13 +603,22 @@ describe('HookGate', () => {
     expect(await pending()).toMatchObject({ tool: 'BrandNewTool', targets: [], canExpand: false, preview: { kind: 'input' } });
   });
 
-  it('judges a 5 MB Write and caps its preview', async () => {
-    const { root, call, approve, pending } = await setup();
+  it("judges a 5 MB Write and a 5 MB Codex edit and caps their previews, and shows claude's strings over a stray diff", async () => {
+    const { root, call, approve, pending, gate } = await setup();
     await approve();
-    void call('Write', { file_path: join(root, 'src/other.ts'), content: 'x'.repeat(5_000_000) });
+    const file = join(root, 'src/other.ts');
+    void call('Write', { file_path: file, content: 'x'.repeat(5_000_000) });
     const prompt = await pending();
     expect(prompt.preview).toMatchObject({ kind: 'write', truncated: true });
     expect(prompt.preview.kind === 'write' ? prompt.preview.content.length : 0).toBe(20_000);
+    gate.answer(prompt.id, 'deny');
+    void call('Edit', { file_path: file, diff: `@@ -1 +1 @@\n-a\n+${'x'.repeat(5_000_000)}\n` }, undefined, 'toolu_2');
+    const patch = await pending();
+    expect(patch.preview).toMatchObject({ kind: 'patch', path: file, truncated: true });
+    expect(patch.preview.kind === 'patch' ? patch.preview.diff.length : 0).toBe(20_000);
+    gate.answer(patch.id, 'deny');
+    void call('Edit', { file_path: file, old_string: 'a', new_string: 'b', diff: '+c' }, undefined, 'toolu_3');
+    expect((await pending()).preview).toMatchObject({ kind: 'edit', oldString: 'a', newString: 'b' });
   });
 
   it('judges each file that mv moves into a directory', async () => {

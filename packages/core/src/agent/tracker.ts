@@ -10,7 +10,7 @@ export type Change =
   | { kind: 'tool'; tool: ToolEventRecord }
   | { kind: 'task'; task: TaskView }
   | { kind: 'prompt'; prompt: PromptRecord }
-  | { kind: 'init'; claudeSessionId: string; model: string | null; cliVersion: string | null; mcpServers: McpServerState[]; skills: string[] }
+  | { kind: 'init'; engineSessionId: string; model: string | null; cliVersion: string | null; mcpServers: McpServerState[]; skills: string[] }
   | { kind: 'mode'; permissionMode: string | null };
 
 export interface OpenWork {
@@ -189,7 +189,7 @@ export class TurnTracker {
   }
 
   private init(event: Extract<StreamEvent, { type: 'init' }>): Change[] {
-    const changes: Change[] = [{ kind: 'init', claudeSessionId: event.sessionId, model: event.model, cliVersion: event.cliVersion, mcpServers: event.mcpServers, skills: event.skills }];
+    const changes: Change[] = [{ kind: 'init', engineSessionId: event.sessionId, model: event.model, cliVersion: event.cliVersion, mcpServers: event.mcpServers, skills: event.skills }];
     if (this.running === null) changes.push(...this.startTurn());
     changes.push(...this.mode(event.permissionMode));
     return changes;
@@ -318,6 +318,7 @@ export class TurnTracker {
         if (block.text.trim() !== '') changes.push(this.message(turnId, parentToolUseId, 'assistant', block.text));
         continue;
       }
+      if (block.kind === 'thinking') continue;
       this.toolNames.set(block.id, block.name);
       const tool: ToolEventRecord = {
         toolUseId: block.id, seq: this.seq++, turnId, parentToolUseId, tool: block.name, input: block.input,
@@ -333,7 +334,7 @@ export class TurnTracker {
   private toolResults(results: ToolResultBlock[]): Change[] {
     const changes: Change[] = [];
     for (const result of results) {
-      const status = result.text.trimStart().startsWith(REJECTED) ? 'rejected' : result.isError ? 'error' : 'ok';
+      const status = result.rejected === true || result.text.trimStart().startsWith(REJECTED) ? 'rejected' : result.isError ? 'error' : 'ok';
       changes.push(...this.endTool(result.toolUseId, status));
     }
     return changes;

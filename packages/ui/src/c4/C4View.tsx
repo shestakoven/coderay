@@ -13,7 +13,7 @@ import elkWorkerUrl from 'elkjs/lib/elk-worker.min.js?url';
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { C4Model, MapSnapshot } from '@ide/protocol';
 import type { NodeState } from '../history/history-state';
-import { c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
+import { OWN_COMPONENT_CARDS, c4Graph, c4RootGraph, layoutC4, type C4EdgeData, type C4FlowNode } from './c4-graph';
 import { focusOf, type Selection } from './focus';
 import { c4NodePlans, componentCard, locateComponent, type NodePlan } from '../plan/c4-marks';
 import { nodeStateClass } from '../history/history-state';
@@ -144,7 +144,12 @@ export function C4View({ snapshot, model }: { snapshot: MapSnapshot; model: C4Mo
     }
     return marks;
   }, [overlay.changes, snapshot.components, model, root, expanded, graphIds]);
-  const taller = useMemo(() => new Set(nodeChangeMarks.keys()), [nodeChangeMarks]);
+  const taller = useMemo(() => {
+    const lines = new Map<string, number>([...nodeChangeMarks.keys()].map((id) => [id, 1]));
+    const planned = c4NodePlans(graph.nodes.map((node) => ({ id: node.id, type: node.kind === 'group' ? 'c4group' : node.kind, parentId: node.parentId })), model, overlay.marks);
+    for (const node of graph.nodes) if (planned.has(node.id) && !node.data.expanded && !node.data.detail) lines.set(node.id, (lines.get(node.id) ?? 0) + 1);
+    return lines;
+  }, [nodeChangeMarks, graph, model, overlay.marks]);
   const tallerKey = JSON.stringify([...taller].sort());
 
   useEffect(() => {
@@ -396,18 +401,40 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
       </DetailsAside>
     );
   }
-  const rootComponent = selection.id.startsWith('root:') ? snapshot.components.find((c) => `root:${c.id}` === selection.id) : undefined;
-  if (rootComponent) {
+  const rootId = selection.id.startsWith('root:') ? selection.id.slice('root:'.length) : null;
+  const separator = selection.id.indexOf('/');
+  const holder = rootId === null && separator > 0 ? model.containers.find((c) => c.id === selection.id.slice(0, separator)) : undefined;
+  const cardId = holder ? selection.id.slice(separator + 1) : null;
+  if (holder && cardId === 'shared') {
+    const folded = [...holder.components.filter((p) => p.near > 0).slice(OWN_COMPONENT_CARDS), ...holder.components.filter((p) => p.near === 0)];
     return (
       <DetailsAside>
-        <h2>{rootComponent.name}</h2>
-        {rootComponent.summary && <p className="summary">{rootComponent.summary}</p>}
-        {rootComponent.description && <p>{rootComponent.description}</p>}
-        {rootComponent.keyFiles.length > 0 && (
+        <h2>Libraries · {holder.name}</h2>
+        <p className="muted">Components deeper than 2 imports from the entry</p>
+        <ul>
+          {folded.map((p) => (
+            <li key={p.id}>
+              {componentName(p.id)} <span className="muted">{p.files} {p.files === 1 ? 'file' : 'files'}</span>
+            </li>
+          ))}
+        </ul>
+      </DetailsAside>
+    );
+  }
+  const component = snapshot.components.find((c) => c.id === (rootId ?? cardId));
+  const held = holder?.components.find((p) => p.id === cardId);
+  if (component || held) {
+    return (
+      <DetailsAside>
+        <h2>{component?.name ?? componentName(cardId!)}</h2>
+        {held && <p className="muted">{held.near} near entry · {held.files} {held.files === 1 ? 'file' : 'files'}{held.containers > 1 ? ` · in ${held.containers} containers` : ''}</p>}
+        {component?.summary && <p className="summary">{component.summary}</p>}
+        {component?.description && <p>{component.description}</p>}
+        {component && component.keyFiles.length > 0 && (
           <>
             <h3>Key files</h3>
             <ul>
-              {rootComponent.keyFiles.map((path) => (
+              {component.keyFiles.map((path) => (
                 <li key={path}>
                   <code>{path}</code>
                 </li>
@@ -468,7 +495,7 @@ function C4Details({ snapshot, model, selection }: { snapshot: MapSnapshot; mode
     return (
       <DetailsAside>
         <h2>{external.name}</h2>
-        <p className="muted">{external.kind} · classified from names only</p>
+        <p className="muted">{external.kind}</p>
         <h3>Identifiers</h3>
         <ul>
           {external.identifiers.map((i) => (

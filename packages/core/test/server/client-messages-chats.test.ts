@@ -70,8 +70,8 @@ describe('parseClientMessage session.configure', () => {
     expect(bad.map((modelChoice) => parse({ type: 'session.configure', modelChoice, effort: null }))).toEqual(bad.map(() => null));
   });
 
-  it('rejects an effort that is not a known level', () => {
-    const bad = ['ultra', 'HIGH', '', 'default', 1, true, {}, ['high']];
+  it('rejects an effort that no engine names', () => {
+    const bad = ['HIGH', '', '-high', 'a'.repeat(33), 1, true, {}, ['high']];
     expect(bad.map((effort) => parse({ type: 'session.configure', modelChoice: null, effort }))).toEqual(bad.map(() => null));
   });
 
@@ -84,6 +84,44 @@ describe('parseClientMessage session.configure', () => {
 
   it('keeps only the type, the model and the effort', () => {
     expect(parse({ type: 'session.configure', modelChoice: 'opus', effort: 'low', id: 'a', text: 'x' })).toEqual({ type: 'session.configure', modelChoice: 'opus', effort: 'low' });
+  });
+
+  it('takes a model of any engine with an effort that engine names, and refuses one its engine does not', () => {
+    expect([
+      parse({ type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' }),
+      parse({ type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null }),
+      parse({ type: 'session.configure', modelChoice: 'opus', effort: 'minimal' }),
+      parse({ type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'HIGH' }),
+      parse({ type: 'session.configure', modelChoice: 'codex:', effort: null }),
+    ]).toEqual([
+      { type: 'session.configure', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' },
+      { type: 'session.configure', modelChoice: 'opencode:openrouter/anthropic/claude-3.5:beta', effort: null },
+      null, null, null,
+    ]);
+  });
+
+  it("takes an effort only another engine names when no model is given, and leaves the check against the chat's engine to the chat", () => {
+    expect([
+      parse({ type: 'session.configure', modelChoice: null, effort: 'ultra' }),
+      parse({ type: 'session.configure', modelChoice: null, effort: 'Ultra!' }),
+    ]).toEqual([{ type: 'session.configure', modelChoice: null, effort: 'ultra' }, null]);
+  });
+});
+
+describe('parseClientMessage session.new', () => {
+  it('opens a new chat on a model when one is named, plain otherwise, and refuses an invalid or missing model', () => {
+    expect([
+      parse({ type: 'session.new' }),
+      parse({ type: 'session.new', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' }),
+      parse({ type: 'session.new', modelChoice: 'opus' }),
+      parse({ type: 'session.new', modelChoice: '--evil', effort: null }),
+      parse({ type: 'session.new', effort: 'high' }),
+    ]).toEqual([
+      { type: 'session.new' },
+      { type: 'session.new', modelChoice: 'codex:gpt-6-luna', effort: 'minimal' },
+      { type: 'session.new', modelChoice: 'opus', effort: null },
+      null, null,
+    ]);
   });
 });
 
@@ -99,5 +137,40 @@ describe('parseClientMessage session.delete', () => {
     expect([
       parse({ type: 'session.delete' }), parse({ type: 'session.delete', id: '' }), parse({ type: 'session.delete', id: 7 }), parse({ type: 'session.delete', id: 'x'.repeat(101) }),
     ]).toEqual([null, null, null, null]);
+  });
+});
+
+describe('parseClientMessage image.get', () => {
+  const id = 'ab'.repeat(32);
+
+  it('accepts a key with exactly one of a blob id or a path, and drops extra fields', () => {
+    expect([
+      parse({ type: 'image.get', key: 'i:x#1', id, extra: true }),
+      parse({ type: 'image.get', key: 'p:x#2', path: '../docs/shot.png' }),
+      parse({ type: 'image.get', key: 'k'.repeat(4096), path: 'p'.repeat(4096) }),
+    ]).toEqual([
+      { type: 'image.get', key: 'i:x#1', id },
+      { type: 'image.get', key: 'p:x#2', path: '../docs/shot.png' },
+      { type: 'image.get', key: 'k'.repeat(4096), path: 'p'.repeat(4096) },
+    ]);
+  });
+
+  it('rejects a request that names both or neither, an id that is not 64 lowercase hex, and a missing, empty or oversized key or path', () => {
+    const malformed = {
+      both: { key: 'k', id, path: 'a.png' },
+      neither: { key: 'k' },
+      'short id': { key: 'k', id: id.slice(1) },
+      'uppercase id': { key: 'k', id: id.toUpperCase() },
+      'path-like id': { key: 'k', id: `../${id}` },
+      'numeric id': { key: 'k', id: 7 },
+      'no key': { id },
+      'empty key': { key: '', id },
+      'huge key': { key: 'k'.repeat(4097), id },
+      'empty path': { key: 'k', path: '' },
+      'huge path': { key: 'k', path: 'p'.repeat(4097) },
+      'path not a string': { key: 'k', path: ['a.png'] },
+    };
+    expect(Object.fromEntries(Object.entries(malformed).map(([name, fields]) => [name, parse({ type: 'image.get', ...fields })])))
+      .toEqual(Object.fromEntries(Object.keys(malformed).map((name) => [name, null])));
   });
 });

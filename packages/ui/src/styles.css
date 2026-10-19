@@ -70,6 +70,7 @@ html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(-
 
 button { background: var(--raised); color: var(--text); border: 1px solid var(--line); border-radius: var(--r-1); padding: 3px 10px; font: inherit; cursor: pointer; }
 button:disabled { opacity: 0.45; cursor: default; }
+.visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .badge { padding: 1px 8px; border-radius: 10px; font-size: calc(11px * var(--fs-scale, 1)); font-weight: 600; }
 .badge.plan { background: var(--selection); color: var(--fg); border: 1px solid var(--accent); }
 .no-token { padding: 24px; color: var(--muted); }
@@ -77,18 +78,17 @@ button:disabled { opacity: 0.45; cursor: default; }
 .chat { width: 400px; display: flex; flex-direction: column; border-left: 1px solid var(--line); background: var(--panel); font-size: calc(13px * var(--fs-scale, 1)); }
 .chat-header { display: flex; gap: 8px; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--line); }
 .chat-header .spacer { flex: 1; }
-.chat-log { flex: 1; overflow: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 12px; }
+.chat-log { flex: 1; overflow: auto; overflow-x: hidden; padding: 8px 10px; display: flex; flex-direction: column; gap: 12px; }
 .turn { display: flex; flex-direction: column; gap: 6px; }
-.turn.agent-initiated { border-left: 2px solid var(--accent); padding-left: 8px; }
 .turn-marker, .turn-end { color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
 .msg { white-space: pre-wrap; word-break: break-word; }
 .msg.user { background: var(--selection); border-radius: 6px; padding: 6px 8px; }
-.notice { color: var(--muted); font-style: italic; white-space: pre-wrap; }
+.notice { color: var(--muted); font-style: italic; white-space: pre-wrap; overflow-wrap: anywhere; }
 .tool-row { font-family: var(--font-mono); font-size: calc(12px * var(--fs-scale, 1)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tool.ok .tool-status { color: var(--ok); }
 .tool.error .tool-status, .tool.rejected .tool-status, .tool.unfinished .tool-status { color: var(--warn); }
 .tool-children { margin: 4px 0 0 14px; border-left: 1px dashed var(--line); padding-left: 8px; display: flex; flex-direction: column; gap: 4px; }
-.prompt { border: 1px solid var(--accent); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; }
+.prompt { border: 1px solid var(--accent); border-radius: 6px; padding: 8px; display: flex; flex-direction: column; gap: 6px; overflow-wrap: anywhere; }
 .prompt.done { border-color: var(--line); color: var(--muted); }
 .prompt fieldset { border: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .prompt legend { font-weight: 600; margin-bottom: 3px; }
@@ -392,7 +392,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-switcher-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chat-new { padding: 2px 8px; background: transparent; border-color: transparent; color: var(--muted); border-radius: 6px; }
 .chat-new:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
-.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: 300px; max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
+.chat-list { position: absolute; z-index: 15; top: 100%; left: 0; width: min(300px, 100cqi); max-height: 320px; overflow: auto; margin: 4px 0 0; padding: 4px; list-style: none; background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); }
 .chat-rename { flex: 1; min-width: 0; padding: 5px 8px; background: var(--bg); color: var(--fg); border: 1px solid var(--accent); border-radius: var(--r-1); font: inherit; outline: 0; }
 .chat-list-empty { padding: 8px; }
 .chat-list-row { display: flex; flex-direction: column; gap: 1px; width: 100%; padding: 6px 8px; border: 0; background: none; text-align: left; border-radius: var(--r-1); }
@@ -408,11 +408,45 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .chat-delete-all:hover, .chat-delete-all.confirm { background: var(--raised); }
 .chat-delete-all.confirm { color: var(--error); }
 .chat-list-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.chat-list-meta { font-size: calc(11px * var(--fs-scale, 1)); }
-.model-controls { display: flex; gap: 6px; flex: none; }
-.model-controls select { appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 6px; height: 28px; padding: 0 8px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; }
+.chat-list-meta { overflow: hidden; font-size: calc(11px * var(--fs-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+.model-controls { display: flex; gap: 6px; flex: 0 1 auto; min-width: 0; }
+.model-controls select { flex: none; appearance: none; background: transparent; color: var(--muted); border: 0; border-radius: 6px; height: 28px; padding: 0 8px; font: inherit; font-size: calc(12px * var(--fs-scale, 1)); cursor: pointer; }
 .model-controls select:hover:not(:disabled) { background: var(--raised); color: var(--fg); }
 .model-controls select:disabled { opacity: 0.5; cursor: default; }
+.model-button { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 180px; height: 28px; padding: 0 6px 0 8px; background: transparent; border-color: transparent; border-radius: 6px; color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }
+.model-button:hover:not(:disabled), .model-button[aria-expanded='true'] { background: var(--raised); border-color: transparent; color: var(--fg); }
+.model-button:disabled { opacity: 0.5; }
+.model-button.needed { color: var(--accent-hover); }
+.model-button-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-menu { position: absolute; z-index: 16; left: 10px; right: 10px; bottom: calc(100% - 6px); display: flex; flex-direction: column; max-height: min(420px, 60vh); background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-2); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); overflow: hidden; transform-origin: 50% 100%; animation: model-pop 0.16s var(--ease) both; container: model-menu / inline-size; }
+@keyframes model-pop { from { opacity: 0; transform: translateY(5px) scale(0.985); } }
+.model-search { display: flex; flex: none; align-items: center; gap: 8px; height: 36px; padding: 0 10px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.model-search input, .model-search input:focus-visible { flex: 1; min-width: 0; padding: 0; border: 0; outline: 0; background: none; color: var(--fg); font: inherit; }
+.model-search input::placeholder { color: var(--muted); }
+.model-list { flex: 1; min-height: 0; overflow: auto; padding: 4px; scrollbar-width: thin; }
+.model-group-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; min-width: 0; padding: 8px 8px 4px; }
+.model-engine { flex: none; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+.model-state { flex: none; padding: 0 6px; border: 1px solid var(--line); border-radius: 10px; font-size: calc(11px * var(--fs-scale, 1)); }
+.model-state.missing, .model-state.error { color: var(--error); border-color: rgba(247, 84, 100, 0.5); }
+.model-state.old, .model-state.signed-out { color: var(--warn); border-color: rgba(242, 197, 92, 0.45); }
+.model-hint { min-width: 0; overflow-wrap: anywhere; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-account { min-width: 0; overflow: hidden; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); text-overflow: ellipsis; white-space: nowrap; }
+.model-row { position: relative; display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 8px; border-radius: var(--r-1); cursor: pointer; }
+.model-row.sel { background: var(--selection); }
+.model-check { display: grid; flex: none; place-items: center; width: 14px; color: var(--accent-hover); }
+.model-name { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.model-name u, .model-id u { text-decoration: none; color: var(--accent-hover); }
+.model-id, .model-new { flex: 0 1 auto; min-width: 0; max-width: 45%; margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-id { font-family: var(--font-mono); }
+.model-row.locked .model-name { color: var(--muted); }
+.model-row.locked.sel .model-name, .model-row.locked.sel .model-new { color: var(--fg); }
+.model-empty { padding: 14px 10px; color: var(--muted); text-align: center; }
+.model-empty:empty { padding: 0; }
+.model-foot { display: flex; flex: none; flex-wrap: wrap; gap: 4px 14px; padding: 6px 10px; border-top: 1px solid var(--line); color: var(--muted); font-size: var(--fs-xs); }
+.model-foot kbd { margin-right: 3px; }
+/* In the narrowest chat panel the name is what tells models apart; the full id stays in the row's tooltip. */
+@container model-menu (max-width: 300px) { .model-id, .model-new-tail { display: none; } }
+@media (prefers-reduced-motion: reduce) { .model-menu { animation: none; } }
 .composer-actions { align-items: center; gap: 2px; }
 .composer-actions .spacer { flex: 1; }
 .composer-box { display: flex; flex-direction: column; gap: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 8px 8px 6px; transition: border-color 0.12s; }
@@ -427,7 +461,7 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .skill-plugin { margin-left: auto; font-size: calc(11px * var(--fs-scale, 1)); white-space: nowrap; }
 .tool-row b.skill-call { color: var(--accent-hover); }
 .composer-usage { padding: 0 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
-.bg-tasks { flex-basis: 100%; font-size: calc(11px * var(--fs-scale, 1)); color: var(--muted); }
+.bg-tasks { flex-basis: 100%; min-width: 0; font-size: calc(11px * var(--fs-scale, 1)); color: var(--muted); }
 .bg-tasks-toggle { display: inline-flex; align-items: center; gap: 4px; padding: 2px 6px; margin-left: -6px; border: 0; background: transparent; color: var(--muted); border-radius: 6px; font: inherit; cursor: pointer; }
 .bg-tasks-toggle:hover { background: var(--raised); color: var(--fg); }
 .bg-tasks-spin { display: inline-block; animation: bg-spin 1.6s linear infinite; }
@@ -582,7 +616,7 @@ body.resizing .resizer { pointer-events: auto; }
 /* Agent view: CodeRay's chat or claude's own terminal interface */
 .agent-view { display: flex; gap: 2px; padding: 2px; background: var(--bg); border: 1px solid var(--border); border-radius: 6px; flex: none; }
 .chat-header .agent-view button { display: inline-flex; align-items: center; gap: 5px; border: 0; background: none; color: var(--muted); padding: 2px 8px; border-radius: var(--r-1); font-size: calc(12px * var(--fs-scale, 1)); line-height: 18px; }
-.chat-header .agent-view button:hover:not(.on) { color: var(--fg); }
+.chat-header .agent-view button:hover:not(.on):not(:disabled) { color: var(--fg); }
 .chat-header .agent-view button.on { background: var(--raised); color: var(--fg); }
 .chat-header .agent-view button:focus-visible { outline: 1px solid var(--accent); outline-offset: -1px; }
 /* FitAddon measures the host's computed size, so the gutter is an inset, not padding; overflow stays inside so .right-body never toggles a scrollbar */
@@ -642,7 +676,7 @@ button:not(:disabled):hover { border-color: var(--accent); }
 
 /* Chat header at narrow widths */
 .chat-header .chat-status { flex: none; }
-.chat-switcher { flex: 1 1 0; }
+.chat-switcher { flex: 1 1 auto; }
 .chat-switcher-button { max-width: 100%; }
 .chat-header .spacer { flex: 0 0 0; }
 
@@ -701,7 +735,7 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .tl-action:hover:not(:disabled) { color: var(--fg); background: var(--raised); }
 .tab-count { margin-left: 6px; padding: 0 6px; border-radius: 8px; background: var(--raised); color: var(--fg); font-size: calc(10.5px * var(--fs-scale, 1)); line-height: 16px; }
 .tl-item::before { order: 1; }
-.tl-time { order: 0; flex: none; width: 38px; color: var(--muted); font: 11px var(--font-mono); }
+.tl-time { order: 0; flex: none; white-space: nowrap; color: var(--muted); font: 11px var(--font-mono); }
 .tl-item .link-row { order: 2; }
 .tl-kind { order: 3; flex: none; color: var(--muted); font-size: calc(10.5px * var(--fs-scale, 1)); text-transform: uppercase; letter-spacing: 0.04em; }
 .tl-action { order: 4; }
@@ -821,3 +855,41 @@ button:not(:disabled):hover { border-color: var(--accent); }
 button.close-project { margin-right: auto; color: var(--fg); }
 .close-project:hover:not(:disabled) { text-decoration: underline; }
 @media (max-width: 800px) { .start-body { grid-template-columns: minmax(0, 520px); gap: 32px; padding-top: 6vh; } }
+.model-state.loading { color: var(--muted); }
+.model-state.loading::before { content: '⟳' / ''; display: inline-block; margin-right: 4px; animation: bg-spin 1.6s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .model-state.loading::before { animation: none; } }
+/* The chat's title gives way first, down to its floor, then the chip's caption: the title takes all but a sliver of the shrink, which
+   rounds to nothing (layout runs in 1/64 px), so a caption that fits is never cut. The engine's name is the chip's minimum. */
+.chat-header { container: chat-header / inline-size; }
+.chat-header .chat-switcher { flex-shrink: 100000; min-width: 30%; }
+.engine-chip { display: inline-grid; grid-template-columns: auto minmax(0, max-content); flex: 0 1 auto; align-items: center; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--r-1); color: var(--fg); font-size: calc(11px * var(--fs-scale, 1)); line-height: 1.45; white-space: nowrap; cursor: default; }
+.engine-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.engine-protection, .engine-short { overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
+.engine-protection::before, .engine-short::before { content: '·'; content: '·' / ', '; margin: 0 0.3em; }
+.engine-short, .engine-chip > .icon { display: none; }
+.engine-chip > .icon { color: var(--muted); }
+.engine-why { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+/* Under the header, across its width, so it never leaves the panel. */
+.engine-chip:not([data-quiet]):hover .engine-why, .engine-chip:not([data-quiet]):focus-visible .engine-why {
+  z-index: 20; top: calc(100% - 2px); left: 8px; right: 8px; width: auto; height: auto; padding: 6px 8px; overflow: visible; clip-path: none;
+  background: var(--raised); border-radius: var(--r-1); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); color: var(--fg); font-size: calc(12px * var(--fs-scale, 1)); line-height: 1.4; white-space: normal;
+}
+.engine-why b { display: block; margin-bottom: 2px; font-weight: 600; }
+/* Narrower: the short caption, then no frame, then the shield alone; the full words stay the chip's name and its tooltip. */
+@container chat-header (max-width: 460px) {
+  .engine-protection { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
+  .engine-short { display: block; }
+}
+@container chat-header (max-width: 400px) { .engine-chip { padding: 0; border-color: transparent; } }
+@container chat-header (max-width: 300px) {
+  .engine-chip { padding: 2px; font-size: 0; }
+  .engine-short { display: none; }
+  .engine-chip > .icon { display: block; }
+  .engine-why { font-size: calc(12px * var(--fs-scale, 1)); }
+}
+/* Below 360 px the agent view shows its icons without their words, which stay the buttons' names. */
+@container chat-header (max-width: 359px) { .chat-header .agent-view button { gap: 0; font-size: 0; } }
+.model-unlisted { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 8px 8px 4px; }
+.model-retry { padding: 0 6px; border: 0; border-radius: var(--r-1); background: none; color: var(--accent-hover); font-size: calc(11px * var(--fs-scale, 1)); }
+.model-retry:hover:not(:disabled) { background: var(--raised); }
+.model-retry:disabled { color: var(--muted); }

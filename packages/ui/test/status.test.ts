@@ -42,13 +42,12 @@ describe('describeMapStatus', () => {
     });
   });
 
-  it('says what a running grouping sent to Haiku and that file contents are never sent', () => {
+  it('says how much a running grouping sent', () => {
     const chips = describeMapStatus(status({ grouping: 'running', sending: { paths: 92, symbols: 240, links: 31 } }));
     expect(chips[1]).toEqual({
       text: 'grouping… sent 92 paths, 240 symbol names, 31 dependency counts',
       tone: 'muted',
-      title:
-        'Haiku receives the project name, file paths, exported symbol names, import counts between groups, and the names and summaries of previous components. File contents are never sent.',
+      title: 'Grouping files into components',
     });
   });
 
