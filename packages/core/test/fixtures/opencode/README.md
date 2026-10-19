@@ -49,7 +49,7 @@
 | `FAKE_OPENCODE_HEALTH=down` | Health answers 503; `=unhealthy` answers 200 with `healthy: false`. |
 | `FAKE_OPENCODE_DISPOSE=hang` | `/global/dispose` never answers. |
 | `FAKE_OPENCODE_ABORT=ignore` | `/session/:id/abort` answers 200 and the turn goes on: no idle comes. |
-| `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.error` `UnknownError` "Model not found: <provider>/<model>. Did you mean: …" (1.19's words for a model of a provider it has not connected) and `session.idle`. |
+| `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.status` busy, `session.error` `UnknownError` "Model not found: <provider>/<model>. Did you mean: …" (1.19's words for a model of a provider it has not connected) and `session.idle`. |
 | `FAKE_OPENCODE_GONE=<id>` | `GET /session/<id>` is 404. |
 | `FAKE_OPENCODE_SESSION_FAIL=1` | `POST /session` answers 500. |
 | `FAKE_OPENCODE_PROMPT_FAIL=1` | `/session/:id/prompt_async` and `/command` answer 400 after the prompt is recorded. |

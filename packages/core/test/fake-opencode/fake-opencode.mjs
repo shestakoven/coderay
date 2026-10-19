@@ -335,6 +335,8 @@ const server = createServer(async (req, res) => {
     if (env.FAKE_OPENCODE_UNKNOWN_MODEL === '1') {
       if (s[2] === 'prompt_async') json(res, 204); else answer();
       const model = typeof body?.model === 'string' ? body.model : `${body?.model?.providerID}/${body?.model?.modelID}`;
+      // Every turn of 1.19 says busy before it reads the model.
+      send('session.status', { sessionID: session.id, status: { type: 'busy' } });
       send('session.error', { sessionID: session.id, error: { name: 'UnknownError', data: { message: `Model not found: ${model}. Did you mean: nemotron-3.5-lightning-free?` } } });
       send('session.idle', { sessionID: session.id });
       return;

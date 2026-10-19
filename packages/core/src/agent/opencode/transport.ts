@@ -482,7 +482,7 @@ class OpencodeTransport implements AgentTransport {
     this.settleTurn();
   }
 
-  // Stop's fallback when no idle came: the turn ends as stopped, its open calls cut off (a busy status first, so a stray idle cannot swallow it).
+  // Stop's fallback when no idle came: the turn ends as stopped, its open calls cut off (a busy status first: only an idle after it ends the turn).
   private settleStop(): void {
     const chat = { sessionID: this.sessionId };
     this.events.handle({ type: 'session.status', properties: { ...chat, status: { type: 'busy' } } });

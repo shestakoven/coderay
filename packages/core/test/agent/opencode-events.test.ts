@@ -8,6 +8,8 @@ const tool = (callID: string, name: string, state: object, input: object = {}, s
   part({ id: `prt_${callID}`, type: 'tool', callID, tool: name, state: { input, ...state }, sessionID });
 const delta = (partID: string, text: string, sessionID = S, field = 'text') => ({ type: 'message.part.delta', properties: { sessionID, messageID: 'msg_1', partID, field, delta: text } });
 const idle = (sessionID = S) => ({ type: 'session.idle', properties: { sessionID } });
+// Every turn of 1.19 says busy before its idle.
+const busy = (sessionID = S) => ({ type: 'session.status', properties: { sessionID, status: { type: 'busy' } } });
 const error = (name: string, message: string, sessionID: string | null = S) =>
   ({ type: 'session.error', properties: { ...(sessionID === null ? {} : { sessionID }), error: { name, data: { message } } } });
 
@@ -81,6 +83,7 @@ describe('OpencodeEvents', () => {
     e.setModel('opencode/big-pickle', 200000);
     e.setSkills(['pdf']);
     const init = e.turnStarted();
+    e.handle(busy());
     const usage = e.handle(part({ type: 'step-finish', tokens: { total: 1300, input: 1000, output: 20, reasoning: 0, cache: { read: 180, write: 100 } }, cost: 0 }));
     const ended = e.handle(idle());
     expect([init, usage, ended, e.busy()]).toEqual([
@@ -91,10 +94,10 @@ describe('OpencodeEvents', () => {
     ]);
   });
 
-  it("ends a stopped turn as stopped, and lets neither its tool's late end nor its second idle end the next turn", () => {
+  it("ends a turn only on an idle after its own busy, so a stopped turn's late idles end neither it nor the next turn, also after Stop's own fallback", () => {
     const e = events();
-    const busy = { type: 'session.status', properties: { sessionID: S, status: { type: 'busy' } } };
     e.turnStarted();
+    e.handle(busy());
     e.handle(tool('c1', 'bash', { status: 'running' }, { command: 'sleep 9' }));
     e.interrupted();
     // 1.19's order after /abort: the abort error, idle, the tool's end, idle again.
@@ -102,19 +105,22 @@ describe('OpencodeEvents', () => {
     e.turnStarted();
     const late = [...e.handle(tool('c1', 'bash', { status: 'error', error: 'Tool execution aborted' }, { command: 'sleep 9' })), ...e.handle(idle())];
     const stillBusy = e.busy();
-    const next = [...e.handle(busy), ...e.handle(idle())];
-    // The fake sends one idle after a stop: the next turn's own start lets its idle through.
+    const next = [...e.handle(busy()), ...e.handle(idle())];
+    // No idle within 5 s: the transport ends the turn with a busy and an idle of its own; 1.19's two come during the next turn, before its busy.
     e.turnStarted();
+    e.handle(busy());
     e.interrupted();
-    e.handle(idle());
+    const settled = [...e.handle(busy()), ...e.handle(idle())];
     e.turnStarted();
-    const afterFake = [...e.handle(busy), ...e.handle(idle())];
-    expect([stopped, late, stillBusy, next, afterFake]).toEqual([
-      [
-        { type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'c1', isError: true, rejected: false, text: 'unfinished', images: [] }] },
-        { type: 'result', subtype: 'error_during_execution', origin: null },
-      ],
-      [], true, [{ type: 'result', subtype: 'success', origin: null }], [{ type: 'result', subtype: 'success', origin: null }],
+    const answered = [
+      ...e.handle(idle()), ...e.handle(idle()), ...e.handle(busy('ses_child')), ...e.handle(idle()),
+      ...e.handle(busy()), ...e.handle(part({ type: 'text', text: 'Back.', time: { start: 1, end: 2 } })), ...e.handle(idle()),
+    ];
+    const success = { type: 'result', subtype: 'success', origin: null };
+    const stop = { type: 'result', subtype: 'error_during_execution', origin: null };
+    expect([stopped, late, stillBusy, next, settled, answered]).toEqual([
+      [{ type: 'user', parentToolUseId: null, toolResults: [{ toolUseId: 'c1', isError: true, rejected: false, text: 'unfinished', images: [] }] }, stop],
+      [], true, [success], [stop], [{ type: 'assistant', parentToolUseId: null, blocks: [{ kind: 'text', text: 'Back.' }] }, success],
     ]);
   });
 
@@ -123,6 +129,7 @@ describe('OpencodeEvents', () => {
     const early = e.handle(idle());
     e.turnStarted();
     const out = [
+      ...e.handle(busy()),
       ...e.handle(part({ type: 'text', text: 'theirs', sessionID: 'ses_other', time: { start: 1, end: 2 } })),
       ...e.handle({ type: 'server.heartbeat', properties: {} }),
       // A /command's marker in the user's message: its subagent shows by its own task part.
@@ -134,9 +141,9 @@ describe('OpencodeEvents', () => {
       ...e.handle(idle()),
     ];
     e.turnStarted();
-    const clean = e.handle(idle());
+    const clean = [...e.handle(busy()), ...e.handle(idle())];
     e.turnStarted();
-    const again = [...e.handle(error('UnknownError', 'the provider answered 500')), ...e.handle(idle())];
+    const again = [...e.handle(busy()), ...e.handle(error('UnknownError', 'the provider answered 500')), ...e.handle(idle())];
     const failed = [{ type: 'notice', text: 'opencode: the provider answered 500' }, { type: 'result', subtype: 'failed', origin: null }];
     expect([early, out, clean, again]).toEqual([[], [{ type: 'unknown', label: 'vcs.branch.updated' }, ...failed], [{ type: 'result', subtype: 'success', origin: null }], failed]);
   });
@@ -144,6 +151,7 @@ describe('OpencodeEvents', () => {
   it("adopts each child session's parts under the task call that started it, closes the tools still open at idle, keeps a call's input once it runs and until the next turn, and owns no stranger", () => {
     const e = events();
     e.turnStarted();
+    e.handle(busy());
     const created = (id: string, parentID?: string) => ({ type: 'session.created', properties: { sessionID: id, info: { id, ...(parentID ? { parentID } : {}), directory: '/p' } } });
     const out = [
       ...e.handle(tool('c_read', 'read', { status: 'running' }, { filePath: '/p/a.ts' })),

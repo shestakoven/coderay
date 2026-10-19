@@ -77,8 +77,8 @@ export class OpencodeEvents {
   private stopped = false;
   private failed = false;
   private lastError: string | null = null;
-  // After a stop 1.19 sends a second session.idle; it must not end the turn that follows.
-  private stray = false;
+  // The turn's own busy status came: an idle before it is a stopped turn's late one (1.19 sends two after /abort, after Stop's fallback too).
+  private started = false;
 
   constructor(servers: string[]) {
     this.servers = servers;
@@ -126,6 +126,7 @@ export class OpencodeEvents {
 
   turnStarted(): StreamEvent[] {
     this.turn = true;
+    this.started = false;
     this.stopped = false;
     this.failed = false;
     this.lastError = null;
@@ -155,7 +156,7 @@ export class OpencodeEvents {
         return [];
       }
       case 'session.status':
-        if (properties.sessionID === this.chat && isRecord(properties.status) && properties.status.type === 'busy') this.stray = false;
+        if (properties.sessionID === this.chat && isRecord(properties.status) && properties.status.type === 'busy') this.started = true;
         return [];
       case 'session.error':
         return properties.sessionID === this.chat ? this.error(properties.error) : [];
@@ -251,16 +252,11 @@ export class OpencodeEvents {
 
   // Calls still open at the end were cut off (the tracker marks them unfinished).
   private idle(): StreamEvent[] {
-    if (this.stray) {
-      this.stray = false;
-      return [];
-    }
-    if (!this.turn) return [];
+    if (!this.turn || !this.started) return [];
     const closed = [...this.open].map(([id, call]): StreamEvent => ({
       type: 'user', parentToolUseId: call.parent, toolResults: [{ toolUseId: id, isError: true, rejected: false, text: 'unfinished', images: [] }],
     }));
     const subtype = this.stopped ? 'error_during_execution' : this.failed ? 'failed' : 'success';
-    this.stray = this.stopped;
     this.turn = false;
     this.open.clear();
     this.streaming.clear();
