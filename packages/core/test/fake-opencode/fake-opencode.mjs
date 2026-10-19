@@ -131,6 +131,7 @@ const send = (type, properties) => { const frame = `data: ${JSON.stringify({ typ
 const killSleepers = () => { for (const child of sleepers.splice(0)) try { process.kill(-child.pid, 'SIGKILL'); } catch {} };
 const ABORTED = Symbol('aborted');
 const REJECTED = 'The user rejected permission to use this specific tool call';
+const ASKED_FIRST = new Set(['task', 'webfetch', 'external_directory']);
 
 // A reject rejects every other pending ask of that session, as 1.19 does.
 function rejectOthers(sessionID, except) {
@@ -183,8 +184,8 @@ async function play(session, messageID) {
     const sessionID = sessionFor(line.session);
     const tool = line.tool ?? line.ask;
     const input = line.input ?? {};
-    // 1.19 may ask about a bash call before it reports the call running.
-    const late = line.running === 'after';
+    // 1.19 asks about these before it reports the call running, and may for a bash call.
+    const late = (line.running ?? (ASKED_FIRST.has(line.ask) ? 'after' : 'before')) === 'after';
     if (late) part(toolPart(sessionID, tool, line.callID, { status: 'pending', input: {}, raw: '' }));
     else start(sessionID, tool, line.callID, input);
     const id = nextId('per');
@@ -192,12 +193,16 @@ async function play(session, messageID) {
     const asked = { id, sessionID, permission: line.ask, patterns: line.patterns ?? [], metadata: line.metadata ?? {}, always, tool: { messageID, callID: line.callID } };
     const reply = new Promise((resolve) => { waiting.set(id, { kind: 'permission', session: sessionID, asked, resolve }); });
     send('permission.asked', asked);
-    if (late) setTimeout(() => part(toolPart(sessionID, tool, line.callID, { status: 'running', input, time: { start: Date.now() } })), 50);
+    // Running 50 ms after the ask, or before its answer's part when that comes first.
+    let ran = !late;
+    const run = () => { if (!ran) { ran = true; part(toolPart(sessionID, tool, line.callID, { status: 'running', input, time: { start: Date.now() } })); } };
+    if (late) setTimeout(run, 50);
     // Another client with the server's password answers the ask (the model curling the server, say).
     if (line.answeredBy) setImmediate(() => { const w = waiting.get(id); if (!w) return; waiting.delete(id); send('permission.replied', { sessionID, requestID: id, reply: line.answeredBy }); w.resolve({ reply: line.answeredBy, message: null }); });
     const settle = (answer) => {
       // An ask answered after its turn ended (Q12-abort-leaves) changes nothing in the turn.
       if (over) return;
+      run();
       if (answer.reply === 'reject') {
         part(toolPart(sessionID, tool, line.callID, { status: 'error', input, error: answer.message ? `${REJECTED} with the following feedback: ${answer.message}` : `${REJECTED}.`, time: { start: 1, end: 2 } }));
         // A reject with feedback lets the model go on; a plain one ends the turn.

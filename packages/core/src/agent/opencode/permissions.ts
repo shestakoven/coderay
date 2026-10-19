@@ -43,6 +43,7 @@ export function readAsk(properties: unknown): Ask | null {
 /**
  * The gate calls an ask stands for, judged together; `[]` when the ask cannot be mapped (then it is rejected). `input` is the tool part's
  * input, unknown while the part is pending: a task's, a webfetch's and the first external_directory's ask come before it runs.
+ * A bash and a task without it are rejected.
  */
 export function askCalls(
   ask: Ask, input: Record<string, unknown> | undefined, cwd: string, subagents: string[], ownSessions: Set<string>, servers: string[],
@@ -91,7 +92,9 @@ export function askCalls(
     // The ask's pattern is the subagent the task starts; only a task's input says which session it resumes.
     const [subagent] = ask.patterns;
     if (subagent === undefined || !subagents.includes(subagent)) return refuse(`the subagent ${subagent} did not pass the self-check`);
-    const resumed = input?.task_id;
+    // 1.19 resumes any session by its id, another chat's too.
+    if (input === undefined) return refuse('the session it resumes is not known yet');
+    const resumed = input.task_id;
     if (resumed !== undefined && !(typeof resumed === 'string' && ownSessions.has(resumed))) return refuse(`it resumes ${String(resumed)}, which this chat did not create`);
     return [{ ...base, tool_name: 'Task', tool_input: { subagent_type: subagent, ...(resumed === undefined ? {} : { task_id: resumed }) } }];
   }

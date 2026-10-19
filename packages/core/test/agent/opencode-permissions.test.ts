@@ -38,7 +38,7 @@ describe('askCalls', () => {
     ['a bash in another workdir → judged there', ask('bash', { metadata: { command: 'rm -rf src' } }), { command: 'rm -rf src', workdir: '../elsewhere' }, [{ ...base, cwd: '/elsewhere', tool_name: 'Bash', tool_input: { command: 'rm -rf src' } }]],
     ['a webfetch → WebFetch with the url', ask('webfetch', { patterns: ['https://x/'] }), undefined, [{ ...base, tool_name: 'WebFetch', tool_input: { url: 'https://x/' } }]],
     ['a websearch → WebSearch with the query', ask('websearch', { patterns: ['opencode'] }), undefined, [{ ...base, tool_name: 'WebSearch', tool_input: { query: 'opencode' } }]],
-    ['a task for a checked subagent, asked before its input is known → Task', ask('task', { patterns: ['general'], metadata: { description: 'look', subagent_type: 'general' } }), undefined, [{ ...base, tool_name: 'Task', tool_input: { subagent_type: 'general' } }]],
+    ['a task for a checked subagent → Task', ask('task', { patterns: ['general'], metadata: { description: 'look', subagent_type: 'general' } }), { description: 'look', prompt: 'Look.', subagent_type: 'general' }, [{ ...base, tool_name: 'Task', tool_input: { subagent_type: 'general' } }]],
     ['a task resuming a session this chat created → Task with it', ask('task', { patterns: ['explore'] }), { subagent_type: 'explore', task_id: 'ses_child' }, [{ ...base, tool_name: 'Task', tool_input: { subagent_type: 'explore', task_id: 'ses_child' } }]],
     ["an IDE server's tool → its mcp name with the tool's input", ask('files_write_note'), { text: 'hi' }, [{ ...base, tool_name: 'mcp__files__write_note', tool_input: { text: 'hi' } }]],
     ["an external directory → a read of each pattern, under an id of its own: the call's own ask may follow", ask('external_directory', { patterns: ['/elsewhere/*'], metadata: { filepath: '/elsewhere/a.ts', parentDir: '/elsewhere' } }), undefined, [{ ...base, tool_use_id: 'call_1:external_directory', tool_name: 'Read', tool_input: { file_path: '/elsewhere/*' } }]],
@@ -49,6 +49,7 @@ describe('askCalls', () => {
   it.each([
     ['a task for a subagent that did not pass the self-check', ask('task', { patterns: ['loose'] }), { subagent_type: 'loose' }],
     ['a task resuming a session this chat did not create', ask('task', { patterns: ['general'] }), { subagent_type: 'general', task_id: 'ses_other' }],
+    ['a task whose input, and so the session it resumes, is not known yet', ask('task', { patterns: ['general'] }), undefined],
     ['an edit with no diff', ask('edit', { metadata: { filepath: '/p/a.ts' } }), {}],
     ['an edit naming its file only in patterns, which are relative to the worktree', ask('edit', { patterns: ['a.ts'], metadata: { diff: DIFF } }), {}],
     ['a patch whose file list has an unknown change type', ask('edit', { metadata: { diff: DIFF, files: [file('/p/a.ts', 'update'), file('/p/b.ts', 'rename')] } }), {}],

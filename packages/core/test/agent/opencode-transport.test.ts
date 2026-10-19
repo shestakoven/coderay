@@ -208,6 +208,15 @@ describe('startOpencodeTransport', () => {
     ]);
   });
 
+  it("judges a task by its input, which 1.19 sends after the ask, and rejects one resuming a session this chat did not create before the gate sees it", async () => {
+    const t = start('opencode/task-resume.jsonl', { decide: allow });
+    t.send('go');
+    await t.ended();
+    expect([t.asked.map((call) => [call.tool_use_id, call.tool_input]), t.records().filter((r) => r.reply).map((r) => r.reply!.reply)]).toEqual([
+      [['call_fresh', { subagent_type: 'general' }]], ['once', 'reject'],
+    ]);
+  });
+
   it("rejects a bash naming the server's secrets before the gate sees it, and never shows the server's password or CodeRay's bearer token", async () => {
     const t = start('opencode/bash-secret.jsonl', { decide: allow });
     t.send('go');

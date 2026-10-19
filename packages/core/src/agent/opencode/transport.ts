@@ -22,9 +22,11 @@ const REOPENS = 3;
 const REOPEN_MS = 1_000;
 // How far up a session's parents CodeRay looks for the chat's own.
 const MAX_DEPTH = 8;
-// How long a bash ask waits for its call's input, and how often it looks.
+// How long a bash or task ask waits for its call's input, and how often it looks.
 const INPUT_WAIT_MS = 2_000;
 const INPUT_POLL_MS = 20;
+// Asks judged by their call's input: only the running call names a bash's workdir and the session a task resumes.
+const NEEDS_INPUT = new Set(['bash', 'task']);
 // 1.19 lists the tools once a user tool's dependencies are installed; a server stopped mid-install leaves a lock the next waits about a minute on (F5).
 const TOOL_IDS_TIMEOUT_MS = 90_000;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
@@ -391,11 +393,11 @@ class OpencodeTransport implements AgentTransport {
     this.answer(client, ask.id, reply);
   }
 
-  // 1.19 may ask about a bash call a moment before it says the call runs, and only the running call names its workdir.
+  // 1.19 asks about a task, and may ask about a bash call, a moment before it says the call runs.
   private async inputOf(ask: Ask, signal: AbortSignal): Promise<Record<string, unknown> | undefined> {
     if (ask.callID === null) return undefined;
     const end = Date.now() + INPUT_WAIT_MS;
-    while (ask.permission === 'bash' && this.events.input(ask.callID) === undefined && Date.now() < end && !signal.aborted) {
+    while (NEEDS_INPUT.has(ask.permission) && this.events.input(ask.callID) === undefined && Date.now() < end && !signal.aborted) {
       await new Promise((resolve) => setTimeout(resolve, INPUT_POLL_MS));
     }
     return this.events.input(ask.callID);
