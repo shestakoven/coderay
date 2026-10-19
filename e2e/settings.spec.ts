@@ -791,7 +791,7 @@ async function standInAccounts(page: Page, lists: { claude: object[]; codex: obj
   };
 }
 
-test('an opencode profile: added and cancelled by keyboard, its rule shown under the name, found by search, its providers loaded and filtered, a key\'s rule shown, a key saved that never shows and removed by keyboard, rows that stack at 820 px, and the profile removed', async ({ page }) => {
+test('an opencode profile: added and cancelled by keyboard, its rule shown under the name, found by search, its providers loaded and filtered, a key\'s rule shown, a key saved that never shows and removed by keyboard, rows that stack at 820 px, Escape folding the providers away with Settings open, and the profile removed', async ({ page }) => {
   const stand = await standInAccounts(page, { claude: [], codex: [], opencode: [] });
   await openApp(page);
   const dialog = await openSettings(page);
@@ -856,6 +856,11 @@ test('an opencode profile: added and cancelled by keyboard, its rule shown under
   expect(await beside()).toBe(true);
   await page.setViewportSize({ width: 820, height: 700 });
   await expect.poll(beside).toBe(false);
+  // Escape in the empty field folds the providers back onto their button; Settings stays open.
+  await page.keyboard.press('Escape');
+  await expect(profiles.getByRole('button', { name: 'Providers' })).toBeFocused();
+  await expect(rows).toHaveCount(0);
+  await expect(dialog).toBeVisible();
 
   await profiles.getByRole('button', { name: 'Remove', exact: true }).click();
   await profiles.getByRole('button', { name: 'Remove profile?' }).click();

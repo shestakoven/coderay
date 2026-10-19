@@ -54,6 +54,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest, provider
     if (input === null) setKey('empty');
   }, []);
   const cancelButton = useRef<HTMLButtonElement>(null);
+  const disclosure = useRef<HTMLButtonElement>(null);
   const name = ENGINE_NAMES[engine];
   // A login view without an engine comes from a core before engine-scoped accounts: it is Claude's.
   // A profile is made at once: the moment its view waits is no sign-in to show.
@@ -207,6 +208,7 @@ export function AccountsSection({ engine, view, login, busy, onRequest, provider
                   <span className="sw-account-actions">
                     {profile !== null && (
                       <button
+                        ref={open === profile ? disclosure : undefined}
                         type="button"
                         className="sw-btn ghost sw-disclosure"
                         aria-expanded={open === profile}
@@ -231,7 +233,18 @@ export function AccountsSection({ engine, view, login, busy, onRequest, provider
                 )}
               </div>
               {profile !== null && open === profile && (
-                <div id={`${keyId}-providers`} className="sw-account-detail">
+                <div
+                  id={`${keyId}-providers`}
+                  className="sw-account-detail"
+                  onKeyDown={(event) => {
+                    if (event.key !== 'Escape') return;
+                    // Escape folds the providers back onto their button, not the whole Settings dialog.
+                    event.preventDefault();
+                    event.stopPropagation();
+                    disclosure.current?.focus();
+                    onProviders?.(null);
+                  }}
+                >
                   <ProviderKeys
                     {...(providers[profile] ?? ASKED)}
                     accountId={profile}

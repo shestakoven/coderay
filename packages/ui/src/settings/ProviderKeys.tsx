@@ -21,7 +21,7 @@ function shown(providers: ProviderView[], query: string): ProviderView[] {
 
 const without = <T,>(record: Record<string, T>, id: string): Record<string, T> => Object.fromEntries(Object.entries(record).filter(([key]) => key !== id));
 
-// Escape empties a field that has text, and leaves an empty one's Escape to Settings.
+// Escape empties a field that has text, and leaves an empty one's Escape to the providers panel.
 function escapeEmpties(event: KeyboardEvent<HTMLInputElement>, empty: () => void): void {
   if (event.key !== 'Escape' || event.currentTarget.value === '') return;
   event.preventDefault();
