@@ -388,6 +388,11 @@ describe('AgentSession on opencode', () => {
     check: () => {}, decide: async () => ({ permissionDecision: 'allow', permissionDecisionReason: 'ok' }),
   };
   const opencodeChat = (h: Harness) => h.session.newSession({ modelChoice: NEMOTRON.modelChoice!, effort: null });
+  // An opencode profile named Work, active, with its own XDG homes.
+  const work = (): SessionAccounts => {
+    const dir = tempDir('oc-profile-');
+    return { activeId: () => 'work', home: () => ({ dir, env: opencodeHomes(dir), unset: [], args: [] }), label: () => 'Work', activeLabel: () => 'Work' };
+  };
 
   it("starts an opencode chat on its model and effort with the gate, opencode's prompt names, the rules and the project's instructions once each, idecore in opencode's dialect with the keep-alive and opencode's commands as skills, resumes opencode's session after a restart, and exempts from fail-opens only what its rules run without asking", async () => {
     const h = await harness({ overrides: { gate: allowAll, mcpServers: () => ({ idecore: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer core-secret' } } }) } });
@@ -402,26 +407,25 @@ describe('AgentSession on opencode', () => {
     await waitFor(() => h.session.state().turns.filter((turn) => turn.closedAt !== null).length === 2, 'the second turn closed');
     const [launch, resumed] = h.started;
     const opened = h.opencodeRecords().find((record) => record.session)?.session?.id;
-    const own = await harness({ overrides: { engines: undefined } });
+    const own = await harness({ overrides: { engines: undefined, accounts: { opencode: work() } } });
     expect([
       launch !== undefined && 'opencode' in launch && [launch.model, launch.effort, typeof launch.decide, launch.system, launch.mcp.config.idecore],
       h.session.state().skills, [resumed?.resume, resumed?.engineSessionId === opened],
       before, ['Read', 'LS', 'Skill', 'mcp__idecore__step', 'Bash', 'Edit', 'Write', 'Task', 'WebFetch', 'mcp__docs__write'].filter(h.session.exempt()),
-      // The core's own registry probes opencode with its shell in the run directory.
+      // The core's own registry probes opencode with its shell in the run directory, and names the active profile.
       await own.session.engines.get('opencode')?.status(), existsSync(join(runDir(own.home), 'opencode-shell')),
     ]).toEqual([
       ['opencode/nemotron-3.5-lightning-free', 'high', 'function', `Use edit, write, apply_patch; call idecore_propose_plan.\n\n${OPENCODE_RULES}\n\n## AGENTS.md\n# Project rules\nBe brief.\n`,
         { type: 'remote', url: 'http://127.0.0.1:9/mcp?keepAlive=1', headers: { Authorization: 'Bearer core-secret' }, enabled: true, timeout: 86_400_000 }],
       ['probe-skill'], [true, true],
       false, ['Read', 'LS', 'Skill', 'mcp__idecore__step'],
-      { engine: 'opencode', state: 'ready', hint: null }, true,
+      { engine: 'opencode', state: 'ready', hint: null, account: 'Work' }, true,
     ]);
   });
 
   it("runs an opencode chat in its profile's home, shows its refusal as a refused chat with the reason in that profile's words and tries again with the next message, and starts no opencode while the gate cannot decide yet", async () => {
-    const profile = tempDir('oc-profile-');
-    const work: SessionAccounts = { activeId: () => 'work', home: () => ({ dir: profile, env: opencodeHomes(profile), unset: [], args: [] }), label: () => 'Work', activeLabel: () => 'Work' };
-    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1', FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [], default: {} }) }, overrides: { accounts: { opencode: work } } });
+    const profile = work();
+    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1', FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [], default: {} }) }, overrides: { accounts: { opencode: profile } } });
     await opencodeChat(h);
     h.session.send('hi');
     await waitFor(() => h.session.state().session?.status === 'refused', 'the chat refused');
@@ -433,7 +437,7 @@ describe('AgentSession on opencode', () => {
     await opencodeChat(blocked);
     expect(() => blocked.session.send('hi')).toThrow('CodeRay could not get the gate ready, so the agent was not started.');
     expect([notices(h), [...homes], notices(blocked), blocked.started]).toEqual([
-      [reason, reason], [opencodeHomes(profile).XDG_CONFIG_HOME], ['CodeRay could not get the gate ready for opencode (the watchdog is not ready yet).'], [],
+      [reason, reason], [profile.home('work').env.XDG_CONFIG_HOME], ['CodeRay could not get the gate ready for opencode (the watchdog is not ready yet).'], [],
     ]);
   });
 

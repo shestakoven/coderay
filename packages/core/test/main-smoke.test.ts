@@ -1,5 +1,6 @@
 import { execFileSync, spawn, type ChildProcess } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
+import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
@@ -8,7 +9,7 @@ import type { ModelInfo, ServerMessage } from '@ide/protocol';
 import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE } from './fake-claude/fake';
 import { FAKE_CODEX } from './fake-codex/fake';
-import { FAKE_OPENCODE } from './fake-opencode/fake';
+import { FAKE_OPENCODE, opencodeRecords } from './fake-opencode/fake';
 import { fixture, tempDir, waitFor, writeTree } from './helpers';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
@@ -192,10 +193,11 @@ describe('main.ts', { timeout: 90_000 }, () => {
     expect([models(), waited < 6_000]).toEqual([[[['Sonnet'], ['codex']], [['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra'], undefined]], true]);
   });
 
-  it("runs opencode beside Claude and Codex, makes a profile from its name, and lists a provider's models once the active profile has its key", async () => {
+  it("runs opencode beside Claude and Codex, under the test's own XDG homes, makes a profile from its name, and lists a provider's models once the active profile has its key", async () => {
     const dir = tempDir('main-opencode-');
     mkdirSync(join(dir, 'home'));
-    const { messages, socket } = await startMain({ claude: sonnetClaude(dir), codex: FAKE_CODEX, opencode: FAKE_OPENCODE, env: { HOME: join(dir, 'home') } });
+    const record = join(dir, 'opencode.jsonl');
+    const { messages, socket } = await startMain({ claude: sonnetClaude(dir), codex: FAKE_CODEX, opencode: FAKE_OPENCODE, env: { HOME: join(dir, 'home'), FAKE_OPENCODE_RECORD: record } });
     const send = (message: object): void => socket.send(JSON.stringify(message));
     const answers = (requestId: string) => messages.flatMap((m) => ('requestId' in m && m.requestId === requestId ? [m] : []));
     const answered = (requestId: string) => waitFor(() => answers(requestId).find((m) => m.type === 'settings.result'), `the result of ${requestId}`, 20_000);
@@ -220,17 +222,19 @@ describe('main.ts', { timeout: 90_000 }, () => {
     send({ type: 'account.provider.set', requestId: 'r3', id, providerID: 'openai', apiKey: 'sk-test' });
     await answered('r3');
     const keyed = await listedAfter(beforeSelect + 1, 'the models once the profile has the key');
+    // A core run without --no-opencode starts it under System too: never in the owner's homes.
+    const homes = opencodeRecords(record).flatMap((r) => (r.xdg ? Object.values(r.xdg) : [])).map((path) => (path === null ? 'unset' : path.startsWith(homedir()) ? 'the owner\'s' : 'scratch'));
     expect([
       listed.map((model) => model.name), engines.type === 'engines.snapshot' && engines.engines.map((engine) => [engine.engine, engine.state]),
       refused, profiles(), answers('r3').map((m) => [m.type, m.type === 'settings.providers' && m.providers.find((p) => p.id === 'openai')?.connected, 'error' in m && m.error]),
-      opencodeNames(selected), opencodeNames(keyed),
+      opencodeNames(selected), opencodeNames(keyed), [...new Set(homes)],
     ]).toEqual([
       ['Sonnet', 'GPT-6-Luna', 'GPT-5.6-Terra', 'OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)'], [['claude', 'ready'], ['codex', 'ready'], ['opencode', 'ready']],
       { type: 'settings.result', requestId: 'bad', error: 'A profile name is 1 to 40 characters without control characters.' },
       { engine: 'opencode', accounts: [{ id, email: 'Work', createdAt: expect.any(Number) }], activeId: id },
       [['settings.providers', true, null], ['settings.result', false, null]],
       ['OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)'],
-      ['OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)', 'OpenAI · Stub'],
+      ['OpenCode Zen · Nemotron 3.5 Lightning (free)', 'OpenCode Zen · GPT OSS 120B (free)', 'OpenAI · Stub'], ['scratch'],
     ]);
   });
 });
