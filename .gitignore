@@ -1,5 +1,5 @@
 .superpowers/
-.ide/*.sqlite*
+.ide/
 node_modules/
 .worktrees/
 spike/
