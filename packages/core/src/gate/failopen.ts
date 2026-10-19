@@ -6,8 +6,6 @@ import type { ActivityLedger } from '../watchdog/activity';
 import type { Watchdog } from '../watchdog/watchdog';
 import type { HookGate } from './hook-gate';
 
-export const NO_HOOK_TOOLS: ReadonlySet<string> = new Set<string>();
-
 const KEPT_REPORTED = 100_000;
 
 export interface FailOpenOptions {
@@ -16,7 +14,8 @@ export interface FailOpenOptions {
   changes: Pick<ChangeService, 'reattribute' | 'humanIn'>;
   watchdog: Pick<Watchdog, 'raiseFailOpen' | 'isPending'>;
   record: (record: ToolDecisionRecord) => void;
-  exempt?: ReadonlySet<string>;
+  /** The tools the chat's engine runs without asking the gate, by its own rules: their ok end without a decision is no fail-open. */
+  exempt?: () => (toolName: string) => boolean;
   now?: () => number;
   /** The chat's engine runs its calls in an OS sandbox: a call the gate never saw could not write. */
   sandboxed?: () => boolean;
@@ -30,7 +29,7 @@ export class FailOpenDetector {
   toolEnded(e: ToolEndInfo): void {
     try {
       if (this.o.sandboxed?.()) return;
-      if (e.status !== 'ok' || (this.o.exempt ?? NO_HOOK_TOOLS).has(e.tool)) return;
+      if (e.status !== 'ok' || this.o.exempt?.()(e.tool)) return;
       const seen = this.o.gate.hasCall(e.toolUseId);
       if (seen === 'decided' || this.reported.has(e.toolUseId)) return;
       this.reported.add(e.toolUseId);

@@ -1,36 +1,44 @@
 import { randomUUID } from 'node:crypto';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, symlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import type { EngineId } from '@ide/protocol';
 import { AccountStore } from '../../src/accounts/account-store';
-import { AgentSession, type AgentSessionOptions, type SessionGate } from '../../src/agent/agent-session';
+import { AgentSession, type AgentSessionOptions, type SessionAccounts, type SessionGate } from '../../src/agent/agent-session';
 import type { ClaudeCommand } from '../../src/agent/claude-process';
 import type { CodexCommand } from '../../src/agent/codex/command';
 import { claudeEngine } from '../../src/agent/engines/claude';
 import { codexEngine } from '../../src/agent/engines/codex';
+import { opencodeEngine } from '../../src/agent/engines/opencode';
 import { EngineRegistry, type Engine } from '../../src/agent/engines/registry';
+import type { OpencodeCommand } from '../../src/agent/opencode/command';
+import { OPENCODE_RULES } from '../../src/agent/system-prompt';
 import type { Launch } from '../../src/agent/transport';
-import { projectDir } from '../../src/home';
+import { projectDir, runDir } from '../../src/home';
 import { isAlive } from '../../src/os-process';
 import { openStore, type Store } from '../../src/store/store';
 import { transcriptPath } from '../../src/watchdog/recovery';
 import { argValue, fakeClaude } from '../fake-claude/fake';
 import { codexRecords, fakeCodex, type CodexRecord } from '../fake-codex/fake';
-import { sessionRecord, SONNET, tempDir, waitFor } from '../helpers';
+import { fakeOpencode, opencodeHomes, opencodeRecords, type OpencodeRecord } from '../fake-opencode/fake';
+import { fixture, NEMOTRON, sessionRecord, SONNET, tempDir, waitFor } from '../helpers';
 
 interface Harness {
   session: AgentSession;
   store: Store;
+  home: string;
+  root: string;
   started: Launch[];
   codexRecords: () => CodexRecord[];
+  opencodeRecords: () => OpencodeRecord[];
 }
 
 // Each engine runs on its own fake; every start is recorded with the engine's launch.
-function registry(claude: ClaudeCommand, codex: CodexCommand, started: Launch[], ids: EngineId[]): EngineRegistry {
+function registry(claude: ClaudeCommand, codex: CodexCommand, opencode: OpencodeCommand, started: Launch[], ids: EngineId[]): EngineRegistry {
   const engines: Record<string, Engine> = {
     claude: claudeEngine({ command: () => claude, cwd: '/' }),
     codex: codexEngine({ command: () => codex, cwd: '/', signedOut: () => 'Sign in.' }),
+    opencode: opencodeEngine({ command: () => opencode, cwd: '/', userServers: () => [] }),
   };
   return new EngineRegistry(ids.map((id): Engine => {
     const engine = engines[id]!;
@@ -40,7 +48,7 @@ function registry(claude: ClaudeCommand, codex: CodexCommand, started: Launch[],
 
 async function harness(options: {
   engines?: EngineId[]; seed?: (store: Store, root: string, transcriptsDir: string) => void; overrides?: Partial<AgentSessionOptions>;
-  claudeScenario?: string; codexScenario?: string; codexEnv?: Record<string, string>;
+  claudeScenario?: string; codexScenario?: string; codexEnv?: Record<string, string>; opencodeScenario?: string; opencodeEnv?: Record<string, string>;
 } = {}): Promise<Harness> {
   const home = tempDir('ide-home-');
   const root = tempDir('ide-root-');
@@ -51,13 +59,16 @@ async function harness(options: {
   const claude = fakeClaude(options.claudeScenario ?? 'multi-turn', join(home, `record-${randomUUID()}.jsonl`));
   const codexRecord = join(home, `codex-${randomUUID()}.jsonl`);
   const codex = fakeCodex(options.codexScenario ?? 'multi-turn', codexRecord, options.codexEnv);
+  const opencodeRecord = join(home, `opencode-${randomUUID()}.jsonl`);
+  const opencode = fakeOpencode(options.opencodeScenario ?? fixture('opencode/multi-turn.jsonl'), opencodeRecord, { ...opencodeHomes(home), ...options.opencodeEnv });
   const started: Launch[] = [];
   const session = new AgentSession({
-    root, home, store, claude, codex, transcriptsDir, engines: registry(claude, codex, started, options.engines ?? ['claude', 'codex']), defaultModel: SONNET, ...options.overrides,
+    root, home, store, claude, codex, opencode, transcriptsDir,
+    engines: registry(claude, codex, opencode, started, options.engines ?? ['claude', 'codex', 'opencode']), defaultModel: SONNET, ...options.overrides,
   });
   onTestFinished(() => session.close());
   await session.start();
-  return { session, store, started, codexRecords: () => codexRecords(codexRecord) };
+  return { session, store, home, root, started, codexRecords: () => codexRecords(codexRecord), opencodeRecords: () => opencodeRecords(opencodeRecord) };
 }
 
 // A Codex chat whose core was killed mid-turn: still marked running, with a message, and a Claude transcript beside it.
@@ -368,5 +379,82 @@ describe('AgentSession on Codex', () => {
     h.session.send('again');
     await waitFor(() => h.session.state().session?.status === 'crashed', 'the agent crashed');
     expect(notices(h)).toEqual(['Codex: unexpected status 503 Service Unavailable', expect.stringMatching(/^codex stopped unexpectedly \(exit code 3\)/)]);
+  });
+});
+
+describe('AgentSession on opencode', () => {
+  const allowAll: SessionGate = {
+    write: () => ({ settingsPath: '/dev/null' }), remove: () => {}, systemPrompt: (names) => `Use ${names.writeTools}; call ${names.idecore('propose_plan')}.`,
+    check: () => {}, decide: async () => ({ permissionDecision: 'allow', permissionDecisionReason: 'ok' }),
+  };
+  const opencodeChat = (h: Harness) => h.session.newSession({ modelChoice: NEMOTRON.modelChoice!, effort: null });
+  // An opencode profile named Work, active, with its own XDG homes.
+  const work = (): SessionAccounts => {
+    const dir = tempDir('oc-profile-');
+    return { activeId: () => 'work', home: () => ({ dir, env: opencodeHomes(dir), unset: [], args: [] }), label: () => 'Work', activeLabel: () => 'Work' };
+  };
+
+  it("starts an opencode chat on its model and effort with the gate, opencode's prompt names, the rules and the project's instructions once each, idecore in opencode's dialect with the keep-alive and opencode's commands as skills, resumes opencode's session after a restart, and exempts from fail-opens only what its rules run without asking", async () => {
+    const h = await harness({ overrides: { gate: allowAll, mcpServers: () => ({ idecore: { type: 'http', url: 'http://127.0.0.1:9/mcp', headers: { Authorization: 'Bearer core-secret' } } }) } });
+    writeFileSync(join(h.root, 'AGENTS.md'), '# Project rules\nBe brief.\n');
+    symlinkSync('AGENTS.md', join(h.root, 'CLAUDE.md'));
+    const before = h.session.exempt()('Read');
+    await h.session.newSession({ modelChoice: NEMOTRON.modelChoice!, effort: 'high' });
+    h.session.send('hi');
+    await turnClosed(h);
+    await h.session.restart();
+    h.session.send('again');
+    await waitFor(() => h.session.state().turns.filter((turn) => turn.closedAt !== null).length === 2, 'the second turn closed');
+    const [launch, resumed] = h.started;
+    const opened = h.opencodeRecords().find((record) => record.session)?.session?.id;
+    const own = await harness({ overrides: { engines: undefined, accounts: { opencode: work() } } });
+    expect([
+      launch !== undefined && 'opencode' in launch && [launch.model, launch.effort, typeof launch.decide, launch.system, launch.mcp.config.idecore],
+      h.session.state().skills, [resumed?.resume, resumed?.engineSessionId === opened],
+      before, ['Read', 'LS', 'Skill', 'mcp__idecore__step', 'Bash', 'Edit', 'Write', 'Task', 'WebFetch', 'mcp__docs__write'].filter(h.session.exempt()),
+      // The core's own registry probes opencode with its shell in the run directory, and names the active profile.
+      await own.session.engines.get('opencode')?.status(), existsSync(join(runDir(own.home), 'opencode-shell')),
+    ]).toEqual([
+      ['opencode/nemotron-3.5-lightning-free', 'high', 'function', `Use edit, write, apply_patch; call idecore_propose_plan.\n\n${OPENCODE_RULES}\n\n## AGENTS.md\n# Project rules\nBe brief.\n`,
+        { type: 'remote', url: 'http://127.0.0.1:9/mcp?keepAlive=1', headers: { Authorization: 'Bearer core-secret' }, enabled: true, timeout: 86_400_000 }],
+      ['probe-skill'], [true, true],
+      false, ['Read', 'LS', 'Skill', 'mcp__idecore__step'],
+      { engine: 'opencode', state: 'ready', hint: null, account: 'Work' }, true,
+    ]);
+  });
+
+  it("runs an opencode chat in its profile's home, shows its refusal as a refused chat with the reason in that profile's words and tries again with the next message, and starts no opencode while the gate cannot decide yet", async () => {
+    const profile = work();
+    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1', FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [], default: {} }) }, overrides: { accounts: { opencode: profile } } });
+    await opencodeChat(h);
+    h.session.send('hi');
+    await waitFor(() => h.session.state().session?.status === 'refused', 'the chat refused');
+    h.session.send('again');
+    await waitFor(() => h.started.length === 2 && h.session.state().session?.status === 'refused', 'refused again');
+    const reason = 'opencode has no provider "opencode" connected for this model. Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.';
+    const homes = new Set(h.opencodeRecords().flatMap((record) => (record.pid === undefined ? [] : [record.xdg?.XDG_CONFIG_HOME])));
+    const blocked = await harness({ overrides: { gate: { ...allowAll, check: () => { throw new Error('the watchdog is not ready yet'); } } } });
+    await opencodeChat(blocked);
+    expect(() => blocked.session.send('hi')).toThrow('CodeRay could not get the gate ready, so the agent was not started.');
+    expect([notices(h), [...homes], notices(blocked), blocked.started]).toEqual([
+      [reason, reason], [profile.home('work').env.XDG_CONFIG_HOME], ['CodeRay could not get the gate ready for opencode (the watchdog is not ready yet).'], [],
+    ]);
+  });
+
+  it("says once that the project's instructions were cut, names the server a chat runs on, the second one after the one that read the user's servers, and reads its crash in opencode's words", async () => {
+    const h = await harness({ opencodeScenario: fixture('opencode/hang.jsonl'), opencodeEnv: { FAKE_OPENCODE_CONFIG: JSON.stringify({ mcp: { usersrv: { type: 'local', command: ['node'] } } }) } });
+    writeFileSync(join(h.root, 'CLAUDE.md'), 'x'.repeat(70_000));
+    await opencodeChat(h);
+    h.session.send('hi');
+    await waitFor(() => h.session.state().items.some((item) => item.kind === 'tool'), 'the server runs the turn');
+    const servers = h.opencodeRecords().filter((record) => record.pid !== undefined);
+    const chat = servers.at(-1)!;
+    expect([servers.length, (chat.configContent as { mcp: Record<string, unknown> }).mcp.usersrv, h.store.session(h.session.sessionId()!)?.pid, existsSync(join(runDir(h.home), `opencode-${chat.pid}.pid.json`))])
+      .toEqual([2, { enabled: false }, chat.pid, true]);
+    process.kill(chat.pid!, 'SIGKILL');
+    await waitFor(() => h.session.state().session?.status === 'crashed', 'the chat crashed');
+    expect(notices(h)).toEqual([
+      "The project's instructions (AGENTS.md, CLAUDE.md) are longer than 64 KB: opencode gets only their first 64 KB.", expect.stringMatching(/^opencode stopped unexpectedly \(signal SIGKILL\)/),
+    ]);
   });
 });

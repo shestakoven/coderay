@@ -12,6 +12,8 @@ export interface RunOptions {
   // The caller shows the error itself (inside a form), so no toast
   inline?: boolean;
   onSettled?: (error: string | null) => void;
+  // A request that starts a process of its engine, such as opencode for a provider key, may take longer than the usual wait.
+  timeoutMs?: number;
 }
 
 const ANSWER_TIMEOUT_MS = 15_000;
@@ -51,7 +53,7 @@ export function useRequests(send: (message: ClientMessage) => boolean, lastResul
 
   useEffect(() => {
     if (!pending) return;
-    const timer = setTimeout(() => settle('The core did not answer. Try again.', pending.options), ANSWER_TIMEOUT_MS);
+    const timer = setTimeout(() => settle('The core did not answer. Try again.', pending.options), pending.options.timeoutMs ?? ANSWER_TIMEOUT_MS);
     return () => clearTimeout(timer);
   }, [pending, settle]);
 

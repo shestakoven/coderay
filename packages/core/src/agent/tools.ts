@@ -7,9 +7,10 @@ export const DISALLOWED_TOOLS = [
 
 export const MIN_CLAUDE_VERSION = '2.1.296';
 export const MIN_CODEX_VERSION = '0.160.0';
+export const MIN_OPENCODE_VERSION = '1.19.0';
 
 /** The oldest version of each engine's binary CodeRay was verified with. */
-export const MIN_VERSIONS: Record<EngineId, string> = { claude: MIN_CLAUDE_VERSION, codex: MIN_CODEX_VERSION, opencode: '1.19.0' };
+export const MIN_VERSIONS: Record<EngineId, string> = { claude: MIN_CLAUDE_VERSION, codex: MIN_CODEX_VERSION, opencode: MIN_OPENCODE_VERSION };
 
 export const ENGINE_BINARIES: Record<EngineId, string> = { claude: 'claude', codex: 'codex', opencode: 'opencode' };
 

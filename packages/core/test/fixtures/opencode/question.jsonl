@@ -1,0 +1,9 @@
+{"question":{"text":"A or B?","options":["A","B"],"callID":"call_q1"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_chose","type":"text","text":"","time":{"start":1}}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_chose","field":"text","delta":"You chose A."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_chose","type":"text","text":"You chose A.","time":{"start":1,"end":2}}}}
+{"fake":"await-turn"}
+{"question":{"text":"C or D?","options":["C","D"],"callID":"call_q2"}}
+{"fake":"await-turn"}
+{"question":{"text":"E or F?","options":["E","F"],"callID":"call_q3","session":"unannounced"}}
+{"question":{"text":"G or H?","options":["G","H"],"callID":"call_q4","session":"ses_foreign"}}

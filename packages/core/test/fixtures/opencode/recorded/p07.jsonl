@@ -1,0 +1,5 @@
+{"dir":"req","msg":{"method":"GET","path":"/experimental/tool/ids"}}
+{"dir":"res","msg":{"path":"/experimental/tool/ids","status":200,"body":["invalid","question","bash","read","glob","grep","edit","write","task","webfetch","todowrite","websearch","skill","apply_patch","globaltool","globaltools"]}}
+{"dir":"req","msg":{"method":"POST","path":"/global/dispose"}}
+{"dir":"res","msg":{"path":"/global/dispose","status":200,"body":true}}
+{"dir":"sse","msg":{"id":"evt_1498d230900132toW902cKTNJX","type":"server.instance.disposed","properties":{"directory":"$TMP/oc-e3-project-eKyWVy"}}}

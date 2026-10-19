@@ -11,7 +11,8 @@ import { startServer, type RunningServer } from '../../src/server/server';
 import { openStore, type Store } from '../../src/store/store';
 import { fakeClaude, readRecords, type FakeRecord } from '../fake-claude/fake';
 import { codexRecords, fakeCodex, type CodexRecord } from '../fake-codex/fake';
-import { LUNA, SONNET, tempDir, waitFor, writeTree } from '../helpers';
+import { fakeOpencode, opencodeHomes, opencodeRecords, type OpencodeRecord } from '../fake-opencode/fake';
+import { LUNA, NEMOTRON, SONNET, tempDir, waitFor, writeTree } from '../helpers';
 
 export const FILES = { 'src/app.ts': "export const greeting = 'helo';\n", 'src/other.ts': "export const other = 'helo';\n", 'notes.txt': 'notes\n' };
 export const COMPONENTS = [{ id: 'app', name: 'App', files: ['src/app.ts', 'src/other.ts'], globs: [] }];
@@ -31,6 +32,7 @@ export interface Built {
   generate: ReturnType<typeof vi.fn>;
   records(): FakeRecord[];
   codexRecords(): CodexRecord[];
+  opencodeRecords(): OpencodeRecord[];
   // What the core typed into the agent's terminal.
   typed: string[];
   send(): Promise<void>;
@@ -50,9 +52,12 @@ export interface BuildOptions {
   files?: Record<string, string>;
   claudeEnv?: Record<string, string>;
   canaryMs?: number;
-  engine?: 'claude' | 'codex';
+  engine?: 'claude' | 'codex' | 'opencode';
   codexEnv?: Record<string, string>;
+  opencodeEnv?: Record<string, string>;
 }
+
+const DEFAULT_MODELS = { claude: SONNET, codex: LUNA, opencode: NEMOTRON };
 
 let builds = 0;
 
@@ -83,9 +88,12 @@ export async function build(options: BuildOptions): Promise<Built> {
   const fake = fakeClaude(scenarioPath, recordFile);
   const codexRecord = join(home, `codex-record-${n}.jsonl`);
   const codex = options.engine === 'codex' ? fakeCodex(scenarioPath, codexRecord, options.codexEnv) : undefined;
+  // One per home, as opencode's database: a core started again on the same home finds the sessions and the progress of the last one.
+  const opencodeRecord = join(home, 'opencode-record.jsonl');
+  const opencode = options.engine === 'opencode' ? fakeOpencode(scenarioPath, opencodeRecord, { ...opencodeHomes(home), ...options.opencodeEnv }) : undefined;
   const session = new AgentSession({
     root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000,
-    ...(codex ? { codex } : {}), defaultModel: options.engine === 'codex' ? LUNA : SONNET,
+    ...(codex ? { codex } : {}), ...(opencode ? { opencode } : {}), defaultModel: DEFAULT_MODELS[options.engine ?? 'claude'],
     mcpServers: () => ({ idecore: rt.gate.mcpEntry() }), ...rt.sessionOptions, terminalInput: (data) => typed.push(data),
   });
   rt.attach(session);
@@ -103,7 +111,7 @@ export async function build(options: BuildOptions): Promise<Built> {
   if (options.start !== false) await rt.start();
   return {
     rt, session, store, root, home, shadowDir, generate,
-    records: () => readRecords(recordFile), codexRecords: () => codexRecords(codexRecord), typed,
+    records: () => readRecords(recordFile), codexRecords: () => codexRecords(codexRecord), opencodeRecords: () => opencodeRecords(opencodeRecord), typed,
     send: async () => {
       session.send('go');
       await waitFor(() => session.hasOpenTurn(), 'turn open');

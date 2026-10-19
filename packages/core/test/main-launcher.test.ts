@@ -11,7 +11,7 @@ const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
 
 function spawnLauncher(base: string, port: number | string) {
-  const child: ChildProcess = spawn(process.execPath, ['--import', 'tsx', MAIN, '--ide-home', join(base, 'home'), '--port', String(port), '--ui', join(base, 'ui'), '--no-codex'], {
+  const child: ChildProcess = spawn(process.execPath, ['--import', 'tsx', MAIN, '--ide-home', join(base, 'home'), '--port', String(port), '--ui', join(base, 'ui'), '--no-codex', '--no-opencode'], {
     cwd: REPO,
     stdio: ['ignore', 'pipe', 'pipe'],
   });

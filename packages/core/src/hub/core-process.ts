@@ -15,6 +15,7 @@ const STDERR_DRAIN_MS = 500;
 export interface ChildCoreFlags {
   claude: string;
   codex: string | null;
+  opencode: string | null;
   noMapMcp: boolean;
   noAgentSearch: boolean;
   allowedOrigins: string[];
@@ -38,6 +39,7 @@ export function childCoreArgs({ root, port, home, hubPort }: ChildCoreTarget, fl
     '--ide-home', home,
     '--claude', flags.claude,
     ...(flags.codex === null ? ['--no-codex'] : ['--codex', flags.codex]),
+    ...(flags.opencode === null ? ['--no-opencode'] : ['--opencode', flags.opencode]),
     ...(flags.noMapMcp ? ['--no-map-mcp'] : []),
     ...(flags.noAgentSearch ? ['--no-agent-search'] : []),
     ...origins.flatMap((origin) => ['--allow-origin', origin]),

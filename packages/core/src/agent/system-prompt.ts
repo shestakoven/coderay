@@ -66,3 +66,43 @@ export const CODEX_APPROVALS = [
 ].join(' ');
 
 export const codexInstructions = (prompt: string | null): string => (prompt === null ? CODEX_APPROVALS : `${prompt}\n\n${CODEX_APPROVALS}`);
+
+export const OPENCODE_PROMPT_NAMES: PromptNames = {
+  idecore: (tool) => `idecore_${tool}`,
+  writeTools: 'edit, write, apply_patch',
+  exploreTools: 'glob, grep, read or an exploratory bash command',
+};
+
+/** How opencode's asks reach CodeRay and what each kind of rejection means. */
+export const OPENCODE_RULES = [
+  'CodeRay asks the user before each write (edit, write, apply_patch, a bash command that writes, a subagent, a web fetch).',
+  "A rejection with a reason comes from CodeRay's guard: read it, adapt, and do not retry the same call. A rejection without a reason is the user's: stop and wait for the user's next message.",
+  'Never ask for a permission to be remembered (`always`).',
+].join(' ');
+
+export const MAX_PROJECT_INSTRUCTIONS = 64 * 1024;
+export const INSTRUCTIONS_CUT = '\n(project instructions cut at 64 KB)';
+
+// Whole characters only: a cut inside one would leave a broken byte sequence.
+function firstBytes(text: string, bytes: number): string {
+  let cut = Buffer.from(text).subarray(0, bytes).toString();
+  while (!text.startsWith(cut)) cut = cut.slice(0, -1);
+  return cut;
+}
+
+/** The text sent as `system` with every prompt: the gate prompt, the rules, then the project's AGENTS.md and CLAUDE.md (cut at MAX_PROJECT_INSTRUCTIONS bytes). */
+export function opencodeSystem(prompt: string | null, instructions: { path: string; text: string }[]): string {
+  const sections: string[] = [];
+  let left = MAX_PROJECT_INSTRUCTIONS;
+  for (const { path, text } of instructions) {
+    const section = `## ${path}\n${text}`;
+    const bytes = Buffer.byteLength(section);
+    if (bytes > left) {
+      sections.push(`${firstBytes(section, left)}${INSTRUCTIONS_CUT}`);
+      break;
+    }
+    sections.push(section);
+    left -= bytes;
+  }
+  return [...(prompt === null ? [] : [prompt]), OPENCODE_RULES, ...sections].join('\n\n');
+}

@@ -1,6 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
 import type { AccountLoginView, AccountView, EngineAccountsView, EngineId } from '@ide/protocol';
+import { profileNameProblem, providerKeyProblem, type ProviderList } from '../src/settings/accounts';
 import { AccountsSection } from '../src/settings/AccountsSection';
 
 interface Element {
@@ -166,8 +167,10 @@ describe('AccountsSection sign-in', () => {
 
 const WORK = { id: '3c1e8f5a-7d2b-4c6e-9a1f-2b3c4d5e6f70', email: 'work@example.com', plan: 'Plus', createdAt: 3 };
 
-function renderEngine(engine: EngineId, view: Partial<EngineAccountsView> = {}, login: AccountLoginView = idle): Element {
-  return parse(renderToStaticMarkup(<AccountsSection engine={engine} view={{ engine, accounts: [], activeId: null, ...view }} login={login} busy={false} onRequest={() => undefined} />));
+function renderEngine(engine: EngineId, view: Partial<EngineAccountsView> = {}, login: AccountLoginView = idle, providers?: { lists: Record<string, ProviderList>; open: string }): Element {
+  return parse(renderToStaticMarkup(
+    <AccountsSection engine={engine} view={{ engine, accounts: [], activeId: null, ...view }} login={login} busy={false} onRequest={() => undefined} providers={providers?.lists} open={providers?.open} />,
+  ));
 }
 
 describe('AccountsSection per engine', () => {
@@ -190,5 +193,50 @@ describe('AccountsSection per engine', () => {
     const root = renderEngine('codex', {}, { state: 'waiting', engine: 'codex', method: 'device-code', url: 'https://auth.example.test/codex/device?s=SECRET', userCode: 'ABCD-1234', error: null });
     expect([buttons(root, 'Open the device page').map(isDisabled), textOf(root).includes('ABCD-1234'), buttons(root, 'Copy').length, textOf(root).includes('SECRET'), buttons(root, 'Cancel').length])
       .toStrictEqual([[false], true, 1, false, 1]);
+  });
+});
+
+const NAME_RULE = 'A profile name is 1 to 40 characters without control characters.';
+const COMMAND = "XDG_DATA_HOME='/h/data' XDG_CONFIG_HOME='/h/config' XDG_STATE_HOME='/h/state' XDG_CACHE_HOME='/h/cache' opencode auth login";
+const hasClass = (name: string) => (element: Element): boolean => (element.attrs.class ?? '').split(/\s+/).includes(name);
+const labelled = (tag: string, label: string) => (element: Element): boolean => element.tag === tag && element.attrs['aria-label'] === label;
+
+describe('opencode profiles', () => {
+  it('offers "Add profile" under System with its note, and judges a name and a key as the core does', () => {
+    const root = renderEngine('opencode');
+    // The core's view waits for a moment while it makes a profile: that is no sign-in to show.
+    const making = renderEngine('opencode', {}, { ...idle, state: 'waiting', engine: 'opencode', method: 'profile' });
+    expect([
+      rows(root).map((row) => row.text), [root, making].map((section) => all(section, (element) => element.tag === 'button').map(textOf)),
+      profileNameProblem(` ${'x'.repeat(40)} `), profileNameProblem('   '), profileNameProblem('a\u0007b'), profileNameProblem('x'.repeat(41)),
+      providerKeyProblem('sk-test'), providerKeyProblem('has space'),
+    ]).toStrictEqual([
+      ["System opencode's own providers and keys active"], [['Add profile'], ['Add profile']],
+      null, NAME_RULE, NAME_RULE, NAME_RULE, null, 'A key is 1 to 512 characters without spaces.',
+    ]);
+  });
+
+  it("shows an open profile's providers: loading, then the connected ones first, a masked key field whose Save waits for a key, and the terminal command for an oauth-only one", () => {
+    const view = { accounts: [{ id: A.id, email: 'Work', createdAt: 1 }], activeId: A.id };
+    const list = (state: Partial<ProviderList>): Element => renderEngine('opencode', view, idle, { open: A.id, lists: { [A.id]: { loading: false, providers: [], loginCommand: '', error: null, ...state } } });
+    const loaded = list({ loginCommand: COMMAND, providers: [
+      { id: 'openai', name: 'OpenAI', connected: false, methods: ['api'], env: ['OPENAI_API_KEY'] },
+      { id: 'github-copilot', name: 'GitHub Copilot', connected: false, methods: ['oauth'], env: [] },
+      { id: 'openrouter', name: 'OpenRouter', connected: true, methods: ['api'], env: ['OPENROUTER_API_KEY'] },
+    ] });
+    const field = all(loaded, labelled('input', 'OpenAI API key'))[0]!;
+    const providerRows = all(loaded, hasClass('sw-provider-row'));
+    expect([
+      textOf(list({ loading: true })).includes('Loading providers…'),
+      all(loaded, (element) => element.tag === 'button' && 'aria-expanded' in element.attrs).map((button) => [textOf(button), button.attrs['aria-expanded']]),
+      providerRows.map((row) => [textOf(all(row, (element) => element.tag === 'b')[0]!), textOf(all(row, hasClass('sw-provider-state'))[0]!), all(row, (element) => element.tag === 'button').map((button) => textOf(button) || button.attrs['aria-label'])]),
+      [field.attrs.type, field.attrs.autocomplete, 'value' in field.attrs],
+      all(loaded, labelled('button', 'Save OpenAI key')).map(isDisabled),
+      [textOf(providerRows[1]!).includes('Sign in in a terminal'), all(loaded, (element) => element.tag === 'code').map(textOf)],
+    ]).toStrictEqual([
+      true, [['Providers', 'true']],
+      [['OpenRouter', 'connected', ['Save', 'Remove the OpenRouter key']], ['GitHub Copilot', 'not connected', ['Copy']], ['OpenAI', 'not connected', ['Save']]],
+      ['password', 'new-password', false], [true], [true, [COMMAND]],
+    ]);
   });
 });

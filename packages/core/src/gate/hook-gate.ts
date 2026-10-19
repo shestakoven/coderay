@@ -31,6 +31,8 @@ export interface HookAnswer {
   permissionDecision: 'allow' | 'deny';
   permissionDecisionReason: string;
   additionalContext?: string;
+  /** The user's own refusal or a call that ran out of time: an engine that can end the turn passes no reason on. */
+  final?: true;
 }
 
 export interface GateContext {
@@ -105,6 +107,7 @@ const ALLOWED = new Set<ToolDecision>(['allow', 'unchecked', 'ask-approved', 'fl
 
 const allow = (reason: string): HookAnswer => ({ permissionDecision: 'allow', permissionDecisionReason: reason });
 const deny = (reason: string): HookAnswer => ({ permissionDecision: 'deny', permissionDecisionReason: reason });
+const final = (reason: string): HookAnswer => ({ ...deny(reason), final: true });
 
 export class HookGate {
   private readonly options: HookGateOptions;
@@ -199,10 +202,10 @@ export class HookGate {
       if (held) {
         waited = hold.isHeld();
         const remaining = deadline - this.now();
-        if (remaining <= 0) return deny(NO_RESPONSE);
+        if (remaining <= 0) return final(NO_RESPONSE);
         const wait = await hold.wait(signal, remaining);
         if (wait === 'aborted') return null;
-        if (wait === 'timeout') return deny(NO_RESPONSE);
+        if (wait === 'timeout') return final(NO_RESPONSE);
       }
       const mode = this.options.policy().mode;
       const generation = hold?.generation();
@@ -308,13 +311,13 @@ export class HookGate {
       const reason = outcome === 'timeout' ? NO_RESPONSE : CALL_ENDED;
       this.close(view, event, null, 'dropped');
       this.record(input, judged, 'deny', reason);
-      return deny(reason);
+      return outcome === 'timeout' ? final(reason) : deny(reason);
     }
     if (outcome === 'deny') {
       const reason = `CodeRay: the user denied this call (${describeTargets(judged.decision.outOfScope) || input.toolName}). Stop and wait for the user's next message.`;
       this.close(view, event, 'deny', 'denied');
       this.record(input, judged, 'ask-denied', reason);
-      return deny(reason);
+      return final(reason);
     }
     if (outcome === 'allow-once') {
       this.close(view, event, 'allow-once', 'allowed-once', input.batch);

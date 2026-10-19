@@ -1,0 +1,4 @@
+{"ask":"bash","running":"after","callID":"call_sh1","patterns":["ls","echo x > esc.txt"],"input":{"command":"ls && echo x > esc.txt","description":"write"},"metadata":{"command":"ls && echo x > esc.txt"},"apply":{"path":"esc.txt","content":"x\n"}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_done","type":"text","text":"","time":{"start":1}}}}
+{"type":"message.part.delta","properties":{"sessionID":"$SESSION","messageID":"$MESSAGE","partID":"prt_done","field":"text","delta":"Done."}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_done","type":"text","text":"Done.","time":{"start":1,"end":2}}}}

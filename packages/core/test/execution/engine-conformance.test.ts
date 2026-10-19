@@ -5,7 +5,7 @@ import type { ChatItem } from '@ide/protocol';
 import { argValue } from '../fake-claude/fake';
 import { sent } from '../fake-codex/fake';
 import { fixture, waitFor } from '../helpers';
-import { AWAIT, build, HOLD_OPEN, INIT, type Built } from './harness';
+import { AWAIT, build, FILES, HOLD_OPEN, INIT, type Built } from './harness';
 
 describe('A plan waiting for an answer in a Codex chat', () => {
   it('is withdrawn when the turn ends with its propose_plan call still open, since its answer would reach nobody', async () => {
@@ -34,7 +34,7 @@ describe('A plan waiting for an answer in a Codex chat', () => {
   });
 });
 
-type EngineName = 'claude' | 'codex';
+type EngineName = 'claude' | 'codex' | 'opencode';
 const RESULT = '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"$SESSION"}';
 const say = (words: string): string => JSON.stringify({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: words }] }, parent_tool_use_id: null, session_id: '$SESSION' });
 const EDIT = JSON.stringify({ fake: 'tool', id: 'toolu_edit', name: 'Edit', input: { file_path: '$CWD/src/other.ts', old_string: 'helo', new_string: 'hello' }, result: 'The file was updated.', apply: true });
@@ -47,18 +47,25 @@ const codexRead = [
   JSON.stringify({ method: 'item/started', params: { threadId: '$THREAD', turnId: '$TURN', item: { ...LS, status: 'inProgress', aggregatedOutput: null, exitCode: null } } }),
   JSON.stringify({ method: 'item/completed', params: { threadId: '$THREAD', turnId: '$TURN', item: { ...LS, status: 'completed', aggregatedOutput: 'app.ts\nother.ts\n', exitCode: 0 } } }),
 ];
+const ocPart = (part: object): string => JSON.stringify({ type: 'message.part.updated', properties: { sessionID: '$SESSION', part: { sessionID: '$SESSION', messageID: '$MESSAGE', ...part } } });
+const ocSay = (words: string): string => ocPart({ type: 'text', text: words, time: { start: 1, end: 2 } });
+const OC_RUNNING = ocPart({ type: 'tool', tool: 'bash', callID: 'call_sleep', state: { status: 'running', input: { command: 'sleep 600', description: 'wait' }, time: { start: 1 } } });
 
 // The same behaviour in each engine's own words: the suite's assertions are engine-neutral.
 const SCENARIOS: Record<'reply' | 'stop' | 'write' | 'resume', Record<EngineName, string | string[]>> = {
-  reply: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT], codex: [...codexRead, codexSay('m1', 'OK')] },
-  stop: { claude: [AWAIT, INIT, HOLD_OPEN, AWAIT, INIT, say('Back.'), RESULT, AWAIT], codex: [HOLD_OPEN, TURN, codexSay('m2', 'Back.')] },
-  write: { claude: [AWAIT, INIT, say('Ready.'), RESULT, AWAIT, INIT, EDIT, say('Done.'), RESULT, AWAIT], codex: fixture('codex/patch.jsonl') },
-  resume: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT, INIT, say('42'), RESULT, AWAIT], codex: fixture('codex/multi-turn.jsonl') },
+  // Codex's ls and opencode's read run without a decision by design: neither may read as a fail-open.
+  reply: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT], codex: [...codexRead, codexSay('m1', 'OK')], opencode: fixture('opencode/reply.jsonl') },
+  stop: { claude: [AWAIT, INIT, HOLD_OPEN, AWAIT, INIT, say('Back.'), RESULT, AWAIT], codex: [HOLD_OPEN, TURN, codexSay('m2', 'Back.')], opencode: [OC_RUNNING, HOLD_OPEN, TURN, ocSay('Back.')] },
+  write: { claude: [AWAIT, INIT, say('Ready.'), RESULT, AWAIT, INIT, EDIT, say('Done.'), RESULT, AWAIT], codex: fixture('codex/patch.jsonl'), opencode: fixture('opencode/edit.jsonl') },
+  resume: { claude: [AWAIT, INIT, say('OK'), RESULT, AWAIT, INIT, say('42'), RESULT, AWAIT], codex: fixture('codex/multi-turn.jsonl'), opencode: fixture('opencode/multi-turn.jsonl') },
 };
+// opencode's preview is the diff its ask carried, which names the project's absolute path.
 const PREVIEW: Record<EngineName, object> = {
   claude: { kind: 'edit', oldString: 'helo', newString: 'hello' },
   codex: { kind: 'patch', diff: "@@ -1 +1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n" },
+  opencode: { kind: 'patch', diff: "Index: $CWD/src/other.ts\n===================================================================\n--- $CWD/src/other.ts\n+++ $CWD/src/other.ts\n@@ -1,1 +1,1 @@\n-export const other = 'helo';\n+export const other = 'hello';\n" },
 };
+const preview = (b: Built, engine: EngineName): object => JSON.parse(JSON.stringify(PREVIEW[engine]).replaceAll('$CWD', b.root)) as object;
 
 const noticesOf = (b: Built): string[] => b.session.state().items.flatMap((item) => (item.kind === 'notice' ? [item.text] : []));
 const closed = (b: Built, count: number) => waitFor(() => b.session.state().turns.filter((turn) => turn.closedAt !== null).length === count, `${count} turns closed`);
@@ -72,7 +79,7 @@ async function startPlan(b: Built): Promise<void> {
   expect([outcome, b.rt.gate.plans.step({ key: 'edit', phase: 'start' })]).toMatchObject([{ ok: true, value: { status: 'approved' } }, { ok: true }]);
 }
 
-describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
+describe.each(['claude', 'codex', 'opencode'] as const)('the %s engine', (engine) => {
   const make = (scenario: keyof typeof SCENARIOS, extra: Partial<Parameters<typeof build>[0]> = {}) => build({ scenario: SCENARIOS[scenario][engine], engine, ...extra });
 
   it('answers a message: the reply comes in and the turn ends, with no notice and nothing the agent ran taken for a fail-open', async () => {
@@ -106,7 +113,31 @@ describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
     const prompt = await waitFor(() => b.rt.gate.gate.pending()[0], 'the write waits for the user');
     b.rt.gate.gate.answer(prompt.id, 'allow-once');
     await closed(b, 2);
-    expect([prompt.summary, prompt.preview, other(b), decisionOf(b)]).toMatchObject(['src/other.ts', PREVIEW[engine], "export const other = 'hello';\n", 'ask-approved']);
+    expect([prompt.summary, prompt.preview, other(b), decisionOf(b)]).toMatchObject(['src/other.ts', preview(b, engine), "export const other = 'hello';\n", 'ask-approved']);
+  });
+
+  it('tells the model why the guard denied a write, and the row reads denied', async () => {
+    const b = await make('write', { mode: 'A' });
+    b.session.send('ready?');
+    await closed(b, 1);
+    b.session.send('fix the other file too');
+    await closed(b, 2);
+    // Codex shows the model only "rejected by user" (spec §5): it has no reason to check.
+    const reason = engine === 'claude' ? b.records().findLast((record) => record.hook)?.hook?.reason
+      : engine === 'codex' ? null
+      : b.opencodeRecords().find((record) => record.reply)?.reply?.message;
+    expect([decisionOf(b), other(b), reason === null ? null : reason?.includes('no approved plan')]).toEqual(['deny', FILES['src/other.ts'], engine === 'codex' ? null : true]);
+  });
+
+  it('refuses the chat with the reason when the engine cannot show that the gate is on, and the agent says nothing', async () => {
+    const b = await build(engine === 'claude'
+      ? { scenario: [AWAIT, INIT, say('never'), RESULT, AWAIT], engine, claudeEnv: { FAKE_CLAUDE_HOOKS: 'off' }, canaryMs: 300 }
+      : engine === 'codex' ? { scenario: SCENARIOS.reply.codex, engine, codexEnv: { FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' } }
+      : { scenario: SCENARIOS.reply.opencode, engine, opencodeEnv: { FAKE_OPENCODE_AGENTS: JSON.stringify([{ name: 'build', mode: 'primary', permission: { '*': 'ask', edit: 'allow' } }]) } });
+    b.session.send('hi');
+    await waitFor(() => b.session.state().session?.status === 'refused', 'the chat refused');
+    const reason = { claude: "CodeRay's hook did not start", codex: 'Codex reported sandbox workspaceWrite', opencode: 'opencode agent build would run edit without asking' }[engine];
+    expect([says(b), noticesOf(b).some((text) => text.startsWith(reason))]).toEqual([[], true]);
   });
 
   it('resumes the same conversation after the core restarts', async () => {
@@ -119,9 +150,12 @@ describe.each(['claude', 'codex'] as const)('the %s engine', (engine) => {
     const again = await build({ scenario: SCENARIOS.resume[engine], engine, from: b });
     again.session.send('again');
     await closed(again, 2);
+    const records = again.opencodeRecords();
     const resumed = engine === 'claude'
       ? argValue(again.records().findLast((record) => record.argv !== undefined)?.argv, '--resume')
-      : (sent(again.codexRecords(), 'thread/resume')[0] as { threadId?: string } | undefined)?.threadId;
+      : engine === 'codex' ? (sent(again.codexRecords(), 'thread/resume')[0] as { threadId?: string } | undefined)?.threadId
+      // The chat's server is the last one started (a probe server may come first), and it goes on with the conversation's second turn.
+      : says(again).at(-1) === '42' ? records.slice(records.findLastIndex((record) => record.pid !== undefined)).find((record) => record.prompt)?.prompt?.session : undefined;
     expect([resumed, typeof before]).toEqual([before, 'string']);
   });
 

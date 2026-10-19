@@ -24,6 +24,7 @@ export function sessionRecord(id: string, cwd: string): SessionRecord {
 // What a test chat starts with when nothing else names a model, as IDE_DEFAULT_MODEL does for the app.
 export const SONNET: ChatPick = { engine: 'claude', modelChoice: 'sonnet', effort: 'medium' };
 export const LUNA: ChatPick = { engine: 'codex', modelChoice: 'codex:gpt-6-luna', effort: 'medium' };
+export const NEMOTRON: ChatPick = { engine: 'opencode', modelChoice: 'opencode:opencode/nemotron-3.5-lightning-free', effort: null };
 
 export function indexed(path: string, lang: Lang, imports: string[], overrides: Partial<IndexedFile> = {}): IndexedFile {
   return { path, lang, contentHash: path, imports, symbols: [], parseError: false, ...overrides };

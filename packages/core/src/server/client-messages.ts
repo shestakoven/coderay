@@ -23,7 +23,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
     after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message, key, files,
-    engine, method, apiKey,
+    engine, method, apiKey, providerID,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -135,6 +135,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return (id === null || isAccountId(id)) && isEngineOrNone(engine) ? { type, requestId, ...(engine === undefined ? {} : { engine }), id } : null;
     case 'account.remove':
       return isAccountId(id) && isEngineOrNone(engine) ? { type, requestId, ...(engine === undefined ? {} : { engine }), id } : null;
+    case 'account.providers':
+      return isAccountId(id) ? { type, requestId, id } : null;
+    case 'account.provider.set':
+      return isAccountId(id) && isProviderId(providerID) && isRuledText(apiKey) ? { type, requestId, id, providerID, apiKey } : null;
+    case 'account.provider.remove':
+      return isAccountId(id) && isProviderId(providerID) ? { type, requestId, id, providerID } : null;
     case 'hub.close':
     case 'hub.restart':
       return isBoundedString(id, MAX_ID_LENGTH) ? { type, requestId, id } : null;
@@ -195,10 +201,17 @@ function parsePick(modelChoice: unknown, effort: unknown): { modelChoice: string
 
 const isEngineOrNone = (value: unknown): value is EngineId | undefined => value === undefined || isEngineId(value);
 
-// A key goes only with the API-key way, and never into a log line.
+// opencode's provider ids are catalog slugs; one that is a path or a path's parts never reaches `/auth/:id`.
+const isProviderId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9][\w.-]{0,99}$/.test(value);
+
+// A profile name or a provider key the core judges itself, answering one it refuses with its rule; bounded here only.
+const isRuledText = (value: unknown): value is string => typeof value === 'string' && value.length <= MAX_RULED_TEXT;
+
+// A key goes only with the API-key way, and never into a log line; a profile's name rides in its slot.
 function loginTarget(engine: unknown, method: unknown, apiKey: unknown): { engine?: EngineId; method?: LoginMethod; apiKey?: string } | null {
   if (!isEngineOrNone(engine)) return null;
   if (method !== undefined && !LOGIN_METHODS[engine ?? 'claude'].includes(method as LoginMethod)) return null;
+  if (method === 'profile') return isRuledText(apiKey) ? { engine, method, apiKey: apiKey.trim() } : null;
   if ((method === 'api-key') !== (apiKey !== undefined)) return null;
   if (apiKey !== undefined && (typeof apiKey !== 'string' || !API_KEY_PATTERN.test(apiKey))) return null;
   return {
@@ -221,6 +234,8 @@ const MAX_URL_LENGTH = 2048;
 const MAX_NAME_LENGTH = 1024;
 const MAX_ID_LENGTH = 100;
 const MAX_CODE_LENGTH = 4096;
+// Longer than any rule allows, so a name or key over its rule's length gets the rule's answer.
+const MAX_RULED_TEXT = 4096;
 const MAX_HUB_IDS = 100;
 const MAX_GIT_PATHS = 5000;
 const MAX_COMMIT_MESSAGE = 100_000;

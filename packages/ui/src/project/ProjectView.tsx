@@ -38,6 +38,7 @@ import { flowOf } from '../plan-flow/flow-model';
 import { availableModes, resolveMode, type MapMode } from '../plan-flow/map-mode';
 import { describeMapStatus, describeProgress } from '../map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from '../net/socket';
+import type { ProviderList } from '../settings/accounts';
 import { SettingsPanel, type SettingsResult } from '../settings/SettingsPanel';
 import { Icon } from '../layout/Icon';
 import { DetailsSlotContext } from '../layout/DetailsSlot';
@@ -76,6 +77,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
+  const [providers, setProviders] = useState<Record<string, ProviderList>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [connection, setConnection] = useState<ConnectionStatus>('connecting');
   const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
@@ -130,6 +132,11 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
         case 'settings.result':
           setSettingsResult({ requestId: message.requestId, error: message.error });
           break;
+        case 'settings.providers': {
+          const { id, providers: list, loginCommand, error } = message;
+          setProviders((lists) => ({ ...lists, [id]: { loading: false, providers: list, loginCommand, error } }));
+          break;
+        }
         case 'plans.snapshot':
           dispatchPlans({ type: 'plans', plans: message.plans });
           break;
@@ -210,6 +217,13 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
 
   sendRef.current = (message) => link.current?.send(message) ?? false;
 
+  const loadProviders = (id: string): void => {
+    const sent = send({ type: 'account.providers', requestId: crypto.randomUUID(), id });
+    setProviders((lists) => ({
+      ...lists,
+      [id]: { providers: [], loginCommand: '', ...lists[id], loading: sent, error: sent ? null : 'Not connected to the core. Check the connection and try again.' },
+    }));
+  };
   const openSettings = (): void => {
     send({ type: 'settings.get' });
     setSettingsOpen(true);
@@ -605,6 +619,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           <SettingsPanel
             settings={settings}
             lastResult={settingsResult}
+            providers={providers}
+            loadProviders={loadProviders}
             sessionServers={chat.mcpServers}
             send={send}
             onClose={() => setSettingsOpen(false)}

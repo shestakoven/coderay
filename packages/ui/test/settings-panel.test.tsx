@@ -90,7 +90,7 @@ const settingsWith = (claudeCodeServers: SettingsView['claudeCodeServers'], proj
 
 const render = (settings: SettingsView | null, sessionServers: McpServerState[] = [], initialCategory: CategoryId = 'mcp'): string =>
   renderToStaticMarkup(
-    <SettingsPanel settings={settings} lastResult={null} sessionServers={sessionServers} send={() => true} onClose={() => undefined} initialCategory={initialCategory} />,
+    <SettingsPanel settings={settings} lastResult={null} providers={{}} loadProviders={() => undefined} sessionServers={sessionServers} send={() => true} onClose={() => undefined} initialCategory={initialCategory} />,
   );
 
 const claude = settingsWith([
@@ -230,8 +230,8 @@ describe('Settings workspace', () => {
   });
 
   it.each(CATEGORIES.map((category) => category.id))('shows only the settings of the %s category', (id) => {
-    // The fixture's core runs Claude alone, so Codex's accounts block stays hidden.
-    expect(settingTitles(parse(render(claude, claudeSession, id)))).toEqual(blocksOf(id).filter((block) => block.id !== 'accounts-codex').map((block) => block.title));
+    // The fixture's core runs Claude alone, so the accounts blocks of Codex and opencode stay hidden.
+    expect(settingTitles(parse(render(claude, claudeSession, id)))).toEqual(blocksOf(id).filter((block) => block.id !== 'accounts-codex' && block.id !== 'accounts-opencode').map((block) => block.title));
   });
 
   const modeGroup = (root: Element): Element[] => {

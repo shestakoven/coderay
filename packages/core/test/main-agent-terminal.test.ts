@@ -72,7 +72,7 @@ async function startMain(mode: Mode, extraEnv: Record<string, string> = {}) {
   writeFileSync(transcript, '');
   const child: ChildProcess = spawn(
     process.execPath,
-    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', wrapper, '--no-codex'],
+    ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', wrapper, '--no-codex', '--no-opencode'],
     {
       cwd: REPO,
       env: {

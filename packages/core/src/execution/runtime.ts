@@ -160,6 +160,7 @@ export function createExecutionRuntime(o: ExecutionRuntimeOptions): ExecutionRun
     watchdog,
     record: (record) => session?.recordDecision(record),
     sandboxed: () => session?.sandboxed() ?? false,
+    exempt: () => session?.exempt() ?? (() => false),
   });
 
   let policyKey = '';

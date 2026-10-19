@@ -1,0 +1,3 @@
+{"fake":"error","message":"a skill of yours is broken","session":false}
+{"fake":"error","message":"the provider answered 500"}
+{"fake":"await-turn"}

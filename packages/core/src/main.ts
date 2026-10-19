@@ -11,8 +11,10 @@ import { AccountLogin } from './accounts/account-login';
 import { AccountError, AccountStore, claudeAccounts } from './accounts/account-store';
 import { claudeLogin } from './accounts/claude-login';
 import { codexLogin, codexLogout } from './accounts/codex-login';
+import { answerProviders, opencodeLogin, type OpencodeProfiles } from './accounts/opencode-login';
 import { AgentSession } from './agent/agent-session';
 import { codexCommand } from './agent/codex/command';
+import { opencodeCommand } from './agent/opencode/command';
 import { hideSecrets } from './agent/codex/secrets';
 import type { Engine } from './agent/engines/registry';
 import { createExecutionRuntime } from './execution/runtime';
@@ -94,6 +96,8 @@ const { values } = parseArgs({
     claude: { type: 'string', default: 'claude' },
     codex: { type: 'string', default: 'codex' },
     'no-codex': { type: 'boolean', default: false },
+    opencode: { type: 'string', default: 'opencode' },
+    'no-opencode': { type: 'boolean', default: false },
     'no-map-mcp': { type: 'boolean', default: false },
     'no-agent-search': { type: 'boolean', default: false },
     hub: { type: 'boolean', default: false },
@@ -144,7 +148,10 @@ if (values.hub) {
       allowedOrigins: values['allow-origin'],
       home,
       projects: values.project.map((path) => resolve(path)),
-      child: { claude: values.claude, codex: values['no-codex'] ? null : values.codex, noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'] },
+      child: {
+        claude: values.claude, codex: values['no-codex'] ? null : values.codex, opencode: values['no-opencode'] ? null : values.opencode,
+        noMapMcp: values['no-map-mcp'], noAgentSearch: values['no-agent-search'],
+      },
     });
   } catch (error) {
     console.error(`CodeRay core failed to start: ${(error as Error).message}`);
@@ -222,17 +229,22 @@ try {
   let snapshot: MapSnapshot | undefined;
   let session: AgentSession | undefined;
   let indexer: Indexer | undefined;
-  // --no-codex: a core for tests and the e2e, which never run the real codex.
+  // --no-codex, --no-opencode: a core for tests and the e2e, which never run the real codex or opencode.
   const codex = values['no-codex'] ? undefined : codexCommand(values.codex);
+  const opencode = values['no-opencode'] ? undefined : opencodeCommand(values.opencode);
+  // A profile keeps everything in its directory: removing that removes it.
+  const opencodeAccounts = opencode ? new AccountStore({ home, engine: 'opencode', logout: async () => {} }) : undefined;
   const accountStores: Partial<Record<EngineId, AccountStore>> = {
     claude: claudeAccounts(home, values.claude),
     ...(codex ? { codex: new AccountStore({ home, engine: 'codex', logout: codexLogout(() => codex) }) } : {}),
+    ...(opencodeAccounts ? { opencode: opencodeAccounts } : {}),
   };
   const accounts = accountStores.claude!;
   const login = new AccountLogin({
     engines: {
       claude: { store: accounts, flow: claudeLogin(values.claude) },
       ...(codex && accountStores.codex ? { codex: { store: accountStores.codex, flow: codexLogin(() => codex, runDir(home)) } } : {}),
+      ...(opencodeAccounts ? { opencode: { store: opencodeAccounts, flow: opencodeLogin() } } : {}),
     },
     onChange: () => {
       try {
@@ -272,6 +284,7 @@ try {
     root, home, store,
     claude: { command: values.claude, args: [] },
     ...(codex ? { codex } : {}),
+    ...(opencode ? { opencode } : {}),
     accounts: accountStores,
     defaultModel: defaultModel(process.env.IDE_DEFAULT_MODEL),
     mcpServers: () => registry.sessionServers(),
@@ -454,6 +467,7 @@ try {
       if (generation === refreshes) server?.broadcast(message);
     });
   };
+  const profiles: OpencodeProfiles | null = opencode && opencodeAccounts ? { command: opencode, runDir: runDir(home), store: opencodeAccounts, refreshEngines } : null;
 
   const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {
@@ -525,6 +539,11 @@ try {
         return;
       case 'settings.get':
         reply(settingsSnapshot());
+        return;
+      case 'account.providers':
+      case 'account.provider.set':
+      case 'account.provider.remove':
+        await answerProviders(message, profiles, reply);
         return;
       case 'terminal.open':
         if (message.kind === 'agent') {

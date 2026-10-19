@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import type { ClientMessage, McpServerState, PolicyLevel, SettingsView } from '@ide/protocol';
+import type { ClientMessage, EngineId, McpServerState, PolicyLevel, SettingsView } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
-import { ACCOUNT_BLOCKS, engineAccounts } from './accounts';
+import { ACCOUNT_BLOCKS, engineAccounts, type ProviderList } from './accounts';
 import { AccountsSection } from './AccountsSection';
 import { APPEARANCE_BLOCKS, AppearanceBlock } from './AppearanceBlocks';
 import { applyAppearance, loadAppearance, saveAppearance, systemReducesMotion, type Appearance } from './appearance';
@@ -33,14 +33,20 @@ interface KeyEventLike {
   stopPropagation: () => void;
 }
 
+const noun = (engine: EngineId): string => (engine === 'opencode' ? 'Profile' : 'Account');
+
 const typing = (target: EventTarget | null): boolean => {
   const element = target as HTMLElement | null;
   return element !== null && (/^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName) || element.isContentEditable);
 };
 
-export function SettingsPanel({ settings, lastResult, sessionServers, send, onClose, initialCategory, projectName }: {
+export function SettingsPanel({ settings, lastResult, providers, loadProviders, sessionServers, send, onClose, initialCategory, projectName }: {
   settings: SettingsView | null;
   lastResult: SettingsResult | null;
+  /** The opencode profiles' providers, by profile id, as `settings.providers` gave them. */
+  providers: Record<string, ProviderList>;
+  /** Asks the core for a profile's providers, outside the one-at-a-time requests: the answer is a `settings.providers`, never a `settings.result`. */
+  loadProviders: (id: string) => void;
   sessionServers: McpServerState[];
   send: (message: ClientMessage) => boolean;
   onClose: () => void;
@@ -58,6 +64,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
   const [appearance, setAppearance] = useState<Appearance>(() => loadAppearance(storage));
   const [attempt, setAttempt] = useState(0);
   const [slow, setSlow] = useState(false);
+  const [openProfile, setOpenProfile] = useState<string | null>(null);
   const root = useRef<HTMLDivElement>(null);
   const search = useRef<HTMLInputElement>(null);
   const opener = useRef<Element | null>(null);
@@ -151,6 +158,7 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
     'claude-code-servers': (settings?.claudeCodeServers ?? []).map((server) => server.name),
     accounts: (listOf('accounts')?.accounts ?? []).map((account) => account.email),
     'accounts-codex': (listOf('accounts-codex')?.accounts ?? []).map((account) => account.email),
+    'accounts-opencode': (listOf('accounts-opencode')?.accounts ?? []).map((account) => account.email),
   }).filter((block) => shown(block.id)), [query, settings, hasClaudeRows]);
   const counts = countByCategory(matched);
   const visible: BlockId[] = searching ? matched.map((block) => block.id) : blocksOf(category).map((block) => block.id).filter(shown);
@@ -179,7 +187,13 @@ export function SettingsPanel({ settings, lastResult, sessionServers, send, onCl
               view={list}
               login={settings.accounts.login}
               busy={busy}
-              onRequest={(message) => run(message, { okText: message.type === 'account.select' ? 'Account switched' : message.type === 'account.remove' ? 'Account removed' : undefined })}
+              onRequest={(message, options) => run(message, { okText: message.type === 'account.select' ? `${noun(list.engine)} switched` : message.type === 'account.remove' ? `${noun(list.engine)} removed` : undefined, ...options })}
+              providers={providers}
+              open={openProfile}
+              onProviders={(id) => {
+                setOpenProfile(id);
+                if (id !== null) loadProviders(id);
+              }}
             />
           )}
         </Setting>
