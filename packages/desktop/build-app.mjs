@@ -85,7 +85,7 @@ const artifacts = await build({
     appId: 'com.shestakov.coderay',
     productName: PRODUCT_NAME,
     directories: { output: 'dist' },
-    files: ['main.mjs', 'chrome-insets.mjs', 'updater.mjs', 'package.json'],
+    files: ['main.mjs', 'chrome-insets.mjs', 'stop-children.mjs', 'updater.mjs', 'package.json'],
     publish: { provider: 'github', ...RELEASES },
     // Chromium's own strings (menus, dialogs, spellcheck); each locale is a file to sign.
     electronLanguages: ['en', 'ru'],

@@ -4,9 +4,10 @@ import { appendFileSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { connect, createServer } from 'node:net';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, dialog, Menu, shell } from 'electron';
+import { app, autoUpdater as nativeUpdater, BrowserWindow, dialog, Menu, shell } from 'electron';
 import electronUpdater from 'electron-updater';
 import { keepRoomForTrafficLights } from './chrome-insets.mjs';
+import { createStopper } from './stop-children.mjs';
 import { createUpdater } from './updater.mjs';
 
 // The OS hands out a free port; a fixed one would collide with a running dev:core / dev:ui.
@@ -94,21 +95,18 @@ function loginShellPath() {
   }
 }
 
-let stopped = false;
-function stopChildren() {
-  if (stopped) return;
-  stopped = true;
-  for (const { pid } of children) {
-    try {
-      process.kill(-pid, 'SIGTERM');
-    } catch {}
-  }
+const stopper = createStopper({
+  pids: () => children.map(({ pid }) => pid),
   // A project switch makes core spawn a detached successor outside our groups; it is the one left on the port.
-  try {
-    const pids = execFileSync('lsof', ['-ti', `tcp:${CORE_PORT}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').filter(Boolean);
-    for (const pid of pids) process.kill(Number(pid), 'SIGTERM');
-  } catch {}
-}
+  portOwners: () => {
+    try {
+      return execFileSync('lsof', ['-ti', `tcp:${CORE_PORT}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).split('\n').filter(Boolean).map(Number);
+    } catch {
+      return [];
+    }
+  },
+  sleep: (ms) => new Promise((done) => setTimeout(done, ms)),
+});
 
 // vite binds ::1 only, core 127.0.0.1: 'localhost' is the one name that reaches both.
 const listening = (port) =>
@@ -124,10 +122,25 @@ async function waitForPort(port) {
 // A second launch of the built app would start a second hub on the same projects; it focuses the first window instead.
 if (packaged && !app.requestSingleInstanceLock()) app.exit(0);
 
-app.on('before-quit', stopChildren);
-process.on('exit', stopChildren);
+// Quitting waits for the children to stop. An installing update quits through its own path and only signals them.
+let quitting = false;
+let installingUpdate = false;
+nativeUpdater.on('before-quit-for-update', () => {
+  installingUpdate = true;
+  stopper.signal();
+});
+app.on('before-quit', (event) => {
+  if (quitting || installingUpdate) return;
+  quitting = true;
+  event.preventDefault();
+  stopper.stop().then(() => app.exit(0));
+});
+process.on('exit', () => stopper.signal());
 for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(signal, () => app.quit());
-app.on('window-all-closed', () => app.quit());
+// As in any Mac app, closing the last window leaves CodeRay and its agents running; Cmd+Q quits.
+app.on('window-all-closed', () => {
+  if (process.platform !== 'darwin') app.quit();
+});
 
 // Awaiting ready at top level deadlocks Electron's ESM entry: the app only becomes ready after the module finishes.
 app.whenReady().then(async () => {
@@ -169,36 +182,45 @@ app.whenReady().then(async () => {
     { label: 'Window', submenu: [{ role: 'minimize' }, { role: 'zoom' }, { type: 'separator' }, { label: 'Close Window', accelerator: 'Shift+CmdOrCtrl+W', role: 'close' }] },
   ]));
   setMenu();
-  const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
-    // Like PyCharm: the traffic lights sit inside the app's own top bar instead of a separate title bar.
-    titleBarStyle: 'hidden',
-    trafficLightPosition: { x: 14, y: 13 },
-    webPreferences: { contextIsolation: true, nodeIntegration: false },
-  });
-  win.webContents.on('dom-ready', () => {
-    win.webContents.insertCSS(`
-      header.topbar { -webkit-app-region: drag; }
-      header.topbar :is(button, select, input, label, a, [role='tab']) { -webkit-app-region: no-drag; }
-    `);
-  });
-  keepRoomForTrafficLights(win);
-  const external = (url) => {
-    if (/^https?:/.test(url)) shell.openExternal(url);
+  const createWindow = () => {
+    const win = new BrowserWindow({
+      width: 1440,
+      height: 900,
+      // Like PyCharm: the traffic lights sit inside the app's own top bar instead of a separate title bar.
+      titleBarStyle: 'hidden',
+      trafficLightPosition: { x: 14, y: 13 },
+      webPreferences: { contextIsolation: true, nodeIntegration: false },
+    });
+    win.webContents.on('dom-ready', () => {
+      win.webContents.insertCSS(`
+        header.topbar { -webkit-app-region: drag; }
+        header.topbar :is(button, select, input, label, a, [role='tab']) { -webkit-app-region: no-drag; }
+      `);
+    });
+    keepRoomForTrafficLights(win);
+    const external = (url) => {
+      if (/^https?:/.test(url)) shell.openExternal(url);
+    };
+    win.webContents.on('will-navigate', (event, url) => {
+      if (new URL(url).origin === UI_ORIGIN) return;
+      event.preventDefault();
+      external(url);
+    });
+    win.webContents.setWindowOpenHandler(({ url }) => {
+      external(url);
+      return { action: 'deny' };
+    });
+    win.loadURL(`${UI_ORIGIN}/#token=${token}`);
   };
-  win.webContents.on('will-navigate', (event, url) => {
-    if (new URL(url).origin === UI_ORIGIN) return;
-    event.preventDefault();
-    external(url);
-  });
-  win.webContents.setWindowOpenHandler(({ url }) => {
-    external(url);
-    return { action: 'deny' };
-  });
-  win.loadURL(`${UI_ORIGIN}/#token=${token}`);
+  createWindow();
   updater?.start();
+  // Clicking the Dock icon after the window was closed brings it back.
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  });
   app.on('second-instance', () => {
+    const [win] = BrowserWindow.getAllWindows();
+    if (!win) return createWindow();
     if (win.isMinimized()) win.restore();
     win.focus();
   });
