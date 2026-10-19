@@ -70,9 +70,9 @@ function killAllUnder(base: string): void {
   }
 }
 
-function startHubProcess(env: { base: string; home: string; bin: string }, port: number, projects: string[]) {
+function startHubProcess(env: { base: string; home: string; bin: string }, port: number, projects: string[], opencode?: string) {
   const args = ['--import', 'tsx', MAIN, '--hub', ...projects.flatMap((root) => ['--project', root]),
-    '--ide-home', env.home, '--port', String(port), '--allow-origin', ORIGIN, '--claude', FAKE_CLAUDE, '--no-codex', '--no-opencode'];
+    '--ide-home', env.home, '--port', String(port), '--allow-origin', ORIGIN, '--claude', FAKE_CLAUDE, '--no-codex', ...(opencode ? ['--opencode', opencode] : ['--no-opencode'])];
   const child: ChildProcess = spawn(process.execPath, args, {
     cwd: REPO,
     env: {
@@ -162,20 +162,26 @@ describe('main.ts --hub', { timeout: 180_000 }, () => {
     expect(readOpenProjects(env.home)).toEqual({ roots: [a, c], activeRoot: c });
   });
 
-  it('reopens the projects of the last session when started without --project', async () => {
+  it('reopens the projects of the last session when started without --project, each core given the hub\'s opencode', async () => {
     const env = prepare();
     onTestFinished(() => killAllUnder(env.base));
     const [a, b] = ['alpha', 'beta'].map((name) => scratchProject(env.base, name)) as [string, string];
     writeOpenProjects(env.home, serializeOpenProjects({ roots: [b, a], activeRoot: a }));
     expect(existsSync(openProjectsFile(env.home))).toBe(true);
+    // An opencode that always fails, under the scratch dir, so no core can reach the real one and nothing it starts outlives the test unseen.
+    const opencode = join(env.bin, 'opencode');
+    writeFileSync(opencode, '#!/bin/sh\nexit 1\n', { mode: 0o755 });
     const port = await freePort();
-    const hubProcess = startHubProcess(env, port, []);
+    const hubProcess = startHubProcess(env, port, [], opencode);
     onTestFinished(async () => { await hubProcess.stop(); });
 
     const hub = await connectHub(port, hubProcess.output);
     await waitFor(() => runningIn(hub.latest(), [a, b]), `both restored projects running; output:\n${hubProcess.output.text}`, 120_000);
     expect(hub.latest()?.projects.map((project) => project.root)).toEqual([b, a]);
     expect(hub.latest()?.activeId).toBe(projectId(a));
+    const argsOf = (pid: number) => execFileSync('ps', ['-ww', '-o', 'args=', '-p', String(pid)], { encoding: 'utf8' });
+    const cores = [a, b].flatMap((root) => processesUnder(root, [hubProcess.child.pid]).map(argsOf).filter((args) => args.includes('--exit-with-parent')));
+    expect(cores.map((args) => args.includes(` --opencode ${opencode} `))).toEqual([true, true]);
 
     expect(await hubProcess.stop()).toBe(0);
     expect(await waitFor(() => processesUnder(env.base).length === 0 || undefined, `no process left under ${env.base}`, 15_000)).toBe(true);
