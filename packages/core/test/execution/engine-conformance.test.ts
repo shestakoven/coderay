@@ -154,8 +154,8 @@ describe.each(['claude', 'codex', 'opencode'] as const)('the %s engine', (engine
     const resumed = engine === 'claude'
       ? argValue(again.records().findLast((record) => record.argv !== undefined)?.argv, '--resume')
       : engine === 'codex' ? (sent(again.codexRecords(), 'thread/resume')[0] as { threadId?: string } | undefined)?.threadId
-      // The chat's server is the last one started: a probe server may come first.
-      : records.slice(records.findLastIndex((record) => record.pid !== undefined)).find((record) => record.prompt)?.prompt?.session;
+      // The chat's server is the last one started (a probe server may come first), and it goes on with the conversation's second turn.
+      : says(again).at(-1) === '42' ? records.slice(records.findLastIndex((record) => record.pid !== undefined)).find((record) => record.prompt)?.prompt?.session : undefined;
     expect([resumed, typeof before]).toEqual([before, 'string']);
   });
 

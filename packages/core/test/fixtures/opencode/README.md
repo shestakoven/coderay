@@ -20,7 +20,7 @@
 
 - **`POST /session`** sends `session.created` 20 ms before it answers, as a busy server may.
 - **Ids.** Session ids carry the fake's pid (`ses_<pid>_<n>`), so a test can tell two fakes' records apart; asks are `per_…`, questions `que_…`, messages `msg_…`.
-- **Restarts.** A fake started again with the same `FAKE_OPENCODE_RECORD` goes on from the line the previous one reached (a core restart). Its sessions (id, parent, ruleset, directory) are kept in `<record>.sessions.json`, so a restarted fake answers `GET /session/:id` for them. Any other id is answered too (opencode's database outlives a server), with the inline config's rules as its ruleset, except `FAKE_OPENCODE_GONE`, which is 404.
+- **Restarts.** A fake started again with the same `FAKE_OPENCODE_RECORD` goes on from the line the previous one reached (a core restart). Its sessions (id, parent, ruleset, directory) are kept in `<record>.sessions.json`, so a restarted fake answers `GET /session/:id` for them, as opencode's database outlives a server. A session a scenario line names is another client's root and is answered too; any other id, and `FAKE_OPENCODE_GONE`, is 404.
 - **`GET /agent`** lists `build`, `compaction`, `explore`, `general`, `plan`, `summary`, `title` and any agent of the config, each with its rules as a **list** in evaluation order: 1.19's defaults, the agent's own defaults, the merged top-level `permission`, the merged `agent.<name>.permission`, and last the `external_directory <XDG_DATA_HOME>/opencode/tool-output/* allow` rule 1.19 appends.
 - **`GET /config`** is the configured answer with `OPENCODE_CONFIG_CONTENT` deep-merged over it (a key keeps the position it first had, so a user's `*` stays before CodeRay's rules), and each `permission` map echoed with the known keys first (1.19's schema order), which is not the evaluation order.
 - **Events.** `permission.replied` is `{sessionID, requestID, reply}`; `question.replied` `{sessionID, requestID, answers}`; `question.rejected` `{sessionID, requestID}`; `session.created` `{sessionID, info}`.
@@ -45,10 +45,12 @@
 | `FAKE_OPENCODE_DB_BUSY=<n>` | The first `n` starts with this record file exit with code 1 before they listen, as 1.19 does beside another server of the same home that sets the database up: the first with "Failed query:", the rest with "database is locked" on stderr. |
 | `FAKE_OPENCODE_NO_LISTEN=1` | Never prints the listening line. |
 | `FAKE_OPENCODE_LISTEN_STREAM=stderr` | Prints it on stderr. |
-| `FAKE_OPENCODE_HEALTH=down` | Health answers 503. |
+| `FAKE_OPENCODE_HEALTH=down` | Health answers 503; `=unhealthy` answers 200 with `healthy: false`. |
 | `FAKE_OPENCODE_DISPOSE=hang` | `/global/dispose` never answers. |
 | `FAKE_OPENCODE_ABORT=ignore` | `/session/:id/abort` answers 200 and the turn goes on: no idle comes. |
 | `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.error` `UnknownError` "Model not found: <provider>/<model>. Did you mean: …" (1.19's words for a model of a provider it has not connected) and `session.idle`. |
 | `FAKE_OPENCODE_GONE=<id>` | `GET /session/<id>` is 404. |
+| `FAKE_OPENCODE_SESSION_FAIL=1` | `POST /session` answers 500. |
+| `FAKE_OPENCODE_PROMPT_FAIL=1` | `/session/:id/prompt_async` and `/command` answer 400 after the prompt is recorded. |
 | `FAKE_OPENCODE_REPLIED=1` | At the first prompt, before its turn plays, a `permission.replied` `once` nobody asked for (`per_nobody`): the tripwire; `=reject` replies `reject`. |
 | `FAKE_OPENCODE_RULES_FLIP=1` | After the first prompt `build` gains a last rule `edit * allow`: the per-prompt self-check. |

@@ -166,9 +166,13 @@ async function play(session, messageID) {
   const wait = (promise) => Promise.race([promise, aborted]);
 
   // The session an ask or a question comes from: the chat's, a child (an unannounced one is a task resumed by task_id, created on an
-  // earlier server), or another named one, which GET /session/:id answers as a root of its own.
+  // earlier server), or another named one: another client's root session, which GET /session/:id answers.
   const sessionFor = (kind) => {
-    if (kind !== 'child' && kind !== 'unannounced') return kind || session.id;
+    if (!kind) return session.id;
+    if (kind !== 'child' && kind !== 'unannounced') {
+      if (!sessions.has(kind)) { sessions.set(kind, { id: kind, parentID: null, directory: session.directory, permission: null }); saveSessions(); }
+      return kind;
+    }
     const child = { id: nextId('ses'), parentID: session.id, directory: session.directory, permission: [rule('task', '*', 'deny')] };
     sessions.set(child.id, child); saveSessions();
     if (kind === 'child') send('session.created', { sessionID: child.id, info: info(child) });
@@ -262,14 +266,6 @@ async function play(session, messageID) {
 }
 
 const json = (res, status, body) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(body === undefined ? '' : JSON.stringify(body)); };
-const sessionOf = (id, directory) => {
-  const known = sessions.get(id);
-  if (known) return Object.assign(known, { answers: known.answers ?? [] });
-  // opencode's database outlives a server: an id this fake never made is still a session, made under the inline rules.
-  const made = { id, parentID: null, directory: directory ?? process.cwd(), permission: rules(inline.permission), answers: [] };
-  sessions.set(id, made);
-  return made;
-};
 
 const server = createServer(async (req, res) => {
   let raw = ''; for await (const chunk of req) raw += String(chunk);
@@ -282,7 +278,7 @@ const server = createServer(async (req, res) => {
   record({ req: { method: req.method, path, body: body ?? null, directory } });
   if (req.headers.authorization !== expectedAuth) return json(res, 401, { error: 'unauthorized' });
   const m = (re) => re.exec(path);
-  if (path === '/global/health') return env.FAKE_OPENCODE_HEALTH === 'down' ? json(res, 503, { healthy: false }) : json(res, 200, { healthy: true, version: VERSION });
+  if (path === '/global/health') return env.FAKE_OPENCODE_HEALTH === 'down' ? json(res, 503, { healthy: false }) : json(res, 200, { healthy: env.FAKE_OPENCODE_HEALTH !== 'unhealthy', version: VERSION });
   if (path === '/global/dispose') { if (env.FAKE_OPENCODE_DISPOSE === 'hang') return; killSleepers(); return json(res, 200, true); }
   if (path === '/instance/dispose') { loaded = [...auth.keys()]; return json(res, 200, true); }
   if (path === '/agent') return json(res, 200, agents());
@@ -301,6 +297,7 @@ const server = createServer(async (req, res) => {
   if (path === '/experimental/tool/ids') return json(res, 200, env.FAKE_OPENCODE_TOOL_IDS ? JSON.parse(env.FAKE_OPENCODE_TOOL_IDS) : TOOL_IDS);
   if (path === '/permission' && req.method === 'GET') return json(res, 200, [...waiting.values()].filter((w) => w.kind === 'permission').map((w) => w.asked));
   if (path === '/session' && req.method === 'POST') {
+    if (env.FAKE_OPENCODE_SESSION_FAIL === '1') return json(res, 500, { name: 'UnknownError', data: { message: 'the database is read-only' } });
     const s = { id: nextId('ses'), parentID: null, directory: directory ?? process.cwd(), permission: body?.permission ?? null, answers: [] };
     sessions.set(s.id, s); saveSessions();
     record({ session: { id: s.id, permission: s.permission } });
@@ -312,8 +309,8 @@ const server = createServer(async (req, res) => {
   let s;
   if ((s = m(/^\/session\/([^/]+)$/))) {
     if (req.method === 'DELETE') { sessions.delete(s[1]); saveSessions(); send('session.deleted', { sessionID: s[1], info: { id: s[1] } }); return json(res, 200, true); }
-    if (s[1] === env.FAKE_OPENCODE_GONE) return json(res, 404, { name: 'NotFoundError', data: { message: `Session not found: ${s[1]}` } });
-    return json(res, 200, info(sessionOf(s[1], directory)));
+    if (s[1] === env.FAKE_OPENCODE_GONE || !sessions.has(s[1])) return json(res, 404, { name: 'NotFoundError', data: { message: `Session not found: ${s[1]}` } });
+    return json(res, 200, info(sessions.get(s[1])));
   }
   if ((s = m(/^\/session\/([^/]+)\/(prompt_async|command)$/))) {
     const session = sessions.get(s[1]);
@@ -334,6 +331,7 @@ const server = createServer(async (req, res) => {
       send('session.idle', { sessionID: session.id });
       return;
     }
+    if (env.FAKE_OPENCODE_PROMPT_FAIL === '1') return json(res, 400, { name: 'BadRequest', data: { message: 'Expected a part at ["parts",0]', kind: 'Payload' } });
     // prompt_async answers at once; /command answers when the turn ends (Q10). A prompt on a busy session joins the running turn (Q12b).
     if (s[2] === 'prompt_async') json(res, 204); else session.answers.push(answer);
     if (!session.busy) session.turn = play(session, messageID);

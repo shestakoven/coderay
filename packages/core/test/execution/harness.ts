@@ -88,7 +88,8 @@ export async function build(options: BuildOptions): Promise<Built> {
   const fake = fakeClaude(scenarioPath, recordFile);
   const codexRecord = join(home, `codex-record-${n}.jsonl`);
   const codex = options.engine === 'codex' ? fakeCodex(scenarioPath, codexRecord, options.codexEnv) : undefined;
-  const opencodeRecord = join(home, `opencode-record-${n}.jsonl`);
+  // One per home, as opencode's database: a core started again on the same home finds the sessions and the progress of the last one.
+  const opencodeRecord = join(home, 'opencode-record.jsonl');
   const opencode = options.engine === 'opencode' ? fakeOpencode(scenarioPath, opencodeRecord, { ...opencodeHomes(home), ...options.opencodeEnv }) : undefined;
   const session = new AgentSession({
     root, home, store, claude: { ...fake, env: { ...fake.env, ...options.claudeEnv } }, canaryMs: options.canaryMs ?? 5_000,
