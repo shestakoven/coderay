@@ -110,7 +110,7 @@
     zoom.showModal();
   };
   zoom.addEventListener('click', () => zoom.close());
-  $$('.hero-shot img, .tour-steps img').forEach((img) => {
+  $$('.tour-steps img').forEach((img) => {
     img.tabIndex = 0;
     img.setAttribute('role', 'button');
     img.setAttribute('aria-label', img.alt + ' Enlarge.');
@@ -216,16 +216,45 @@
   const play = $('#play');
   const chaptersList = $('#chapters');
   let chapters = [];
+  // The demo plays by itself, silently, while it is on screen; a pause by the visitor sticks.
+  let userPaused = false;
+  let autoPaused = false;
+
+  const label = (text) => {
+    $('b', play).textContent = text;
+    play.setAttribute('aria-label', text);
+  };
+  const setPlaying = (playing) => {
+    player.classList.toggle('started', playing);
+    label(playing ? 'Pause the demo' : video.currentTime > 0 ? 'Resume the demo' : 'Play the demo');
+  };
+  video.muted = true;
+  video.addEventListener('play', () => setPlaying(true));
+  video.addEventListener('pause', () => { if (!autoPaused) setPlaying(false); });
+  play.addEventListener('click', () => {
+    if (video.paused) {
+      userPaused = false;
+      video.play().catch(() => {});
+    } else {
+      userPaused = true;
+      video.pause();
+    }
+  });
+
+  if (!reduceMotion && 'IntersectionObserver' in window) {
+    new IntersectionObserver((entries) => {
+      const visible = entries.some((entry) => entry.isIntersecting);
+      if (visible && video.paused && !userPaused) {
+        autoPaused = false;
+        video.play().catch(() => {});
+      } else if (!visible && !video.paused) {
+        autoPaused = true;
+        video.pause();
+      }
+    }, { threshold: 0.4 }).observe($('.player .frame'));
+  }
 
   const format = (seconds) => `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, '0')}`;
-
-  function start() {
-    player.classList.add('started');
-    video.controls = true;
-    video.play().catch(() => {});
-  }
-  play.addEventListener('click', start);
-  video.addEventListener('play', () => player.classList.add('started'));
 
   fetch('assets/video/chapters.json')
     .then((response) => (response.ok ? response.json() : []))
@@ -233,17 +262,17 @@
     .then((list) => {
       chapters = list;
       if (!chapters.length) {
-        $('.chapters').hidden = true;
-        $('.player').style.gridColumn = '1 / -1';
+        chaptersList.hidden = true;
         return;
       }
-      chapters.forEach((chapter, index) => {
+      chapters.forEach((chapter) => {
         const item = document.createElement('li');
-        item.innerHTML = `<button type="button"><span></span><time></time></button>`;
-        $('span', item).textContent = chapter.title;
-        $('time', item).textContent = format(chapter.t);
-        $('button', item).addEventListener('click', () => {
-          if (!player.classList.contains('started')) { player.classList.add('started'); video.controls = true; }
+        item.innerHTML = '<button type="button"></button>';
+        const button = $('button', item);
+        button.textContent = chapter.title;
+        button.title = `${chapter.title}, ${format(chapter.t)}`;
+        button.addEventListener('click', () => {
+          userPaused = false;
           video.currentTime = chapter.t;
           video.play().catch(() => {});
         });
@@ -254,6 +283,11 @@
   video.addEventListener('timeupdate', () => {
     let current = -1;
     chapters.forEach((chapter, index) => { if (video.currentTime >= chapter.t) current = index; });
-    $$('button', chaptersList).forEach((button, index) => button.classList.toggle('on', index === current));
+    $$('button', chaptersList).forEach((button, index) => {
+      button.classList.toggle('on', index === current);
+      const end = chapters[index + 1] ? chapters[index + 1].t : video.duration;
+      const progress = index === current ? (video.currentTime - chapters[index].t) / (end - chapters[index].t) : 0;
+      button.style.setProperty('--p', String(Math.max(0, Math.min(1, progress || 0))));
+    });
   });
 })();
