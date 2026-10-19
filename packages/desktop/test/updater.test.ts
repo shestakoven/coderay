@@ -10,7 +10,7 @@ const FOUR_HOURS_MS = 4 * 60 * 60_000;
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function setup() {
+function setup({ window = true } = {}) {
   const autoUpdater = Object.assign(new EventEmitter(), {
     autoDownload: false,
     autoInstallOnAppQuit: false,
@@ -20,16 +20,20 @@ function setup() {
   });
   const dialog = { showMessageBox: vi.fn<(...args: unknown[]) => Promise<{ response: number }>>(async () => ({ response: 1 })) };
   const menuLabels: string[] = [];
+  const snapshots: unknown[] = [];
   const updater = createUpdater({
     autoUpdater,
     dialog,
-    getWindow: () => WINDOW,
+    getWindow: () => (window ? WINDOW : null),
     version: VERSION,
     log: vi.fn(),
-    onChange: () => menuLabels.push(updater.menuItem().label),
+    onChange: (snapshot: unknown) => {
+      snapshots.push(snapshot);
+      menuLabels.push(updater.menuItem().label);
+    },
   });
   const shown = () => dialog.showMessageBox.mock.calls.map((call) => call.at(-1) as Record<string, unknown>);
-  return { autoUpdater, dialog, updater, menuLabels, shown };
+  return { autoUpdater, dialog, updater, menuLabels, snapshots, shown };
 }
 
 afterEach(() => {
@@ -151,7 +155,7 @@ describe('updater', () => {
     expect(ready.enabled).not.toBe(false);
     ready.click();
     expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
-    expect(menuLabels).toEqual([
+    expect(menuLabels.filter((label, index) => label !== menuLabels[index - 1])).toEqual([
       'Checking for Updates…',
       'Downloading Update… 0%',
       'Downloading Update… 42%',
@@ -160,23 +164,76 @@ describe('updater', () => {
     ]);
   });
 
-  it('offers a restart that defaults to Later, installs only on Restart, and offers it again on a user check', async () => {
-    const { autoUpdater, dialog, updater } = setup();
+  it('tells the window each step of an update, and offers the restart on download and on a user check, never on a scheduled one and never as a dialog', () => {
+    const { autoUpdater, dialog, snapshots, updater } = setup();
+    const at = (phase: string, version: string | null, percent: number | null, offers: number) => ({ phase, version, percent, offers });
+
+    updater.check();
+    autoUpdater.emit('update-available', { version: NEXT });
+    autoUpdater.emit('download-progress', { percent: 41.6 });
+    autoUpdater.emit('download-progress', { percent: 87.2 });
+    expect(snapshots).toEqual([at('checking', null, null, 0), at('downloading', NEXT, 0, 0), at('downloading', NEXT, 42, 0), at('downloading', NEXT, 87, 0)]);
+
+    snapshots.length = 0;
+    autoUpdater.emit('update-downloaded', { version: NEXT });
+    expect(snapshots.at(-1)).toEqual(at('ready', NEXT, null, 1));
+    expect(updater.getState()).toEqual(at('ready', NEXT, null, 1));
+
+    updater.check();
+    expect(updater.getState().offers).toBe(1);
+    updater.check({ byUser: true });
+    expect(snapshots.at(-1)).toEqual(at('ready', NEXT, null, 2));
+    expect(updater.getState()).toEqual(at('ready', NEXT, null, 2));
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+  });
+
+  it('without a window stays silent about a downloaded update, even on a scheduled check', async () => {
+    const { autoUpdater, dialog, updater } = setup({ window: false });
 
     autoUpdater.emit('update-downloaded', { version: NEXT });
+    updater.check();
     await flush();
-    expect(dialog.showMessageBox).toHaveBeenCalledWith(WINDOW, expect.objectContaining({
+
+    expect(dialog.showMessageBox).not.toHaveBeenCalled();
+    expect(updater.getState()).toEqual({ phase: 'ready', version: NEXT, percent: null, offers: 0 });
+  });
+
+  it('without a window asks natively on a user check: Later by default, and only Restart installs', async () => {
+    const { autoUpdater, dialog, updater } = setup({ window: false });
+    autoUpdater.emit('update-downloaded', { version: NEXT });
+
+    updater.check({ byUser: true });
+    await flush();
+    expect(dialog.showMessageBox).toHaveBeenCalledTimes(1);
+    expect(dialog.showMessageBox).toHaveBeenCalledWith(expect.objectContaining({
       message: expect.stringContaining(NEXT),
       buttons: ['Restart', 'Later'],
       defaultId: 1,
       cancelId: 1,
     }));
     expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+    expect(updater.getState().offers).toBe(0);
 
     dialog.showMessageBox.mockResolvedValueOnce({ response: 0 });
     updater.check({ byUser: true });
     await flush();
     expect(dialog.showMessageBox).toHaveBeenCalledTimes(2);
+    expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
+    expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
+  });
+
+  it('restarts from the window only once the update is downloaded', () => {
+    const { autoUpdater, updater } = setup();
+
+    updater.restart();
+    updater.check();
+    autoUpdater.emit('update-available', { version: NEXT });
+    updater.restart();
+    expect(autoUpdater.quitAndInstall).not.toHaveBeenCalled();
+
+    autoUpdater.emit('update-downloaded', { version: NEXT });
+    updater.restart();
     expect(autoUpdater.quitAndInstall).toHaveBeenCalledTimes(1);
     expect(autoUpdater.quitAndInstall).toHaveBeenCalledWith(false, true);
   });

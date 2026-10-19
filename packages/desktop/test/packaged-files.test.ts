@@ -5,6 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 const DESKTOP = join(dirname(fileURLToPath(import.meta.url)), '..');
 const LOCAL_IMPORT = /(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g;
+// A file named by a path string, such as the preload script handed to BrowserWindow, is loaded without an import.
+const NAMED_FILE = /['"]([\w-]+\.(?:cjs|mjs))['"]/g;
 
 const read = (file: string) => readFileSync(join(DESKTOP, file), 'utf8');
 
@@ -16,8 +18,12 @@ function localModulesLoadedBy(entry: string): string[] {
     if (seen.has(file)) continue;
     seen.add(file);
     if (!existsSync(join(DESKTOP, file))) continue;
-    for (const [, specifier] of read(file).matchAll(LOCAL_IMPORT)) {
+    const source = read(file);
+    for (const [, specifier] of source.matchAll(LOCAL_IMPORT)) {
       queue.push(relative(DESKTOP, join(DESKTOP, dirname(file), specifier)));
+    }
+    for (const [, name] of source.matchAll(NAMED_FILE)) {
+      queue.push(relative(DESKTOP, join(DESKTOP, dirname(file), name)));
     }
   }
   return [...seen];
@@ -29,13 +35,14 @@ function packagedFiles(): string[] {
 }
 
 describe('packaged desktop app', () => {
-  it('lists in electron-builder files every local module that main.mjs loads, directly or through another module', () => {
+  it('lists in electron-builder files every local module that main.mjs loads, by import or by a path string such as the preload script', () => {
     const loaded = localModulesLoadedBy('main.mjs');
     const packaged = packagedFiles();
 
     expect(packaged.length).toBeGreaterThan(0);
     expect(loaded).toContain('main.mjs');
     expect(loaded.length).toBeGreaterThan(1);
+    expect(loaded).toContain('preload.cjs');
     expect(loaded.filter((file) => !packaged.includes(file))).toEqual([]);
   });
 });
