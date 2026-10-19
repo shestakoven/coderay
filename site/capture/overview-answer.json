@@ -1,0 +1,162 @@
+{
+  "createdBy": [
+    "audit",
+    "rate-limit"
+  ],
+  "answer": {
+    "groups": [
+      {
+        "name": "Public API",
+        "summary": "The HTTP surface clients call: sign-up, accounts and probes",
+        "lane": "interface",
+        "noise": false,
+        "components": [
+          "users-api",
+          "health"
+        ]
+      },
+      {
+        "name": "Accounts",
+        "summary": "Sign-up rules, the user model and password hashing",
+        "lane": "core",
+        "noise": false,
+        "components": [
+          "user-service",
+          "rate-limit",
+          "domain",
+          "security",
+          "audit"
+        ]
+      },
+      {
+        "name": "Persistence",
+        "summary": "SQLite storage for users",
+        "lane": "core",
+        "noise": false,
+        "components": [
+          "user-store",
+          "database"
+        ]
+      },
+      {
+        "name": "Messaging",
+        "summary": "Transactional email over SMTP",
+        "lane": "integrations",
+        "noise": false,
+        "components": [
+          "email"
+        ]
+      },
+      {
+        "name": "Platform",
+        "summary": "App wiring, settings from the environment and tests",
+        "lane": "platform",
+        "noise": false,
+        "components": [
+          "app",
+          "config",
+          "tests"
+        ]
+      }
+    ],
+    "components": {
+      "users-api": {
+        "role": "Sign-up and account endpoints",
+        "noise": false,
+        "parts": []
+      },
+      "health": {
+        "role": "Liveness and readiness probes",
+        "noise": false,
+        "parts": []
+      },
+      "user-service": {
+        "role": "Sign-up rules and orchestration",
+        "noise": false,
+        "parts": []
+      },
+      "rate-limit": {
+        "role": "Per-IP sliding window",
+        "noise": false,
+        "parts": []
+      },
+      "audit": {
+        "role": "Security event log",
+        "noise": false,
+        "parts": []
+      },
+      "domain": {
+        "role": "User entity and API schemas",
+        "noise": false,
+        "parts": []
+      },
+      "security": {
+        "role": "bcrypt password hashing",
+        "noise": false,
+        "parts": []
+      },
+      "user-store": {
+        "role": "SQL access to users",
+        "noise": false,
+        "parts": []
+      },
+      "database": {
+        "role": "Connection and schema",
+        "noise": false,
+        "parts": []
+      },
+      "email": {
+        "role": "Welcome mail delivery",
+        "noise": false,
+        "parts": []
+      },
+      "app": {
+        "role": "FastAPI app factory",
+        "noise": false,
+        "parts": []
+      },
+      "config": {
+        "role": "ACME_* settings",
+        "noise": false,
+        "parts": []
+      },
+      "tests": {
+        "role": "API tests with pytest",
+        "noise": false,
+        "parts": []
+      }
+    },
+    "labels": [
+      {
+        "from": "users-api",
+        "to": "user-service",
+        "label": "register()"
+      },
+      {
+        "from": "user-service",
+        "to": "user-store",
+        "label": "add, find_by_email"
+      },
+      {
+        "from": "user-service",
+        "to": "email",
+        "label": "send_welcome()"
+      },
+      {
+        "from": "user-store",
+        "to": "database",
+        "label": "SQL"
+      },
+      {
+        "from": "app",
+        "to": "users-api",
+        "label": "mounts"
+      },
+      {
+        "from": "user-service",
+        "to": "security",
+        "label": "hash_password()"
+      }
+    ]
+  }
+}

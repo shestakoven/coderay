@@ -1,0 +1,437 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CodeRay: see the plan before the agent writes a line</title>
+<meta name="description" content="CodeRay is a desktop IDE built around a live map of your code. The agent shows its plan on the map, you steer it there, and afterwards the same map shows what actually happened.">
+<meta name="theme-color" content="#141518">
+<meta name="color-scheme" content="dark">
+<meta property="og:type" content="website">
+<meta property="og:title" content="CodeRay: see the plan before the agent writes a line">
+<meta property="og:description" content="A desktop IDE where the agent shows its plan on a map of your code, and the same map shows what it actually did.">
+<link rel="canonical" href="https://shestakoven.github.io/coderay/">
+<meta property="og:url" content="https://shestakoven.github.io/coderay/">
+<meta property="og:image" content="https://shestakoven.github.io/coderay/assets/og.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://shestakoven.github.io/coderay/assets/og.png">
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+<link rel="preload" href="assets/fonts/plex-sans.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="assets/fonts/jetbrains-mono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+
+<header class="nav" id="nav">
+  <div class="wrap">
+    <a class="brand" href="#top" aria-label="CodeRay, top of page">
+      <svg viewBox="205 245 610 530" aria-hidden="true"><g transform="translate(512 512) skewX(-16) translate(-512 -512)" fill="currentColor"><rect x="289" y="268" width="118" height="488" rx="44"/><rect x="435" y="268" width="300" height="118" rx="44"/><rect x="435" y="638" width="300" height="118" rx="44"/></g></svg>
+      CodeRay
+    </a>
+    <ul>
+      <li><a href="#how">How it works</a></li>
+      <li><a href="#scheme">Plan and review</a></li>
+      <li><a href="#demo">Demo</a></li>
+      <li><a href="#around">Toolkit</a></li>
+    </ul>
+    <a class="gh" href="https://github.com/shestakoven/coderay" data-gh rel="noopener" aria-label="CodeRay on GitHub"><svg class="gh-mark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg><span class="gh-name">GitHub</span><span class="gh-count" data-gh-count hidden><svg class="gh-star" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg><b></b></span></a>
+    <a class="btn primary small" href="https://github.com/shestakoven/coderay/releases/latest" data-download>Download<span class="long">&nbsp;for macOS</span></a>
+  </div>
+</header>
+
+<main id="main">
+
+<!-- HERO -->
+<section class="hero" id="top">
+  <div class="wrap">
+    <div class="hero-top">
+      <h1>See the plan before the agent writes a line.</h1>
+      <p class="hero-sub lead">CodeRay is a desktop IDE built around a live map of your code. The agent shows its plan on the map, you steer it there, and afterwards the same map shows what actually happened.</p>
+      <div class="hero-act">
+        <a class="btn primary" href="https://github.com/shestakoven/coderay/releases/latest" data-download>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v8.5M4.5 7.5 8 11l3.5-3.5M3 13.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn ghost" href="#demo">
+          <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true"><path d="M3.5 2.2v9.6a.5.5 0 0 0 .77.42l7.2-4.8a.5.5 0 0 0 0-.84l-7.2-4.8a.5.5 0 0 0-.77.42Z" fill="currentColor"/></svg>
+          Watch the demo
+        </a>
+        <span class="fine"><span data-version>0.1.0</span> · Apple Silicon · Claude Code, Codex, opencode</span>
+      </div>
+    </div>
+
+    <figure class="hero-shot">
+      <div class="window">
+        <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+        <picture>
+          <source srcset="assets/shots/plan.webp" type="image/webp">
+          <img src="assets/shots/plan.png" width="2880" height="1800" alt="CodeRay showing a plan on the code map: the agent's proposed parts and links, with the steps and their reasons beside the map, waiting for approval.">
+        </picture>
+      </div>
+      <figcaption class="caption">A plan waiting for approval, drawn on the project's map. Real app, recorded session.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<!-- PROBLEM -->
+<section class="section problem" id="problem">
+  <div class="wrap">
+    <div class="grid">
+      <div class="head">
+        <span class="tag" style="--c: var(--modified)">The problem</span>
+        <h2>The agent writes the code. You lose the picture.</h2>
+      </div>
+      <div class="body">
+        <p>A terminal agent shows its work as text scrolling past. After an hour you can no longer say which parts of the system changed, why, or what now depends on them.</p>
+        <p>So you approve diffs you half understand, or you stop looking. Either way the mental model of your own codebase goes first.</p>
+        <p class="pull">CodeRay keeps the picture. The map is the surface you work on; the chat is only how you talk to the agent.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOUR -->
+<section class="section tour rule" id="how" style="--n: 7">
+  <div class="wrap">
+    <div class="tour-head">
+      <span class="tag" style="--c: var(--accent-hover)">How control works</span>
+      <h2>One map, from the first request to the last review.</h2>
+      <p>Every stage of a task happens on the same map, in the same vocabulary of colors and states, so what you saw in the plan is what you check afterwards.</p>
+    </div>
+
+    <div class="tour-track">
+      <div class="tour-stage" aria-hidden="true">
+        <div class="stage-shell">
+          <div class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <div class="stage-views"></div>
+          </div>
+          <div class="stage-cap">
+            <div class="stage-meter">
+              <span class="tag" id="stage-tag">Map</span>
+              <div class="stage-ticks" id="stage-ticks"></div>
+            </div>
+            <div class="stage-text" id="stage-text"></div>
+          </div>
+        </div>
+      </div>
+
+      <ol class="tour-steps">
+        <li data-shot="map" data-name="Map" data-color="var(--muted)">
+          <span class="tag" style="--c: var(--muted)">Map</span>
+          <div class="copy">
+            <h3>Your code, drawn as it is.</h3>
+            <p>Parts are grouped from your structure and imports and redrawn within seconds of any file change, whether you or the agent made it.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/map.webp" type="image/webp"><img src="assets/shots/map.png" width="2880" height="1800" loading="lazy" alt="The live map of the project: components grouped from the code, with links drawn from imports."></picture>
+          </figure>
+        </li>
+        <li data-shot="plan" data-name="Plan" data-color="var(--accent-hover)">
+          <span class="tag" style="--c: var(--accent-hover)">Plan</span>
+          <div class="copy">
+            <h3>The agent proposes before it acts.</h3>
+            <p>Its plan lands on the map: the parts it will create or change, the links it will add, and the reason for each step. Until you answer, nothing is written.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/plan.webp" type="image/webp"><img src="assets/shots/plan.png" width="2880" height="1800" loading="lazy" alt="A plan drawn on the map, with the steps and their reasons listed beside it, waiting for approval."></picture>
+          </figure>
+        </li>
+        <li data-shot="plan-steer" data-name="Steer" data-color="var(--ask)">
+          <span class="tag" style="--c: var(--ask)">Steer</span>
+          <div class="copy">
+            <h3>Correct the plan where it is wrong.</h3>
+            <p>Point at a part or a link and press C to comment, or A to add a part after it. You read the exact message first, and the next plan arrives on the same map.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/plan-steer.webp" type="image/webp"><img src="assets/shots/plan-steer.png" width="2880" height="1800" loading="lazy" alt="The plan map with a comment on one part and a requested part added after another, and the message that will be sent to the agent."></picture>
+          </figure>
+        </li>
+        <li data-shot="execute" data-name="Run" data-color="var(--accent)">
+          <span class="tag" style="--c: var(--accent)">Run</span>
+          <div class="copy">
+            <h3>Watch each step land.</h3>
+            <p>Parts light up as the agent starts and finishes a step. Every file it touches is tracked against the step that asked for it.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/execute.webp" type="image/webp"><img src="assets/shots/execute.png" width="2880" height="1800" loading="lazy" alt="The approved plan running: the current step is highlighted on the map and finished steps are marked done."></picture>
+          </figure>
+        </li>
+        <li data-shot="guard" data-name="Guard" data-color="var(--warn)">
+          <span class="tag" style="--c: var(--warn)">Guard</span>
+          <div class="copy">
+            <h3>Strays are caught, not found later.</h3>
+            <p>A write outside the approved plan is stopped before it runs, or flagged within seconds if it came through a shell. You choose: block, ask, or allow and flag.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/guard.webp" type="image/webp"><img src="assets/shots/guard.png" width="2880" height="1800" loading="lazy" alt="The agent tried to change a file outside the approved plan and CodeRay is asking what to do."></picture>
+          </figure>
+        </li>
+        <li data-shot="review-map" data-name="Review" data-color="var(--added)">
+          <span class="tag" style="--c: var(--added)">Review</span>
+          <div class="copy">
+            <h3>What was done, on the same map.</h3>
+            <p>Links come from the imports in your code, not from the agent's account of itself. See what is new, what nobody planned, what was planned but never built.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/review-map.webp" type="image/webp"><img src="assets/shots/review-map.png" width="2880" height="1800" loading="lazy" alt="The review map: what the agent actually changed, with unplanned links, missing links and a question asked on a part."></picture>
+          </figure>
+        </li>
+        <li data-shot="review-diff" data-name="Trace" data-color="var(--modified)">
+          <span class="tag" style="--c: var(--modified)">Trace</span>
+          <div class="copy">
+            <h3>Every change has a reason.</h3>
+            <p>Open a part to see its changes grouped by the plan step behind them, each with the step's reason. Ask a question on any part or link without touching the code.</p>
+          </div>
+          <figure class="window">
+            <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+            <picture><source srcset="assets/shots/review-diff.webp" type="image/webp"><img src="assets/shots/review-diff.png" width="2880" height="1800" loading="lazy" alt="The changes of one part shown as a diff, grouped by the plan step that caused them."></picture>
+          </figure>
+        </li>
+      </ol>
+    </div>
+  </div>
+</section>
+
+<!-- PLAN VS FACT -->
+<section class="section scheme rule" id="scheme">
+  <div class="wrap">
+    <div class="scheme-head">
+      <span class="tag" style="--c: var(--ask)">Plan and review</span>
+      <h2>Intent and fact, drawn on the same map.</h2>
+      <p>The plan is what the agent says it will do. The review is what the code says it did. Put them on one set of parts and the gap between them is the thing you came to find.</p>
+    </div>
+
+    <div class="scheme-bar">
+      <div class="seg" role="group" aria-label="Map view">
+        <button type="button" id="seg-plan" aria-pressed="true">Plan <span>intent</span></button>
+        <button type="button" id="seg-review" aria-pressed="false">Review <span>fact</span></button>
+      </div>
+      <p class="scheme-state" id="scheme-state" aria-live="polite">Three steps, six parts, two new links. Nothing is written until you approve.</p>
+    </div>
+
+    <div class="canvas">
+      <svg class="sch" id="sch" data-view="plan" viewBox="0 0 1100 500" role="img" aria-label="A schematic of the same six parts shown twice. In the plan, a rate limiter and an audit log will be created and linked to the route and service. In the review, the rate limiter exists and is linked, the audit log was never linked, and an email service outside the plan was linked to the user service.">
+
+        <!-- header -->
+        <text class="headline on-plan" x="20" y="34">PLAN V2 · WAITING FOR YOU</text>
+        <text class="headline on-review" x="20" y="34">REVIEW · 2 OF 3 STEPS DONE</text>
+
+        <!-- links -->
+        <path class="edge e-existing" d="M210 260 H275"/>
+        <path class="edge e-existing" d="M465 260 H590"/>
+        <path class="edge e-existing" d="M780 260 C837 260 837 102 895 102"/>
+        <path class="edge e-planned-miss" d="M780 260 H895"/>
+        <path class="edge e-new" d="M370 228 V122"/>
+        <path class="edge e-unplanned" d="M685 292 V400"/>
+
+        <!-- parts -->
+        <g class="node n-existing n-actor" transform="translate(20 228)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">Client</text><text class="s" x="16" y="47">Person · actor</text>
+        </g>
+
+        <g class="node n-modify" id="n-route" transform="translate(275 228)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">POST /users</text><text class="s" x="16" y="47">Route · routes/users.py</text>
+          <g class="tagbox tag-modify on-plan" transform="translate(132 11)"><rect width="50" height="17" rx="4"/><text x="25" y="9">MODIFY</text></g>
+          <g class="tagbox tag-modify on-review" transform="translate(119 11)"><rect width="63" height="17" rx="4"/><text x="31.5" y="9">MODIFIED</text></g>
+          <g class="badge on-plan" transform="translate(176 0)"><circle r="9"/><text>2</text></g>
+          <g class="badge on-review" transform="translate(176 0)"><circle r="9" style="stroke: color-mix(in srgb, var(--added) 55%, transparent)"/><path d="M-3.4 .4 l2.4 2.7 l4.4-5.6" style="stroke: var(--added)"/></g>
+        </g>
+
+        <g class="node n-modify" id="n-service" transform="translate(590 228)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">UserService</text><text class="s" x="16" y="47">Service · user_service.py</text>
+          <g class="tagbox tag-modify on-plan" transform="translate(132 11)"><rect width="50" height="17" rx="4"/><text x="25" y="9">MODIFY</text></g>
+          <g class="tagbox tag-modify on-review" transform="translate(119 11)"><rect width="63" height="17" rx="4"/><text x="31.5" y="9">MODIFIED</text></g>
+          <g class="badge on-plan" transform="translate(176 0)"><circle r="9"/><text>2</text></g>
+          <g class="badge on-review" transform="translate(176 0)"><circle r="9" style="stroke: color-mix(in srgb, var(--added) 55%, transparent)"/><path d="M-3.4 .4 l2.4 2.7 l4.4-5.6" style="stroke: var(--added)"/></g>
+        </g>
+
+        <g class="node n-existing" transform="translate(895 70)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">UserRepository</text><text class="s" x="16" y="47">Repository · db</text>
+        </g>
+
+        <g class="node" id="n-limiter" transform="translate(275 58)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">RateLimiter</text><text class="s" x="16" y="47">Module · rate_limit.py</text>
+          <g class="tagbox tag-create on-plan" transform="translate(132 11)"><rect width="50" height="17" rx="4"/><text x="25" y="9">CREATE</text></g>
+          <g class="tagbox tag-done on-review" transform="translate(125 11)"><rect width="57" height="17" rx="4"/><text x="28.5" y="9">CREATED</text></g>
+          <g class="badge on-plan" transform="translate(176 0)"><circle r="9"/><text>1</text></g>
+          <g class="badge on-review" transform="translate(176 0)"><circle r="9" style="stroke: color-mix(in srgb, var(--added) 55%, transparent)"/><path d="M-3.4 .4 l2.4 2.7 l4.4-5.6" style="stroke: var(--added)"/></g>
+        </g>
+
+        <g class="node" id="n-audit" transform="translate(895 228)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">AuditLog</text><text class="s" x="16" y="47">Module · audit_log.py</text>
+          <g class="tagbox tag-create on-plan" transform="translate(132 11)"><rect width="50" height="17" rx="4"/><text x="25" y="9">CREATE</text></g>
+          <g class="tagbox tag-miss on-review" transform="translate(119 11)"><rect width="63" height="17" rx="4"/><text x="31.5" y="9">NOT DONE</text></g>
+          <g class="badge on-plan" transform="translate(176 0)"><circle r="9"/><text>3</text></g>
+          <g class="badge on-review" transform="translate(176 0)"><circle r="9" style="stroke: color-mix(in srgb, var(--error) 55%, transparent)"/><path d="M-3 -3 L3 3 M3 -3 L-3 3" style="stroke: var(--error)"/></g>
+        </g>
+
+        <g class="node" id="n-email" transform="translate(590 400)">
+          <rect class="card" width="190" height="64" rx="8"/><rect class="bar" x="0" y="11" width="3" height="42" rx="1.5"/>
+          <text class="t" x="16" y="28">EmailService</text><text class="s" x="16" y="47">Service · email_service.py</text>
+          <g class="tagbox tag-out on-review" transform="translate(125 11)"><rect width="57" height="17" rx="4"/><text x="28.5" y="9">OUTSIDE</text></g>
+        </g>
+
+        <!-- link labels -->
+        <g class="pill" transform="translate(243 260)"><rect x="-22" y="-11" width="44" height="22" rx="6"/><text>POST</text></g>
+        <g class="pill" transform="translate(527 260)"><rect x="-50" y="-11" width="100" height="22" rx="6"/><text>create_user()</text></g>
+        <g class="pill" transform="translate(837 181)"><rect x="-27" y="-11" width="54" height="22" rx="6"/><text>save()</text></g>
+        <g class="pill pill-miss" transform="translate(837 260)"><rect x="-47" y="-11" width="94" height="22" rx="6"/><text>log(blocked)</text></g>
+        <g class="pill pill-new" transform="translate(370 175)"><rect x="-38" y="-11" width="76" height="22" rx="6"/><text>check(ip)</text></g>
+        <g class="pill pill-unplanned" transform="translate(685 346)"><rect x="-57" y="-11" width="114" height="22" rx="6"/><text>send_welcome()</text></g>
+
+        <!-- plan: steps and keys -->
+        <g class="steps on-plan" transform="translate(520 56)">
+          <g transform="translate(0 0)"><circle cx="9" cy="9" r="9" fill="var(--surface)" stroke="var(--border)"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9.5" font-weight="700" fill="var(--fg-2)">1</text><text class="row-t" x="28" y="13">Add the rate limiter</text><text class="row-f" x="28" y="30">core/rate_limit.py</text></g>
+          <g transform="translate(0 46)"><circle cx="9" cy="9" r="9" fill="var(--surface)" stroke="var(--border)"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9.5" font-weight="700" fill="var(--fg-2)">2</text><text class="row-t" x="28" y="13">Wire it into route and service</text><text class="row-f" x="28" y="30">routes/users.py, user_service.py</text></g>
+          <g transform="translate(0 92)"><circle cx="9" cy="9" r="9" fill="var(--surface)" stroke="var(--border)"/><text x="9" y="9.5" text-anchor="middle" dominant-baseline="central" font-size="9.5" font-weight="700" fill="var(--fg-2)">3</text><text class="row-t" x="28" y="13">Log blocked attempts</text><text class="row-f" x="28" y="30">audit_log.py · <tspan fill="var(--ask)">added from your note</tspan></text></g>
+        </g>
+        <g class="on-plan" transform="translate(20 470)">
+          <rect width="22" height="22" rx="5" fill="var(--surface)" stroke="var(--border)"/><text class="note" x="11" y="11.5" text-anchor="middle" dominant-baseline="central" style="fill: var(--fg)">C</text>
+          <text class="note" x="32" y="11.5" dominant-baseline="central">comment on a part or link</text>
+          <g transform="translate(236 0)"><rect width="22" height="22" rx="5" fill="var(--surface)" stroke="var(--border)"/><text class="note" x="11" y="11.5" text-anchor="middle" dominant-baseline="central" style="fill: var(--fg)">A</text>
+          <text class="note" x="32" y="11.5" dominant-baseline="central">add a part after it</text></g>
+        </g>
+
+        <!-- review: steps, evidence, question -->
+        <g class="steps on-review" transform="translate(520 56)">
+          <g transform="translate(0 0)"><circle cx="9" cy="9" r="9" fill="var(--surface)" style="stroke: color-mix(in srgb, var(--added) 55%, transparent)"/><path d="M5.6 9.4 l2.4 2.7 l4.4-5.6" fill="none" stroke="var(--added)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text class="row-t" x="28" y="13">Add the rate limiter</text><text class="row-f" x="28" y="30">core/rate_limit.py</text><text class="row-f" x="296" y="13" text-anchor="end" fill="var(--added)">done</text></g>
+          <g transform="translate(0 46)"><circle cx="9" cy="9" r="9" fill="var(--surface)" style="stroke: color-mix(in srgb, var(--added) 55%, transparent)"/><path d="M5.6 9.4 l2.4 2.7 l4.4-5.6" fill="none" stroke="var(--added)" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><text class="row-t" x="28" y="13">Wire it into route and service</text><text class="row-f" x="28" y="30">routes/users.py, user_service.py</text><text class="row-f" x="296" y="13" text-anchor="end" fill="var(--added)">done</text></g>
+          <g transform="translate(0 92)"><circle cx="9" cy="9" r="9" fill="var(--surface)" style="stroke: color-mix(in srgb, var(--error) 55%, transparent)"/><path d="M6 6 L12 12 M12 6 L6 12" fill="none" stroke="var(--error)" stroke-width="1.8" stroke-linecap="round"/><text class="row-t" x="28" y="13">Log blocked attempts</text><text class="row-f" x="28" y="30">audit_log.py</text><text class="row-f" x="296" y="13" text-anchor="end" fill="var(--error)">skipped</text></g>
+        </g>
+        <g class="on-review">
+          <text class="note" x="903" y="318">Planned, but nothing in</text>
+          <text class="note" x="903" y="334">the code does this yet.</text>
+          <text class="note warn" x="756" y="350" dominant-baseline="central">user_service.py:42</text>
+          <path class="ask-line" d="M806 416 C780 400 760 372 742 352"/>
+          <g class="ask-chip" transform="translate(806 398)"><rect width="240" height="36" rx="9"/><text x="14" y="18.5">Why does sign-up send mail?</text></g>
+        </g>
+        <g class="on-review" transform="translate(20 470)">
+          <text class="note" x="0" y="11.5" dominant-baseline="central">Links are read from the imports in the code, not from the agent's summary.</text>
+        </g>
+      </svg>
+    </div>
+
+    <ul class="legend" aria-label="Link legend">
+      <li><svg viewBox="0 0 34 8" aria-hidden="true"><path d="M0 4h34" stroke="var(--muted)" stroke-opacity=".55" stroke-width="1.6"/></svg>existing</li>
+      <li><svg viewBox="0 0 34 8" aria-hidden="true"><path d="M0 4h34" stroke="var(--accent-hover)" stroke-width="2" stroke-dasharray="7 6"/></svg>planned</li>
+      <li><svg viewBox="0 0 34 8" aria-hidden="true"><path d="M0 4h34" stroke="var(--added)" stroke-width="2"/></svg>built as planned</li>
+      <li><svg viewBox="0 0 34 8" aria-hidden="true"><path d="M0 4h34" stroke="var(--warn)" stroke-width="2" stroke-dasharray="7 5"/></svg>unplanned</li>
+      <li><svg viewBox="0 0 34 8" aria-hidden="true"><path d="M0 4h34" stroke="var(--muted)" stroke-width="1.6" stroke-dasharray="2 6" stroke-opacity=".9"/></svg>missing</li>
+      <li><svg viewBox="0 0 34 8" aria-hidden="true"><path d="M0 4h34" stroke="var(--error)" stroke-width="2" stroke-dasharray="3 4"/></svg>broken</li>
+    </ul>
+
+    <div class="scheme-notes">
+      <div>
+        <h3>The plan is intent.</h3>
+        <p>Parts the agent will create or change, links it will add, and a reason for every step. Comment on a part or a link, or add a part of your own, before you approve.</p>
+      </div>
+      <div>
+        <h3>The review is fact.</h3>
+        <p>Links are derived from the imports in your code. A planned link with no import is missing, an import nobody planned is flagged, and an import of a removed file is broken.</p>
+      </div>
+      <div>
+        <h3>Ask instead of digging.</h3>
+        <p>Select a part or a link and ask. The question goes to the agent as one message that names the part and the file and says: answer only, change nothing.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- DEMO -->
+<section class="section demo rule" id="demo">
+  <div class="wrap">
+    <div class="demo-head">
+      <span class="tag" style="--c: var(--accent-hover)">Demo</span>
+      <h2>A whole task, start to finish.</h2>
+      <p>One request, one plan, one correction, one stray write, one review.</p>
+    </div>
+
+    <div class="demo-grid">
+      <div class="player" id="player">
+        <div class="window">
+          <div class="window-bar"><i></i><i></i><i></i><span>acme-signup · CodeRay</span></div>
+          <div class="frame">
+            <video id="video" preload="none" playsinline poster="assets/video/demo-poster.jpg" aria-label="CodeRay demo: from a request to a reviewed change">
+              <source src="assets/video/demo.webm" type="video/webm">
+              <source src="assets/video/demo.mp4" type="video/mp4">
+            </video>
+            <button class="play" id="play" type="button" aria-label="Play the demo">
+              <span><svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true"><path d="M3.5 2.2v9.6a.5.5 0 0 0 .77.42l7.2-4.8a.5.5 0 0 0 0-.84l-7.2-4.8a.5.5 0 0 0-.77.42Z" fill="currentColor"/></svg>Play the demo</span>
+            </button>
+          </div>
+        </div>
+      </div>
+      <div class="chapters">
+        <h3>Chapters</h3>
+        <ol id="chapters"></ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- TOOLKIT -->
+<section class="section around rule" id="around">
+  <div class="wrap">
+    <div class="around-grid">
+      <div class="head">
+        <span class="tag" style="--c: var(--added)">Toolkit</span>
+        <h2>Everything else serves the map.</h2>
+        <p>CodeRay does not replace your agent or your editor. It adds the parts that keep you in control of both.</p>
+      </div>
+      <dl class="facts">
+        <div style="--c: var(--warn)"><dt>Control modes</dt><dd>Block, ask, or allow and flag, with ask as the default. File writers and recognized shell writes are stopped before they run; anything else is caught within seconds.</dd></div>
+        <div style="--c: var(--modified)"><dt>Step rollback</dt><dd>Per-step checkpoints. Roll back one step without overwriting your own edits or later steps.</dd></div>
+        <div style="--c: var(--added)"><dt>Provenance</dt><dd>Every change in a part, grouped by the plan step that caused it. Your own edits sit under their own heading.</dd></div>
+        <div style="--c: var(--ask)"><dt>Background models</dt><dd>A small model groups files into components and summarizes changes. Local embeddings help cluster files and power code search for the agent.</dd></div>
+        <div style="--c: var(--accent-hover)"><dt>Your agent</dt><dd>Chats run on the real Claude Code, Codex or opencode CLIs. The plan gate and the map sit around them.</dd></div>
+        <div style="--c: var(--muted)"><dt>MCP servers</dt><dd>Configured at IDE level and per project. A project's servers run only after you approve them on this machine.</dd></div>
+        <div style="--c: var(--muted)"><dt>Many projects</dt><dd>Projects are tabs of one window. Each runs its own agent in the background, and a bubble tells you which one needs you.</dd></div>
+        <div style="--c: var(--muted)"><dt>Languages</dt><dd>Maps for TypeScript, Python, C, C++, C# and Swift, plus a container view drawn from <code>docker-compose</code> and XcodeGen.</dd></div>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<!-- CTA -->
+<section class="cta" id="download">
+  <div class="wrap">
+    <div class="grid">
+      <h2>Know what your agent did.</h2>
+      <p>CodeRay <span data-version>0.1.0</span> for macOS on Apple Silicon. It drives your own agent CLI, Claude Code by default, so install it and log in first.</p>
+      <div class="act">
+        <a class="btn primary" href="https://github.com/shestakoven/coderay/releases/latest" data-download>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M8 2v8.5M4.5 7.5 8 11l3.5-3.5M3 13.5h10" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          Download for macOS
+        </a>
+        <a class="btn ghost" href="https://github.com/shestakoven/coderay" data-gh rel="noopener"><svg class="gh-mark" width="16" height="16" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>Star on GitHub<span class="gh-count" data-gh-count hidden><svg class="gh-star" width="14" height="14" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 .25a.75.75 0 01.673.418l1.882 3.815 4.21.612a.75.75 0 01.416 1.279l-3.046 2.97.719 4.192a.75.75 0 01-1.088.791L8 12.347l-3.766 1.98a.75.75 0 01-1.088-.79l.72-4.194L.818 6.374a.75.75 0 01.416-1.28l4.21-.611L7.327.668A.75.75 0 018 .25z"/></svg><b></b></span></a>
+      </div>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 CodeRay</span>
+    <a class="foot-link" href="https://github.com/shestakoven/coderay" data-gh rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+<script src="main.js" defer></script>
+</body>
+</html>

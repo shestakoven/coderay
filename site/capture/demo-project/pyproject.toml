@@ -1,0 +1,18 @@
+[project]
+name = "acme-signup"
+version = "1.4.0"
+description = "Sign-up and account service for Acme"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115",
+    "pydantic[email]>=2.9",
+    "pydantic-settings>=2.5",
+    "bcrypt>=4.2",
+    "uvicorn>=0.32",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.3", "httpx>=0.27"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
