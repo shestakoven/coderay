@@ -40,6 +40,8 @@ export function toolName(tool: string, input: Record<string, unknown>, servers: 
   if (tool === 'write') return 'Write';
   if (tool === 'edit') return input.oldString === '' ? 'Write' : 'Edit';
   if (tool === 'apply_patch') return patchFiles(input).every(([kind]) => kind === 'Add') ? 'Write' : 'Edit';
+  // The subagent a user's `/command` runs starts with no ask: it is the user's command, as a skill is.
+  if (tool === 'task' && typeof input.command === 'string') return 'Skill';
   const name = NAMES.get(tool);
   if (name !== undefined) return name;
   // opencode names an MCP tool `<server>_<tool>`; the longest server wins when one name starts another.

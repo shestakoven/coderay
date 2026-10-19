@@ -19,7 +19,7 @@ function events(servers = ['idecore']): OpencodeEvents {
 
 describe('toolName', () => {
   it.each([
-    ['bash', {}, 'Bash'], ['read', {}, 'Read'], ['glob', {}, 'Glob'], ['grep', {}, 'Grep'], ['list', {}, 'LS'], ['webfetch', {}, 'WebFetch'], ['websearch', {}, 'WebSearch'], ['codesearch', {}, 'Grep'], ['lsp', {}, 'LSP'], ['task', {}, 'Task'], ['todowrite', {}, 'TodoWrite'], ['question', {}, 'AskUserQuestion'], ['skill', {}, 'Skill'],
+    ['bash', {}, 'Bash'], ['read', {}, 'Read'], ['glob', {}, 'Glob'], ['grep', {}, 'Grep'], ['list', {}, 'LS'], ['webfetch', {}, 'WebFetch'], ['websearch', {}, 'WebSearch'], ['codesearch', {}, 'Grep'], ['lsp', {}, 'LSP'], ['task', {}, 'Task'], ['task', { description: 'review changes', prompt: 'You are a code reviewer.', subagent_type: 'build', command: 'review' }, 'Skill'],['todowrite', {}, 'TodoWrite'], ['question', {}, 'AskUserQuestion'], ['skill', {}, 'Skill'],
     ['edit', { filePath: '/p/a.ts', oldString: 'a', newString: 'b' }, 'Edit'], ['edit', { filePath: '/p/new.ts', oldString: '', newString: 'x' }, 'Write'], ['write', { filePath: '/p/new.ts', content: 'x' }, 'Write'],
     ['apply_patch', { patchText: '*** Update File: a.ts' }, 'Edit'], ['apply_patch', { patchText: '*** Add File: new.ts\n+x' }, 'Write'], ['apply_patch', { patchText: '*** Add File: new.ts\n+x\n*** Delete File: old.ts' }, 'Edit'],
     ['idecore_propose_plan', {}, 'mcp__idecore__propose_plan'], ['files_list_dir', {}, 'mcp__files__list_dir'], ['files_x_list', {}, 'mcp__files_x__list'], ['unknown_thing', {}, 'unknown_thing'],
