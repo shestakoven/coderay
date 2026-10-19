@@ -47,7 +47,7 @@
 | `FAKE_OPENCODE_HEALTH=down` | Health answers 503. |
 | `FAKE_OPENCODE_DISPOSE=hang` | `/global/dispose` never answers. |
 | `FAKE_OPENCODE_ABORT=ignore` | `/session/:id/abort` answers 200 and the turn goes on: no idle comes. |
-| `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.error` `ProviderModelNotFoundError` and `session.idle`. |
+| `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.error` `UnknownError` "Model not found: <provider>/<model>. Did you mean: …" (1.19's words for a model of a provider it has not connected) and `session.idle`. |
 | `FAKE_OPENCODE_GONE=<id>` | `GET /session/<id>` is 404. |
 | `FAKE_OPENCODE_REPLIED=1` | At the first prompt, before its turn plays, a `permission.replied` `once` nobody asked for (`per_nobody`): the tripwire; `=reject` replies `reject`. |
 | `FAKE_OPENCODE_RULES_FLIP=1` | After the first prompt `build` gains a last rule `edit * allow`: the per-prompt self-check. |

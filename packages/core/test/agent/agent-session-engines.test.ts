@@ -421,7 +421,7 @@ describe('AgentSession on opencode', () => {
   it("runs an opencode chat in its profile's home, shows its refusal as a refused chat with the reason in that profile's words and tries again with the next message, and starts no opencode while the gate cannot decide yet", async () => {
     const profile = tempDir('oc-profile-');
     const work: SessionAccounts = { activeId: () => 'work', home: () => ({ dir: profile, env: opencodeHomes(profile), unset: [], args: [] }), label: () => 'Work', activeLabel: () => 'Work' };
-    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1' }, overrides: { accounts: { opencode: work } } });
+    const h = await harness({ opencodeEnv: { FAKE_OPENCODE_UNKNOWN_MODEL: '1', FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [], default: {} }) }, overrides: { accounts: { opencode: work } } });
     await opencodeChat(h);
     h.session.send('hi');
     await waitFor(() => h.session.state().session?.status === 'refused', 'the chat refused');

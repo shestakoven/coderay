@@ -27,7 +27,7 @@ export function signedOutHint(home: AccountHome): string {
     : 'Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.';
 }
 
-/** For a chat whose model is of a provider opencode has not connected (`ProviderModelNotFoundError`). */
+/** For a chat whose model is of a provider opencode has not connected (1.19: "Model not found: <provider>/<model>"). */
 export function providerHint(providerID: string, home: AccountHome): string {
   return `opencode has no provider "${providerID}" connected for this model. ${signedOutHint(home)}`;
 }

@@ -317,7 +317,8 @@ const server = createServer(async (req, res) => {
     const answer = () => json(res, 200, { info: { id: messageID, sessionID: session.id, role: 'assistant', finish: 'stop' }, parts: [] });
     if (env.FAKE_OPENCODE_UNKNOWN_MODEL === '1') {
       if (s[2] === 'prompt_async') json(res, 204); else answer();
-      send('session.error', { sessionID: session.id, error: { name: 'ProviderModelNotFoundError', data: { providerID: body?.model?.providerID ?? String(body?.model ?? '').split('/')[0], modelID: body?.model?.modelID ?? String(body?.model ?? '').split('/').slice(1).join('/') } } });
+      const model = typeof body?.model === 'string' ? body.model : `${body?.model?.providerID}/${body?.model?.modelID}`;
+      send('session.error', { sessionID: session.id, error: { name: 'UnknownError', data: { message: `Model not found: ${model}. Did you mean: nemotron-3.5-lightning-free?` } } });
       send('session.idle', { sessionID: session.id });
       return;
     }

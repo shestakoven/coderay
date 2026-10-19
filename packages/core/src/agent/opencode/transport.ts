@@ -26,6 +26,7 @@ const MAX_DEPTH = 8;
 const INPUT_WAIT_MS = 2_000;
 const INPUT_POLL_MS = 20;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
+const MODEL_NOT_FOUND = /^Model not found: ([^/\s]+)\//;
 const BEARER = /^Bearer\s+(\S+)$/i;
 // Every prompt runs this agent; the self-check reads its rules.
 const AGENT = 'build';
@@ -299,13 +300,18 @@ class OpencodeTransport implements AgentTransport {
     if (type === 'permission.asked') return this.asked(server, client, properties);
     if (type === 'permission.replied') return this.replied(properties);
     if (type === 'question.asked') return void this.questioned(server, client, properties);
-    const error = properties.error;
-    if (type === 'session.error' && properties.sessionID === this.sessionId && isRecord(error) && error.name === 'ProviderModelNotFoundError') {
-      const provider = isRecord(error.data) && typeof error.data.providerID === 'string' ? error.data.providerID : (this.model?.split('/')[0] ?? '');
-      return this.refuse(this.launch.providerHint(provider));
-    }
+    const provider = type === 'session.error' && properties.sessionID === this.sessionId ? this.unconnected(properties.error) : null;
+    if (provider !== null) return this.refuse(this.launch.providerHint(provider));
     // Between turns opencode only says what a stopped turn left behind: a second idle, a stopped tool's end.
     if (this.turnOpen) this.dispatch(this.events.handle({ type, properties }));
+  }
+
+  // 1.19 says "Model not found: <provider>/<model>. Did you mean: …" both for a provider it has not connected and for a model its provider lacks.
+  private unconnected(error: unknown): string | null {
+    const message = isRecord(error) && isRecord(error.data) && typeof error.data.message === 'string' ? error.data.message : '';
+    const provider = MODEL_NOT_FOUND.exec(message)?.[1];
+    if (provider === undefined) return null;
+    return this.catalog.some((model) => parseModelId(model.value)?.model.startsWith(`${provider}/`)) ? null : provider;
   }
 
   // Tripwire: a root session CodeRay did not open means someone else uses this server's password.
