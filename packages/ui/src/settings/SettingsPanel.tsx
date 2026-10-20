@@ -337,6 +337,7 @@ export function SettingsPanel({ settings, lastResult, providers, loadProviders, 
             <span><Kbd>⌘</Kbd><Kbd>,</Kbd> open anywhere</span>
             <span><Kbd>/</Kbd> search</span>
             <span><Kbd>esc</Kbd> close</span>
+            <a className="sw-sponsor" href="https://github.com/sponsors/shestakoven" target="_blank" rel="noopener noreferrer">Support CodeRay</a>
           </div>
         </nav>
         <main className="sw-main" id="sw-page" role="tabpanel" aria-labelledby={`sw-tab-${category}`}>

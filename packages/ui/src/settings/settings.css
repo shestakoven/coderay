@@ -54,6 +54,8 @@
 .sw-tab.dim { opacity: 0.4; }
 .sw-rail-foot { margin-top: auto; display: flex; flex-direction: column; gap: 6px; padding: 0 var(--sw-3); color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }
 .sw-rail-foot span { display: flex; align-items: center; gap: 6px; }
+.sw-sponsor { color: var(--muted); text-decoration: none; }
+.sw-sponsor:hover, .sw-sponsor:focus-visible { color: var(--text, inherit); text-decoration: underline; }
 .sw-kbd {
   display: inline-grid; place-items: center; min-width: 20px; height: 18px; padding: 0 5px; border-radius: 4px;
   background: var(--surface); color: var(--muted); font: 500 11px/1 var(--font-ui);
