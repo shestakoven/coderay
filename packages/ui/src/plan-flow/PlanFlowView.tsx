@@ -72,7 +72,8 @@ function Canvas({ plan, flow, view, direction, hoverStep, draft, tools, selectio
   const [layouts, setLayouts] = useState<FlowLayouts | null>(null);
   const [rawHoverNode, setHoverNode] = useState<string | null>(null);
   const [rawHoverEdge, setHoverEdge] = useState<number | null>(null);
-  const leave = useRef<number | undefined>(undefined);
+  const leaveNode = useRef<number | undefined>(undefined);
+  const leaveEdge = useRef<number | undefined>(undefined);
   const { setViewport } = useReactFlow();
   const store = useStoreApi();
   const fitTo = useCallback(
@@ -122,14 +123,14 @@ function Canvas({ plan, flow, view, direction, hoverStep, draft, tools, selectio
   }, [layouts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const hoverNodeIn = useCallback((id: string | null) => {
-    window.clearTimeout(leave.current);
+    window.clearTimeout(leaveNode.current);
     if (id !== null) setHoverNode(id);
-    else leave.current = window.setTimeout(() => setHoverNode(null), 90);
+    else leaveNode.current = window.setTimeout(() => setHoverNode(null), 90);
   }, []);
   const hoverEdgeIn = useCallback((index: number | null) => {
-    window.clearTimeout(leave.current);
+    window.clearTimeout(leaveEdge.current);
     if (index !== null) setHoverEdge(index);
-    else leave.current = window.setTimeout(() => setHoverEdge(null), 120);
+    else leaveEdge.current = window.setTimeout(() => setHoverEdge(null), 120);
   }, []);
 
   // The hovered part may be gone when the draft is sent: a request leaves the map with it.
