@@ -270,3 +270,4 @@
 .pf-canvas.has-bar .react-flow__minimap { margin-bottom: 74px; }
 .map-area.has-view .pf-rail { top: 88px; max-height: calc(100% - 88px - 100px); }
 .map-area.has-view .pf-detail { top: 88px; max-height: calc(100% - 88px - 100px); }
+.pf-step-title .added-chip { margin-left: 6px; vertical-align: 1px; }

@@ -11,8 +11,10 @@ const DRAWN = new Set(['proposed', 'approved', 'done', 'withdrawn']);
 export const flowOf = (plan: PlanView | null): PlanFlow | null => (plan !== null && (DRAWN.has(plan.status) || plan.status === 'changes-requested') ? plan.flow : null);
 
 export function stepPhase(plan: PlanView, key: string): StepPhase {
-  if (plan.status === 'proposed') return 'proposed';
-  return plan.steps.find((step) => step.key === key)?.status ?? 'pending';
+  const status = plan.steps.find((step) => step.key === key)?.status ?? 'pending';
+  // A revised plan that waits again keeps the steps already done; only the rest is up for the user's answer.
+  if (plan.status === 'proposed') return status === 'done' ? 'done' : 'proposed';
+  return status;
 }
 
 export function nodePhase(plan: PlanView, node: PlanFlowNode): NodePhase {

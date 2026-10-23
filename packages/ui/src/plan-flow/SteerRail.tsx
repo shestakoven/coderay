@@ -40,7 +40,7 @@ export function SteerRail({ plan, flow, open, onToggle, onHover }: {
                 <li key={step.key} className="pf-step" onMouseEnter={() => onHover(step.key)} data-testid={`flow-step-${index + 1}`}>
                   <span className={`step-badge ${phase === 'proposed' ? '' : phase}`}>{phase === 'done' ? '✓' : index + 1}</span>
                   <span className="pf-step-body">
-                    <span className="pf-step-title">{step.title}</span>
+                    <span className="pf-step-title">{step.title}{step.extra && <span className="added-chip" title="Added after you approved the plan">added</span>}</span>
                     {step.rationale && <span className="pf-step-why">{step.rationale}</span>}
                     <span className="pf-step-meta">{count === 0 ? 'no files' : `${count} file${count === 1 ? '' : 's'}`}</span>
                   </span>

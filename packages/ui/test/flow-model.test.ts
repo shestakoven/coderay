@@ -65,9 +65,9 @@ describe('stepPhase', () => {
     ]);
   });
 
-  it('reports a waiting plan as proposed even when its steps carry another status', () => {
+  it('keeps the steps already done when a revised plan waits again, and proposes the rest', () => {
     const waiting: PlanView = { ...withProgress(userPlan(), 2), status: 'proposed' };
-    expect(waiting.steps.map((step) => stepPhase(waiting, step.key))).toEqual(['proposed', 'proposed', 'proposed', 'proposed', 'proposed']);
+    expect(waiting.steps.map((step) => stepPhase(waiting, step.key))).toEqual(['done', 'done', 'proposed', 'proposed', 'proposed']);
   });
 
   it('reports the status of each step once the plan runs', () => {
