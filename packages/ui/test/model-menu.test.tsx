@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it } from 'vitest';
-import { PROTECTION, type ChatPick, type EngineId, type SessionView } from '@ide/protocol';
+import { type ChatPick, type EngineId, type SessionView } from '@ide/protocol';
 import { initialChatState } from '../src/chat/chat-state';
 import { ChatPanel } from '../src/chat/ChatPanel';
 import { ImageStore } from '../src/chat/image-store';
@@ -142,28 +142,15 @@ describe('ChatPanel', () => {
         />,
       );
       return [
-        /class="engine-chip"[^>]*>([^<]*)<span class="engine-protection">([^<]*)</.exec(html)?.slice(1),
+        html.includes('engine-chip'),
         /class="chat-status refused"[^>]*><i class="status-dot"><\/i>([^<]*)</.exec(html)?.[1],
         [...html.matchAll(/<div class="turn-end">([^<]*)<\/div>/g)].map((match) => match[1]),
         html.includes('Terminal</button>'),
       ];
     };
     expect([header('claude'), header('codex')]).toEqual([
-      [['Claude', 'Hook'], 'hook off', ['failed', 'ended: claude exited'], true],
-      [['Codex', 'OS sandbox + approvals'], 'refused', ['failed', 'ended: codex exited'], false],
+      [false, 'hook off', ['failed', 'ended: claude exited'], true],
+      [false, 'refused', ['failed', 'ended: codex exited'], false],
     ]);
-  });
-
-  it("lets the keyboard and a screen reader reach the chip's explanation, and gives a narrow header the caption's short word", () => {
-    const session: SessionView = { id: 's', engine: 'codex', engineSessionId: 'c', status: 'running', model: null, modelChoice: 'codex:gpt-6-luna', effort: 'medium', cliVersion: null, permissionMode: null, startedAt: 1 };
-    const html = renderToStaticMarkup(
-      <ChatPanel
-        chat={{ ...initialChatState, session }} chats={{ activeId: 's', sessions: [], models: [], engines: [] }} send={() => true} onClearFilter={() => undefined}
-        onDismissError={() => undefined} prompts={[]} promptAnchored={false} onAnswerPrompt={() => undefined} onFocusTargets={() => undefined} dialog={null}
-        view="chat" onView={() => undefined} terminal={null} images={new ImageStore(() => true)} imagesLive={false}
-      />,
-    );
-    const why = /<span class="engine-chip" tabindex="0" aria-describedby="([^"]+)">/.exec(html)?.[1];
-    expect([html.includes(`<span id="${why}">${PROTECTION.codex.title}</span>`), /class="engine-short" aria-hidden="true">([^<]*)</.exec(html)?.[1]]).toEqual([true, 'Sandbox']);
   });
 });

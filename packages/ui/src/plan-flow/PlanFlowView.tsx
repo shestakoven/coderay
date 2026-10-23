@@ -333,6 +333,13 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, keys, working, v
     dispatch({ t: 'clear' });
   }, [onAnswer]);
 
+  const reject = useCallback(() => {
+    onAnswer({ kind: 'reject', feedback: '' });
+    setEditor(null);
+    setSelection(null);
+    dispatch({ t: 'clear' });
+  }, [onAnswer]);
+
   useEffect(() => {
     if (!waiting || !keys) return;
     const onKey = (event: KeyboardEvent): void => {
@@ -414,7 +421,7 @@ function Workspace({ plan, flow: planFlow, hoverStep, onAnswer, keys, working, v
           phase={barPhase} working={working} version={plan.version} steps={plan.steps.length} files={stats.files}
           items={items} canUndo={draft.past.length > 0} text={text}
           onUndo={() => dispatch({ t: 'undo' })} onReset={() => dispatch({ t: 'clear' })} onRemove={(index) => dispatch({ t: 'remove', index })}
-          onSend={send} onApprove={approve}
+          onSend={send} onApprove={approve} onReject={reject}
         />
       )}
     </div>

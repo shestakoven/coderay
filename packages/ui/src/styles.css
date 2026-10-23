@@ -317,7 +317,6 @@ button.primary { background: var(--accent); border-color: var(--accent); color: 
 .right-panel .chat { width: auto; flex: 1; min-height: 0; border: 0; }
 .map-area { flex: 1; min-width: 0; position: relative; }
 .empty { padding: 16px 14px; }
-.plan-dock { flex: none; max-height: 55%; overflow: auto; border-bottom: 1px solid var(--line); background: var(--surface); }
 .right-panel .plan-panel { width: auto; max-height: none; border: 0; border-radius: 0; background: none; padding: 4px 12px 12px; overflow: visible; }
 .details.in-panel { position: static; width: auto; border: 0; border-radius: 0; background: none; padding: 4px 14px 14px; overflow: visible; }
 .details-slot:has(.details) .empty { display: none; }
@@ -683,7 +682,7 @@ button:not(:disabled):hover { border-color: var(--accent); }
 /* No divider lines: regions are told apart by background tone */
 .topbar, .activity, .statusbar, .timeline { background: var(--bg); border: 0; }
 .left-panel, .right-panel { border: 0; }
-.chat-header, .composer, .plan-dock, .right-panel .seg, .terminal-panel, .terminal-tabs { border: 0; }
+.chat-header, .composer, .right-panel .seg, .terminal-panel, .terminal-tabs { border: 0; }
 .resizer { background: transparent; }
 .resizer.vertical { width: 0; }
 .resizer.horizontal { height: 0; }
@@ -694,7 +693,7 @@ button:not(:disabled):hover { border-color: var(--accent); }
 .activity button.on { background: var(--surface); }
 
 /* One flat background everywhere; cards (map nodes, inputs) are the only raised surfaces */
-.left-panel, .right-panel, .chat, .chat-header, .plan-dock, .terminal-tabs, .md-code-bar { background: var(--bg); }
+.left-panel, .right-panel, .chat, .chat-header, .terminal-tabs, .md-code-bar { background: var(--bg); }
 .activity button.on { background: var(--raised); }
 
 /* Compact shell */
@@ -858,35 +857,8 @@ button.close-project { margin-right: auto; color: var(--fg); }
 .model-state.loading { color: var(--muted); }
 .model-state.loading::before { content: '⟳' / ''; display: inline-block; margin-right: 4px; animation: bg-spin 1.6s linear infinite; }
 @media (prefers-reduced-motion: reduce) { .model-state.loading::before { animation: none; } }
-/* The chat's title gives way first, down to its floor, then the chip's caption: the title takes all but a sliver of the shrink, which
-   rounds to nothing (layout runs in 1/64 px), so a caption that fits is never cut. The engine's name is the chip's minimum. */
 .chat-header { container: chat-header / inline-size; }
 .chat-header .chat-switcher { flex-shrink: 100000; min-width: 30%; }
-.engine-chip { display: inline-grid; grid-template-columns: auto minmax(0, max-content); flex: 0 1 auto; align-items: center; padding: 0 6px; border: 1px solid var(--line); border-radius: var(--r-1); color: var(--fg); font-size: calc(11px * var(--fs-scale, 1)); line-height: 1.45; white-space: nowrap; cursor: default; }
-.engine-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.engine-protection, .engine-short { overflow: hidden; color: var(--muted); text-overflow: ellipsis; }
-.engine-protection::before, .engine-short::before { content: '·'; content: '·' / ', '; margin: 0 0.3em; }
-.engine-short, .engine-chip > .icon { display: none; }
-.engine-chip > .icon { color: var(--muted); }
-.engine-why { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-/* Under the header, across its width, so it never leaves the panel. */
-.engine-chip:not([data-quiet]):hover .engine-why, .engine-chip:not([data-quiet]):focus-visible .engine-why {
-  z-index: 20; top: calc(100% - 2px); left: 8px; right: 8px; width: auto; height: auto; padding: 6px 8px; overflow: visible; clip-path: none;
-  background: var(--raised); border-radius: var(--r-1); box-shadow: 0 6px 18px rgba(0, 0, 0, 0.45); color: var(--fg); font-size: calc(12px * var(--fs-scale, 1)); line-height: 1.4; white-space: normal;
-}
-.engine-why b { display: block; margin-bottom: 2px; font-weight: 600; }
-/* Narrower: the short caption, then no frame, then the shield alone; the full words stay the chip's name and its tooltip. */
-@container chat-header (max-width: 460px) {
-  .engine-protection { position: absolute; width: 1px; height: 1px; clip-path: inset(50%); white-space: nowrap; }
-  .engine-short { display: block; }
-}
-@container chat-header (max-width: 400px) { .engine-chip { padding: 0; border-color: transparent; } }
-@container chat-header (max-width: 300px) {
-  .engine-chip { padding: 2px; font-size: 0; }
-  .engine-short { display: none; }
-  .engine-chip > .icon { display: block; }
-  .engine-why { font-size: calc(12px * var(--fs-scale, 1)); }
-}
 /* Below 360 px the agent view shows its icons without their words, which stay the buttons' names. */
 @container chat-header (max-width: 359px) { .chat-header .agent-view button { gap: 0; font-size: 0; } }
 .model-unlisted { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; padding: 8px 8px 4px; }

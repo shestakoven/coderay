@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { startCore, type Core } from './core';
-import { sendMessage } from './helpers';
+import { openPlanTab, sendMessage } from './helpers';
 
 let core: Core | undefined;
 
@@ -13,6 +13,7 @@ test('approve a plan: it waits on the map, and its write happens after Approve',
   core = await startCore('gate-big-plan');
   await page.goto(core.url);
   await sendMessage(page, 'fix them');
+  await openPlanTab(page);
   const panel = page.getByTestId('plan-panel');
   await expect(panel).toContainText('Plan v1 · waiting for you');
   expect(core.file('src/app.ts')).toBe("export const greeting = 'helo';\n");
@@ -38,8 +39,7 @@ test('plan flow: the view opens for a waiting plan, Now hides the new parts, app
   core = await startCore('gate-flow-plan');
   await page.goto(core.url);
   await sendMessage(page, 'fix them');
-  const panel = page.getByTestId('plan-panel');
-  await expect(panel).toContainText('Plan v1 · waiting for you');
+  await expect(page.getByTestId('steer-bar')).toBeVisible();
   await expect(page.getByTestId('plan-flow')).toBeVisible();
 
   const greeter = page.getByTestId('flow-node-greeter');
@@ -73,8 +73,9 @@ test('plan flow: the view opens for a waiting plan, Now hides the new parts, app
   await expect(page.getByTestId('flow-details')).toContainText('src/app.ts');
   await expect(page.getByTestId('flow-details')).toContainText('format(name)');
 
-  await panel.getByRole('button', { name: 'Approve' }).click();
-  await expect(panel).toContainText('Plan v1 · done');
+  await page.getByTestId('steer-approve').click();
+  await openPlanTab(page);
+  await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · done');
   await expect(app).toHaveAttribute('data-phase', 'done');
   await expect(greeter).toHaveAttribute('data-phase', 'done');
 });
@@ -83,6 +84,7 @@ test('plan flow: a plan without a flow has no Plan flow button and no view switc
   core = await startCore('gate-big-plan');
   await page.goto(core.url);
   await sendMessage(page, 'fix them');
+  await openPlanTab(page);
   await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · waiting for you');
   await expect(page.getByRole('button', { name: 'Plan flow' })).toHaveCount(0);
   await expect(page.getByTestId('plan-flow')).toHaveCount(0);
@@ -93,6 +95,7 @@ test('request changes: Enter on blank text keeps the box open, Shift+Enter adds 
   core = await startCore('gate-big-plan');
   await page.goto(core.url);
   await sendMessage(page, 'fix them');
+  await openPlanTab(page);
   const panel = page.getByTestId('plan-panel');
   await expect(panel).toContainText('Plan v1 · waiting for you');
   await panel.getByRole('button', { name: 'Request changes' }).click();

@@ -1,6 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { startCore, type Core } from './core';
-import { sendMessage } from './helpers';
+import { openPlanTab, sendMessage } from './helpers';
 
 let core: Core | undefined;
 
@@ -13,7 +13,7 @@ async function openWaitingPlan(page: Page, scenario = 'gate-flow-plan'): Promise
   core = await startCore(scenario);
   await page.goto(core.url);
   await sendMessage(page, 'fix them');
-  await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · waiting for you');
+  await expect(page.getByTestId('steer-bar')).toBeVisible();
   await expect(page.getByTestId('plan-flow')).toBeVisible();
 }
 
@@ -93,6 +93,7 @@ test('steer a waiting plan: comment on a part, add a part, read the message, sen
   expect(await page.getByTestId('steer-message').textContent()).toBe(message);
 
   await page.getByTestId('steer-send').click();
+  await openPlanTab(page);
   const panel = page.getByTestId('plan-panel');
   await expect(panel).toContainText('Plan v1 · changes requested');
   expect(await panel.locator('.plan-note', { hasText: 'Please revise the plan.' }).textContent()).toBe(message);
@@ -153,6 +154,7 @@ test('steer a link: Esc, Remove, undo and Reset keep the draft right, and Cmd+En
   await page.keyboard.press('ControlOrMeta+Enter');
   await draft(page, 'app', 'c', 'check the casing');
   await page.keyboard.press('ControlOrMeta+Enter');
+  await openPlanTab(page);
   const panel = page.getByTestId('plan-panel');
   await expect(panel).toContainText('Plan v1 · changes requested');
   expect(await panel.locator('.plan-note', { hasText: 'Please revise the plan.' }).textContent())
@@ -170,6 +172,7 @@ test('Approve as is with a pending draft approves the plan and sends nothing as 
   await expectChanges(page, 1);
 
   await page.getByRole('button', { name: 'Approve as is' }).click();
+  await openPlanTab(page);
   const panel = page.getByTestId('plan-panel');
   await expect(panel).toContainText('Plan v1 · done');
   await expect(panel).not.toContainText('changes requested');
@@ -235,16 +238,16 @@ test('keys belong to the map: not with focus elsewhere, in any layout, and not o
   await expect(pop).toHaveCount(0);
 });
 
-test('a draft is not drawn once the plan is answered from the plan dock', async ({ page }) => {
+test('a draft is not drawn once the plan is approved with Approve plan', async ({ page }) => {
   await openWaitingPlan(page);
   await draft(page, 'app', 'c', 'use the shared formatter');
   await draft(page, 'greeter', 'a', 'log every greeting');
   const ghost = page.getByTestId('flow-node-~ask-1');
   await expect(ghost).toBeVisible();
 
-  const panel = page.getByTestId('plan-panel');
-  await panel.getByRole('button', { name: 'Approve' }).click();
-  await expect(panel).toContainText('Plan v1 · done');
+  await page.getByRole('button', { name: 'Approve as is' }).click();
+  await openPlanTab(page);
+  await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · done');
   await expect(ghost).toHaveCount(0);
   await expect(page.getByTestId('flow-node-app')).not.toContainText('use the shared formatter');
   await expect(page.getByTestId('steer-bar')).toHaveCount(0);
@@ -302,6 +305,6 @@ test('clicking Approve plan while a comment is typed keeps the comment and does 
   await page.getByTestId('steer-approve').click();
   // The click first keeps the typed text as a comment, and the bar turns into its "changes" form: a plan with a remark is never approved by one click.
   await expect(page.getByTestId('steer-changes')).toContainText(/1\s*change/);
-  await expect(page.getByTestId('plan-panel')).toContainText('Plan v1 · waiting for you');
+  await expect(page.getByTestId('steer-bar')).toBeVisible();
   await expect(page.getByTestId('flow-node-app')).toContainText('typed, then approve clicked');
 });

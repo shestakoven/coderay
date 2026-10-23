@@ -28,7 +28,6 @@ import { MapActivity } from '../map/MapActivity';
 import { ViewSwitch } from '../map/ViewSwitch';
 import { PlanOverlayContext, type PlanOverlay } from '../plan/overlay';
 import { PlanPanel } from '../plan/PlanPanel';
-import { PlanDock } from '../plan/PlanDock';
 import { chimeKey, finishedWorking, playChime, playDone, type Activity } from '../plan/chime';
 import { initialPlanState, pendingPrompts, planMarks, planOnMap, planReducer, waitsForUser } from '../plan/plan-state';
 import { C4View } from '../c4/C4View';
@@ -527,9 +526,6 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   onDismissError={() => dispatchChat({ type: 'dismiss-error' })}
                   prompts={pendingPrompts(plans.prompts)}
                   dialog={watchdog && <WatchdogDialog key={watchdog.id} event={watchdog} diffs={hist.results} send={send} requestDiff={requestDiff} />}
-                  planDock={shown && waitsForUser(shown) && (
-                    <PlanDock key={planKey} plan={shown} snapshot={snapshot} working={activity.busy} onAnswer={answerPlan} onFocusStep={(index) => focusComponents(marks.stepComponents[index] ?? [])} onHoverStep={setHoverStep} />
-                  )}
                   promptAnchored={anchored}
                   onAnswerPrompt={(promptId, answer) => send({ type: 'gate.answer', promptId, answer })}
                   onFocusTargets={showPathsOnMap}
@@ -553,7 +549,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 />
               </ErrorBoundary>
             )}
-            plan={shown && !waitsForUser(shown) ? (
+            plan={shown && (!waitsForUser(shown) || flowPlan === null) ? (
               <PlanPanel
                 key={planKey}
                 plan={shown}
@@ -567,7 +563,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                 onShowFiles={showPathsOnMap}
               />
             ) : (
-              <div className="empty muted">{shown ? 'The plan is waiting for your answer above the chat.' : 'No plan yet. When the agent proposes one, it appears above the chat and on the map.'}</div>
+              <div className="empty muted">{shown ? 'The plan is waiting for your answer on the map.' : 'No plan yet. When the agent proposes one, it appears on the map.'}</div>
             )}
             review={(
               <ReviewPanel history={hist.history} plans={plans.plans} diffs={hist.results} requestDiff={requestDiff} onShowOnMap={showPathsOnMap} onStart={() => {

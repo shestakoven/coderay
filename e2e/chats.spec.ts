@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { startCore, type Core } from './core';
-import { chatAgents, chooseModel, sendMessage } from './helpers';
+import { chatAgents, chooseModel, openPlanTab, sendMessage } from './helpers';
 
 let core: Core | undefined;
 
@@ -15,10 +15,12 @@ test('chats keep their own model and effort, and switching restores the first ch
   await expect(page.getByText('core connected')).toBeVisible();
   await page.getByPlaceholder(/Message the agent/).fill('first chat about greetings');
   await page.keyboard.press('Enter');
+  await openPlanTab(page);
   const panel = page.getByTestId('plan-panel');
   await expect(panel).toContainText('waiting for you');
   await panel.getByRole('button', { name: 'Approve' }).click();
   await expect(panel).toContainText('done');
+  await page.getByRole('tab', { name: 'Agent' }).click();
 
   await chooseModel(page, 'opus');
   await page.getByLabel('Effort').selectOption('high');
@@ -65,7 +67,9 @@ test('the chat shows the agent at work until the turn ends', async ({ page }) =>
   const working = page.locator('.working');
   await expect(working).toContainText('approve the plan');
   await expect(page.locator('.chat-header')).toHaveClass(/working-on/);
+  await openPlanTab(page);
   await page.getByTestId('plan-panel').getByRole('button', { name: 'Approve' }).click();
+  await page.getByRole('tab', { name: 'Agent' }).click();
   await expect(working).toHaveCount(0);
   await expect(page.locator('.chat-header')).not.toHaveClass(/working-on/);
 });
@@ -222,8 +226,7 @@ test('a Codex chat: choosing GPT-6-Luna makes it a Codex chat that answers, its 
   await chooseModel(page, 'luna');
   await sendMessage(page, 'hi');
   await expect(page.locator('.msg.assistant').last()).toHaveText('OK');
-  await expect(page.locator('.engine-chip')).toContainText('Codex');
-  await expect(page.locator('.engine-protection')).toHaveText('OS sandbox + approvals');
+  await expect(page.locator('.engine-chip')).toHaveCount(0);
   await expect(page.locator('.agent-view')).toHaveCount(0);
   await page.locator('.chat-switcher-button').click();
   await expect(page.getByRole('option').filter({ hasText: 'hi' }).locator('.chat-list-meta')).toContainText('Codex · GPT-6-Luna · ');
@@ -239,9 +242,7 @@ test('an opencode chat: choosing Nemotron makes it an opencode chat that answers
   await chooseModel(page, 'nemotron');
   await sendMessage(page, 'hi');
   await expect(page.locator('.msg.assistant').last()).toHaveText('OK');
-  const chip = page.locator('.engine-chip');
-  await expect(chip.locator('.engine-why b')).toHaveText('opencode · Rules only');
-  await expect(chip).toHaveAccessibleDescription('opencode asks CodeRay before each write; nothing stops a write it does not ask about.');
+  await expect(page.locator('.engine-chip')).toHaveCount(0);
   await expect(page.getByRole('combobox', { name: 'Effort' })).toHaveCount(0);
   await page.locator('.chat-switcher-button').click();
   await expect(page.getByRole('option').filter({ hasText: 'hi' }).locator('.chat-list-meta')).toContainText('opencode · OpenCode Zen · Nemotron 3.5 Lightning (free) · —');

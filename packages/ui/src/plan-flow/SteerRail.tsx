@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { PlanFlow, PlanView } from '@ide/protocol';
 import { Icon } from '../layout/Icon';
 import { stepPhase } from './flow-model';
@@ -10,6 +11,7 @@ export function SteerRail({ plan, flow, open, onToggle, onHover }: {
   onToggle: () => void;
   onHover: (key: string | null) => void;
 }) {
+  const [goalOpen, setGoalOpen] = useState(false);
   const files = (key: string): number => new Set(flow.nodes.filter((node) => node.steps.includes(key) && node.state !== 'existing').flatMap((node) => node.files.map((file) => file.path))).size;
   return (
     <aside className={`pf-rail${open ? '' : ' closed'}`} data-testid="flow-rail">
@@ -20,7 +22,16 @@ export function SteerRail({ plan, flow, open, onToggle, onHover }: {
       </button>
       {open && (
         <>
-          <p className="pf-rail-goal">{plan.goal}</p>
+          <p
+            className={`pf-rail-goal${goalOpen ? ' open' : ''}`} role="button" tabIndex={0} aria-expanded={goalOpen}
+            title={goalOpen ? 'Show less' : 'Show the whole goal'}
+            onClick={() => setGoalOpen(!goalOpen)}
+            onKeyDown={(event) => {
+              if (event.key !== 'Enter' && event.key !== ' ') return;
+              event.preventDefault();
+              setGoalOpen(!goalOpen);
+            }}
+          >{plan.goal}</p>
           <ol className="pf-steps" onMouseLeave={() => onHover(null)}>
             {plan.steps.map((step, index) => {
               const phase = stepPhase(plan, step.key);

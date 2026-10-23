@@ -6,8 +6,8 @@ const GROUP_ICON = { note: 'comment', ask: 'plus' } as const;
 
 export type BarPhase = 'idle' | 'sending';
 
-// The answer to a waiting plan: approve it, or send what was collected on the map.
-export function SteerBar({ phase, working, version, steps, files, items, canUndo, text, onUndo, onReset, onRemove, onSend, onApprove }: {
+// The answer to a waiting plan: approve it, reject it, or send what was collected on the map.
+export function SteerBar({ phase, working, version, steps, files, items, canUndo, text, onUndo, onReset, onRemove, onSend, onApprove, onReject }: {
   phase: BarPhase;
   // Whether the agent has a turn open: the spinner is only honest while it does.
   working: boolean;
@@ -22,6 +22,7 @@ export function SteerBar({ phase, working, version, steps, files, items, canUndo
   onRemove: (index: number) => void;
   onSend: () => void;
   onApprove: () => void;
+  onReject: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [raw, setRaw] = useState(false);
@@ -85,6 +86,7 @@ export function SteerBar({ phase, working, version, steps, files, items, canUndo
           <span className="pf-bar-dot" />
           <span className="pf-bar-text"><b>Plan v{version}</b> · {steps} step{steps === 1 ? '' : 's'} · {files} file{files === 1 ? '' : 's'}</span>
           <span className="pf-bar-hint"><Icon name="info" size={12} /> Point at a part to comment on it or add to it</span>
+          <button type="button" className="pf-btn ghost" onClick={onReject} title="Rejects the plan; the agent's next write is denied until it proposes a new one" data-testid="steer-reject">Reject</button>
           <button type="button" className="pf-btn primary" onClick={onApprove} data-testid="steer-approve">Approve plan</button>
         </>
       ) : (
@@ -97,6 +99,7 @@ export function SteerBar({ phase, working, version, steps, files, items, canUndo
           <button type="button" className="pf-icon-btn" onClick={onUndo} disabled={!canUndo} data-tip="Undo  ⌘Z" aria-label="Undo"><Icon name="undo" size={14} /></button>
           <button type="button" className="pf-link" onClick={onReset}>Reset</button>
           <span className="pf-bar-sep" />
+          <button type="button" className="pf-btn ghost" onClick={onReject} title="Rejects the plan; the agent's next write is denied until it proposes a new one" data-testid="steer-reject">Reject</button>
           <button type="button" className="pf-btn ghost" onClick={onApprove} title="Approves the plan as it is and drops these changes">Approve as is</button>
           <button type="button" className="pf-btn primary" onClick={onSend} data-testid="steer-send">Send to agent <kbd>⌘↵</kbd></button>
         </>

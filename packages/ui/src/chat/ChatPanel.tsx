@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { ENGINE_CAPABILITIES, ENGINE_NAMES, PROTECTION, type ChatItem, type ClientMessage, type EngineId, type GateAnswer, type GatePromptView, type ImageRef, type ToolStatus } from '@ide/protocol';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
+import { ENGINE_CAPABILITIES, type ChatItem, type ClientMessage, type EngineId, type GateAnswer, type GatePromptView, type ImageRef, type ToolStatus } from '@ide/protocol';
 import { canSend, canStop, childItems, decisionLabel, filterItems, runningTasks, stopControl, turnGroups, type ChatState } from './chat-state';
 import { PromptBody } from '../plan/PromptBody';
 import { promptTarget, targetLabel } from '../plan/prompt-text';
@@ -35,7 +35,7 @@ export type AgentView = 'chat' | 'terminal';
 
 const atBottom = (element: HTMLElement): boolean => element.scrollHeight - element.scrollTop - element.clientHeight < PINNED_SLACK;
 
-export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, planDock, view, onView, terminal, images, imagesLive }: {
+export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismissError, prompts, promptAnchored, onAnswerPrompt, onFocusTargets, dialog, view, onView, terminal, images, imagesLive }: {
   chat: ChatState;
   chats: ChatList;
   send: (message: ClientMessage) => boolean;
@@ -47,7 +47,6 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
   onAnswerPrompt: (id: string, answer: GateAnswer) => void;
   onFocusTargets: (paths: string[]) => void;
   dialog: ReactNode;
-  planDock?: ReactNode;
   view: AgentView;
   onView: (view: AgentView) => void;
   terminal: ReactNode;
@@ -182,7 +181,6 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
     <section className="chat">
       <header className={`chat-header${active ? ' working-on' : ''}`}>
         <ChatSwitcher chats={chats} canLeave={sendable} send={send} />
-        {pick && <EngineChip engine={pick.engine ?? 'claude'} />}
         {(chat.session?.status === 'crashed' || chat.session?.status === 'refused') && (
           <span className={`chat-status ${chat.session?.status ?? 'none'}`} title={chat.session?.model ?? undefined}>
             <i className="status-dot" />{chat.session.status === 'refused' ? ((chat.session.engine ?? 'claude') === 'claude' ? 'hook off' : 'refused') : chat.session.status}
@@ -208,7 +206,6 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         {view === 'chat' && chat.session?.status === 'running' && <button className="chat-restart" onClick={() => send({ type: 'session.restart' })} title="Restart the agent" aria-label="Restart"><Icon name="restart" size={16} /></button>}
       </header>
       {dialog}
-      {planDock}
       {chat.filter && (
         <div className="chat-filter" data-testid="chat-filter">
           <span>Filtered to {chat.filter.label}</span>
@@ -327,32 +324,6 @@ export function ChatPanel({ chat, chats, send, focusItem, onClearFilter, onDismi
         <div className="composer-usage"><BackgroundTasks tasks={tasks} send={send} canStop={ENGINE_CAPABILITIES[pick?.engine ?? 'claude'].backgroundTasks} /><UsageMeter usage={chat.usage} /></div>
       </footer>}
     </section>
-  );
-}
-
-// Focusable, so its explanation reaches the keyboard and a screen reader as well as the pointer; Escape puts the tooltip away.
-function EngineChip({ engine }: { engine: EngineId }) {
-  const why = useId();
-  const [quiet, setQuiet] = useState(false);
-  const { caption, short, title } = PROTECTION[engine];
-  return (
-    <span
-      className="engine-chip" tabIndex={0} aria-describedby={why} data-quiet={quiet || undefined}
-      onKeyDown={(event) => {
-        if (event.key !== 'Escape' || quiet) return;
-        event.stopPropagation();
-        setQuiet(true);
-      }}
-      onBlur={() => setQuiet(false)}
-      onMouseLeave={() => setQuiet(false)}
-    >
-      {ENGINE_NAMES[engine]}<span className="engine-protection">{caption}</span>
-      <span className="engine-short" aria-hidden="true">{short}</span>
-      <Icon name="shield" size={14} />
-      <span className="engine-why" role="tooltip">
-        <b aria-hidden="true">{ENGINE_NAMES[engine]} · {caption}</b> <span id={why}>{title}</span>
-      </span>
-    </span>
   );
 }
 

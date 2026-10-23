@@ -60,3 +60,8 @@ export async function chooseModel(page: Page, query: string): Promise<void> {
   await page.keyboard.press('Enter');
   await expect(page.getByTestId('model-menu')).toHaveCount(0);
 }
+
+// The plan of a plan without a map is answered in the Plan tab, not in the chat.
+export async function openPlanTab(page: Page): Promise<void> {
+  await page.getByRole('tab', { name: /^Plan( has a plan)?$/ }).click();
+}
