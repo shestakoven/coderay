@@ -218,7 +218,7 @@ function groupLinks(groups: CandidateGroup[], edges: FileEdge[]): string[] {
     .map(([key, count]) => `${key}: ${count}`);
 }
 
-function groupingSchema(groups: CandidateGroup[]): JsonSchema {
+export function groupingSchema(groups: CandidateGroup[]): JsonSchema {
   const name = { type: 'string', maxLength: NAME_MAX, pattern: NAME_PATTERN };
   const path = { type: 'string', maxLength: PATH_MAX };
   const ids = groups.map((group) => group.id);
