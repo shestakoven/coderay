@@ -581,8 +581,8 @@ export async function runBackgroundSmoke(options: BackgroundSmokeOptions): Promi
       try {
         const off = await until(() => { const now = status(again); return now?.state === 'off' && now.reason === 'unavailable'; }, 120_000);
         const now = status(again);
-        check('Smoke 4: with opencode gone the explicit choice is off ("opencode is not installed … Choose another engine")',
-          off && now?.state === 'off' && now.engine === 'opencode' && /opencode is not installed/i.test(now.hint) && /Choose another engine/.test(now.hint) ? null : describe(now), describe(now));
+        check('Smoke 4: with opencode gone the explicit choice is off ("Install opencode: … Choose another engine")',
+          off && now?.state === 'off' && now.engine === 'opencode' && /^Install opencode: opencode is not on the PATH\. Choose another engine/.test(now.hint) ? null : describe(now), describe(now));
         const stored = JSON.parse(readFileSync(store, 'utf8')) as { choice?: { mode?: string; engine?: string } };
         check('Smoke 4: Auto is not applied in its place', stored.choice?.mode === 'engine' && stored.choice.engine === 'opencode' ? null : JSON.stringify(stored.choice));
         await again.request({ type: 'background-ai.save', choice: { mode: 'auto' } });
