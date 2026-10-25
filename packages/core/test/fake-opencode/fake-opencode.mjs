@@ -100,9 +100,10 @@ const auth = new Map(existsSync(authFile) ? Object.entries(JSON.parse(readFileSy
 const saveAuth = () => { mkdirSync(dirname(authFile), { recursive: true }); writeFileSync(authFile, JSON.stringify(Object.fromEntries(auth))); };
 // /config/providers shows the providers the instance loaded: a key set later shows after /instance/dispose (Q1).
 let loaded = [...auth.keys()];
+const FREE = { input: 0, output: 0, cache: { read: 0, write: 0 } };
 const baseProviders = env.FAKE_OPENCODE_PROVIDERS ? JSON.parse(env.FAKE_OPENCODE_PROVIDERS) : { providers: [{ id: 'opencode', name: 'OpenCode Zen', env: ['OPENCODE_API_KEY'], models: {
-  'nemotron-3.5-lightning-free': { id: 'nemotron-3.5-lightning-free', providerID: 'opencode', name: 'Nemotron 3.5 Lightning (free)', limit: { context: 262144, output: 32768 }, variants: {} },
-  'gpt-oss-120b-free': { id: 'gpt-oss-120b-free', providerID: 'opencode', name: 'GPT OSS 120B (free)', limit: { context: 131072, output: 32768 }, variants: { low: {}, high: {} } },
+  'nemotron-3.5-lightning-free': { id: 'nemotron-3.5-lightning-free', providerID: 'opencode', name: 'Nemotron 3.5 Lightning (free)', limit: { context: 262144, output: 32768 }, variants: {}, cost: FREE },
+  'gpt-oss-120b-free': { id: 'gpt-oss-120b-free', providerID: 'opencode', name: 'GPT OSS 120B (free)', limit: { context: 131072, output: 32768 }, variants: { low: {}, high: {} }, cost: FREE },
 } }], default: { opencode: 'nemotron-3.5-lightning-free' } };
 const KNOWN = { openai: 'OpenAI', anthropic: 'Anthropic' };
 // A key of a provider the catalog does not know loads nothing.

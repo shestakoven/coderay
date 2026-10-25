@@ -32,7 +32,8 @@ export function providerHint(providerID: string, home: AccountHome): string {
   return `opencode has no provider "${providerID}" connected for this model. ${signedOutHint(home)}`;
 }
 
-export interface CatalogModel { value: string; name: string; efforts: string[]; context: number | null }
+/** `cost`: the catalog's input plus output price, null when it gives none (0 for the free models). */
+export interface CatalogModel { value: string; name: string; efforts: string[]; context: number | null; cost: number | null }
 
 const text = (value: unknown, fallback: string): string => (typeof value === 'string' && value !== '' ? value : fallback);
 
@@ -48,13 +49,15 @@ export function catalogModels(answer: unknown): CatalogModel[] {
       if (parseModelId(value) === null) return [];
       const efforts = isRecord(model.variants) ? Object.keys(model.variants).filter((variant) => isEffortFor('opencode', variant)) : [];
       const context = isRecord(model.limit) ? model.limit.context : undefined;
+      const cost = isRecord(model.cost) && typeof model.cost.input === 'number' && typeof model.cost.output === 'number' ? model.cost.input + model.cost.output : null;
       // A context of 0 is a catalog that does not know it, and no meter can be drawn against it.
-      return [{ value, name: `${providerName} · ${text(model.name, model.id)}`, efforts, context: typeof context === 'number' && Number.isFinite(context) && context > 0 ? context : null }];
+      return [{ value, name: `${providerName} · ${text(model.name, model.id)}`, efforts, context: typeof context === 'number' && Number.isFinite(context) && context > 0 ? context : null, cost }];
     });
   });
 }
 
-export interface OpencodeProbe { status: EngineStatus; models: ModelInfo[] }
+/** `userServers`: the MCP servers of the user's own config, by name (Q11-quiet: listing them starts none). */
+export interface OpencodeProbe { status: EngineStatus; models: ModelInfo[]; catalog: CatalogModel[]; userServers: string[] }
 
 const firstLine = (error: unknown): string => (error as Error).message.split('\n')[0] ?? '';
 
@@ -63,7 +66,7 @@ const firstLine = (error: unknown): string => (error as Error).message.split('\n
  * With `runDir` the server's pid file and shell wrapper live there, so a core killed mid-probe leaves the reaper an orphan to find.
  */
 export async function opencodeProbe(command: OpencodeCommand, cwd: string, userServers: string[], timeoutMs = PROBE_TIMEOUT_MS, runDir?: string): Promise<OpencodeProbe> {
-  const notReady = (state: EngineState, hint: string): OpencodeProbe => ({ status: { engine: 'opencode', state, hint }, models: [] });
+  const notReady = (state: EngineState, hint: string): OpencodeProbe => ({ status: { engine: 'opencode', state, hint }, models: [], catalog: [], userServers: [] });
   let stdout: string;
   try {
     ({ stdout } = await run(command.command, [...command.args, '--version'], { env: opencodeEnv(command, HARDENING_ENV), timeout: timeoutMs }));
@@ -81,9 +84,13 @@ export async function opencodeProbe(command: OpencodeCommand, cwd: string, userS
     const dir = runDir ?? (own = mkdtempSync(join(tmpdir(), 'coderay-opencode-probe-')));
     const configContent = inlineConfig({ config: {}, names: [] }, userServers, shellWrapper(dir));
     // The listening timeout ends first, so a server that never listens is reported with the reason it gave.
-    const answer = await withServer(command, cwd, (client) => client.get('/config/providers'), { configContent, listenTimeoutMs: timeoutMs, pidDir: runDir }, timeoutMs + ANSWER_MS);
-    const models = catalogModels(answer).map(({ value, name, efforts }): ModelInfo => ({ value, name, engine: 'opencode', efforts }));
-    return { status: { engine: 'opencode', state: 'ready', hint: null }, models };
+    const [providers, config] = await withServer(
+      command, cwd, (client) => Promise.all([client.get('/config/providers'), client.get('/config')]), { configContent, listenTimeoutMs: timeoutMs, pidDir: runDir }, timeoutMs + ANSWER_MS,
+    );
+    const catalog = catalogModels(providers);
+    const models = catalog.map(({ value, name, efforts }): ModelInfo => ({ value, name, engine: 'opencode', efforts }));
+    const servers = isRecord(config) && isRecord(config.mcp) ? Object.keys(config.mcp) : [];
+    return { status: { engine: 'opencode', state: 'ready', hint: null }, models, catalog, userServers: servers };
   } catch (error) {
     return notReady('error', `opencode serve did not start: ${firstLine(error)}`);
   } finally {

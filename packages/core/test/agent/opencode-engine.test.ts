@@ -38,28 +38,29 @@ describe('opencodeProbe', () => {
     expect([status.engine, status.state, hint instanceof RegExp ? hint.test(status.hint ?? '') : status.hint, models.length > 0]).toEqual(['opencode', state, hint instanceof RegExp ? true : hint, state === 'ready']);
   });
 
-  it("lists every connected provider's models with the provider in the name and the variants as efforts, on one server started with the user's servers off", async () => {
+  it("lists every connected provider's models with the provider in the name and the variants as efforts, with their prices, and the user's servers by name, on one server started with those known off", async () => {
     const d = dir();
     const record = join(d, 'rec.jsonl');
-    const { status, models } = await opencodeProbe(fakeOpencode(null, record), d, ['usersrv']);
+    const userConfig = { mcp: { github: { type: 'local', command: ['gh-mcp'] } } };
+    const { status, models, catalog, userServers } = await opencodeProbe(fakeOpencode(null, record, { FAKE_OPENCODE_CONFIG: JSON.stringify(userConfig) }), d, ['usersrv']);
     const configs = opencodeRecords(record).filter((entry) => entry.pid !== undefined).map((entry) => entry.configContent as { mcp: unknown; shell: string });
     // The shell it named was a wrapper of the probe's own, gone with the server.
-    expect([status.state, models, configs.map((config) => config.mcp), configs.map((config) => existsSync(config.shell))])
-      .toEqual(['ready', FREE_MODELS, [{ usersrv: { enabled: false } }], [false]]);
+    expect([status.state, models, catalog.map((model) => model.cost), userServers, configs.map((config) => config.mcp), configs.map((config) => existsSync(config.shell))])
+      .toEqual(['ready', FREE_MODELS, [0, 0], ['github', 'usersrv'], [{ usersrv: { enabled: false } }], [false]]);
   });
 });
 
 describe('catalogModels', () => {
-  it("keeps each model's context limit beside its id and leaves out one whose id cannot be a model id or whose provider names none", () => {
+  it("keeps each model's context limit and price beside its id and leaves out one whose id cannot be a model id or whose provider names none", () => {
     const models = catalogModels({ providers: [null, { id: 'p', name: 'P', models: {
-      ok: { id: 'ok', name: 'OK', limit: { context: 4096 }, variants: { x: {}, 'Not An Effort': {} } },
-      unknown: { id: 'unknown', name: 'Unknown', limit: { context: 0 } },
+      ok: { id: 'ok', name: 'OK', limit: { context: 4096 }, variants: { x: {}, 'Not An Effort': {} }, cost: { input: 1, output: 2, cache: { read: 0, write: 0 } } },
+      unknown: { id: 'unknown', name: 'Unknown', limit: { context: 0 }, cost: { input: 1 } },
       'bad id': { id: 'bad id', name: 'Bad', limit: { context: 1 } },
     } }, { id: 'q', models: { m: { id: 'm' } } }, { name: 'No id', models: { x: { id: 'x' } } }] });
     expect(models).toEqual([
-      { value: 'opencode:p/ok', name: 'P · OK', efforts: ['x'], context: 4096 },
-      { value: 'opencode:p/unknown', name: 'P · Unknown', efforts: [], context: null },
-      { value: 'opencode:q/m', name: 'q · m', efforts: [], context: null },
+      { value: 'opencode:p/ok', name: 'P · OK', efforts: ['x'], context: 4096, cost: 3 },
+      { value: 'opencode:p/unknown', name: 'P · Unknown', efforts: [], context: null, cost: null },
+      { value: 'opencode:q/m', name: 'q · m', efforts: [], context: null, cost: null },
     ]);
   });
 });
