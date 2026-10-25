@@ -25,7 +25,7 @@ describe('OpencodeModel', () => {
     const deny = { '*': 'deny' };
     expect(records(dir).find((record) => record.configContent)!.configContent).toEqual({
       permission: deny, agent: { build: { permission: deny }, plan: { permission: deny }, general: { permission: deny }, explore: { permission: deny } },
-      mcp: { github: { enabled: false } }, share: 'disabled', autoupdate: false, lsp: false, formatter: false,
+      mcp: { github: { enabled: false } }, share: 'disabled', autoupdate: false, lsp: false, formatter: false, snapshot: false,
       shell: expect.stringContaining(`${dir}/opencode-shell/`), small_model: 'opencode/nemotron-3.5-lightning-free',
     });
     expect(requests(records(dir), 'POST', '/session')[0]!.body).toEqual({ permission: [{ permission: '*', pattern: '*', action: 'deny' }] });

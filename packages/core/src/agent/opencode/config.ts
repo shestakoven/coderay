@@ -61,6 +61,8 @@ export function backgroundConfig(shell: string, userServers: readonly string[], 
     autoupdate: false,
     lsp: false,
     formatter: false,
+    // 1.19 snapshots the git worktree around its directory at every step, for an undo a background call never needs.
+    snapshot: false,
     shell,
     // 1.19 titles every session with its small model, which would otherwise be the user's choice of provider (spike Q7).
     ...(smallModel === undefined ? {} : { small_model: smallModel }),
