@@ -1,0 +1,5 @@
+{"type":"session.status","properties":{"sessionID":"$SESSION","status":{"type":"retry","attempt":1,"message":"Rate limited","next":1}}}
+{"fake":"sleep","ms":200}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_answer1","type":"text","text":"{\"answer\":","time":{"start":1,"end":2}}}}
+{"type":"message.part.updated","properties":{"sessionID":"$SESSION","part":{"sessionID":"$SESSION","messageID":"$MESSAGE","id":"prt_answer2","type":"text","text":"\"hi\"}","time":{"start":3,"end":4}}}}
+{"fake":"await-turn"}

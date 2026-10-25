@@ -1,6 +1,6 @@
 # Scenarios for the fake opencode server
 
-`test/fake-opencode/fake-opencode.mjs` stands in for `opencode serve` 1.19: it prints the listening line, checks basic auth, answers CodeRay's routes itself (`/global/health`, `/global/dispose`, `/instance/dispose`, `/agent`, `/config`, `/config/providers`, `/provider`, `/provider/auth`, `/auth/:id`, `/command`, `/experimental/tool/ids`, `/permission`, `/session`, `/session/:id`, `/session/:id/prompt_async`, `/session/:id/command`, `/session/:id/abort`, `/permission/:id/reply`, `/question/:id/reply`, `/question/:id/reject`, `/event`) and replays one of these files on each `prompt_async` or `command`. Shapes are trimmed from the recorded transcripts of opencode 1.19.0 in `recorded/` (sanitized copies of the 2026-10-13 and 2026-10-17 verification runs; `docs/spike/2026-10-17-opencode-e3-verified.md` explains them). Every line is one of:
+`test/fake-opencode/fake-opencode.mjs` stands in for `opencode serve` 1.19: it prints the listening line, checks basic auth, answers CodeRay's routes itself (`/global/health`, `/global/dispose`, `/instance/dispose`, `/agent`, `/config`, `/config/providers`, `/provider`, `/provider/auth`, `/auth/:id`, `/command`, `/experimental/tool/ids`, `/permission`, `/session`, `/session/:id`, `/session/:id/prompt_async`, `/session/:id/command`, `/session/:id/message`, `/session/:id/abort`, `/permission/:id/reply`, `/question/:id/reply`, `/question/:id/reject`, `/event`) and replays one of these files on each `prompt_async`, `command` or `message`. Shapes are trimmed from the recorded transcripts of opencode 1.19.0 in `recorded/` (sanitized copies of the 2026-10-13 and 2026-10-17 verification runs; `docs/spike/2026-10-17-opencode-e3-verified.md` explains them). Every line is one of:
 
 | Line | Effect |
 |---|---|
@@ -28,6 +28,7 @@
 - **`/abort`** (Q12-abort-leaves): `session.error` `MessageAbortedError`, every running tool part ends `error` "Tool execution aborted", the rest of the turn is skipped to the next `await-turn`, and `session.idle` follows. A held ask **stays pending** in `GET /permission` with no `permission.replied`; a later `/permission/:id/reply` answers 200 and sends it. A held question stays too. (The real server also sent a second `session.idle` a moment after an abort; the fake sends one.)
 - **`/session/:id/prompt_async`** answers 204 at once; a prompt while the session is busy is folded into the running turn (Q12b: no second turn).
 - **`/session/:id/command`** answers `{info, parts}` when the turn ends, before `session.idle` (Q10). A `model` that is not a string is answered 400 as 1.19 does; `system` is recorded and has no effect.
+- **`/session/:id/message`** answers when the turn ends too, as `{info, parts}`: the turn's text parts, and as `info.error` the error of its last `fake: error` line on the session (null without one), as 1.19's last assistant message (`docs/spike/2026-10-19-background-ai-verified.md`, Q3).
 - **Auth** (Q1). `PUT /auth/:id` persists to `$XDG_DATA_HOME/opencode/auth.json` (else `<cwd>/fake-data/…`). `GET /provider`'s `connected` lists an authed provider at once; `GET /config/providers` lists it (with one stub model) only after `POST /instance/dispose` or a restart, and only when `GET /provider` knows it (`openai`, `anthropic`). The fake refuses to start when an `XDG_*` variable points at the real default home.
 - **`GET /experimental/tool/ids`**: the 14 built-in tool ids of 1.19 (F1).
 
@@ -44,6 +45,7 @@
 | `FAKE_OPENCODE_TOOL_IDS_HOLD_MS` | `GET /experimental/tool/ids` answers this many milliseconds late, as 1.19 does while it installs a user tool's dependencies. |
 | `FAKE_OPENCODE_AUTH=fail` | `PUT /auth/:id` answers 400 with the request body quoted in its message. |
 | `FAKE_OPENCODE_DB_BUSY=<n>` | The first `n` starts with this record file exit with code 1 before they listen, as 1.19 does beside another server of the same home that sets the database up: the first with "Failed query:", the rest with "database is locked" on stderr. |
+| `FAKE_OPENCODE_EVENT_HOLD_MS` | The first `GET /event` opens only this many milliseconds after it comes: what is sent before is lost to it. |
 | `FAKE_OPENCODE_NO_LISTEN=1` | Never prints the listening line. |
 | `FAKE_OPENCODE_LISTEN_STREAM=stderr` | Prints it on stderr. |
 | `FAKE_OPENCODE_HEALTH=down` | Health answers 503; `=unhealthy` answers 200 with `healthy: false`. |

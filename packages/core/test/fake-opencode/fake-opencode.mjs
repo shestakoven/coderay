@@ -123,7 +123,7 @@ const saveSessions = () => { if (sessionFile !== null) writeFileSync(sessionFile
 const info = (s) => ({ id: s.id, slug: 'fake-session', version: VERSION, projectID: 'global', directory: s.directory, ...(s.parentID ? { parentID: s.parentID } : {}), title: 'New session', permission: s.permission ?? [], time: { created: 1, updated: 1 } });
 
 const streams = new Set();
-let eventHoldMs = 0;
+let eventHoldMs = Number(env.FAKE_OPENCODE_EVENT_HOLD_MS ?? 0);
 const waiting = new Map();   // permission or question id → { kind, session, asked?, resolve }
 const sleepers = [];
 let ids = 0; let prompts = 0;
@@ -152,11 +152,14 @@ async function play(session, messageID) {
   Object.assign(session, { busy: true, aborted: false, abort });
   send('session.status', { sessionID: session.id, status: { type: 'busy' } });
   const running = new Map();   // callID → its tool part while it runs
+  const texts = new Map();     // part id → the turn's text part, for /message's answer
+  let failure = null;          // the error a `fake: error` line gave the turn
   const finishers = [];
   const parallel = [];
   let partSeq = 0; let ended = false; let closed = false; let over = false;
   const part = (p) => {
     send('message.part.updated', { sessionID: p.sessionID, part: p, time: Date.now() });
+    if (p.type === 'text') texts.set(p.id, p);
     if (p.type === 'tool' && p.callID) { if (p.state?.status === 'pending' || p.state?.status === 'running') running.set(p.callID, p); else running.delete(p.callID); }
   };
   const toolPart = (sessionID, tool, callID, state) => ({ id: `prt_${callID}`, sessionID, messageID, type: 'tool', tool, callID, state });
@@ -248,7 +251,12 @@ async function play(session, messageID) {
     // The event stream drops: what is sent until the client opens it again is lost to it.
     if (line.fake === 'close-stream') { for (const res of streams) res.end(); streams.clear(); eventHoldMs = line.holdMs ?? 0; continue; }
     if (line.fake === 'spawn-sleeper') { const child = spawn('sleep', ['600'], { detached: true, stdio: 'ignore' }); child.unref(); sleepers.push(child); record({ sleeperPid: child.pid }); continue; }
-    if (line.fake === 'error') { send('session.error', { ...(line.session === false ? {} : { sessionID: session.id }), error: { name: 'UnknownError', data: { message: line.message } } }); continue; }
+    if (line.fake === 'error') {
+      const error = { name: 'UnknownError', data: { message: line.message } };
+      if (line.session !== false) failure = error;
+      send('session.error', { ...(line.session === false ? {} : { sessionID: session.id }), error });
+      continue;
+    }
     if (line.ask) { await ask(line); continue; }
     if (line.question) { await question(line); continue; }
     if (line.type === 'message.part.updated' && line.properties?.part) { part(line.properties.part.id ? line.properties.part : { ...line.properties.part, id: `prt_${partSeq++}` }); continue; }
@@ -266,7 +274,7 @@ async function play(session, messageID) {
   over = true;
   session.busy = false;
   session.abort = null;
-  for (const answer of session.answers.splice(0)) answer();
+  for (const answer of session.answers.splice(0)) answer({ parts: [...texts.values()], error: failure });
   send('session.status', { sessionID: session.id, status: { type: 'idle' } });
   send('session.idle', { sessionID: session.id });
 }
@@ -321,7 +329,7 @@ const server = createServer(async (req, res) => {
     if (s[1] === env.FAKE_OPENCODE_GONE || !sessions.has(s[1])) return json(res, 404, { name: 'NotFoundError', data: { message: `Session not found: ${s[1]}` } });
     return json(res, 200, info(sessions.get(s[1])));
   }
-  if ((s = m(/^\/session\/([^/]+)\/(prompt_async|command)$/))) {
+  if ((s = m(/^\/session\/([^/]+)\/(prompt_async|command|message)$/))) {
     const session = sessions.get(s[1]);
     if (!session) return json(res, 404, { name: 'NotFoundError', data: { message: `Session not found: ${s[1]}` } });
     session.answers ??= [];
@@ -332,7 +340,12 @@ const server = createServer(async (req, res) => {
     record({ prompt: { session: session.id, kind: s[2], body: body ?? null } });
     if (env.FAKE_OPENCODE_RULES_FLIP === '1' && prompts === 1) rulesFlipped = true;
     if (env.FAKE_OPENCODE_REPLIED && prompts === 1) send('permission.replied', { sessionID: session.id, requestID: 'per_nobody', reply: env.FAKE_OPENCODE_REPLIED === 'reject' ? 'reject' : 'once' });
-    const answer = () => json(res, 200, { info: { id: messageID, sessionID: session.id, role: 'assistant', finish: 'stop' }, parts: [] });
+    // /message answers with the turn's text parts and its error, as 1.19's last assistant message (spike Q3); /command with no parts.
+    const message = s[2] === 'message';
+    const answer = (turn) => json(res, 200, {
+      info: { id: messageID, sessionID: session.id, role: 'assistant', finish: 'stop', ...(message ? { error: turn?.error ?? null } : {}) },
+      parts: message ? (turn?.parts ?? []) : [],
+    });
     if (env.FAKE_OPENCODE_UNKNOWN_MODEL === '1') {
       if (s[2] === 'prompt_async') json(res, 204); else answer();
       const model = typeof body?.model === 'string' ? body.model : `${body?.model?.providerID}/${body?.model?.modelID}`;
@@ -343,7 +356,7 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (env.FAKE_OPENCODE_PROMPT_FAIL === '1') return json(res, 400, { name: 'BadRequest', data: { message: 'Expected a part at ["parts",0]', kind: 'Payload' } });
-    // prompt_async answers at once; /command answers when the turn ends (Q10). A prompt on a busy session joins the running turn (Q12b).
+    // prompt_async answers at once; /command and /message answer when the turn ends (E3 Q10, spike Q3). A prompt on a busy session joins the running turn (Q12b).
     if (s[2] === 'prompt_async') json(res, 204); else session.answers.push(answer);
     if (!session.busy) session.turn = play(session, messageID);
     return;
