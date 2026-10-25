@@ -75,7 +75,7 @@ Open a part to see its changes grouped by the plan step that caused them, each w
 | **Step rollback** | Per-step checkpoints. Roll back one step without overwriting your own edits or later steps. |
 | **Provenance** | Every change in a part, grouped by the plan step behind it. |
 | **Your agent** | Chats run on the real CLIs of [Claude Code](https://docs.claude.com/en/docs/claude-code), Codex or opencode. CodeRay adds a plan tool, a system prompt and a write gate around them; how hard the gate is depends on the engine: a hook on Claude Code, a read-only sandbox with approvals on Codex, permission rules on opencode. |
-| **Background models** | A small model groups files into components and summarizes changes. Local embeddings help cluster files and power semantic code search for the agent. A new file lands in a component right away when a component's glob, a sibling file or the test it covers says where. |
+| **Background models** | A small model groups files into components and summarizes changes, on the first engine that is ready (Claude Code, then Codex, then opencode) or the one chosen in Settings; without one the map stays a folder map. Local embeddings help cluster files and power semantic code search for the agent. A new file lands in a component right away when a component's glob, a sibling file or the test it covers says where. |
 | **MCP servers** | Configured for the IDE and per project. A project's servers run only after you approve them on this machine. |
 | **Many projects** | Projects are tabs of one window. Each runs its own agent in the background, and a bubble tells you which one needs you. |
 | **Languages** | Maps for TypeScript, Python, C, C++, C# and Swift, plus a container view drawn from `docker-compose` and XcodeGen. |
@@ -84,7 +84,7 @@ Open a part to see its changes grouped by the plan step that caused them, each w
 
 Download the latest `.dmg` from [Releases](https://github.com/shestakoven/coderay/releases/latest) and drag CodeRay to Applications. The app is signed and notarized and updates itself.
 
-Requirements: a Mac with Apple silicon, and the CLI of the agent you want to use, installed and logged in ([`claude`](https://docs.claude.com/en/docs/claude-code) by default). Claude Code is also used for the small background model that groups the map and writes summaries, even when chats run on Codex or opencode.
+Requirements: a Mac with Apple silicon, and the CLI of the agent you want to use, installed and logged in ([`claude`](https://docs.claude.com/en/docs/claude-code) by default). The small background model that groups the map and writes summaries runs on the first engine that is ready (Claude Code, then Codex, then opencode), or on the one chosen in Settings → Background AI; without one the map stays a folder map, and chat works as before.
 
 ## Build from source
 
