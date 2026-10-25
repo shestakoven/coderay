@@ -1,6 +1,6 @@
 import {
   AGENT_TERMINAL_ID, API_KEY_PATTERN, ENGINE_IDS, IMAGE_MEDIA_TYPES, isEffortFor, isEngineId, LOGIN_METHODS, MAX_CHAT_IMAGES, MAX_REVIEW_GRAPH_FILES, parseModelId,
-  type ChatImage, type ClientMessage, type EngineId, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type LoginMethod, type Policy, type PromptAnswer,
+  type BackgroundAiChoice, type ChatImage, type ClientMessage, type EngineId, type FileAnswer, type FileHashes, type McpEntry, type McpLevel, type PlanAnswer, type LoginMethod, type Policy, type PromptAnswer,
   type ReviewGraphFile, type WatchdogAnswer,
 } from '@ide/protocol';
 import { isAccountId } from '../accounts/account-store';
@@ -23,7 +23,7 @@ export function parseClientMessage(raw: string): ClientMessage | null {
   const {
     type, text, requestId, answer, level, name, entry, previousName, entryHash, fileHashes, policy, hashes, planId, version, promptId, eventId, path, before,
     after, revertId, changeIds, stepKey, confirm, id, ids, modelChoice, effort, cols, rows, kind, data, images, title, parent, url, code, paths, side, message, key, files,
-    engine, method, apiKey, providerID,
+    engine, method, apiKey, providerID, choice, onboarded,
   } = value;
   switch (type) {
     case 'chat.send':
@@ -141,6 +141,12 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       return isAccountId(id) && isProviderId(providerID) && isRuledText(apiKey) ? { type, requestId, id, providerID, apiKey } : null;
     case 'account.provider.remove':
       return isAccountId(id) && isProviderId(providerID) ? { type, requestId, id, providerID } : null;
+    case 'background-ai.save': {
+      const parsed = parseBackgroundChoice(choice);
+      return parsed ? { type, requestId, choice: parsed } : null;
+    }
+    case 'background-ai.onboarded':
+      return typeof onboarded === 'boolean' ? { type, requestId, onboarded } : null;
     case 'hub.close':
     case 'hub.restart':
       return isBoundedString(id, MAX_ID_LENGTH) ? { type, requestId, id } : null;
@@ -188,6 +194,15 @@ function parseAnswer(value: unknown): PromptAnswer | null {
   const answers = value.answers;
   if (value.kind !== 'answers' || !isRecord(answers) || !Object.values(answers).every((item) => typeof item === 'string')) return null;
   return { kind: 'answers', answers: answers as Record<string, string> };
+}
+
+// A mode, and for one engine a model of that engine or none; whether the core runs that engine only the core knows.
+function parseBackgroundChoice(value: unknown): BackgroundAiChoice | null {
+  if (!isRecord(value)) return null;
+  if (value.mode === 'auto' || value.mode === 'off') return { mode: value.mode };
+  const { engine, model } = value;
+  if (value.mode !== 'engine' || !isEngineId(engine)) return null;
+  return model === null || (typeof model === 'string' && parseModelId(model)?.engine === engine) ? { mode: 'engine', engine, model } : null;
 }
 
 // A model of its engine and an effort that engine names; with no model the chat's engine decides, which only the session knows.

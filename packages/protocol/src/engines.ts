@@ -8,6 +8,24 @@ export const ENGINE_NAMES: Record<EngineId, string> = { claude: 'Claude', codex:
 
 export const isEngineId = (value: unknown): value is EngineId => ENGINE_IDS.includes(value as EngineId);
 
+/** The order Auto tries the engines in for the background AI. */
+export const BACKGROUND_ENGINE_ORDER: readonly EngineId[] = ['claude', 'codex', 'opencode'];
+
+/** The engines by their product names, as the background AI's copy names them. */
+export const ENGINE_PRODUCT_NAMES: Record<EngineId, string> = { claude: 'Claude Code', codex: 'Codex', opencode: 'opencode' };
+
+/** Auto: the first ready engine in `BACKGROUND_ENGINE_ORDER`; `engine`: that engine only, its default model when `model` is null. */
+export type BackgroundAiChoice = { mode: 'auto' } | { mode: 'off' } | { mode: 'engine'; engine: EngineId; model: string | null };
+
+/**
+ * `modelId` is in `ModelInfo.value` form; `note` names an engine Auto passed over for a failure. On `off`, `engine` is the explicit engine
+ * (reason `unavailable`), else null, and `hint` is one line for a person.
+ */
+export type BackgroundAiStatus =
+  | { state: 'checking' }
+  | { state: 'ready'; engine: EngineId; modelId: string; note: string | null }
+  | { state: 'off'; reason: 'choice' | 'none' | 'unavailable'; engine: EngineId | null; hint: string };
+
 /** What an engine can do: the UI hides what it cannot, and the core skips the matching paths. */
 export interface EngineCapabilities {
   slashCommands: boolean;

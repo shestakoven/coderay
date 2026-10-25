@@ -110,6 +110,27 @@ describe('parseClientMessage account requests', () => {
   });
 });
 
+describe('parseClientMessage background AI', () => {
+  it('passes a choice of Auto, Off or one engine with a model of that engine or none, and the first-run flag, and drops anything else', () => {
+    const messages = [
+      { type: 'background-ai.save', requestId: 'r1', choice: { mode: 'auto' } },
+      { type: 'background-ai.save', requestId: 'r2', choice: { mode: 'engine', engine: 'codex', model: 'codex:gpt-6-luna' } },
+      { type: 'background-ai.save', requestId: 'r3', choice: { mode: 'engine', engine: 'claude', model: null } },
+      { type: 'background-ai.onboarded', requestId: 'r4', onboarded: false },
+    ];
+    const dropped = [
+      { type: 'background-ai.save', requestId: 'r', choice: { mode: 'engine', engine: 'codex', model: 'haiku' } },
+      { type: 'background-ai.save', requestId: 'r', choice: { mode: 'engine', engine: 'gemini', model: null } },
+      { type: 'background-ai.save', requestId: 'r', choice: { mode: 'engine', engine: 'claude' } },
+      { type: 'background-ai.save', requestId: 'r', choice: { mode: 'manual' } },
+      { type: 'background-ai.onboarded', requestId: 'r', onboarded: 'yes' },
+      { type: 'background-ai.save', choice: { mode: 'auto' } },
+    ];
+    const off = parse({ type: 'background-ai.save', requestId: 'r5', choice: { mode: 'off', path: '../x' } });
+    expect([messages.map(parse), dropped.map(parse), off]).toEqual([messages, dropped.map(() => null), { type: 'background-ai.save', requestId: 'r5', choice: { mode: 'off' } }]);
+  });
+});
+
 describe('parseClientMessage opencode profiles', () => {
   // A name or a key the core refuses still reaches it, which answers with the rule; only what no rule can answer is dropped here.
   it('passes a profile name trimmed, a name or a key the core answers with its rule, and the provider requests, and drops what no rule can answer', () => {

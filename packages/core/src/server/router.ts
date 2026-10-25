@@ -1,7 +1,7 @@
 import type { ClientMessage, GitClientMessage, HistoryClientMessage } from '@ide/protocol';
 
 export type MessageRoute = 'history' | 'git' | 'settings' | 'unknown';
-export type SettingsClientMessage = Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` | `account.${string}` }>;
+export type SettingsClientMessage = Extract<ClientMessage, { requestId: string; type: `mcp.${string}` | `policy.${string}` | `account.${string}` | `background-ai.${string}` }>;
 
 const HISTORY = new Set(['watchdog.answer', 'watchdog.stop-agent', 'history.diff', 'review.graph', 'revert.undo', 'change.revert', 'step.rollback-preview', 'step.rollback']);
 const GIT = new Set([
@@ -11,6 +11,7 @@ const GIT = new Set([
 const SETTINGS = new Set([
   'mcp.save', 'mcp.remove', 'mcp.approve', 'mcp.confirm-external-edits', 'policy.save', 'policy.confirm-external-edits',
   'account.login.start', 'account.login.code', 'account.login.cancel', 'account.select', 'account.remove',
+  'background-ai.save', 'background-ai.onboarded',
 ]);
 
 export function routeOf(type: string): MessageRoute {

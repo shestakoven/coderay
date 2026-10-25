@@ -10,7 +10,7 @@ import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE } from './fake-claude/fake';
 import { FAKE_CODEX } from './fake-codex/fake';
 import { FAKE_OPENCODE, opencodeRecords } from './fake-opencode/fake';
-import { fixture, tempDir, waitFor, writeTree } from './helpers';
+import { fixture, pinBackgroundAi, tempDir, waitFor, writeTree } from './helpers';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
@@ -24,6 +24,7 @@ async function startMain(options: { claude?: string; env?: Record<string, string
   mkdirSync(join(base, 'ui'));
   await writeTree(root, { 'notes.txt': 'notes\n', 'src/app.ts': 'export const a = 1;\n' });
   execFileSync('git', ['init', '-q'], { cwd: root });
+  pinBackgroundAi(join(base, 'home'));
   const child: ChildProcess = spawn(
     process.execPath,
     ['--import', 'tsx', MAIN, '--project', root, '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--claude', options.claude ?? FAKE_CLAUDE,

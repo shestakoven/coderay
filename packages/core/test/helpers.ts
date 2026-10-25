@@ -1,11 +1,11 @@
-import { existsSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { onTestFinished, type TestContext } from 'vitest';
 import { stringify } from 'yaml';
-import type { ChatPick, Lang, MapStatus } from '@ide/protocol';
+import type { BackgroundAiChoice, ChatPick, Lang, MapStatus } from '@ide/protocol';
 import type { IndexedFile } from '../src/model';
 import type { SessionRecord } from '../src/store/store';
 
@@ -88,6 +88,12 @@ export function mapStatus(overrides: Partial<MapStatus> = {}): MapStatus {
     warnings: [],
     ...overrides,
   };
+}
+
+/** A core on this home starts with the background AI as stored (Off and onboarded by default), so no fake engine gets a background call. */
+export function pinBackgroundAi(home: string, stored: { choice: BackgroundAiChoice; onboarded: boolean } = { choice: { mode: 'off' }, onboarded: true }): void {
+  mkdirSync(home, { recursive: true });
+  writeFileSync(join(home, 'background-ai.json'), JSON.stringify(stored));
 }
 
 // An executable standing in for the Node launcher: when run, it records the IDE_NODE and HOME it got, its own path and its arguments, then exits.

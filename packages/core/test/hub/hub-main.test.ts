@@ -9,7 +9,7 @@ import type { HubProject, HubServerMessage, HubSnapshot, ServerMessage } from '@
 import { projectId } from '../../src/hub/supervisor';
 import { openProjectsFile, readOpenProjects, serializeOpenProjects, writeOpenProjects } from '../../src/hub/open-projects';
 import { FAKE_CLAUDE } from '../fake-claude/fake';
-import { fixture, tempDir, waitFor } from '../helpers';
+import { fixture, pinBackgroundAi, tempDir, waitFor } from '../helpers';
 
 const MAIN = fileURLToPath(new URL('../../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../../..', import.meta.url));
@@ -34,6 +34,7 @@ function prepare() {
   const home = join(base, 'home');
   mkdirSync(MODELS_CACHE, { recursive: true });
   mkdirSync(home, { recursive: true });
+  pinBackgroundAi(home);
   symlinkSync(MODELS_CACHE, join(home, 'models'));
   // A claude that always fails, first in PATH, so no core can ever reach the real model.
   const bin = join(base, 'bin');

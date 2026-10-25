@@ -4,8 +4,8 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
-  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage, type EngineAccountsView, type EngineId, type MapSnapshot, type ModelInfo,
-  type ServerMessage,
+  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage,
+  type EngineAccountsView, type EngineId, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage,
 } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
 import { AccountError, AccountStore, claudeAccounts } from './accounts/account-store';
@@ -254,7 +254,19 @@ try {
       }
     },
   });
-  const models = createModelProvider(home, () => accounts.activeEnv());
+  // One engines probe serves the engines list, Settings and the background AI's pick: statusOf is its latest answer per engine.
+  const latestStatus = new Map<EngineId, Promise<EngineStatus>>();
+  const probeStatus = (engine: Engine): Promise<EngineStatus> => {
+    const pending = engine.status();
+    latestStatus.set(engine.id, pending);
+    return pending;
+  };
+  const statusOf = (engine: Engine): Promise<EngineStatus> => latestStatus.get(engine.id) ?? probeStatus(engine);
+  // The engines and refreshEngines are defined below; the provider calls them only once the core has started.
+  const models = createModelProvider({ home, engines: () => agent.engines.all(), status: statusOf, recheck: () => refreshEngines() });
+  // The latest full answers of the engines probe and of the model lists, for Settings.
+  let lastEngines: EngineStatus[] = [];
+  let lastModels: ModelInfo[] = [];
   let languageAdapters: LanguageAdapter[] = [];
   const rt = createExecutionRuntime({
     root, home, store,
@@ -332,7 +344,10 @@ try {
   };
   const settingsSnapshot = (): ServerMessage => ({
     type: 'settings.snapshot',
-    settings: { ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), engines: accountViews(), login: login.view() } },
+    settings: {
+      ...registry.view(), policy: policy.view(), accounts: { ...accounts.list(), engines: accountViews(), login: login.view() },
+      backgroundAi: models.view(lastEngines, lastModels),
+    },
   });
   const plansSnapshot = (): ServerMessage => ({ type: 'plans.snapshot', plans: rt.gate.plans.plans() });
   const gateSnapshot = (): ServerMessage => ({ type: 'gate.snapshot', prompts: rt.gate.gate.pending() });
@@ -384,6 +399,14 @@ try {
         await changeAccount(engine, () => accountsOf(engine).remove(message.id));
         return;
       }
+      case 'background-ai.save':
+        // The parser checked the choice's shape; only the core knows which engines it runs.
+        if (message.choice.mode === 'engine' && agent.engines.get(message.choice.engine) === undefined) throw new Error('That background AI choice is not valid.');
+        models.setChoice(message.choice);
+        return;
+      case 'background-ai.onboarded':
+        models.setOnboarded(message.onboarded === true);
+        return;
     }
   };
   // The windows hear of an applied change even when restarting the agent after it fails.
@@ -436,15 +459,29 @@ try {
   let refreshes = 0;
   // The engines and the models each go out once every engine has answered, or after SLOW_ENGINE_MS with the engines that have, so a
   // slow engine (a codex that hangs) never holds Claude's back; the full list follows to every window unless a later change sent newer.
+  // Every full answer of the latest change is kept for Settings, and the background AI compares the states with those its pick saw.
   const sendEngines = (first: (message: ServerMessage) => void): void => {
     const generation = refreshes;
     const late = (message: ServerMessage): void => {
       if (generation === refreshes) server?.broadcast(message);
     };
-    void answeredBy(agent.engines.all().map((engine) => engine.status()), SLOW_ENGINE_MS)
+    const keep = (update: () => void): void => {
+      if (generation !== refreshes) return;
+      update();
+      server?.broadcast(settingsSnapshot());
+    };
+    const keepEngines = (engines: EngineStatus[]): void => keep(() => {
+      lastEngines = engines;
+      models.enginesChanged(engines);
+    });
+    void answeredBy(agent.engines.all().map(probeStatus), SLOW_ENGINE_MS)
       .then(({ answered, late: rest }) => {
         first({ type: 'engines.snapshot', engines: answered });
-        return rest?.then((engines) => late({ type: 'engines.snapshot', engines }));
+        if (rest === null) keepEngines(answered);
+        return rest?.then((engines) => {
+          keepEngines(engines);
+          late({ type: 'engines.snapshot', engines });
+        });
       })
       .catch((error: unknown) => console.error('CodeRay core: could not check the engines', error));
     const engines = agent.engines.all();
@@ -452,10 +489,17 @@ try {
       const failed = engines.filter((engine) => !pending.includes(engine.id) && unlisted.has(engine.id)).map((engine) => engine.id);
       return { type: 'models.snapshot', models: lists.flat(), ...(pending.length === 0 ? {} : { pending }), ...(failed.length === 0 ? {} : { failed }) };
     };
+    const keepModels = (lists: ModelInfo[][]): void => keep(() => {
+      lastModels = lists.flat();
+    });
     void answeredBy(engines.map(modelsOf), SLOW_ENGINE_MS)
       .then(({ answered, waiting, late: rest }) => {
         first(modelsSnapshot(answered, waiting.map((at) => engines[at]!.id)));
-        return rest?.then((lists) => late(modelsSnapshot(lists, [])));
+        if (rest === null) keepModels(answered);
+        return rest?.then((lists) => {
+          keepModels(lists);
+          late(modelsSnapshot(lists, []));
+        });
       })
       .catch((error: unknown) => console.error('CodeRay core: could not list the models', error));
   };
@@ -463,11 +507,19 @@ try {
   const refreshEngines = (): void => {
     const generation = ++refreshes;
     engineModels.clear();
+    latestStatus.clear();
     sendEngines((message) => {
       if (generation === refreshes) server?.broadcast(message);
     });
+    // After sendEngines started the probe, which the pick reads through statusOf: the other order would probe twice.
+    models.refresh();
   };
   const profiles: OpencodeProfiles | null = opencode && opencodeAccounts ? { command: opencode, runDir: runDir(home), store: opencodeAccounts, refreshEngines } : null;
+
+  models.onChange(() => server?.broadcast(settingsSnapshot()));
+  // One probe at startup serves the pick and the first-run screen; Off once answered needs neither, and starts no engine.
+  if (models.choice().mode === 'off' && models.onboarded()) models.refresh();
+  else refreshEngines();
 
   const handle = async (message: ClientMessage, reply: Reply): Promise<void> => {
     switch (message.type) {

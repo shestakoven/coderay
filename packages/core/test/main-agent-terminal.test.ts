@@ -8,7 +8,7 @@ import { AGENT_TERMINAL_ID, type ServerMessage } from '@ide/protocol';
 import { runDir } from '../src/home';
 import { isAlive } from '../src/os-process';
 import { FAKE_CLAUDE, readRecords } from './fake-claude/fake';
-import { fixture, tempDir, waitFor } from './helpers';
+import { fixture, pinBackgroundAi, tempDir, waitFor } from './helpers';
 
 const MAIN = fileURLToPath(new URL('../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../..', import.meta.url));
@@ -61,6 +61,7 @@ async function startMain(mode: Mode, extraEnv: Record<string, string> = {}) {
   mkdirSync(root);
   writeFileSync(join(root, 'notes.txt'), 'notes\n');
   execFileSync('git', ['init', '-q'], { cwd: root });
+  pinBackgroundAi(join(base, 'home'));
   writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
   const wrapper = join(base, 'claude-wrapper.mjs');
   writeFileSync(wrapper, WRAPPER);

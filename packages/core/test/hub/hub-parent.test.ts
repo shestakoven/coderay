@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it, onTestFinished } from 'vitest';
 import { projectDir } from '../../src/home';
 import { LOCK_FILE } from '../../src/lock';
-import { tempDir, waitFor } from '../helpers';
+import { pinBackgroundAi, tempDir, waitFor } from '../helpers';
 
 const MAIN = fileURLToPath(new URL('../../src/main.ts', import.meta.url));
 const REPO = fileURLToPath(new URL('../../../..', import.meta.url));
@@ -18,6 +18,7 @@ function startHub(base: string, flags: string[], projects: string[] = []) {
   mkdirSync(join(base, 'ui'));
   mkdirSync(join(base, 'user-home'));
   writeFileSync(join(bin, 'claude'), '#!/bin/sh\nexit 1\n', { mode: 0o755 });
+  pinBackgroundAi(join(base, 'home'));
   const child = spawn(process.execPath, ['--import', 'tsx', MAIN, '--hub', ...projects.flatMap((root) => ['--project', root]),
     '--ide-home', join(base, 'home'), '--port', '0', '--ui', join(base, 'ui'), '--allow-origin', ORIGIN, '--claude', join(bin, 'claude'), '--no-codex', '--no-opencode', ...flags], {
     cwd: REPO,

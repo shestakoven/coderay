@@ -1,4 +1,5 @@
-import { type EngineId } from './engines';
+import { type BackgroundAiChoice, type BackgroundAiStatus, type EngineId, type EngineStatus } from './engines';
+import type { ModelInfo } from './session';
 
 export type McpLevel = 'ide' | 'project';
 export type McpTransport = 'stdio' | 'http';
@@ -135,9 +136,26 @@ export interface AccountsView {
   login: AccountLoginView;
 }
 
+/** One engine the core runs: its latest state (null until the first check answers) and its models. */
+export interface BackgroundAiOption {
+  engine: EngineId;
+  status: EngineStatus | null;
+  models: ModelInfo[];
+}
+
+export interface BackgroundAiView {
+  choice: BackgroundAiChoice;
+  /** The first-run screen was answered in this CodeRay home. */
+  onboarded: boolean;
+  status: BackgroundAiStatus;
+  /** Every engine the core runs, in `BACKGROUND_ENGINE_ORDER`. */
+  options: BackgroundAiOption[];
+}
+
 export interface SettingsView extends McpSettingsView {
   policy: PolicyView;
   accounts: AccountsView;
+  backgroundAi: BackgroundAiView;
 }
 
 export type SettingsServerMessage =
@@ -163,4 +181,6 @@ export type SettingsClientMessage =
   // An opencode profile's providers: answered with `settings.providers` only, never `settings.result`.
   | { type: 'account.providers'; requestId: string; id: string }
   | { type: 'account.provider.set'; requestId: string; id: string; providerID: string; apiKey: string }
-  | { type: 'account.provider.remove'; requestId: string; id: string; providerID: string };
+  | { type: 'account.provider.remove'; requestId: string; id: string; providerID: string }
+  | { type: 'background-ai.save'; requestId: string; choice: BackgroundAiChoice }
+  | { type: 'background-ai.onboarded'; requestId: string; onboarded: boolean };

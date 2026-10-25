@@ -44,10 +44,12 @@ const userHomeOf = (base: string): string => join(base, 'user-home');
 const xdgHomes = (base: string): Record<string, string> =>
   Object.fromEntries(['XDG_DATA_HOME', 'XDG_CONFIG_HOME', 'XDG_STATE_HOME', 'XDG_CACHE_HOME'].map((name) => [name, join(base, 'xdg', name.toLowerCase())]));
 
-function prepareHome(base: string): { home: string; bin: string } {
+// Unless a spec shows the first-run screen, the background AI is Off and answered, so no fake engine gets a background call.
+function prepareHome(base: string, { onboarded = true }: { onboarded?: boolean } = {}): { home: string; bin: string } {
   const home = join(base, 'home');
   mkdirSync(MODELS_CACHE, { recursive: true });
   mkdirSync(home, { recursive: true });
+  if (onboarded) writeFileSync(join(home, 'background-ai.json'), '{"choice":{"mode":"off"},"onboarded":true}\n');
   symlinkSync(MODELS_CACHE, join(home, 'models'));
   // A claude that always fails, first in PATH, so a map change can never call the real Haiku.
   const bin = join(base, 'bin');

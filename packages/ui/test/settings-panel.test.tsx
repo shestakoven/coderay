@@ -86,6 +86,7 @@ const settingsWith = (claudeCodeServers: SettingsView['claudeCodeServers'], proj
   },
   claudeCodeServers,
   accounts: { engines: [{ engine: 'claude', accounts: [], activeId: null }], login: { state: 'idle', engine: null, method: null, url: null, userCode: null, error: null } },
+  backgroundAi: { choice: { mode: 'auto' }, onboarded: true, status: { state: 'ready', engine: 'claude', modelId: 'haiku', note: null }, options: [] },
 });
 
 const render = (settings: SettingsView | null, sessionServers: McpServerState[] = [], initialCategory: CategoryId = 'mcp'): string =>
