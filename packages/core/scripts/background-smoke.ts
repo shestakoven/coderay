@@ -160,6 +160,8 @@ export async function runBackgroundSmoke(options: BackgroundSmokeOptions): Promi
     const file = join(aux, `${name}.starts`);
     return existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((line) => line !== '' && Number(line.split(' ')[0]) * 1000 >= since - 1000) : [];
   };
+  // Every engine start this run logged, the smoke's own included: a count before and after a core is exact where seconds are not.
+  const allStarts = (): number => ['claude', 'codex', 'opencode'].reduce((sum, name) => sum + starts(name, 0).length, 0);
 
   const coreEnv = (): NodeJS.ProcessEnv => {
     const env: NodeJS.ProcessEnv = { ...process.env };
@@ -392,6 +394,7 @@ export async function runBackgroundSmoke(options: BackgroundSmokeOptions): Promi
   const smokes: Array<{ name: string; run: () => Promise<void> }> = [
     { name: 'Smoke 1 — no engine, then Off', run: async () => {
       rmSync(store, { force: true });
+      const startsBefore = allStarts();
       const core = await startCore('smoke 1', { claude: MISSING, codex: MISSING, opencode: MISSING });
       try {
         const known = await until(() => (core.view()?.options.length ?? 0) === 3 && core.view()!.options.every((option) => option.status?.state === 'missing'), 120_000);
@@ -422,7 +425,7 @@ export async function runBackgroundSmoke(options: BackgroundSmokeOptions): Promi
         const none = await until(() => { const now = status(core); return now?.state === 'off' && now.reason === 'none'; }, 60_000);
         const hint = status(core);
         check('Smoke 1: Auto with no engine is off with the install hint', none && hint?.state === 'off' && hint.hint.startsWith('No AI engine is installed') ? null : describe(hint));
-        check('Smoke 1: no engine was started', starts('claude', core.startedAt).length + starts('codex', core.startedAt).length + starts('opencode', core.startedAt).length === 0 && pidFiles().length === 0 ? null : 'a start was logged or a pid file exists');
+        check('Smoke 1: no engine was started', allStarts() === startsBefore && pidFiles().length === 0 ? null : 'a start was logged or a pid file exists');
       } finally {
         await stopCore(core, 'Smoke 1');
       }
