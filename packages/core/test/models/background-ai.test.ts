@@ -192,9 +192,11 @@ describe('BackgroundAi', () => {
     expect([
       offHint({ mode: 'engine', engine: 'codex', model: null }, [ready], [], new Map([['codex', 'codex turn failed: 401']])),
       offHint({ mode: 'engine', engine: 'codex', model: 'codex:gone' }, [ready], ['codex'], new Map()),
+      offHint({ mode: 'auto' }, [ready], ['codex'], new Map()),
     ]).toEqual([
       'Codex failed: codex turn failed: 401. Choose another engine in Settings → Background AI.',
-      'Codex lists no model for this choice. Choose another engine in Settings → Background AI.',
+      'Codex no longer offers gone. Choose another engine in Settings → Background AI.',
+      'Codex lists no model for this choice. The map and chat work without an AI engine.',
     ]);
     expect(offHint({ mode: 'auto' }, [{ engine: 'codex', state: 'error', hint: 'OpenAI rejected the API key sk-proj-abcdefghijklmnop' }], [], new Map())).not.toContain('sk-proj');
   });

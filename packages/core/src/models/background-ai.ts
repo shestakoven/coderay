@@ -43,10 +43,11 @@ function engineLine(status: EngineStatus): string {
  */
 export function offHint(choice: BackgroundAiChoice, statuses: EngineStatus[], noModel: EngineId[], failed: ReadonlyMap<EngineId, string>, alone = false): string {
   if (choice.mode === 'off') return OFF_BY_CHOICE;
+  const chosen = choice.mode === 'engine' && choice.model !== null ? parseModelId(choice.model)?.model ?? choice.model : null;
   const line = (engine: EngineId): string => {
     const reason = failed.get(engine);
     if (reason !== undefined) return `${ENGINE_PRODUCT_NAMES[engine]} failed: ${reason}`;
-    if (noModel.includes(engine)) return `${ENGINE_PRODUCT_NAMES[engine]} lists no model for this choice`;
+    if (noModel.includes(engine)) return `${ENGINE_PRODUCT_NAMES[engine]} ${chosen === null ? 'lists no model for this choice' : `no longer offers ${chosen}`}`;
     const status = statuses.find((candidate) => candidate.engine === engine);
     return status === undefined ? `${ENGINE_PRODUCT_NAMES[engine]} is not run by this CodeRay` : engineLine(status);
   };

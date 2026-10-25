@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_HOME } from '../../src/accounts/account-homes';
 import { catalogModels, opencodeEngine, opencodeProbe, providerHint } from '../../src/agent/engines/opencode';
 import { opencodeCommand, type OpencodeCommand } from '../../src/agent/opencode/command';
-import { fakeOpencode, opencodeHomes, opencodeRecords } from '../fake-opencode/fake';
+import { fakeOpencode, opencodeHomes, opencodeRecords, requests } from '../fake-opencode/fake';
 import { tempDir, waitFor } from '../helpers';
 
 const dir = () => tempDir('oc-engine-');
@@ -66,7 +66,7 @@ describe('catalogModels', () => {
 });
 
 describe('the opencode engine', () => {
-  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, runs a background call on the cheapest model listed or the chosen one, which fails once its call's server no longer offers it, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
+  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, runs a background call on the cheapest model listed or the chosen one, which fails once its call's server no longer offers it while the cheapest gives way to that server's, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const d = dir();
     const run = join(d, 'run');
@@ -93,12 +93,17 @@ describe('the opencode engine', () => {
         'opencode has no provider "openai" connected for this model. Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.',
       ],
     ]);
-    // The call's server has the chosen model deprecated since the listing: a choice is not re-picked.
+    // The calls' server has both listed models deprecated since the listing: the choice is not re-picked, the cheapest is, from that server's list.
     Object.assign(later, opencodeHomes(d), { FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [{ id: 'opencode', name: 'OpenCode Zen', env: [], models: {
-      'nemotron-3.5-lightning-free': { id: 'nemotron-3.5-lightning-free', cost: { input: 0, output: 0 } },
+      'nemotron-3.5-lightning-free': { id: 'nemotron-3.5-lightning-free', status: 'deprecated', cost: { input: 0, output: 0 } },
       'gpt-oss-120b-free': { id: 'gpt-oss-120b-free', status: 'deprecated', cost: { input: 0, output: 0 } },
+      'big-pickle': { id: 'big-pickle', cost: { input: 0, output: 0 } },
     } }], default: {} }) });
-    const chosen = backgrounds[1] as { model: { generate: (request: { prompt: string; schema: object }) => Promise<unknown> } };
-    expect(await chosen.model.generate({ prompt: 'Say hi', schema: {} }).catch((error: Error) => error.message)).toBe('opencode no longer offers opencode/gpt-oss-120b-free');
+    type Generating = { model: { generate: (request: { prompt: string; schema: object }) => Promise<unknown> } };
+    const [auto, chosen] = (backgrounds.slice(0, 2) as Generating[]).map((background) => background.model.generate({ prompt: 'Say hi', schema: {} }).catch((error: Error) => error.message));
+    expect(await chosen).toBe('opencode no longer offers opencode/gpt-oss-120b-free');
+    // With no scenario the answer is empty: only the model it was asked on counts.
+    await auto;
+    expect(new Set(requests(opencodeRecords(record), 'POST', /^\/session\/[^/]+\/message$/).map((prompt) => (prompt.body as { model: { modelID: string } }).model.modelID))).toEqual(new Set(['big-pickle']));
   });
 });
