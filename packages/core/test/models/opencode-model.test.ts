@@ -1,18 +1,31 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, onTestFinished } from 'vitest';
 import { BUILT_IN_TOOLS } from '../../src/agent/opencode/config';
 import { OpencodeModel, pickOpencodeModel } from '../../src/models/opencode-model';
+import type { GenerateOptions, StructuredRequest } from '../../src/models/types';
 import { fakeOpencode, opencodeHomes, opencodeRecords, requests } from '../fake-opencode/fake';
 import { fixture, tempDir, waitFor } from '../helpers';
 
 const SCHEMA = { type: 'object', properties: { answer: { type: 'string' } }, required: ['answer'], additionalProperties: false };
 const ASK = { prompt: 'Say hi', schema: SCHEMA };
-const model = (scenario: string, dir: string, env: Record<string, string> = {}, timeoutMs = 5_000) => new OpencodeModel({
+/** Each call is aborted and awaited when its test ends: a test that times out does not leave its `opencode serve` running once the worker exits. */
+const stoppedAtEnd = (inner: OpencodeModel): Pick<OpencodeModel, 'generate'> => ({
+  generate: (request: StructuredRequest, { signal }: GenerateOptions = {}) => {
+    const end = new AbortController();
+    const call = inner.generate(request, { signal: signal ? AbortSignal.any([signal, end.signal]) : end.signal });
+    onTestFinished(async () => {
+      end.abort();
+      await call.catch(() => undefined);
+    });
+    return call;
+  },
+});
+const model = (scenario: string, dir: string, env: Record<string, string> = {}, timeoutMs = 5_000) => stoppedAtEnd(new OpencodeModel({
   // The fake's data home under `dir`: its tool-output glob is then the one the self-check expects.
   command: () => fakeOpencode(fixture(`opencode/${scenario}.jsonl`), join(dir, 'record.jsonl'), { ...opencodeHomes(dir), ...env }),
   model: { providerID: 'opencode', modelID: 'nemotron-3.5-lightning-free' }, userServers: ['github'], runDir: dir, timeoutMs,
-});
+}));
 const records = (dir: string) => opencodeRecords(join(dir, 'record.jsonl'));
 const prompts = (dir: string) => requests(records(dir), 'POST', /^\/session\/[^/]+\/message$/) as { body: any }[];
 const leftovers = (dir: string) => readdirSync(dir).filter((name) => name.startsWith('model-') || /^opencode-\d+\.pid\.json$/.test(name));
