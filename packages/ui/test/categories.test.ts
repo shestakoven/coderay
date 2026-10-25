@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest';
 import { BLOCKS, CATEGORIES, blocksOf, categoryOf, countByCategory, isCategoryId, matchBlocks, type CategoryId } from '../src/settings/categories';
 
 const ids = (blocks: { id: string }[]): string[] => blocks.map((block) => block.id);
-const CATEGORY_IDS: CategoryId[] = ['agent', 'mcp', 'paths', 'accounts', 'appearance'];
-const NONE = { agent: 0, mcp: 0, paths: 0, accounts: 0, appearance: 0 };
+const CATEGORY_IDS: CategoryId[] = ['agent', 'mcp', 'paths', 'accounts', 'background', 'appearance'];
+const NONE = { agent: 0, mcp: 0, paths: 0, accounts: 0, background: 0, appearance: 0 };
 
 describe('settings categories', () => {
   it('lists the categories in rail order', () => {
@@ -101,7 +101,7 @@ describe('countByCategory', () => {
   });
 
   it('counts the blocks of every category', () => {
-    expect(countByCategory(BLOCKS)).toEqual({ agent: 2, mcp: 2, paths: 3, accounts: 3, appearance: 4 });
+    expect(countByCategory(BLOCKS)).toEqual({ agent: 2, mcp: 2, paths: 3, accounts: 3, background: 1, appearance: 4 });
   });
 
   it('counts a search result per category with zeros for the rest', () => {

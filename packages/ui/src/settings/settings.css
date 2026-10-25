@@ -448,3 +448,23 @@
   .sw-provider-row { grid-template-columns: minmax(0, 1fr); }
   .sw-provider-action .sw-code { flex: 1; width: auto; min-width: 0; }
 }
+
+/* Background AI: the mode, then one surface with the engine and model and the status line under them */
+.bg-ai { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sw-3); }
+.bg-ai-panel { align-self: stretch; display: flex; flex-direction: column; gap: var(--sw-4); padding: var(--sw-3) var(--sw-4); border-radius: var(--r-2); background: var(--surface); }
+.bg-ai-pick { display: flex; flex-wrap: wrap; gap: var(--sw-3); }
+.bg-ai-pick .sw-field { flex: 1 1 220px; min-width: 0; }
+.bg-ai-pick select {
+  width: 100%; max-width: 100%; height: 30px; padding: 0 30px 0 10px; border: 0; border-radius: var(--r-1); appearance: none;
+  background: var(--bg) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%239a9ea6' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E") no-repeat right 10px center;
+  color: var(--fg); text-overflow: ellipsis; cursor: pointer; transition: box-shadow 150ms;
+}
+.bg-ai-pick select:hover:not(:disabled) { background-color: color-mix(in srgb, var(--bg) 70%, var(--raised)); }
+.bg-ai-pick select:focus-visible { outline: 0; box-shadow: 0 0 0 2px var(--accent); }
+.bg-ai-pick select:disabled { opacity: 0.5; cursor: default; }
+.bg-ai-status { display: flex; align-items: flex-start; gap: 10px; min-height: 20px; }
+.bg-ai-status .sw-dot { margin-top: 6px; }
+.bg-ai-status.checking .sw-dot { animation: sw-pulse 1.4s ease-in-out infinite; }
+.bg-ai-status-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.bg-ai-note { color: var(--muted); font-size: calc(12px * var(--fs-scale, 1)); }
+.bg-ai .sw-link.bg-ai-again { margin-left: -6px; font-size: calc(12px * var(--fs-scale, 1)); }

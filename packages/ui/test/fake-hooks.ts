@@ -84,6 +84,8 @@ export function mount<T>(render: () => T) {
     get lateUpdates() {
       return fiber.lateUpdates;
     },
+    /** Renders again, as React does when the parent passes new props. */
+    rerender: run,
     unmount() {
       fiber.mounted = false;
       for (const slot of fiber.slots) if (typeof slot?.cleanup === 'function') slot.cleanup();

@@ -1,6 +1,7 @@
 import type { IconName } from '../layout/Icon';
+import { LIMITS_NOTE } from './background-ai';
 
-export type CategoryId = 'agent' | 'mcp' | 'paths' | 'accounts' | 'appearance';
+export type CategoryId = 'agent' | 'mcp' | 'paths' | 'accounts' | 'background' | 'appearance';
 
 export interface Category {
   id: CategoryId;
@@ -14,6 +15,7 @@ export const CATEGORIES: Category[] = [
   { id: 'mcp', label: 'MCP servers', icon: 'server', intro: 'Tools the agent can call. Project servers run only after you approve them on this machine.' },
   { id: 'paths', label: 'Paths', icon: 'folder', intro: 'Which files CodeRay protects, which it only records, and which places outside the project the agent may write to.' },
   { id: 'accounts', label: 'Accounts', icon: 'user', intro: 'The sign-in each engine runs under: System uses the engine\'s own, or add accounts of your own.' },
+  { id: 'background', label: 'Background AI', icon: 'sparkle', intro: 'The engine that groups the map and writes summaries in the background. It never edits files or runs tools.' },
   { id: 'appearance', label: 'Appearance', icon: 'sliders', intro: 'How CodeRay looks on this machine. Changes apply at once and stay local.' },
 ];
 
@@ -22,6 +24,7 @@ export type BlockId =
   | 'guarded' | 'harness' | 'outside-allowed'
   | 'mcp-servers' | 'claude-code-servers'
   | 'accounts' | 'accounts-codex' | 'accounts-opencode'
+  | 'background-ai'
   | 'density' | 'font-size' | 'reduced-motion' | 'canvas-dots';
 
 export interface Block {
@@ -43,6 +46,7 @@ export const BLOCKS: Block[] = [
   { id: 'accounts', category: 'accounts', title: 'Claude accounts', help: 'Choose the sign-in the agent runs under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'claude', 'oauth'] },
   { id: 'accounts-codex', category: 'accounts', title: 'Codex accounts', help: 'Choose the ChatGPT sign-in or API key Codex chats run under, or add another.', keywords: ['account', 'sign in', 'login', 'email', 'system', 'codex', 'chatgpt', 'openai', 'api key', 'device code'] },
   { id: 'accounts-opencode', category: 'accounts', title: 'opencode profiles', help: 'Choose the profile opencode chats run under, or add one and give its providers their keys.', keywords: ['account', 'profile', 'system', 'opencode', 'provider', 'api key', 'key', 'openai', 'anthropic', 'openrouter', 'oauth'] },
+  { id: 'background-ai', category: 'background', title: 'Engine', help: `Auto uses the first engine that is ready: Claude Code, then Codex, then opencode. ${LIMITS_NOTE}`, keywords: ['background', 'ai', 'engine', 'model', 'map', 'grouping', 'summary', 'overview', 'auto', 'off', 'claude', 'codex', 'opencode', 'first run'] },
   { id: 'density', category: 'appearance', title: 'Density', help: 'How much room rows, tabs and panels take.', keywords: ['compact', 'comfortable', 'spacing', 'rows'] },
   { id: 'font-size', category: 'appearance', title: 'Text size', help: 'Scales the text across CodeRay.', keywords: ['font', 'size', 'zoom', 'larger', 'smaller', 'text'] },
   { id: 'reduced-motion', category: 'appearance', title: 'Reduce motion', help: 'Turns off animations and transitions.', keywords: ['animation', 'motion', 'accessibility', 'transition'] },
@@ -68,7 +72,7 @@ export function matchBlocks(query: string, extra: Partial<Record<BlockId, string
 }
 
 export function countByCategory(blocks: Block[]): Record<CategoryId, number> {
-  const counts: Record<CategoryId, number> = { agent: 0, mcp: 0, paths: 0, accounts: 0, appearance: 0 };
+  const counts: Record<CategoryId, number> = { agent: 0, mcp: 0, paths: 0, accounts: 0, background: 0, appearance: 0 };
   for (const block of blocks) counts[block.category] += 1;
   return counts;
 }

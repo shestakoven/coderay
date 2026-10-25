@@ -1,6 +1,6 @@
 import { Handle, Position, ReactFlow, useReactFlow, type NodeProps } from '@xyflow/react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MapOverview, MapSnapshot } from '@ide/protocol';
+import type { BackgroundAiStatus, MapOverview, MapSnapshot } from '@ide/protocol';
 import { DetailsAside } from '../layout/DetailsSlot';
 import './overview.css';
 import { MapBackground, MapControls } from '../map/canvas';
@@ -111,6 +111,7 @@ const QUIET_EDGES = 18;
 const LABELLED_EDGES = 6;
 
 export function OverviewView({ snapshot, overview, onRebuild }: { snapshot: MapSnapshot; overview: MapOverview; onRebuild: () => void }) {
+  const ai = snapshot.status.backgroundAi;
   const [groups, setGroups] = useState<Set<string>>(new Set());
   const [components, setComponents] = useState<Set<string>>(new Set());
   const [selection, setSelection] = useState<Selection>(null);
@@ -278,9 +279,10 @@ export function OverviewView({ snapshot, overview, onRebuild }: { snapshot: MapS
         >
           {allOpen ? 'Collapse all' : 'Expand all'}
         </button>
-        <button onClick={onRebuild} disabled={overview.state === 'running'}>Rebuild</button>
+        {/* A rebuild while the background AI is off would only drop the overview it cannot draw again. */}
+        <button onClick={onRebuild} disabled={overview.state === 'running' || ai.state === 'off'} title={ai.state === 'off' ? ai.hint : undefined}>Rebuild</button>
         {overview.state === 'running' && <span className="ov-status"><span className="ov-spinner" /> Updating…</span>}
-        {overview.state === 'failed' && <span className="ov-status warn" title={overview.error ?? undefined}>Update failed</span>}
+        {overview.state === 'failed' && ai.state !== 'off' && <span className="ov-status warn" title={overview.error ?? undefined}>Update failed</span>}
         {!overview.basedOnCurrentMap && overview.state !== 'running' && overview.state !== 'failed' && (
           <span className="ov-badge" title="The component map changed since this overview was drawn">Out of date</span>
         )}
@@ -293,7 +295,12 @@ export function OverviewView({ snapshot, overview, onRebuild }: { snapshot: MapS
   );
 }
 
-export function OverviewPending({ overview, onRebuild }: { overview: MapOverview | undefined; onRebuild: () => void }) {
+export function OverviewPending({ overview, backgroundAi, onRebuild, onOpenSettings }: {
+  overview: MapOverview | undefined;
+  backgroundAi: BackgroundAiStatus;
+  onRebuild: () => void;
+  onOpenSettings: () => void;
+}) {
   const state = overview?.state ?? 'waiting';
   return (
     <div className="map c4 ov ov-empty">
@@ -302,6 +309,12 @@ export function OverviewPending({ overview, onRebuild }: { overview: MapOverview
           <>
             <h2>No overview for this map</h2>
             <p className="muted">{overview.error}</p>
+          </>
+        ) : backgroundAi.state === 'off' ? (
+          <>
+            <h2>No overview while the background AI is off</h2>
+            <p className="muted">{backgroundAi.hint}</p>
+            <button onClick={onOpenSettings}>Open Settings</button>
           </>
         ) : state === 'failed' ? (
           <>

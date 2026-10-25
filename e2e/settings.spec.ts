@@ -98,7 +98,7 @@ test('the category rail follows the arrow keys and the last category survives re
   await openApp(page);
   const dialog = await openSettings(page);
   const tabs = dialog.getByRole('tablist').getByRole('tab');
-  await expect(tabs).toHaveText([/Agent control/, /MCP servers/, /Paths/, /Accounts/, /Appearance/]);
+  await expect(tabs).toHaveText([/Agent control/, /MCP servers/, /Paths/, /Accounts/, /Background AI/, /Appearance/]);
 
   await dialog.getByRole('tab', { name: 'Agent control' }).focus();
   await page.keyboard.press('ArrowDown');
@@ -109,11 +109,11 @@ test('the category rail follows the arrow keys and the last category survives re
   await expect(dialog.getByRole('tab', { name: 'Appearance' })).toHaveAttribute('aria-selected', 'true');
   await expect(dialog.getByRole('heading', { level: 2 })).toHaveText('Appearance');
   await page.keyboard.press('ArrowUp');
-  await expect(dialog.getByRole('tab', { name: 'Accounts' })).toBeFocused();
-  await expect(dialog.getByRole('heading', { level: 2 })).toHaveText('Accounts');
+  await expect(dialog.getByRole('tab', { name: 'Background AI' })).toBeFocused();
+  await expect(dialog.getByRole('heading', { level: 2 })).toHaveText('Background AI');
   await page.keyboard.press('Home');
   await expect(dialog.getByRole('tab', { name: 'Agent control' })).toHaveAttribute('aria-selected', 'true');
-  await expect(dialog.getByRole('tab', { name: 'Accounts' })).toHaveAttribute('aria-selected', 'false');
+  await expect(dialog.getByRole('tab', { name: 'Background AI' })).toHaveAttribute('aria-selected', 'false');
 
   await showCategory(dialog, 'Paths');
   await page.keyboard.press('Escape');
@@ -144,10 +144,11 @@ test('search finds settings across categories, counts them per category and clea
   await expect(modeSetting(dialog)).toHaveCount(0);
   await expect(dialog.getByRole('tab', { name: 'Paths' })).toContainText('2');
   await expect(dialog.getByRole('tab', { name: 'Paths' })).not.toHaveClass(/\bdim\b/);
-  for (const name of ['Agent control', 'MCP servers', 'Accounts', 'Appearance']) await expect(dialog.getByRole('tab', { name })).toHaveClass(/\bdim\b/);
+  for (const name of ['Agent control', 'MCP servers', 'Accounts', 'Background AI', 'Appearance']) await expect(dialog.getByRole('tab', { name })).toHaveClass(/\bdim\b/);
 
+  // "mode" is also in "model", a word of the background AI's engine block.
   await search.fill('mode');
-  await expect(dialog.getByText('1 setting matches “mode”.')).toBeVisible();
+  await expect(dialog.getByText('2 settings match “mode”.')).toBeVisible();
   await expect(modeSetting(dialog)).toBeVisible();
   await expect(dialog.getByRole('tab', { name: 'Agent control' })).not.toHaveClass(/\bdim\b/);
   await expect(dialog.getByRole('tab', { name: 'Paths' })).toHaveClass(/\bdim\b/);

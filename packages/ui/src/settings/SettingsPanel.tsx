@@ -4,6 +4,7 @@ import { Icon } from '../layout/Icon';
 import { ACCOUNT_BLOCKS, engineAccounts, type ProviderList } from './accounts';
 import { AccountsSection } from './AccountsSection';
 import { APPEARANCE_BLOCKS, AppearanceBlock } from './AppearanceBlocks';
+import { BackgroundAiBlock } from './BackgroundAiBlock';
 import { applyAppearance, loadAppearance, saveAppearance, systemReducesMotion, type Appearance } from './appearance';
 import { ClaudeCodeServersBlock, McpServersBlock, claudeRows } from './McpBlocks';
 import {
@@ -87,6 +88,11 @@ export function SettingsPanel({ settings, lastResult, providers, loadProviders, 
     return () => clearTimeout(timer);
   }, [settings, attempt]);
   useEffect(() => saveCategory(storage, category), [storage, category]);
+  const onBackground = category === 'background' && query.trim() === '';
+  useEffect(() => {
+    // Under Off the core checks no engine on its own, so the page asks for their states when it opens.
+    if (onBackground) send({ type: 'models.list' });
+  }, [onBackground]);
   useEffect(() => saveScope(storage, scope), [storage, scope]);
   useEffect(() => {
     if (changes.length === 0) setClosing(false);
@@ -144,6 +150,7 @@ export function SettingsPanel({ settings, lastResult, providers, loadProviders, 
     paths: 0,
     mcp: unapproved + (edits && (edits.ideServers || edits.trust) ? 1 : 0),
     accounts: 0,
+    background: 0,
     appearance: 0,
   };
 
@@ -216,6 +223,19 @@ export function SettingsPanel({ settings, lastResult, providers, loadProviders, 
             />
           ) : <ClaudeCodeServersBlock settings={settings} sessionServers={sessionServers} />}
         </Setting>
+      );
+    }
+    if (id === 'background-ai') {
+      if (!settings) return null;
+      return (
+        <BackgroundAiBlock
+          key={id}
+          view={settings.backgroundAi}
+          onSave={(choice) => run({ type: 'background-ai.save', requestId: crypto.randomUUID(), choice })}
+          onShowFirstRun={() => {
+            if (run({ type: 'background-ai.onboarded', requestId: crypto.randomUUID(), onboarded: false })) onClose();
+          }}
+        />
       );
     }
     if (APPEARANCE_BLOCKS.includes(id)) {

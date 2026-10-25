@@ -223,9 +223,9 @@ describe('Settings: servers from Claude Code', () => {
 describe('Settings workspace', () => {
   const tabs = (root: Element): Element[] => all(root, (element) => element.attrs.role === 'tab');
 
-  it.each(CATEGORIES.map((category) => category.id))('lists the five categories in the rail with %s selected', (id) => {
+  it.each(CATEGORIES.map((category) => category.id))('lists the six categories in the rail with %s selected', (id) => {
     const list = tabs(parse(render(claude, claudeSession, id)));
-    expect(list).toHaveLength(5);
+    expect(list).toHaveLength(6);
     list.forEach((tab, index) => expect(textOf(tab)).toContain(CATEGORIES[index]!.label));
     expect(list.map((tab) => tab.attrs['aria-selected'])).toEqual(CATEGORIES.map((category) => String(category.id === id)));
   });

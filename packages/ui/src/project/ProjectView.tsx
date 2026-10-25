@@ -38,6 +38,7 @@ import { availableModes, resolveMode, type MapMode } from '../plan-flow/map-mode
 import { describeMapStatus, describeProgress } from '../map/status';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from '../net/socket';
 import type { ProviderList } from '../settings/accounts';
+import type { CategoryId } from '../settings/categories';
 import { SettingsPanel, type SettingsResult } from '../settings/SettingsPanel';
 import { Icon } from '../layout/Icon';
 import { DetailsSlotContext } from '../layout/DetailsSlot';
@@ -78,6 +79,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
   const [providers, setProviders] = useState<Record<string, ProviderList>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsCategory, setSettingsCategory] = useState<CategoryId | undefined>(undefined);
   const [connection, setConnection] = useState<ConnectionStatus>('connecting');
   const [progress, setProgress] = useState<MapProgress>({ indexing: null, embedding: null });
   const link = useRef<Connection | null>(null);
@@ -223,8 +225,10 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       [id]: { providers: [], loginCommand: '', ...lists[id], loading: sent, error: sent ? null : 'Not connected to the core. Check the connection and try again.' },
     }));
   };
-  const openSettings = (): void => {
+  // Without a category the panel opens where it was left last time.
+  const openSettings = (category?: CategoryId): void => {
     send({ type: 'settings.get' });
+    setSettingsCategory(category);
     setSettingsOpen(true);
   };
   const openSettingsRef = useRef(openSettings);
@@ -460,7 +464,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
                   {snapshot.overview && snapshot.overview.groups.length > 0 ? (
                     <OverviewView snapshot={snapshot} overview={snapshot.overview} onRebuild={() => send({ type: 'map.overview' })} />
                   ) : (
-                    <OverviewPending overview={snapshot.overview} onRebuild={() => send({ type: 'map.overview' })} />
+                    <OverviewPending overview={snapshot.overview} backgroundAi={snapshot.status.backgroundAi} onRebuild={() => send({ type: 'map.overview' })} onOpenSettings={() => openSettings('background')} />
                   )}
                 </ReactFlowProvider>
               ) : showC4 && snapshot && c4 ? (
@@ -620,6 +624,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
             sessionServers={chat.mcpServers}
             send={send}
             onClose={() => setSettingsOpen(false)}
+            initialCategory={settingsCategory}
             projectName={snapshot?.projectName ?? project.name}
           />
         )}
