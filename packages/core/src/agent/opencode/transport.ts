@@ -7,7 +7,7 @@ import type { StreamEvent } from '../stream';
 import type { AgentTransport, ControlResponse, OpencodeLaunch, TransportSink, UserMessage } from '../transport';
 import { ApiError, type OpencodeClient, type SseEvent } from './api';
 import { opencodeEnv } from './command';
-import { checkedSubagents, inlineConfig, ruleset, selfCheck, toolOutputGlob } from './config';
+import { checkedSubagents, inlineConfig, ruleset, selfCheck, TOOL_IDS_TIMEOUT_MS, toolOutputGlob } from './config';
 import { OpencodeEvents } from './events';
 import type { OpencodeMcp } from './mcp';
 import { askCalls, judgeAsk, readAsk, type Ask, type Reply } from './permissions';
@@ -27,8 +27,6 @@ const INPUT_WAIT_MS = 2_000;
 const INPUT_POLL_MS = 20;
 // Asks judged by their call's input: only the running call names a bash's workdir and the session a task resumes.
 const NEEDS_INPUT = new Set(['bash', 'task']);
-// 1.19 lists the tools once a user tool's dependencies are installed; a server stopped mid-install leaves a lock the next waits about a minute on (F5).
-const TOOL_IDS_TIMEOUT_MS = 90_000;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
 const MODEL_NOT_FOUND = /^Model not found: ([^/\s]+)\//;
 const BEARER = /^Bearer\s+(\S+)$/i;

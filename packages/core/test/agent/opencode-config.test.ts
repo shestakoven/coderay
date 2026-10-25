@@ -3,7 +3,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { agentPermission, BUILT_IN_TOOLS, checkedSubagents, inlineConfig, ruleset, selfCheck, toolOutputGlob } from '../../src/agent/opencode/config';
+import { agentPermission, BUILT_IN_TOOLS, checkedSubagents, denyAllProblem, inlineConfig, ruleset, selfCheck, toolOutputGlob } from '../../src/agent/opencode/config';
 import { opencodeMcp } from '../../src/agent/opencode/mcp';
 
 const RECORDED = fileURLToPath(new URL('../fixtures/opencode/recorded/', import.meta.url));
@@ -108,5 +108,19 @@ describe('selfCheck', () => {
       ['explore'],
       join(homedir(), '.local', 'share', 'opencode', 'tool-output', '*'),
     ]);
+  });
+});
+
+describe('denyAllProblem', () => {
+  // 1.19's order (spike Q6): its defaults, the top-level map, the agent's map (a user's allow merged before CodeRay's deny), the tool-output allow.
+  const echo = (after: Record<string, ReturnType<typeof rule>[]> = {}) => ['build', 'plan', 'general', 'explore'].map((name) => ({
+    name, permission: [rule('*', '*', 'allow'), rule('*', '*', 'deny'), rule('edit', '*', 'allow'), rule('*', '*', 'deny'), rule('external_directory', TOOL_OUTPUT, 'allow'), ...(after[name] ?? [])],
+  }));
+  it("passes when only denies and the tool-output allow follow each agent's last deny, and names an allow or an ask there", () => {
+    expect([
+      denyAllProblem(echo(), TOOL_OUTPUT),
+      denyAllProblem(echo({ build: [rule('external_directory', '/etc/*', 'allow')] }), TOOL_OUTPUT),
+      denyAllProblem(echo({ plan: [rule('bash', '*', 'ask')] }), TOOL_OUTPUT),
+    ]).toEqual([null, "opencode's agent build would allow external_directory /etc/*", "opencode's agent plan would ask bash *"]);
   });
 });

@@ -17,6 +17,9 @@ const REGISTRY_TOOLS = ['bash', 'read', 'edit', 'write'];
 
 export type Action = 'allow' | 'ask' | 'deny';
 
+// 1.19 lists the tools once a user tool's dependencies are installed; a server stopped mid-install leaves a lock the next waits about a minute on (F5).
+export const TOOL_IDS_TIMEOUT_MS = 90_000;
+
 /** The rules as opencode's config takes them (Q8-map): '*' first, insertion order kept. Only idecore's tools are allowed by rule (R14). */
 export function agentPermission(): Record<string, Action> {
   return { [ANY]: 'ask', ...Object.fromEntries(ALLOWED_TOOLS.map((tool): [string, Action] => [tool, 'allow'])), [IDECORE_TOOLS]: 'allow' };
@@ -42,6 +45,45 @@ export function inlineConfig(mcp: OpencodeMcp, userServers: readonly string[], s
     formatter: false,
     shell,
   });
+}
+
+export const DENY_ALL: Rule[] = [{ permission: ANY, pattern: ANY, action: 'deny' }];
+
+/** The inline config of a background call: no tool may run, none of the user's MCP servers starts, titles use the call's own model, nothing is shared. */
+export function backgroundConfig(shell: string, userServers: readonly string[], smallModel?: string): string {
+  const deny: Record<string, Action> = { [ANY]: 'deny' };
+  return JSON.stringify({
+    permission: deny,
+    agent: Object.fromEntries(AGENTS_IN_USE.map((name) => [name, { permission: deny }])),
+    // `mcp: {}` would merge with the user's config and switch nothing off: each of theirs is switched off by name.
+    mcp: Object.fromEntries(userServers.map((name) => [name, { enabled: false }])),
+    share: 'disabled',
+    autoupdate: false,
+    lsp: false,
+    formatter: false,
+    shell,
+    // 1.19 titles every session with its small model, which would otherwise be the user's choice of provider (spike Q7).
+    ...(smallModel === undefined ? {} : { small_model: smallModel }),
+  });
+}
+
+/**
+ * Why a background server could run anything: 1.19 takes the last rule that matches, so after each agent's last `* * deny` only denies may
+ * follow, and the tool-output allow 1.19 appends to every agent (spike Q6). An ask counts too: nobody answers one. Null when every agent in use holds.
+ */
+export function denyAllProblem(agents: unknown, toolOutput: string): string | null {
+  if (!readableAgents(agents)) return 'opencode listed no agents CodeRay can read';
+  for (const name of AGENTS_IN_USE) {
+    const agent = agents.find((candidate) => candidate.name === name);
+    if (agent === undefined) return `opencode lists no agent "${name}"`;
+    const rules = normalise(agent.permission);
+    if (rules === null) return `opencode's agent ${name} has rules CodeRay cannot read`;
+    const last = rules.findLastIndex((rule) => rule.permission === ANY && rule.pattern === ANY && rule.action === 'deny');
+    if (last === -1) return `opencode's agent ${name} has no rule that denies everything`;
+    const loose = rules.slice(last + 1).find((rule) => rule.action !== 'deny' && !(rule.permission === 'external_directory' && rule.pattern === toolOutput && rule.action === 'allow'));
+    if (loose !== undefined) return `opencode's agent ${name} would ${loose.action} ${loose.permission} ${loose.pattern}`;
+  }
+  return null;
 }
 
 /** The glob 1.19 appends to every agent's rules, after CodeRay's: its tool-output directory under the server's data home. */
