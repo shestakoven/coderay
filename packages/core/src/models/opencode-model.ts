@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
-import { parseModelId } from '@ide/protocol';
+import { formatModelId, parseModelId } from '@ide/protocol';
 import { hideSecrets } from '../agent/codex/secrets';
 import type { CatalogModel } from '../agent/engines/opencode';
 import type { OpencodeClient } from '../agent/opencode/api';
@@ -25,7 +25,7 @@ export const noTools = (userServers: readonly string[]): Record<string, false> =
 
 export interface OpencodePick { providerID: string; modelID: string; value: string }
 
-/** The cheapest model, an unknown price after every known one; among equals an opencode model, then a cheap-sounding one, then the catalog's order. */
+/** The cheapest model opencode has not deprecated, an unknown price after every known one; among equals an opencode model, then a cheap-sounding one, then the catalog's order. */
 export function pickOpencodeModel(catalog: CatalogModel[]): OpencodePick | null {
   const id = (model: CatalogModel): string => parseModelId(model.value)?.model ?? '';
   const rank = (model: CatalogModel): number[] => [model.cost ?? Number.POSITIVE_INFINITY, id(model).startsWith('opencode/') ? 0 : 1, CHEAP.test(id(model)) ? 0 : 1];
@@ -34,24 +34,38 @@ export function pickOpencodeModel(catalog: CatalogModel[]): OpencodePick | null 
     return at === -1 ? 0 : a[at]! - b[at]!;
   };
   // The sort is stable, so equals keep the catalog's order.
-  const best = [...catalog].sort((a, b) => compare(rank(a), rank(b)))[0];
+  const best = catalog.filter((model) => !model.deprecated).sort((a, b) => compare(rank(a), rank(b)))[0];
   if (best === undefined) return null;
   const slash = id(best).indexOf('/');
   return slash > 0 ? { providerID: id(best).slice(0, slash), modelID: id(best).slice(slash + 1), value: best.value } : null;
 }
 
-export interface OpencodeModelOptions { command: () => OpencodeCommand; model: { providerID: string; modelID: string }; userServers: string[]; runDir: string; timeoutMs?: number }
+type Model = { providerID: string; modelID: string };
+
+/**
+ * `repick`: the model is the engine's own choice, so a model the call's server no longer offers gives way to that server's cheapest.
+ * `catalog`: reads that server's `GET /config/providers`.
+ */
+export interface OpencodeModelOptions {
+  command: () => OpencodeCommand; model: Model; repick: boolean; catalog: (providers: unknown) => CatalogModel[]; userServers: string[]; runDir: string; timeoutMs?: number;
+}
 
 /**
  * A structured answer from its own `opencode serve`: deny-all rules on every agent, the user's MCP servers off by name, no tool offered,
  * the schema in the prompt; the session is deleted and the server stopped whatever happens.
  */
 export class OpencodeModel implements StructuredModel {
-  constructor(private readonly options: OpencodeModelOptions) {}
+  // Each call's server reads the catalog afresh, and the probe's may be older (a model deprecated since): a re-pick holds for later calls.
+  private model: Model;
+
+  constructor(private readonly options: OpencodeModelOptions) {
+    this.model = options.model;
+  }
 
   async generate(request: StructuredRequest, { signal }: GenerateOptions = {}): Promise<unknown> {
     if (signal?.aborted) throw cancelled();
-    const { command: commandOf, model, userServers, runDir } = this.options;
+    const { command: commandOf, userServers, runDir } = this.options;
+    let model = this.model;
     await mkdir(runDir, { recursive: true, mode: 0o700 });
     // Before the directory: a command or a wrapper that cannot be made leaves nothing behind.
     const command = commandOf();
@@ -90,18 +104,28 @@ export class OpencodeModel implements StructuredModel {
           if (!(await retryBusy(error, attempt))) throw error;
         }
       }
-      const [agents, config, toolIds] = await within(Promise.all([client.get('/agent'), client.get('/config'), client.get('/experimental/tool/ids', TOOL_IDS_TIMEOUT_MS)]));
+      const [agents, config, toolIds, providers] = await within(Promise.all([
+        client.get('/agent'), client.get('/config'), client.get('/experimental/tool/ids', TOOL_IDS_TIMEOUT_MS), client.get('/config/providers'),
+      ]));
       const toolOutput = toolOutputGlob(opencodeEnv(command));
       const problem = selfCheck({ agents, config, toolIds }, { mcp: {}, toolOutput, shell }) ?? denyAllProblem(agents, toolOutput);
       if (problem !== null) throw new Error(typeof problem === 'string' ? problem : `opencode's agent ${problem.agent} would ${problem.action} ${problem.permission} ${problem.pattern}`);
+      // 1.19 answers a prompt on a model it does not offer with an opaque 500.
+      const live = this.options.catalog(providers).filter((entry) => !entry.deprecated);
+      if (!live.some((entry) => entry.value === formatModelId({ engine: 'opencode', model: `${model.providerID}/${model.modelID}` }))) {
+        const next = this.options.repick ? pickOpencodeModel(live) : null;
+        if (next === null) throw new Error(`opencode no longer offers ${model.providerID}/${model.modelID}`);
+        model = { providerID: next.providerID, modelID: next.modelID };
+        this.model = model;
+      }
       creating = client.post<{ id: string }>('/session', { title: SESSION_TITLE, permission: DENY_ALL }).then((session) => session.id);
       sessionId = await within(creating);
       await within(watchRetries(client, deadline, fail, watching.signal));
-      const text = await within(this.ask(client, sessionId, `${request.prompt}\n\nJSON Schema of the answer:\n${JSON.stringify(request.schema)}`));
+      const text = await within(this.ask(client, sessionId, `${request.prompt}\n\nJSON Schema of the answer:\n${JSON.stringify(request.schema)}`, model));
       try {
         return structuredOutput(text, request.schema);
       } catch {
-        return structuredOutput(await within(this.ask(client, sessionId, RETRY_NOTE)), request.schema);
+        return structuredOutput(await within(this.ask(client, sessionId, RETRY_NOTE, model)), request.schema);
       }
     } catch (error) {
       if (client !== null && sessionId !== null) await client.post(`/session/${sessionId}/abort`, undefined, CLEANUP_MS).catch(() => undefined);
@@ -122,9 +146,9 @@ export class OpencodeModel implements StructuredModel {
   }
 
   /** One turn on `/message`, which answers when the turn ends (spike Q3): its text, or opencode's reason when the turn failed. */
-  private async ask(client: OpencodeClient, session: string, text: string): Promise<string> {
+  private async ask(client: OpencodeClient, session: string, text: string, model: Model): Promise<string> {
     const answer = await client.post<unknown>(`/session/${session}/message`, {
-      agent: 'build', model: this.options.model, tools: noTools(this.options.userServers), system: JSON_SYSTEM_PROMPT, parts: [{ type: 'text', text }],
+      agent: 'build', model, tools: noTools(this.options.userServers), system: JSON_SYSTEM_PROMPT, parts: [{ type: 'text', text }],
     }, 0);
     const info = isRecord(answer) && isRecord(answer.info) ? answer.info : {};
     if (isRecord(info.error)) {

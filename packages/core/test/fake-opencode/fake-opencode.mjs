@@ -356,6 +356,9 @@ const server = createServer(async (req, res) => {
       return;
     }
     if (env.FAKE_OPENCODE_PROMPT_FAIL === '1') return json(res, 400, { name: 'BadRequest', data: { message: 'Expected a part at ["parts",0]', kind: 'Payload' } });
+    // 1.19's /message on a model its catalog does not offer, or has deprecated, says nothing more (smoke F1).
+    const offered = providers().providers.some((p) => p.id === body?.model?.providerID && Object.values(p.models).some((x) => x.id === body?.model?.modelID && x.status !== 'deprecated'));
+    if (message && !offered) return json(res, 500, { name: 'UnknownError', data: { message: 'Unexpected server error' } });
     // prompt_async answers at once; /command and /message answer when the turn ends (E3 Q10, spike Q3). A prompt on a busy session joins the running turn (Q12b).
     if (s[2] === 'prompt_async') json(res, 204); else session.answers.push(answer);
     if (!session.busy) session.turn = play(session, messageID);

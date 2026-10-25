@@ -34,7 +34,7 @@ export function providerHint(providerID: string, home: AccountHome): string {
 }
 
 /** `cost`: the catalog's input plus output price, null when it gives none (0 for the free models). */
-export interface CatalogModel { value: string; name: string; efforts: string[]; context: number | null; cost: number | null }
+export interface CatalogModel { value: string; name: string; efforts: string[]; context: number | null; cost: number | null; deprecated: boolean }
 
 const text = (value: unknown, fallback: string): string => (typeof value === 'string' && value !== '' ? value : fallback);
 
@@ -52,7 +52,7 @@ export function catalogModels(answer: unknown): CatalogModel[] {
       const context = isRecord(model.limit) ? model.limit.context : undefined;
       const cost = isRecord(model.cost) && typeof model.cost.input === 'number' && typeof model.cost.output === 'number' ? model.cost.input + model.cost.output : null;
       // A context of 0 is a catalog that does not know it, and no meter can be drawn against it.
-      return [{ value, name: `${providerName} · ${text(model.name, model.id)}`, efforts, context: typeof context === 'number' && Number.isFinite(context) && context > 0 ? context : null, cost }];
+      return [{ value, name: `${providerName} · ${text(model.name, model.id)}`, efforts, context: typeof context === 'number' && Number.isFinite(context) && context > 0 ? context : null, cost, deprecated: model.status === 'deprecated' }];
     });
   });
 }
@@ -149,7 +149,10 @@ export function opencodeEngine(options: OpencodeEngineOptions): Engine {
       // A chosen model must be in the catalog; the pick of a one-model catalog is that model.
       const picked = pickOpencodeModel(model === null ? catalog : catalog.filter((entry) => entry.value === model));
       if (picked === null) return null;
-      return { modelId: picked.value, model: new OpencodeModel({ command: options.command, model: { providerID: picked.providerID, modelID: picked.modelID }, userServers, runDir }) };
+      return {
+        modelId: picked.value,
+        model: new OpencodeModel({ command: options.command, model: { providerID: picked.providerID, modelID: picked.modelID }, repick: model === null, catalog: catalogModels, userServers, runDir }),
+      };
     },
   };
 }

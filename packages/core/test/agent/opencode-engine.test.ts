@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { SYSTEM_HOME } from '../../src/accounts/account-homes';
 import { catalogModels, opencodeEngine, opencodeProbe, providerHint } from '../../src/agent/engines/opencode';
 import { opencodeCommand, type OpencodeCommand } from '../../src/agent/opencode/command';
-import { fakeOpencode, opencodeRecords } from '../fake-opencode/fake';
+import { fakeOpencode, opencodeHomes, opencodeRecords } from '../fake-opencode/fake';
 import { tempDir, waitFor } from '../helpers';
 
 const dir = () => tempDir('oc-engine-');
@@ -51,27 +51,28 @@ describe('opencodeProbe', () => {
 });
 
 describe('catalogModels', () => {
-  it("keeps each model's context limit and price beside its id and leaves out one whose id cannot be a model id or whose provider names none", () => {
+  it("keeps each model's context limit, price and deprecation beside its id and leaves out one whose id cannot be a model id or whose provider names none", () => {
     const models = catalogModels({ providers: [null, { id: 'p', name: 'P', models: {
       ok: { id: 'ok', name: 'OK', limit: { context: 4096 }, variants: { x: {}, 'Not An Effort': {} }, cost: { input: 1, output: 2, cache: { read: 0, write: 0 } } },
-      unknown: { id: 'unknown', name: 'Unknown', limit: { context: 0 }, cost: { input: 1 } },
+      unknown: { id: 'unknown', name: 'Unknown', limit: { context: 0 }, cost: { input: 1 }, status: 'deprecated' },
       'bad id': { id: 'bad id', name: 'Bad', limit: { context: 1 } },
     } }, { id: 'q', models: { m: { id: 'm' } } }, { name: 'No id', models: { x: { id: 'x' } } }] });
     expect(models).toEqual([
-      { value: 'opencode:p/ok', name: 'P · OK', efforts: ['x'], context: 4096, cost: 3 },
-      { value: 'opencode:p/unknown', name: 'P · Unknown', efforts: [], context: null, cost: null },
-      { value: 'opencode:q/m', name: 'q · m', efforts: [], context: null, cost: null },
+      { value: 'opencode:p/ok', name: 'P · OK', efforts: ['x'], context: 4096, cost: 3, deprecated: false },
+      { value: 'opencode:p/unknown', name: 'P · Unknown', efforts: [], context: null, cost: null, deprecated: true },
+      { value: 'opencode:q/m', name: 'q · m', efforts: [], context: null, cost: null, deprecated: false },
     ]);
   });
 });
 
 describe('the opencode engine', () => {
-  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, runs a background call on the cheapest model listed or the chosen one, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
+  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, runs a background call on the cheapest model listed or the chosen one, which fails once its call's server no longer offers it, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const d = dir();
     const run = join(d, 'run');
     const record = join(d, 'rec.jsonl');
-    const engine = opencodeEngine({ command: () => fakeOpencode(null, record), cwd: d, userServers: () => [], account: () => 'work', runDir: run });
+    const later: Record<string, string> = {};
+    const engine = opencodeEngine({ command: () => fakeOpencode(null, record, later), cwd: d, userServers: () => [], account: () => 'work', runDir: run });
     const pidFile = waitFor(() => existsSync(run) && readdirSync(run).some((name) => /^opencode-\d+\.pid\.json$/.test(name)), "the probe server's pid file");
     const status = await engine.status();
     const listed = await engine.listModels();
@@ -92,5 +93,12 @@ describe('the opencode engine', () => {
         'opencode has no provider "openai" connected for this model. Add a provider key to this profile in Settings → Accounts, or pick a free opencode/* model.',
       ],
     ]);
+    // The call's server has the chosen model deprecated since the listing: a choice is not re-picked.
+    Object.assign(later, opencodeHomes(d), { FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [{ id: 'opencode', name: 'OpenCode Zen', env: [], models: {
+      'nemotron-3.5-lightning-free': { id: 'nemotron-3.5-lightning-free', cost: { input: 0, output: 0 } },
+      'gpt-oss-120b-free': { id: 'gpt-oss-120b-free', status: 'deprecated', cost: { input: 0, output: 0 } },
+    } }], default: {} }) });
+    const chosen = backgrounds[1] as { model: { generate: (request: { prompt: string; schema: object }) => Promise<unknown> } };
+    expect(await chosen.model.generate({ prompt: 'Say hi', schema: {} }).catch((error: Error) => error.message)).toBe('opencode no longer offers opencode/gpt-oss-120b-free');
   });
 });

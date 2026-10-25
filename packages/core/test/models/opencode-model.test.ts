@@ -1,6 +1,7 @@
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished } from 'vitest';
+import { catalogModels } from '../../src/agent/engines/opencode';
 import { BUILT_IN_TOOLS } from '../../src/agent/opencode/config';
 import { OpencodeModel, pickOpencodeModel } from '../../src/models/opencode-model';
 import type { GenerateOptions, StructuredRequest } from '../../src/models/types';
@@ -21,10 +22,10 @@ const stoppedAtEnd = (inner: OpencodeModel): Pick<OpencodeModel, 'generate'> => 
     return call;
   },
 });
-const model = (scenario: string, dir: string, env: Record<string, string> = {}, timeoutMs = 5_000) => stoppedAtEnd(new OpencodeModel({
+const model = (scenario: string, dir: string, env: Record<string, string> = {}, timeoutMs = 5_000, repick = false) => stoppedAtEnd(new OpencodeModel({
   // The fake's data home under `dir`: its tool-output glob is then the one the self-check expects.
   command: () => fakeOpencode(fixture(`opencode/${scenario}.jsonl`), join(dir, 'record.jsonl'), { ...opencodeHomes(dir), ...env }),
-  model: { providerID: 'opencode', modelID: 'nemotron-3.5-lightning-free' }, userServers: ['github'], runDir: dir, timeoutMs,
+  model: { providerID: 'opencode', modelID: 'nemotron-3.5-lightning-free' }, repick, catalog: catalogModels, userServers: ['github'], runDir: dir, timeoutMs,
 }));
 const records = (dir: string) => opencodeRecords(join(dir, 'record.jsonl'));
 const prompts = (dir: string) => requests(records(dir), 'POST', /^\/session\/[^/]+\/message$/) as { body: any }[];
@@ -107,18 +108,35 @@ describe('OpencodeModel', () => {
     ]);
     expect(prompts(failed)).toHaveLength(1);
     const gone = tempDir('bg-opencode-', t);
-    const broken = new OpencodeModel({ command: () => { throw new Error('opencode is gone'); }, model: { providerID: 'opencode', modelID: 'x' }, userServers: [], runDir: gone });
+    const broken = new OpencodeModel({ command: () => { throw new Error('opencode is gone'); }, model: { providerID: 'opencode', modelID: 'x' }, repick: false, catalog: catalogModels, userServers: [], runDir: gone });
     expect([await failure(broken.generate(ASK)), leftovers(gone)]).toEqual(['opencode is gone', []]);
+  });
+
+  it('a model its own server no longer offers: a picked one gives way to that server\'s cheapest for this call and the next, a chosen one fails naming it before any prompt', async (t) => {
+    const [picked, chosen] = [tempDir('bg-opencode-', t), tempDir('bg-opencode-', t)];
+    const free = { input: 0, output: 0 };
+    const catalog = { FAKE_OPENCODE_PROVIDERS: JSON.stringify({ providers: [{ id: 'opencode', name: 'OpenCode Zen', env: [], models: {
+      'nemotron-3.5-lightning-free': { id: 'nemotron-3.5-lightning-free', name: 'Nemotron', status: 'deprecated', cost: free },
+      'gpt-oss-120b-free': { id: 'gpt-oss-120b-free', name: 'GPT OSS', cost: free },
+    } }], default: {} }) };
+    const auto = model('structured', picked, catalog, 5_000, true);
+    expect(await Promise.all([auto.generate(ASK), failure(model('structured', chosen, catalog).generate(ASK))])).toEqual([{ answer: 'hi' }, 'opencode no longer offers opencode/nemotron-3.5-lightning-free']);
+    // The scenario has one turn: the next call is looked at only for the model its server starts on and it asks.
+    await auto.generate(ASK).catch(() => undefined);
+    expect(records(picked).flatMap((record) => (record.configContent ? [(record.configContent as { small_model: string }).small_model] : []))).toEqual(['opencode/nemotron-3.5-lightning-free', 'opencode/gpt-oss-120b-free']);
+    expect(new Set(prompts(picked).map((prompt) => prompt.body.model.modelID))).toEqual(new Set(['gpt-oss-120b-free']));
+    expect([prompts(chosen), requests(records(chosen), 'POST', '/session'), leftovers(chosen)]).toEqual([[], [], []]);
   });
 });
 
 describe('pickOpencodeModel', () => {
-  const c = (value: string, cost: number | null) => ({ value, name: value, efforts: [], context: null, cost });
-  it('takes the cheapest, an opencode model and then a cheap-sounding one first among equals, a known cost before an unknown', () => {
+  const c = (value: string, cost: number | null, deprecated = false) => ({ value, name: value, efforts: [], context: null, cost, deprecated });
+  it('takes the cheapest not deprecated, an opencode model and then a cheap-sounding one first among equals, a known cost before an unknown', () => {
     expect(pickOpencodeModel([c('opencode:anthropic/claude-x', 18), c('opencode:openai/gpt-x-mini', 0), c('opencode:opencode/grok-code', 0)]))
       .toEqual({ providerID: 'opencode', modelID: 'grok-code', value: 'opencode:opencode/grok-code' });
     expect(pickOpencodeModel([c('opencode:opencode/big-pickle', 0), c('opencode:opencode/glm-5.3-flash-free', 0)])).toMatchObject({ modelID: 'glm-5.3-flash-free' });
     expect(pickOpencodeModel([c('opencode:anthropic/claude-x', null), c('opencode:opencode/big-pickle', 5), c('opencode:openai/gpt-x-mini', 2)])).toMatchObject({ providerID: 'openai', modelID: 'gpt-x-mini' });
+    expect(pickOpencodeModel([c('opencode:opencode/grok-code', 0, true), c('opencode:openai/gpt-x-mini', 0)])).toMatchObject({ providerID: 'openai', modelID: 'gpt-x-mini' });
     expect(pickOpencodeModel([])).toBeNull();
   });
 });
