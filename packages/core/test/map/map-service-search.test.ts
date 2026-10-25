@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import type { EmbedModel, EmbedStatus } from '../../src/models/types';
 import { MapService } from '../../src/map/map-service';
-import { indexed, tempDir, writeTree } from '../helpers';
+import { indexed, mapStatus, tempDir, writeTree } from '../helpers';
 import { componentsPerDirectory, ScriptedModel } from '../models/fake-models';
 
 const services: MapService[] = [];
@@ -32,7 +32,7 @@ async function start(vectors: Record<string, number[]>, state?: EmbedStatus) {
   const service = new MapService({
     root, projectName: 'demo', stateDir: tempDir('ide-search-state-'),
     reasoning: new ScriptedModel(componentsPerDirectory), embed: new VectorEmbed(vectors, state),
-    isAgentIdle: () => true, onChange: () => undefined, embeddingRule: null, mapPollMs: 20,
+    isAgentIdle: () => true, onChange: () => undefined, backgroundAi: () => mapStatus().backgroundAi, embeddingRule: null, mapPollMs: 20,
   });
   services.push(service);
   await service.start(Object.entries(tree).map(([path, content]) => indexed(path, 'typescript', [], { contentHash: content })), []);

@@ -350,6 +350,21 @@ describe('OverviewService cache', () => {
     expect(model.requests.length).toBe(3);
   });
 
+  it('asks again where the model failed once the background AI is back, and keeps every answer', async () => {
+    const model = new ScriptedModel(ANSWER, () => { throw new Error('off'); }, ANSWER);
+    const { build, service, changes } = overviewOf(model);
+    build();
+    await settle();
+    build(renamed);
+    await settle();
+    const before = [build(renamed).state, changes.count];
+    service.retryFailed();
+    const kept = build().state;
+    build(renamed);
+    await settle();
+    expect([before, changes.count, kept, build(renamed).state, model.requests.length]).toEqual([['failed', 2], 4, 'ready', 'ready', 3]);
+  });
+
   it.each([
     ['without groups', { components: {}, labels: [] }],
     ['without labels', { groups: [], components: {} }],

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ChangeView, PlanView, SummaryView } from '@ide/protocol';
 import type { IndexedFile } from '../model';
+import { BackgroundAiOff } from '../models/background-ai';
 import type { ModelProvider } from '../models/types';
 import type { Store } from '../store/store';
 
@@ -212,10 +213,12 @@ export class Summarizer {
     if (built.key !== entry.key) entry.key = built.key;
     this.inFlight = true;
     let text: string | undefined;
+    let off = false;
     try {
       text = cleanAnswer(await this.o.provider.fast.generate({ prompt: built.prompt, schema: SCHEMA }, { signal: this.abort.signal }));
-    } catch {
+    } catch (error) {
       text = undefined;
+      off = error instanceof BackgroundAiOff;
     }
     this.inFlight = false;
     if (text !== undefined) {
@@ -228,11 +231,22 @@ export class Summarizer {
     }
     const current = this.entries.get(id);
     if (text === undefined && current && current.key === built.key) {
-      current.tries += 1;
-      if (current.tries >= MAX_TRIES) current.exhausted = true;
-      else current.due = this.now() + (this.backoffMs[current.tries - 1] ?? this.backoffMs.at(-1) ?? 0);
+      // An off background AI is not a try: the entry waits, and resume() asks again once it is back.
+      if (off) current.due = this.now() + (this.backoffMs.at(-1) ?? 0);
+      else {
+        current.tries += 1;
+        if (current.tries >= MAX_TRIES) current.exhausted = true;
+        else current.due = this.now() + (this.backoffMs[current.tries - 1] ?? this.backoffMs.at(-1) ?? 0);
+      }
     }
     this.emit();
+    this.schedule();
+  }
+
+  /** The background AI is back: every summary still to make is asked for now. */
+  resume(): void {
+    const now = this.now();
+    for (const entry of this.entries.values()) if (!entry.exhausted) entry.due = now;
     this.schedule();
   }
 

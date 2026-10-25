@@ -1,3 +1,4 @@
+import type { BackgroundAiStatus } from './engines';
 import type { GitClientMessage, GitServerMessage } from './git';
 import type { HistoryClientMessage, HistoryServerMessage } from './history';
 import type { HubClientMessage, HubServerMessage } from './hub';
@@ -90,6 +91,7 @@ export interface MapStatus {
   embeddingPlacement: EmbeddingPlacement | null;
   modelDownloadBytes: number | null;
   warnings: string[];
+  backgroundAi: BackgroundAiStatus;
 }
 
 export type ContainerRole = 'ui' | 'api' | 'worker' | 'service';

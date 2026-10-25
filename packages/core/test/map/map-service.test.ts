@@ -2,9 +2,10 @@ import { existsSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
-import type { FileEdge } from '@ide/protocol';
+import type { BackgroundAiStatus, FileEdge } from '@ide/protocol';
 import { blobHash } from '../../src/history/ide-writes';
 import type { EmbeddingRule } from '../../src/map/embedding-check';
+import { BackgroundAiOff } from '../../src/models/background-ai';
 import type { StructuredRequest } from '../../src/models/types';
 import { MapService } from '../../src/map/map-service';
 import type { StructuredModel } from '../../src/models/types';
@@ -45,11 +46,15 @@ interface Setup {
   onEmbeddingProgress?: (progress: { done: number; total: number } | null) => void;
   expectWrite?: (rel: string, hash: string) => void;
   root?: string;
+  backgroundAi?: () => BackgroundAiStatus;
 }
+
+const READY = (): BackgroundAiStatus => ({ state: 'ready', engine: 'claude', modelId: 'haiku', note: null });
 
 async function startService(setup: Setup = {}) {
   const tree = setup.tree ?? PROJECT;
   const root = setup.root ?? tempDir('ide-map-');
+  const stateDir = tempDir('ide-state-');
   await writeTree(root, tree);
   if (setup.mapJson !== undefined) {
     const text = typeof setup.mapJson === 'string' ? setup.mapJson : JSON.stringify(setup.mapJson);
@@ -58,11 +63,12 @@ async function startService(setup: Setup = {}) {
   const service = new MapService({
     root,
     projectName: 'demo',
-    stateDir: tempDir('ide-state-'),
+    stateDir,
     reasoning: setup.reasoning ?? new ScriptedModel(componentsPerDirectory),
     embed: setup.embed ?? new FakeEmbedModel(),
     isAgentIdle: () => setup.agentIdle ?? true,
     onChange: () => undefined,
+    backgroundAi: setup.backgroundAi ?? READY,
     embeddingRule: setup.embeddingRule ?? null,
     mapPollMs: 20,
     onEmbeddingProgress: setup.onEmbeddingProgress,
@@ -71,7 +77,7 @@ async function startService(setup: Setup = {}) {
   services.push(service);
   await service.start(filesOf(tree), setup.edges ?? []);
   if (setup.settle ?? true) await service.idle();
-  return { root, service, tree };
+  return { root, service, tree, stateDir };
 }
 
 async function change(root: string, service: MapService, tree: Record<string, string>): Promise<void> {
@@ -221,6 +227,19 @@ describe('MapService', () => {
     const view = service.view();
     expect(view.components.map((component) => component.id)).toEqual(['folder:src/api', 'folder:src/db']);
     expect(view.status).toMatchObject({ layer: 'folder', grouping: 'failed', groupingError: 'claude exited with code 1: not logged in' });
+  });
+
+  it('with the background AI off from the start, grouping is skipped, not failed, and resumes when it is ready', async () => {
+    let status: BackgroundAiStatus = { state: 'checking' };
+    const reasoning = new ScriptedModel(() => { throw new BackgroundAiOff('x'); }, componentsPerDirectory);
+    const { service, stateDir } = await startService({ reasoning, backgroundAi: () => status });
+    const state = JSON.parse(await readFile(join(stateDir, 'regroup-state.json'), 'utf8'));
+    expect([service.view().status.grouping, reasoning.requests.length, state]).toEqual(['idle', 1, { lastEndedAt: null, startedAt: null, failures: 0 }]);
+    status = { state: 'off', reason: 'none', engine: null, hint: 'No AI engine is installed.' };
+    expect([await service.regroup(), reasoning.requests.length, service.view().status.backgroundAi]).toEqual(['skipped', 1, status]);
+    status = READY();
+    service.resumeGrouping();
+    await waitFor(() => service.view().status.layer === 'ai', 'the AI map');
   });
 
   it('keeps manual components that were added to map.json while a regroup ran', async () => {
@@ -411,6 +430,7 @@ describe('MapService', () => {
       embed,
       isAgentIdle: () => true,
       onChange: () => (changes += 1),
+      backgroundAi: READY,
       mapPollMs: 20,
     });
     services.push(service);
@@ -437,6 +457,7 @@ describe('MapService', () => {
       embed: new FakeEmbedModel({ status: { state: 'unavailable', reason: 'offline' } }),
       isAgentIdle: () => true,
       onChange: () => undefined,
+      backgroundAi: READY,
     });
     services.push(service);
     await service.start(filesOf(Object.fromEntries(Array.from({ length: 10_001 }, (_, i) => [`src/f${i}.ts`, `${i}`]))), []);
@@ -454,7 +475,7 @@ describe('MapService', () => {
   it('ignores an idle signal before it has started', async () => {
     const service = new MapService({
       root: tempDir('ide-map-'), projectName: 'demo', stateDir: tempDir('ide-state-'),
-      reasoning: noModel, embed: new FakeEmbedModel(), isAgentIdle: () => true, onChange: () => undefined, embeddingRule: null,
+      reasoning: noModel, embed: new FakeEmbedModel(), isAgentIdle: () => true, onChange: () => undefined, backgroundAi: READY, embeddingRule: null,
     });
     services.push(service);
     service.onAgentIdle();

@@ -15,6 +15,7 @@ export const folderStatus: MapStatus = {
   embeddingPlacement: null,
   modelDownloadBytes: null,
   warnings: [],
+  backgroundAi: { state: 'ready', engine: 'claude', modelId: 'haiku', note: null },
 };
 
 const component = (id: string, files: string[]) => ({

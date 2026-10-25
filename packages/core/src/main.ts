@@ -4,7 +4,7 @@ import { homedir } from 'node:os';
 import { basename, join, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import {
-  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type ChatPick, type ClientMessage,
+  AGENT_TERMINAL_ID, ENGINE_NAMES, parseModelId, type BackgroundAiStatus, type ChatPick, type ClientMessage,
   type EngineAccountsView, type EngineId, type EngineStatus, type MapSnapshot, type ModelInfo, type ServerMessage,
 } from '@ide/protocol';
 import { AccountLogin } from './accounts/account-login';
@@ -516,7 +516,20 @@ try {
   };
   const profiles: OpencodeProfiles | null = opencode && opencodeAccounts ? { command: opencode, runDir: runDir(home), store: opencodeAccounts, refreshEngines } : null;
 
-  models.onChange(() => server?.broadcast(settingsSnapshot()));
+  // Off → ready asks the map, the overview, the summaries and the names again; a `checking` between two states changes nothing.
+  let settled: BackgroundAiStatus['state'] | null = null;
+  models.onChange((status) => {
+    mapService?.publishNow();
+    server?.broadcast(settingsSnapshot());
+    if (status.state === 'checking') return;
+    if (status.state === 'ready' && settled === 'off') {
+      mapService?.resumeGrouping();
+      overviews?.retryFailed();
+      rt.summarizer.resume();
+      classifier?.resume();
+    }
+    settled = status.state;
+  });
   // One probe at startup serves the pick and the first-run screen; Off once answered needs neither, and starts no engine.
   if (models.choice().mode === 'off' && models.onboarded()) models.refresh();
   else refreshEngines();
@@ -843,6 +856,7 @@ try {
       isAgentIdle: () => agent.isIdle(),
       expectWrite: (rel, hash) => rt.ideWrites.expect(rel, hash),
       onChange: () => publish(),
+      backgroundAi: () => models.status(),
       onEmbeddingProgress: (embedding) => progress.set({ embedding }),
     });
     mapService = service;

@@ -1,10 +1,11 @@
 import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { EmbeddingPlacement, FileEdge, GroupingPayload, MapComponent, MapStatus } from '@ide/protocol';
+import type { BackgroundAiStatus, EmbeddingPlacement, FileEdge, GroupingPayload, MapComponent, MapStatus } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
 import type { ExpectWrite } from '../history/ide-writes';
 import type { IndexedFile } from '../model';
+import { BackgroundAiOff } from '../models/background-ai';
 import type { EmbedModel, StructuredModel } from '../models/types';
 import { aiCentroids, assignFiles, EMBEDDING_RULE } from './assign';
 import { manualGlobOwner as globOwnerOf, matchManual, ownedGlobs, projectComponents } from './component-map';
@@ -25,6 +26,8 @@ export interface MapServiceOptions {
   embed: EmbedModel;
   isAgentIdle: () => boolean;
   onChange: () => void;
+  /** The background AI's status: while it is off no grouping runs, and none counts as failed. */
+  backgroundAi: () => BackgroundAiStatus;
   embeddingRule?: EmbeddingRule | null;
   cooldownMs?: number;
   mapPollMs?: number;
@@ -185,6 +188,16 @@ export class MapService {
     this.scheduler.evaluate();
   }
 
+  /** The background AI is back: grouping starts again, as if it had never failed. */
+  resumeGrouping(): void {
+    this.scheduler.resume();
+  }
+
+  /** Something outside the map changed its status (the background AI): the windows get it. */
+  publishNow(): void {
+    this.publishIfChanged();
+  }
+
   async idle(): Promise<void> {
     for (;;) {
       const queue = this.queue;
@@ -216,6 +229,7 @@ export class MapService {
 
   private async runGrouping(): Promise<RegroupOutcome> {
     if (this.stopped) return 'cancelled';
+    if (this.options.backgroundAi().state === 'off') return 'skipped';
     const signal = this.stopping.signal;
     this.grouping = 'running';
     this.groupingError = null;
@@ -258,6 +272,11 @@ export class MapService {
       return 'done';
     } catch (error) {
       if (this.stopped) return 'cancelled';
+      // The pick a grouping waited for at core start turned out off.
+      if (error instanceof BackgroundAiOff) {
+        this.grouping = 'idle';
+        return 'skipped';
+      }
       this.grouping = 'failed';
       this.groupingError = (error as Error).message;
       return 'failed';
@@ -468,6 +487,7 @@ export class MapService {
       embeddingPlacement: this.placementStatus(),
       modelDownloadBytes: embed.state === 'downloading' ? embed.bytes : null,
       warnings: [...this.map.warnings, ...(this.writeWarning ? [this.writeWarning] : []), ...assignmentWarnings],
+      backgroundAi: this.options.backgroundAi(),
     };
   }
 

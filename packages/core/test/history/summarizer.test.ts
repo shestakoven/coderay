@@ -4,6 +4,7 @@ import type { ChangeView, PlanView, SummaryView } from '@ide/protocol';
 import { guardedMatcher } from '../../src/gate/paths';
 import { Summarizer, sanitizeText, type SummarizerOptions } from '../../src/history/summarizer';
 import type { IndexedFile } from '../../src/model';
+import { BackgroundAiOff } from '../../src/models/background-ai';
 import { DEFAULT_POLICY } from '../../src/policy/policy';
 import { openStore } from '../../src/store/store';
 import { GatedModel, ScriptedModel } from '../models/fake-models';
@@ -223,6 +224,18 @@ describe('Summarizer scheduling', () => {
     await vi.advanceTimersByTimeAsync(200);
     expect(calls).toBe(3);
     expect(f.summarizer.views()).toMatchObject([{ text: 'Finally.', pending: false }]);
+  });
+
+  it('does not count an off background AI as a try, and asks again at once when it is back', async () => {
+    let off = true;
+    const f = setup({ provider: { fast: new ScriptedModel(() => { if (off) throw new BackgroundAiOff('off'); return { summary: 'Back.' }; }) } });
+    f.summarizer.request('step', 'p1/s1');
+    await vi.advanceTimersByTimeAsync(130_000);
+    expect(f.requests()).toHaveLength(3);
+    off = false;
+    f.summarizer.resume();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(f.summarizer.views()).toMatchObject([{ text: 'Back.', pending: false }]);
   });
 
   it('gives up after three tries and leaves the view pending', async () => {

@@ -12,7 +12,8 @@ export interface RegroupNeed {
   groupable: boolean;
 }
 
-export type RegroupOutcome = 'done' | 'failed' | 'cancelled';
+/** `skipped`: the background AI is off, so nothing ran and nothing failed. */
+export type RegroupOutcome = 'done' | 'failed' | 'cancelled' | 'skipped';
 
 export interface RegroupSchedulerOptions {
   regroup: () => Promise<RegroupOutcome>;
@@ -73,6 +74,14 @@ export class RegroupScheduler {
     clearTimeout(this.timer);
   }
 
+  /** The background AI is back: no failure counts against the next grouping, and with no AI map it groups at once. */
+  resume(): void {
+    if (this.stopped) return;
+    const { hasAiMap } = this.options.need();
+    this.save({ ...this.state, startedAt: null, failures: 0, ...(hasAiMap ? {} : { lastEndedAt: null }) });
+    this.evaluate();
+  }
+
   private delay(): number {
     return Math.min(this.cooldownMs * 2 ** Math.max(0, this.state.failures - 1), MAX_BACKOFF_MS);
   }
@@ -89,6 +98,11 @@ export class RegroupScheduler {
       .then((outcome) => {
         this.running = false;
         if (outcome === 'cancelled' || this.stopped) return;
+        // The state from before the run comes back, and nothing is tried again until resume() or another change asks.
+        if (outcome === 'skipped') {
+          this.save({ ...this.state, startedAt: null });
+          return;
+        }
         this.save({ lastEndedAt: Date.now(), startedAt: null, failures: outcome === 'done' ? 0 : this.state.failures + 1 });
         this.evaluate();
       });

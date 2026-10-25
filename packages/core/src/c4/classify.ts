@@ -157,6 +157,16 @@ export class IdentifierClassifier {
     this.abort?.abort();
   }
 
+  /** The background AI is back: the names waiting for it are asked for without the failure's backoff. */
+  resume(): void {
+    this.failedAt = 0;
+    if (this.timer) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    this.request([]);
+  }
+
   private async run(): Promise<void> {
     const batch = [...this.queued.values()].slice(0, BATCH);
     for (const id of batch) {

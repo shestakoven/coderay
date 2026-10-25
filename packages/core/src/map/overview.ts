@@ -522,6 +522,12 @@ export class OverviewService {
     this.options.onChange();
   }
 
+  /** Asks again where the model failed (the background AI is back); every answer stays. */
+  retryFailed(): void {
+    this.failed.clear();
+    this.options.onChange();
+  }
+
   stop(): void {
     this.stopped = true;
     this.abort?.abort();
