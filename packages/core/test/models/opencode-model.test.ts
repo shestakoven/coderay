@@ -86,6 +86,9 @@ describe('OpencodeModel', () => {
       'opencode did not answer in 1 s',
     ]);
     expect(prompts(failed)).toHaveLength(1);
+    const gone = tempDir('bg-opencode-', t);
+    const broken = new OpencodeModel({ command: () => { throw new Error('opencode is gone'); }, model: { providerID: 'opencode', modelID: 'x' }, userServers: [], runDir: gone });
+    expect([await failure(broken.generate(ASK)), leftovers(gone)]).toEqual(['opencode is gone', []]);
   });
 });
 

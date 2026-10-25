@@ -85,6 +85,8 @@ export class CodexModel implements StructuredModel {
   async generate(request: StructuredRequest, { signal }: GenerateOptions = {}): Promise<unknown> {
     if (signal?.aborted) throw cancelled();
     await mkdir(this.options.runDir, { recursive: true, mode: 0o700 });
+    // Before the directory: a command that cannot be made leaves nothing behind.
+    const command = this.options.command();
     const cwd = await mkdtemp(join(this.options.runDir, `model-${process.pid}-`));
     const timeoutMs = this.options.timeoutMs ?? 300_000;
     let threadId: string | null = null;
@@ -99,7 +101,7 @@ export class CodexModel implements StructuredModel {
     failed.catch(() => undefined);
     let settle: (turn: Turn) => void = () => undefined;
     const ended = new Promise<Turn>((resolve) => { settle = resolve; });
-    const server = startAppServer(this.options.command(), {
+    const server = startAppServer(command, {
       cwd, pidDir: this.options.runDir,
       onRequest: (message) => decline(server, message),
       onNotification: ({ method, params }) => {

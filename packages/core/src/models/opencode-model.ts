@@ -53,12 +53,13 @@ export class OpencodeModel implements StructuredModel {
     if (signal?.aborted) throw cancelled();
     const { command: commandOf, model, userServers, runDir } = this.options;
     await mkdir(runDir, { recursive: true, mode: 0o700 });
-    const cwd = await mkdtemp(join(runDir, `model-${process.pid}-`));
-    const timeoutMs = this.options.timeoutMs ?? 300_000;
-    const deadline = Date.now() + timeoutMs;
+    // Before the directory: a command or a wrapper that cannot be made leaves nothing behind.
     const command = commandOf();
     const shell = shellWrapper(runDir);
     const configContent = backgroundConfig(shell, userServers, `${model.providerID}/${model.modelID}`);
+    const cwd = await mkdtemp(join(runDir, `model-${process.pid}-`));
+    const timeoutMs = this.options.timeoutMs ?? 300_000;
+    const deadline = Date.now() + timeoutMs;
     const passwords: string[] = [];
     const hide = (text: string): string => hideSecrets(passwords.reduce((shown, password) => shown.replaceAll(password, '…'), text));
     // One reason ends the call early (the timeout, an abort, a retry past the deadline); the first one wins.

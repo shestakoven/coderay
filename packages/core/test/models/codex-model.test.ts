@@ -63,6 +63,9 @@ describe('CodexModel', () => {
     const exited = tempDir('bg-codex-', t);
     await expect(model(scenario(exited, [{ fake: 'exit', code: 1 }]), exited, {}, 60_000).generate(ASK)).rejects.toThrow('codex app-server stopped before it answered');
     expect(leftovers(exited)).toEqual([]);
+    const gone = tempDir('bg-codex-', t);
+    await expect(new CodexModel({ command: () => { throw new Error('codex is gone'); }, model: 'm', effort: null, runDir: gone }).generate(ASK)).rejects.toThrow('codex is gone');
+    expect(leftovers(gone)).toEqual([]);
   });
 
   it('refuses a codex it cannot vouch for, or a thread whose echo is not read-only, offline and never asking, before any turn', async (t) => {
