@@ -1,3 +1,5 @@
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import type { BackgroundAiStatus, EngineStatus } from '@ide/protocol';
 import type { Engine } from '../../src/agent/engines/registry';
@@ -28,7 +30,7 @@ function fakeTimers(): void {
 }
 
 describe('BackgroundAi', () => {
-  it('auto takes the first ready engine with a model in order, caches the pick, and reports it', async (t) => {
+  it('auto takes the first ready engine with a model in order, caches the pick, and reports each change once', async (t) => {
     const dir = tempDir('bg-ai-', t);
     const claude = engine('claude', 'ready', null);
     const provider = ai([claude, engine('codex', 'ready', new ScriptedModel({ a: 1 })), engine('opencode', 'ready', new ScriptedModel({ b: 2 }))], dir);
@@ -38,7 +40,10 @@ describe('BackgroundAi', () => {
     expect(await provider.reasoning.generate(REQUEST)).toEqual({ a: 1 });
     expect([claude.probes, claude.backgrounds]).toEqual([1, 1]);
     expect(provider.status()).toEqual({ state: 'ready', engine: 'codex', modelId: 'codex-default', note: null });
-    expect(seen).toEqual(['ready']);
+    provider.refresh();
+    provider.refresh();
+    expect(await provider.fast.generate(REQUEST)).toEqual({ a: 1 });
+    expect(seen).toEqual(['ready', 'checking', 'ready']);
   });
 
   it('with no ready engine every call fails at once with the hint, nothing is probed again until a probe sees another state, and a re-check is asked for', async (t) => {
@@ -50,31 +55,50 @@ describe('BackgroundAi', () => {
     await expect(provider.fast.generate(REQUEST)).rejects.toBeInstanceOf(BackgroundAiOff);
     await expect(provider.fast.generate(REQUEST)).rejects.toThrow('No AI engine is installed');
     expect(provider.status()).toMatchObject({ state: 'off', reason: 'none', engine: null });
-    provider.enginesChanged([{ engine: 'claude', state: 'missing', hint: 'x' }]);
+    // Codex is no engine this pick saw: a change of its state picks nothing again.
+    provider.enginesChanged([{ engine: 'claude', state: 'missing', hint: 'x' }, { engine: 'codex', state: 'ready', hint: null }]);
     await expect(provider.fast.generate(REQUEST)).rejects.toThrow();
     expect(claude.probes).toBe(1);
     provider.enginesChanged([{ engine: 'claude', state: 'ready', hint: null }]);
     await expect(provider.fast.generate(REQUEST)).rejects.toThrow();
     expect(claude.probes).toBe(2);
-    vi.advanceTimersByTime(OFF_RECHECK_MS);
+    vi.advanceTimersByTime(10 * 60_000 - 1);
+    expect(rechecks).toBe(0);
+    vi.advanceTimersByTime(1);
     expect(rechecks).toBe(1);
   });
 
-  it('a failed engine is skipped for the cooldown and the next one answers, without asking the failed one again, until a refresh forgets it', async (t) => {
+  it('a failed engine is skipped for ten minutes and the next one answers, without asking the failed one again, unless a refresh forgets it', async (t) => {
     const dir = tempDir('bg-ai-', t);
-    const claude = engine('claude', 'ready', new ScriptedModel(() => { throw new Error('claude exited with code 1: Not logged in, key sk-ant-api03-abcdefghijklmnopqrstuv'); }));
-    const codex = engine('codex', 'ready', new ScriptedModel({ ok: true }));
-    const provider = ai([claude, codex], dir);
+    const down = new Set<Engine['id']>(['claude']);
+    const answering = (id: Engine['id'], failure: string) => engine(id, 'ready', new ScriptedModel(() => {
+      if (down.has(id)) throw new Error(failure);
+      return { ok: id };
+    }));
+    const claude = answering('claude', 'claude exited with code 1: Not logged in, key sk-ant-api03-abcdefghijklmnopqrstuv');
+    const codex = answering('codex', 'codex failed');
+    let now = 0;
+    const provider = ai([claude, codex, answering('opencode', 'opencode failed')], dir, { now: () => now });
     const first = await Promise.allSettled([provider.fast.generate(REQUEST), provider.fast.generate(REQUEST)]);
     const reason = 'claude exited with code 1: Not logged in, key [key hidden]';
     expect(first.map((result) => result.status === 'rejected' && (result.reason as Error).message)).toEqual([reason, reason]);
-    expect(await provider.fast.generate(REQUEST)).toEqual({ ok: true });
-    expect(await provider.fast.generate(REQUEST)).toEqual({ ok: true });
+    expect(await provider.fast.generate(REQUEST)).toEqual({ ok: 'codex' });
+    expect(await provider.fast.generate(REQUEST)).toEqual({ ok: 'codex' });
     expect([claude.backgrounds, codex.backgrounds]).toEqual([1, 1]);
     expect(provider.status()).toEqual({ state: 'ready', engine: 'codex', modelId: 'codex-default', note: `Claude Code failed: ${reason}` });
     provider.refresh();
     await expect(provider.fast.generate(REQUEST)).rejects.toThrow('Not logged in');
     expect(claude.backgrounds).toBe(2);
+    // Codex fails just before Claude's ten minutes are up: opencode answers. One failing at ten minutes brings Claude back.
+    down.add('codex');
+    now = 10 * 60_000 - 1;
+    await expect(provider.fast.generate(REQUEST)).rejects.toThrow('codex failed');
+    expect(await provider.fast.generate(REQUEST)).toEqual({ ok: 'opencode' });
+    down.add('opencode');
+    down.delete('claude');
+    now = 10 * 60_000;
+    await expect(provider.fast.generate(REQUEST)).rejects.toThrow('opencode failed');
+    expect(await provider.fast.generate(REQUEST)).toEqual({ ok: 'claude' });
   });
 
   it('an explicit engine runs its chosen model; one that is not ready is off, not auto, and another core on the same home follows the choice', async (t) => {
@@ -90,6 +114,9 @@ describe('BackgroundAi', () => {
     provider.setChoice({ mode: 'engine', engine: 'claude', model: 'opus' });
     expect(await provider.fast.generate(REQUEST)).toEqual({ a: 1 });
     expect(provider.status()).toMatchObject({ state: 'ready', engine: 'claude', modelId: 'opus' });
+    // A model of another engine in the file is no model of the chosen one.
+    writeFileSync(join(dir, 'background-ai.json'), JSON.stringify({ choice: { mode: 'engine', engine: 'claude', model: 'codex:gpt-6' }, onboarded: true }));
+    expect(provider.choice()).toEqual({ mode: 'engine', engine: 'claude', model: null });
     // An engine with a reason to run no background call is passed over calmly: no failure, its sentence as the note or the hint.
     const unverified = 'Codex 0.164.0 is not verified for background use';
     const calm = ai([engine('codex', 'ready', unverified), engine('opencode', 'ready', new ScriptedModel({ b: 2 }))], tempDir('bg-ai-', t));
@@ -99,7 +126,7 @@ describe('BackgroundAi', () => {
     await expect(calm.fast.generate(REQUEST)).rejects.toThrow(`${unverified}. Choose another engine in Settings → Background AI.`);
   });
 
-  it('Off makes no call, probes no engine and asks for no re-check', async (t) => {
+  it('Off makes no call, probes no engine and asks for no re-check, and neither does a ready AI', async (t) => {
     fakeTimers();
     const dir = tempDir('bg-ai-', t);
     const claude = engine('claude', 'ready', new ScriptedModel({ a: 1 }));
@@ -110,6 +137,10 @@ describe('BackgroundAi', () => {
     vi.advanceTimersByTime(OFF_RECHECK_MS);
     expect(claude.probes + claude.backgrounds + rechecks).toBe(0);
     expect(provider.status()).toEqual({ state: 'off', reason: 'choice', engine: null, hint: 'Background AI is off. Turn it on in Settings → Background AI.' });
+    provider.setChoice({ mode: 'auto' });
+    expect(await provider.fast.generate(REQUEST)).toEqual({ a: 1 });
+    vi.advanceTimersByTime(OFF_RECHECK_MS);
+    expect(rechecks).toBe(0);
   });
 
   it('an aborted call neither waits for a slow pick nor counts as a failure, and a stale pick never serves a call or overwrites a newer status', async (t) => {
@@ -138,11 +169,19 @@ describe('BackgroundAi', () => {
     expect([gated.requests.length, running.status()]).toEqual([1, { state: 'ready', engine: 'claude', modelId: 'claude-default', note: null }]);
   });
 
-  it('offHint names the install step, keeps an engine hint that names its engine, and hides secrets', () => {
+  it('offHint names the install step, keeps an engine hint that names its engine, says which engine failed or has no such model, and hides secrets', () => {
     const missing = (engine: Engine['id'], hint: string): EngineStatus => ({ engine, state: 'missing', hint });
     expect(offHint({ mode: 'auto' }, [missing('claude', 'x'), missing('codex', 'y')], [], new Map())).toBe('No AI engine is installed. Install Claude Code, Codex or opencode and sign in; the map and chat work without one.');
     expect(offHint({ mode: 'engine', engine: 'codex', model: null }, [{ engine: 'codex', state: 'signed-out', hint: 'Codex is signed out: run codex login.' }], [], new Map()))
       .toBe('Codex is signed out: run codex login. Choose another engine in Settings → Background AI.');
+    const ready: EngineStatus = { engine: 'codex', state: 'ready', hint: null };
+    expect([
+      offHint({ mode: 'engine', engine: 'codex', model: null }, [ready], [], new Map([['codex', 'codex turn failed: 401']])),
+      offHint({ mode: 'engine', engine: 'codex', model: 'codex:gone' }, [ready], ['codex'], new Map()),
+    ]).toEqual([
+      'Codex failed: codex turn failed: 401. Choose another engine in Settings → Background AI.',
+      'Codex lists no model for this choice. Choose another engine in Settings → Background AI.',
+    ]);
     expect(offHint({ mode: 'auto' }, [{ engine: 'codex', state: 'error', hint: 'OpenAI rejected the API key sk-proj-abcdefghijklmnop' }], [], new Map())).not.toContain('sk-proj');
   });
 

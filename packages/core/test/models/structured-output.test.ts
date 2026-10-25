@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { expect, it } from 'vitest';
 import { conforms, extractJson, structuredOutput } from '../../src/models/structured-output';
+import type { JsonSchema } from '../../src/models/types';
 
 const SCHEMA = {
   type: 'object',
@@ -15,19 +16,11 @@ const NESTED = {
     list: { type: 'array', maxItems: 2, items: { type: 'object', properties: { n: { type: 'integer' }, k: { enum: ['x', 'y'] } } } },
   },
 };
+const PAIR = { type: 'string', minLength: 2, maxLength: 2 };
 
-describe('extractJson', () => {
-  it.each([
-    ['Sure:\n```json\n{"a":1}\n```\nDone.', { a: 1 }],
-    ['text {"a":{"b":"\\"}"}} tail', { a: { b: '"}' } }],
-    ['no json here', undefined],
-  ])('reads %j', (text, expected) => expect(extractJson(text)).toEqual(expected));
-});
-
-describe('conforms', () => {
-  it.each([
-    [SCHEMA, { name: 'x', kind: 'a' }, null],
-    [SCHEMA, { name: 'x' }, '$.kind is required'],
+it('conforms names the first rule a value breaks, for every keyword it checks, and null for a value that keeps them all', () => {
+  const rows: [JsonSchema, unknown, string | null][] = [
+    [SCHEMA, { name: 'abcdefgh', kind: 'a' }, null],
     // An own "__proto__" key is a property like any other, never the prototype read as its rule.
     [SCHEMA, JSON.parse('{"name":"x","kind":"a","__proto__":1}'), '$.__proto__ is not allowed'],
     [SCHEMA, { name: 'abcdefghi', kind: 'a' }, '$.name is longer than 8 characters'],
@@ -36,7 +29,17 @@ describe('conforms', () => {
     [NESTED, { list: [{ k: 'z' }] }, '$.list[0].k is not one of x, y'],
     [NESTED, { list: [{}, {}, {}] }, '$.list has more than 2 items'],
     [NESTED, { either: 1 }, '$.either matches no option'],
-  ])('%#: %j', (schema, value, violation) => expect(conforms(value, schema)).toBe(violation));
+    // A key the schema does not name is allowed unless it says otherwise.
+    [NESTED, { either: 'x', extra: true }, null],
+    [{ const: 'v' }, 'w', '$ is not "v"'],
+    // Lengths count code points, as JSON Schema does.
+    [PAIR, '😀😀', null],
+    [PAIR, 'a', '$ is shorter than 2 characters'],
+    [{ type: 'array', minItems: 1 }, [], '$ has fewer than 1 items'],
+    [{ type: ['string', 'null'] }, 1, '$ is not of type string or null'],
+    [{ type: 'number' }, 1, null],
+  ];
+  expect(rows.map(([schema, value]) => conforms(value, schema))).toEqual(rows.map(([, , violation]) => violation));
 });
 
 it('structuredOutput takes the first JSON that fits, and throws with the violation of the largest', () => {
@@ -44,6 +47,8 @@ it('structuredOutput takes the first JSON that fits, and throws with the violati
   expect(structuredOutput('Step [1] or {}: {"name":"x","kind":"b"}', SCHEMA)).toEqual({ name: 'x', kind: 'b' });
   expect(() => structuredOutput('Step [1]: {"name":"x"}', SCHEMA)).toThrow('does not fit the schema: $.kind is required');
   expect(() => structuredOutput('no json here', SCHEMA)).toThrow('the model answered with no JSON');
+  // A bracket inside a string closes nothing.
+  expect(extractJson('text {"a":{"b":"\\"}"}} tail')).toEqual({ a: { b: '"}' } });
   // Degenerate output costs about its length, not its square: brackets that never close, nested ones around junk, deeply nested JSON that does not fit.
   const started = performance.now();
   const junk = `${'['.repeat(50_000)}${'['.repeat(25_000)}x${']'.repeat(25_000)}${'['.repeat(25_000)}${']'.repeat(25_000)}`;

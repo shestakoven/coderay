@@ -118,7 +118,7 @@ describe('pickOpencodeModel', () => {
     expect(pickOpencodeModel([c('opencode:anthropic/claude-x', 18), c('opencode:openai/gpt-x-mini', 0), c('opencode:opencode/grok-code', 0)]))
       .toEqual({ providerID: 'opencode', modelID: 'grok-code', value: 'opencode:opencode/grok-code' });
     expect(pickOpencodeModel([c('opencode:opencode/big-pickle', 0), c('opencode:opencode/glm-5.3-flash-free', 0)])).toMatchObject({ modelID: 'glm-5.3-flash-free' });
-    expect(pickOpencodeModel([c('opencode:anthropic/claude-x', null), c('opencode:openai/gpt-x-mini', 2)])).toMatchObject({ providerID: 'openai', modelID: 'gpt-x-mini' });
+    expect(pickOpencodeModel([c('opencode:anthropic/claude-x', null), c('opencode:opencode/big-pickle', 5), c('opencode:openai/gpt-x-mini', 2)])).toMatchObject({ providerID: 'openai', modelID: 'gpt-x-mini' });
     expect(pickOpencodeModel([])).toBeNull();
   });
 });

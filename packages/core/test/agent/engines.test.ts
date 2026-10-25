@@ -1,8 +1,9 @@
-import { writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
-import { claudeStatus } from '../../src/agent/engines/claude';
+import { describe, expect, it, onTestFinished, vi } from 'vitest';
+import { claudeEngine, claudeStatus } from '../../src/agent/engines/claude';
 import { codexEngine } from '../../src/agent/engines/codex';
+import type { BackgroundModel } from '../../src/agent/engines/registry';
 import { MIN_CLAUDE_VERSION } from '../../src/agent/tools';
 import { fakeCodex } from '../fake-codex/fake';
 import { tempDir } from '../helpers';
@@ -29,6 +30,29 @@ describe('claudeStatus', () => {
       { engine: 'claude', state: 'error', hint: failed },
       { engine: 'claude', state: 'error', hint: 'claude --version did not answer in 0.3 s.' },
     ]);
+  });
+});
+
+describe('claudeEngine', () => {
+  it("runs a background call as the active account's claude in that account's whole environment, on haiku or a chosen Claude model, and only with a run directory", async (t) => {
+    // The core may itself run inside a Claude Code session, whose mark claude refuses to start under.
+    vi.stubEnv('CLAUDECODE', '1');
+    onTestFinished(() => { vi.unstubAllEnvs(); });
+    const dir = tempDir('ide-claude-bg-', t);
+    const record = join(dir, 'call.json');
+    const claude = script([
+      "import { writeFileSync } from 'node:fs';",
+      'for await (const chunk of process.stdin) void chunk;',
+      `writeFileSync(${JSON.stringify(record)}, JSON.stringify({ argv: process.argv.slice(2), account: process.env.ACCOUNT_MARK ?? null, inside: process.env.CLAUDECODE ?? null }));`,
+      "process.stdout.write(JSON.stringify({ type: 'result', subtype: 'success', is_error: false, result: '{}', structured_output: { ok: true } }));",
+    ].join('\n'));
+    const engine = (runDir?: string) => claudeEngine({ command: () => ({ ...claude, env: { ACCOUNT_MARK: 'work' } }), cwd: dir, ...(runDir === undefined ? {} : { runDir }) });
+    const run = join(dir, 'run');
+    const [haiku, opus, foreign, unrun] = await Promise.all([engine(run).background(null), engine(run).background('opus'), engine(run).background('codex:gpt-6'), engine().background(null)]);
+    expect([haiku && typeof haiku === 'object' && haiku.modelId, opus && typeof opus === 'object' && opus.modelId, foreign, unrun]).toEqual(['haiku', 'opus', null, null]);
+    expect(await (haiku as BackgroundModel).model.generate({ prompt: 'p', schema: { type: 'object' } })).toEqual({ ok: true });
+    const call = JSON.parse(readFileSync(record, 'utf8')) as { argv: string[]; account: string | null; inside: string | null };
+    expect([call.argv.slice(0, 3), call.account, call.inside]).toEqual([['-p', '--model', 'haiku'], 'work', null]);
   });
 });
 

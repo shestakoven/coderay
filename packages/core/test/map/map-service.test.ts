@@ -229,15 +229,17 @@ describe('MapService', () => {
     expect(view.status).toMatchObject({ layer: 'folder', grouping: 'failed', groupingError: 'claude exited with code 1: not logged in' });
   });
 
-  it('with the background AI off from the start, grouping is skipped, not failed, and resumes when it is ready', async () => {
+  it('with the background AI off from the start, grouping is skipped, not failed, and once it is back a resume groups at once, even after a grouping failed', async () => {
     let status: BackgroundAiStatus = { state: 'checking' };
-    const reasoning = new ScriptedModel(() => { throw new BackgroundAiOff('x'); }, componentsPerDirectory);
+    const reasoning = new ScriptedModel(() => { throw new BackgroundAiOff('x'); }, () => { throw new Error('the engine left behind failed'); }, componentsPerDirectory);
     const { service, stateDir } = await startService({ reasoning, backgroundAi: () => status });
     const state = JSON.parse(await readFile(join(stateDir, 'regroup-state.json'), 'utf8'));
     expect([service.view().status.grouping, reasoning.requests.length, state]).toEqual(['idle', 1, { lastEndedAt: null, startedAt: null, failures: 0 }]);
     status = { state: 'off', reason: 'none', engine: null, hint: 'No AI engine is installed.' };
     expect([await service.regroup(), reasoning.requests.length, service.view().status.backgroundAi]).toEqual(['skipped', 1, status]);
     status = READY();
+    service.onAgentIdle();
+    await waitFor(() => service.view().status.grouping === 'failed', 'the failed grouping');
     service.resumeGrouping();
     await waitFor(() => service.view().status.layer === 'ai', 'the AI map');
   });

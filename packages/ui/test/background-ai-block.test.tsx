@@ -75,11 +75,18 @@ describe('BackgroundAiBlock', () => {
     const block = mount(() => BackgroundAiBlock({ view: current, onSave, onShowFirstRun: () => undefined }));
     radio(block.output, 'Off');
     expect(onSave).toHaveBeenLastCalledWith({ mode: 'off' });
-    current = { ...view, choice: { mode: 'engine', engine: 'codex', model: 'codex:gone' }, status: { ...ready, note: 'Claude Code failed: Not logged in · Please run /login' } };
+    current = { ...view, choice: { mode: 'engine', engine: 'codex', model: 'codex:gone' }, status: { ...ready, note: 'Claude Code failed: Not logged in · Please run /login · opencode is too old' } };
     block.rerender();
     const model = select(block.output, 'Model')!;
     expect([select(block.output, 'Engine')?.props.value, model.props.value, textOf(descendants(model.props.children as ReactNode).at(-1)?.props.children as ReactNode), status(block.output)])
-      .toEqual(['codex', 'codex:gone', 'codex:gone', 'Ready · CodexClaude Code failed: Not logged in · Please run /login']);
+      .toEqual(['codex', 'codex:gone', 'codex:gone', 'Ready · CodexClaude Code failed: Not logged in · Please run /loginopencode is too old']);
+    // That choice is also the one "Choose an engine" comes back to after Auto.
+    radio(block.output, 'Auto');
+    radio(block.output, 'Choose an engine');
+    expect(onSave).toHaveBeenLastCalledWith({ mode: 'engine', engine: 'codex', model: 'codex:gone' });
+    current = { ...view, status: { state: 'checking' } };
+    block.rerender();
+    const checking = status(block.output);
     current = { ...view, choice: { mode: 'off' }, status: OFF };
     block.rerender();
     const offStatus = status(block.output);
@@ -92,16 +99,20 @@ describe('BackgroundAiBlock', () => {
     const empty = (overview: MapOverview, backgroundAi: BackgroundAiStatus) =>
       renderToStaticMarkup(<OverviewPending overview={overview} backgroundAi={backgroundAi} onRebuild={() => undefined} onOpenSettings={() => undefined} />);
     const failed: MapOverview = { state: 'failed', error: OFF.hint, basedOnCurrentMap: true, groups: [], links: [], labels: [] };
-    expect([offStatus.startsWith('Background AI is off.'), offStatus.includes('Settings'), unavailableStatus, status(block.output)]).toEqual([
-      true, false, ['Codex is signed out: run codex login. Choose another engine.', 'warn'],
+    expect([checking, offStatus, unavailableStatus, status(block.output)]).toEqual([
+      'Checking the engines…', 'Background AI is off. No background calls are made; new groupings, summaries and overviews wait until you turn it on.',
+      ['Codex is signed out: run codex login. Choose another engine.', 'warn'],
       'No engine can run the background AI right now.Claude Code failed: Not logged in · Please run /loginCodex failed: x. The map and chat work without an AI engine.',
     ]);
     expect([empty(failed, OFF), empty({ ...failed, state: 'waiting', error: null }, unavailable), empty(failed, view.status)].map((html) => [
       html.includes(OFF.hint) || html.includes(unavailable.hint), html.includes('>Open Settings<'), html.includes('>Try again<'),
     ])).toEqual([[true, true, false], [true, true, false], [true, false, true]]);
-    // Without an earlier pick, "Choose an engine" starts on the engine Auto runs on now, even one the probe has not answered for.
+    // Without an earlier pick, "Choose an engine" starts on the engine Auto runs on now, even one the probe has not answered for; with none, on the first one it calls ready.
     const fresh = mount(() => BackgroundAiBlock({ view: { ...view, status: { ...ready, engine: 'opencode' } }, onSave, onShowFirstRun: () => undefined }));
     radio(fresh.output, 'Choose an engine');
     expect(onSave).toHaveBeenLastCalledWith({ mode: 'engine', engine: 'opencode', model: null });
+    const idle = mount(() => BackgroundAiBlock({ view: { ...view, status: { ...OFF, reason: 'none', hint: 'Codex failed: x.' } }, onSave, onShowFirstRun: () => undefined }));
+    radio(idle.output, 'Choose an engine');
+    expect(onSave).toHaveBeenLastCalledWith({ mode: 'engine', engine: 'codex', model: null });
   });
 });

@@ -44,7 +44,9 @@ test('the first project shows the engines found, keeps the focus inside, fits a 
   await expect(page.locator('.chip', { hasText: /^AI off$/ })).toBeVisible();
   await expect.poll(stored).toEqual({ choice: { mode: 'off' }, onboarded: true });
 
-  // Settings can bring the screen back in the same window; Esc skips it and keeps the AI off.
+  // Settings can bring the screen back in the same window; Esc skips it, keeps the AI off and gives the focus back.
+  const settingsButton = page.getByRole('button', { name: /^Settings/ });
+  await settingsButton.focus();
   await page.keyboard.press('Control+,');
   const settings = page.getByRole('dialog', { name: 'Settings' });
   await settings.getByRole('tab', { name: 'Background AI', exact: true }).click();
@@ -53,6 +55,7 @@ test('the first project shows the engines found, keeps the focus inside, fits a 
   await expect(dialog).toContainText('Skip keeps the background AI off.');
   await page.keyboard.press('Escape');
   await expect(dialog).toBeHidden();
+  await expect(settingsButton).toBeFocused();
   await expect.poll(stored).toEqual({ choice: { mode: 'off' }, onboarded: true });
 
   await page.reload();

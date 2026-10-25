@@ -296,7 +296,7 @@ describe('IdentifierClassifier', () => {
       ]);
     });
 
-    it('does not ask again within five minutes', async () => {
+    it('does not ask again within five minutes, unless the background AI is back', async () => {
       const model = new FailingModel();
       const classifier = start(model);
       classifier.request([pkg('sqlalchemy')]);
@@ -305,6 +305,9 @@ describe('IdentifierClassifier', () => {
       classifier.request([pkg('sqlalchemy'), pkg('redis')]);
       await elapse(4 * MINUTE);
       expect(model.requests).toHaveLength(1);
+      classifier.resume();
+      await elapse(SETTLE);
+      expect([model.requests.length, classifier.lookup(pkg('redis'))?.system]).toEqual([2, 'Redis']);
     });
 
     it('asks again once five minutes have passed', async () => {

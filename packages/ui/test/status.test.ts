@@ -86,6 +86,7 @@ describe('describeMapStatus', () => {
     const ready = { state: 'ready', engine: 'codex', modelId: 'codex:x', note } as const;
     const [chip] = describeMapStatus(status({ layer: 'ai', groupedAt: 'T1', backgroundAi: ready }));
     expect(chip!.title).toBe(`Grouped at T1\nBackground AI: Codex\n${note}`);
+    expect(describeMapStatus(status({ layer: 'ai', stale: true, staleReasons: ['3 files changed'], backgroundAi: ready }))[0]!.title).toBe(`3 files changed\nBackground AI: Codex\n${note}`);
     expect(describeMapStatus(status({ grouping: 'failed', groupingError: 'Not logged in', backgroundAi: ready }))).toEqual([
       { text: 'folder map', tone: 'muted', title: `Components are folders until an AI grouping succeeds\nBackground AI: Codex\n${note}` },
       { text: 'grouping moves to Codex', tone: 'muted', title: `${note}\nThe next grouping runs on Codex; Regroup runs it now.` },

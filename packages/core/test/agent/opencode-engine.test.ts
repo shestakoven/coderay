@@ -66,7 +66,7 @@ describe('catalogModels', () => {
 });
 
 describe('the opencode engine', () => {
-  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
+  it("names the active account, lists the models of the server its status started unless that was over a minute ago, keeps that server's pid file and shell in the run directory, where the reaper finds an orphan, runs a background call on the cheapest model listed or the chosen one, and tells how to connect the provider a model needs: in a terminal for System, in Settings for a profile", async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     const d = dir();
     const run = join(d, 'run');
@@ -78,8 +78,14 @@ describe('the opencode engine', () => {
     const afterListing = starts(record);
     vi.setSystemTime(Date.now() + 60_001);
     await engine.listModels();
+    // A background call runs on the cheapest model of that listing, or the chosen one if it is listed, and only with a run directory.
+    const backgrounds = await Promise.all([
+      engine.background(null), engine.background(FREE_MODELS[1]!.value), engine.background('opencode:p/none'),
+      opencodeEngine({ command: () => fakeOpencode(null, record), cwd: d, userServers: () => [] }).background(null),
+    ]);
     const shell = (opencodeRecords(record).find((entry) => entry.pid !== undefined)?.configContent as { shell: string }).shell;
     const hints = [providerHint('openai', SYSTEM_HOME), providerHint('openai', { dir: '/profiles/p', env: {}, unset: [], args: [] })];
+    expect(backgrounds.map((background) => (background !== null && typeof background === 'object' ? background.modelId : background))).toEqual([FREE_MODELS[0]!.value, FREE_MODELS[1]!.value, null, null]);
     expect([status, listed, afterListing, starts(record), await pidFile, shell.startsWith(`${run}/`) && existsSync(shell), hints]).toEqual([
       { engine: 'opencode', state: 'ready', hint: null, account: 'work' }, FREE_MODELS, 1, 2, true, true, [
         'opencode has no provider "openai" connected for this model. Run opencode auth login in a terminal to connect a provider, or pick a free opencode/* model.',

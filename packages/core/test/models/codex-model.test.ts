@@ -80,6 +80,7 @@ describe('CodexModel', () => {
       [{ FAKE_CODEX_ECHO: '{"sandbox":{"type":"readOnly","networkAccess":true}}' }, 'codex reported sandbox readOnly with network access'],
       [{ FAKE_CODEX_ECHO: '{"approvalPolicy":"on-request"}' }, 'codex reported sandbox readOnly and approvals "on-request"'],
       [{ FAKE_CODEX_ECHO: '{"thread":{"id":null}}' }, 'codex opened no thread it could name'],
+      [{ FAKE_CODEX_USER_SERVERS: '{"my server":{"command":"x"}}' }, 'an MCP server named "my server", which CodeRay cannot switch off'],
     ];
     for (const [env, reason] of echoes) {
       const dir = tempDir('bg-codex-', t);

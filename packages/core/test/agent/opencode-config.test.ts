@@ -123,6 +123,11 @@ describe('denyAllProblem', () => {
       denyAllProblem(echo({ plan: [rule('bash', '*', 'ask')] }), TOOL_OUTPUT),
       // An ask of everything is no anchor: nobody answers it.
       denyAllProblem(echo({ explore: [rule('*', '*', 'ask')] }), TOOL_OUTPUT),
-    ]).toEqual([null, "opencode's agent build would allow external_directory /etc/*", "opencode's agent plan would ask bash *", "opencode's agent explore would ask * *"]);
+      denyAllProblem(echo().map((agent) => (agent.name === 'general' ? { ...agent, permission: [rule('bash', '*', 'deny')] } : agent)), TOOL_OUTPUT),
+      denyAllProblem(echo().filter((agent) => agent.name !== 'plan'), TOOL_OUTPUT),
+    ]).toEqual([
+      null, "opencode's agent build would allow external_directory /etc/*", "opencode's agent plan would ask bash *", "opencode's agent explore would ask * *",
+      "opencode's agent general has no rule that denies everything", 'opencode lists no agent "plan"',
+    ]);
   });
 });

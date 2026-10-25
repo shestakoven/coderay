@@ -80,14 +80,14 @@ describe('Onboarding', () => {
     expect([on.onWithoutAi.mock.calls.length, foot(screen.output)]).toEqual([1, expect.stringContaining('Skip keeps the background AI off.')]);
   });
 
-  it('while the engines are checked, the rows say so even of the engine already in use, and only Choose and Skip are offered', () => {
+  it('while the engines are checked, the rows say so even of the engine already in use, and only Choose and Skip are offered, whatever is ready already', () => {
     const checking: BackgroundAiView = {
       ...view, choice: { mode: 'engine', engine: 'claude', model: null }, status: { state: 'ready', engine: 'claude', modelId: 'haiku', note: null },
-      options: view.options.map((option) => ({ ...option, status: null })),
+      options: view.options.map((option) => (option.engine === 'opencode' ? option : { ...option, status: null })),
     };
     const screen = mount(() => Onboarding({ view: checking, ...handlers() }));
-    expect(rows(screen.output)).toEqual(['Claude CodeChecking…', 'CodexChecking…', 'opencodeChecking…']);
-    expect([labels(screen.output), tones(screen.output), all(screen.output, 'ul')[0]?.props['aria-busy']]).toEqual([['Choose an engine…', 'Skip'], ['muted', 'muted', 'muted'], true]);
+    expect(rows(screen.output)).toEqual(['Claude CodeChecking…', 'CodexChecking…', 'opencodeReady']);
+    expect([labels(screen.output), tones(screen.output), all(screen.output, 'ul')[0]?.props['aria-busy']]).toEqual([['Choose an engine…', 'Skip'], ['muted', 'muted', 'ok'], true]);
     expect(foot(screen.output)).toContain('Skip keeps Claude Code.');
   });
 });

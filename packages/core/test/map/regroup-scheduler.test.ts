@@ -84,7 +84,7 @@ describe('RegroupScheduler', () => {
     expect(state.runs.map((at) => (at - start) / MINUTE)).toEqual([0, 10, 30, 70]);
   });
 
-  it('after a failed grouping a resume regroups a stale map at once, also when it comes while that grouping still runs', async () => {
+  it('after a failed grouping a resume regroups a stale map at once, also when it comes while that grouping still runs, and forgets the failures', async () => {
     const { state, scheduler } = setup(STALE, { outcome: 'failed', durationMs: MINUTE });
     const start = Date.now();
     scheduler.evaluate();
@@ -94,6 +94,15 @@ describe('RegroupScheduler', () => {
     expect(minutes()).toEqual([0, 1]);
     scheduler.resume();
     expect(minutes()).toEqual([0, 1, 2]);
+    // That one fails too, as the first since the resume: the next waits the cooldown, not twice it.
+    await vi.advanceTimersByTimeAsync(MINUTE + REGROUP_COOLDOWN_MS);
+    expect(minutes()).toEqual([0, 1, 2, 3 + REGROUP_COOLDOWN_MS / MINUTE]);
+    // A resume after a grouping that succeeded leaves a stale AI map to the cooldown.
+    const fresh = setup(STALE);
+    fresh.scheduler.evaluate();
+    await vi.advanceTimersByTimeAsync(0);
+    fresh.scheduler.resume();
+    expect(fresh.state.runs).toHaveLength(1);
   });
 
   it('remembers the last attempt across restarts', async () => {
