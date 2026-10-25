@@ -243,10 +243,15 @@ export class Summarizer {
     this.schedule();
   }
 
-  /** The background AI is back: every summary still to make is asked for now. */
+  /** The background AI is back: every summary still to make is asked for now, one its failures used up included; a blocked one stays. */
   resume(): void {
     const now = this.now();
-    for (const entry of this.entries.values()) if (!entry.exhausted) entry.due = now;
+    for (const entry of this.entries.values()) {
+      if (entry.key === blockedKey(entry.scope, entry.ref)) continue;
+      entry.tries = 0;
+      entry.exhausted = false;
+      entry.due = now;
+    }
     this.schedule();
   }
 

@@ -226,15 +226,28 @@ describe('Summarizer scheduling', () => {
     expect(f.summarizer.views()).toMatchObject([{ text: 'Finally.', pending: false }]);
   });
 
-  it('does not count an off background AI as a try, and asks again at once when it is back', async () => {
-    let off = true;
-    const f = setup({ provider: { fast: new ScriptedModel(() => { if (off) throw new BackgroundAiOff('off'); return { summary: 'Back.' }; }) } });
+  it('asks again at once when the background AI is back, also for a summary its failures used up, and does not count an off one as a try', async () => {
+    let mode: 'down' | 'off' | 'back' = 'down';
+    const f = setup({ provider: { fast: new ScriptedModel(() => {
+      if (mode === 'down') throw new Error('down');
+      if (mode === 'off') throw new BackgroundAiOff('off');
+      return { summary: 'Back.' };
+    }) } });
     f.summarizer.request('step', 'p1/s1');
-    await vi.advanceTimersByTimeAsync(130_000);
+    await vi.advanceTimersByTimeAsync(200_000);
     expect(f.requests()).toHaveLength(3);
-    off = false;
+    mode = 'off';
+    f.summarizer.resume();
+    // Once at the resume, then once a minute: an off one would use the three tries up in 25 s.
+    await vi.advanceTimersByTimeAsync(190_000);
+    expect(f.requests()).toHaveLength(7);
+    // Back with its tries anew: one more failure is retried, not given up on.
+    mode = 'down';
     f.summarizer.resume();
     await vi.advanceTimersByTimeAsync(0);
+    expect(f.requests()).toHaveLength(8);
+    mode = 'back';
+    await vi.advanceTimersByTimeAsync(5_000);
     expect(f.summarizer.views()).toMatchObject([{ text: 'Back.', pending: false }]);
   });
 
