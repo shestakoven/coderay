@@ -24,17 +24,24 @@ const firstLine = (text: string): string => hideSecrets(text.split('\n')[0] ?? '
 const sentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
 const cancelled = (): Error => new Error('cancelled');
 
-/** One engine for a person: its own hint when that already opens with the engine's name or "This <Engine> account", else "<Engine> is <state>: <hint>". */
+/**
+ * One engine for a person: its own hint when that already opens with the engine's name or "This <Engine> account", or names the product
+ * before its first colon ("Install Claude Code: …"), else "<Engine> is <state>: <hint>".
+ */
 function engineLine(status: EngineStatus): string {
   const name = ENGINE_PRODUCT_NAMES[status.engine];
   const hint = status.hint === null ? null : firstLine(status.hint);
   const named = (engine: string): boolean => hint !== null && (hint.startsWith(engine) || hint.startsWith(`This ${engine} account`));
-  if (hint !== null && (named(name) || named(ENGINE_NAMES[status.engine]))) return hint;
+  const leads = hint !== null && hint.includes(':') && hint.slice(0, hint.indexOf(':')).includes(name);
+  if (hint !== null && (leads || named(name) || named(ENGINE_NAMES[status.engine]))) return hint;
   return `${name} is ${STATE_WORDS[status.state]}${hint ? `: ${hint}` : ''}`;
 }
 
-/** Why the background AI is off, in one line: `noModel` are engines with no model for the choice, `failed` the reasons of the failure memory. */
-export function offHint(choice: BackgroundAiChoice, statuses: EngineStatus[], noModel: EngineId[], failed: ReadonlyMap<EngineId, string>): string {
+/**
+ * Why the background AI is off, in one line: `noModel` are engines with no model for the choice, `failed` the reasons of the failure memory,
+ * `alone` that the chosen engine is the only one the core runs, so there is no other to choose.
+ */
+export function offHint(choice: BackgroundAiChoice, statuses: EngineStatus[], noModel: EngineId[], failed: ReadonlyMap<EngineId, string>, alone = false): string {
   if (choice.mode === 'off') return OFF_BY_CHOICE;
   const line = (engine: EngineId): string => {
     const reason = failed.get(engine);
@@ -43,7 +50,7 @@ export function offHint(choice: BackgroundAiChoice, statuses: EngineStatus[], no
     const status = statuses.find((candidate) => candidate.engine === engine);
     return status === undefined ? `${ENGINE_PRODUCT_NAMES[engine]} is not run by this CodeRay` : engineLine(status);
   };
-  if (choice.mode === 'engine') return `${sentence(line(choice.engine))} ${CHOOSE}`;
+  if (choice.mode === 'engine') return alone ? sentence(line(choice.engine)) : `${sentence(line(choice.engine))} ${CHOOSE}`;
   const found = BACKGROUND_ENGINE_ORDER.filter((engine) => failed.has(engine) || noModel.includes(engine) || statuses.some((status) => status.engine === engine && status.state !== 'missing'));
   if (found.length === 0) return INSTALL;
   return `${found.map((engine) => line(engine).replace(/\.$/, '')).join(' · ')}. The map and chat work without an AI engine.`;
@@ -170,11 +177,16 @@ export class BackgroundAi implements DefaultModelProvider {
   view(statuses: EngineStatus[], models: ModelInfo[]): BackgroundAiView {
     this.syncStore();
     const ids = this.options.engines().map((engine) => engine.id);
+    const failed = this.activeFailures();
     return {
       choice: this.stored.choice, onboarded: this.stored.onboarded, status: this.current,
-      options: BACKGROUND_ENGINE_ORDER.filter((id) => ids.includes(id)).map((engine) => ({
-        engine, status: statuses.find((status) => status.engine === engine) ?? null, models: models.filter((model) => model.engine === engine),
-      })),
+      options: BACKGROUND_ENGINE_ORDER.filter((id) => ids.includes(id)).map((engine) => {
+        const status = statuses.find((candidate) => candidate.engine === engine) ?? null;
+        const reason = failed.get(engine);
+        // The probe answers for chats; a parked engine runs no background call.
+        const shown = status?.state === 'ready' && reason !== undefined ? { ...status, state: 'error' as const, hint: `${ENGINE_PRODUCT_NAMES[engine]} failed: ${reason}` } : status;
+        return { engine, status: shown, models: models.filter((model) => model.engine === engine) };
+      }),
     };
   }
 
@@ -278,7 +290,8 @@ export class BackgroundAi implements DefaultModelProvider {
       return { pick: { engine: id, background }, status: { state: 'ready', engine: id, modelId: background.modelId, note }, seen };
     }
     const reason = choice.mode === 'auto' ? 'none' : 'unavailable';
-    return { pick: null, status: { state: 'off', reason, engine: choice.mode === 'engine' ? choice.engine : null, hint: offHint(choice, statuses, noModel, why) }, seen };
+    const alone = choice.mode === 'engine' && [...engines.keys()].every((id) => id === choice.engine);
+    return { pick: null, status: { state: 'off', reason, engine: choice.mode === 'engine' ? choice.engine : null, hint: offHint(choice, statuses, noModel, why, alone) }, seen };
   }
 
   private async generate(request: StructuredRequest, options: GenerateOptions = {}): Promise<unknown> {

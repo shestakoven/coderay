@@ -71,7 +71,7 @@ describe('codexEngine', () => {
       null,
       null,
       // A codex the tool switches were not verified on is a reason, before any call.
-      'Codex 0.161.0 is not verified for background use',
+      'Codex 0.161.0 is newer than CodeRay has checked for background calls; chats are not affected',
     ]);
   });
 });

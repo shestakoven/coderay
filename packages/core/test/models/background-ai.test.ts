@@ -68,7 +68,7 @@ describe('BackgroundAi', () => {
     expect(rechecks).toBe(1);
   });
 
-  it('a failed engine is skipped for ten minutes and the next one answers, without asking the failed one again, unless a refresh forgets it', async (t) => {
+  it('a failed engine is skipped for ten minutes and the next one answers, without asking the failed one again, unless a refresh forgets it; Settings shows it failed, not ready', async (t) => {
     const dir = tempDir('bg-ai-', t);
     const down = new Set<Engine['id']>(['claude']);
     const answering = (id: Engine['id'], failure: string) => engine(id, 'ready', new ScriptedModel(() => {
@@ -86,6 +86,13 @@ describe('BackgroundAi', () => {
     expect(await provider.fast.generate(REQUEST)).toEqual({ ok: 'codex' });
     expect([claude.backgrounds, codex.backgrounds]).toEqual([1, 1]);
     expect(provider.status()).toEqual({ state: 'ready', engine: 'codex', modelId: 'codex-default', note: `Claude Code failed: ${reason}` });
+    const ready = (id: Engine['id']): EngineStatus => ({ engine: id, state: 'ready', hint: null });
+    const signedOut: EngineStatus = { engine: 'claude', state: 'signed-out', hint: 'Run claude /login.' };
+    const shown = (statuses: EngineStatus[]) => provider.view(statuses, []).options.map((option) => option.status);
+    // A probe that is not ready already says why.
+    expect([shown([ready('claude'), ready('codex')]), shown([signedOut])]).toEqual([
+      [{ engine: 'claude', state: 'error', hint: `Claude Code failed: ${reason}` }, ready('codex'), null], [signedOut, null, null],
+    ]);
     provider.refresh();
     await expect(provider.fast.generate(REQUEST)).rejects.toThrow('Not logged in');
     expect(claude.backgrounds).toBe(2);
@@ -101,7 +108,7 @@ describe('BackgroundAi', () => {
     expect(await provider.fast.generate(REQUEST)).toEqual({ ok: 'claude' });
   });
 
-  it('an explicit engine runs its chosen model; one that is not ready is off, not auto, and another core on the same home follows the choice', async (t) => {
+  it('an explicit engine runs its chosen model; one that is not ready is off, not auto, with no other to choose when the core runs it alone, and another core on the same home follows the choice', async (t) => {
     const dir = tempDir('bg-ai-', t);
     const engines = () => [engine('claude', 'ready', new ScriptedModel({ a: 1 })), engine('opencode', 'signed-out', null, 'Run opencode auth login.')];
     const other = ai(engines(), dir);
@@ -118,12 +125,17 @@ describe('BackgroundAi', () => {
     writeFileSync(join(dir, 'background-ai.json'), JSON.stringify({ choice: { mode: 'engine', engine: 'claude', model: 'codex:gpt-6' }, onboarded: true }));
     expect(provider.choice()).toEqual({ mode: 'engine', engine: 'claude', model: null });
     // An engine with a reason to run no background call is passed over calmly: no failure, its sentence as the note or the hint.
-    const unverified = 'Codex 0.164.0 is not verified for background use';
+    const unverified = 'Codex 0.164.0 is newer than CodeRay has checked for background calls; chats are not affected';
     const calm = ai([engine('codex', 'ready', unverified), engine('opencode', 'ready', new ScriptedModel({ b: 2 }))], tempDir('bg-ai-', t));
     expect(await calm.fast.generate(REQUEST)).toEqual({ b: 2 });
     expect(calm.status()).toMatchObject({ state: 'ready', engine: 'opencode', note: unverified });
     calm.setChoice({ mode: 'engine', engine: 'codex', model: null });
     await expect(calm.fast.generate(REQUEST)).rejects.toThrow(`${unverified}. Choose another engine in Settings → Background AI.`);
+    // The only engine of the core, with a hint that names it: said once, and no other engine to choose.
+    const only = ai([engine('claude', 'missing', null, 'Install Claude Code: claude is not on the PATH.')], tempDir('bg-ai-', t));
+    only.setChoice({ mode: 'engine', engine: 'claude', model: null });
+    await expect(only.fast.generate(REQUEST)).rejects.toBeInstanceOf(BackgroundAiOff);
+    expect(only.status()).toMatchObject({ state: 'off', hint: 'Install Claude Code: claude is not on the PATH.' });
   });
 
   it('Off makes no call, probes no engine and asks for no re-check, and neither does a ready AI', async (t) => {

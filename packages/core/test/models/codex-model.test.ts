@@ -75,7 +75,7 @@ describe('CodexModel', () => {
     const echoes: [Record<string, string>, string][] = [
       [{ FAKE_CODEX_USER_AGENT: 'codex (fake)' }, 'Codex reports no version CodeRay can read, so it is not verified for background use'],
       [{ FAKE_CODEX_VERSION: '0.159.9' }, 'Codex 0.159.9 is not verified for background use: update Codex to 0.160.0 or newer'],
-      [{ FAKE_CODEX_VERSION: '0.161.0' }, 'Codex 0.161.0 is not verified for background use'],
+      [{ FAKE_CODEX_VERSION: '0.161.0' }, 'Codex 0.161.0 is newer than CodeRay has checked for background calls; chats are not affected'],
       [{ FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' }, 'codex reported sandbox workspaceWrite and approvals "never", not read-only'],
       [{ FAKE_CODEX_ECHO: '{"sandbox":{"type":"readOnly","networkAccess":true}}' }, 'codex reported sandbox readOnly with network access'],
       [{ FAKE_CODEX_ECHO: '{"approvalPolicy":"on-request"}' }, 'codex reported sandbox readOnly and approvals "on-request"'],

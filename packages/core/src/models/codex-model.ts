@@ -68,7 +68,7 @@ export function codexBackgroundProblem(userAgent: string): string | null {
   const version = VERSION.exec(userAgent)?.[1];
   if (version === undefined) return 'Codex reports no version CodeRay can read, so it is not verified for background use';
   if (isOlderVersion(version, MIN_CODEX_VERSION)) return `Codex ${version} is not verified for background use: update Codex to ${MIN_CODEX_VERSION} or newer`;
-  if (!isOlderVersion(version, FIRST_UNVERIFIED_CODEX)) return `Codex ${version} is not verified for background use`;
+  if (!isOlderVersion(version, FIRST_UNVERIFIED_CODEX)) return `Codex ${version} is newer than CodeRay has checked for background calls; chats are not affected`;
   return null;
 }
 
