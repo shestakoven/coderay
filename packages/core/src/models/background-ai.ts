@@ -24,11 +24,12 @@ const firstLine = (text: string): string => hideSecrets(text.split('\n')[0] ?? '
 const sentence = (text: string): string => (/[.!?]$/.test(text) ? text : `${text}.`);
 const cancelled = (): Error => new Error('cancelled');
 
-/** One engine for a person: its own hint when that already opens with the engine's name, else "<Engine> is <state>: <hint>". */
+/** One engine for a person: its own hint when that already opens with the engine's name or "This <Engine> account", else "<Engine> is <state>: <hint>". */
 function engineLine(status: EngineStatus): string {
   const name = ENGINE_PRODUCT_NAMES[status.engine];
   const hint = status.hint === null ? null : firstLine(status.hint);
-  if (hint !== null && (hint.startsWith(name) || hint.startsWith(ENGINE_NAMES[status.engine]))) return hint;
+  const named = (engine: string): boolean => hint !== null && (hint.startsWith(engine) || hint.startsWith(`This ${engine} account`));
+  if (hint !== null && (named(name) || named(ENGINE_NAMES[status.engine]))) return hint;
   return `${name} is ${STATE_WORDS[status.state]}${hint ? `: ${hint}` : ''}`;
 }
 

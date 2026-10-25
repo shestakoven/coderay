@@ -174,6 +174,8 @@ describe('BackgroundAi', () => {
     expect(offHint({ mode: 'auto' }, [missing('claude', 'x'), missing('codex', 'y')], [], new Map())).toBe('No AI engine is installed. Install Claude Code, Codex or opencode and sign in; the map and chat work without one.');
     expect(offHint({ mode: 'engine', engine: 'codex', model: null }, [{ engine: 'codex', state: 'signed-out', hint: 'Codex is signed out: run codex login.' }], [], new Map()))
       .toBe('Codex is signed out: run codex login. Choose another engine in Settings → Background AI.');
+    expect(offHint({ mode: 'engine', engine: 'codex', model: null }, [{ engine: 'codex', state: 'signed-out', hint: 'This Codex account is signed out: add it again.' }], [], new Map()))
+      .toBe('This Codex account is signed out: add it again. Choose another engine in Settings → Background AI.');
     const ready: EngineStatus = { engine: 'codex', state: 'ready', hint: null };
     expect([
       offHint({ mode: 'engine', engine: 'codex', model: null }, [ready], [], new Map([['codex', 'codex turn failed: 401']])),
