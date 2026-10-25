@@ -238,6 +238,7 @@ export class BackgroundAi implements DefaultModelProvider {
     const skipped = [...why.keys()];
     const statuses: EngineStatus[] = [];
     const noModel: EngineId[] = [];
+    const unverified = new Map<EngineId, string>();
     const probe = this.options.status ?? ((engine: Engine) => engine.status());
     for (const id of order) {
       const engine = engines.get(id);
@@ -252,8 +253,18 @@ export class BackgroundAi implements DefaultModelProvider {
       });
       if (background === undefined) continue;
       if (background === null) { noModel.push(id); continue; }
-      const passed = order.slice(0, order.indexOf(id)).filter((other) => skipped.includes(other));
-      const note = passed.length === 0 ? null : passed.map((other) => `${ENGINE_PRODUCT_NAMES[other]} failed: ${why.get(other)}`).join(' · ');
+      // Not a failure: no call was made, so nothing is parked; the engine's sentence stands as its line.
+      if (typeof background === 'string') {
+        unverified.set(id, background);
+        statuses[statuses.length - 1] = { ...status, hint: background };
+        continue;
+      }
+      const passed = order.slice(0, order.indexOf(id)).flatMap((other) => {
+        if (skipped.includes(other)) return [`${ENGINE_PRODUCT_NAMES[other]} failed: ${why.get(other)}`];
+        const reason = unverified.get(other);
+        return reason === undefined ? [] : [firstLine(reason)];
+      });
+      const note = passed.length === 0 ? null : passed.join(' · ');
       return { pick: { engine: id, background }, status: { state: 'ready', engine: id, modelId: background.modelId, note }, seen };
     }
     const reason = choice.mode === 'auto' ? 'none' : 'unavailable';

@@ -73,9 +73,9 @@ describe('CodexModel', () => {
 
   it('refuses a codex it cannot vouch for, or a thread whose echo is not read-only, offline and never asking, before any turn', async (t) => {
     const echoes: [Record<string, string>, string][] = [
-      [{ FAKE_CODEX_USER_AGENT: 'codex (fake)' }, 'CodeRay cannot read codex\'s version in "codex (fake)"'],
-      [{ FAKE_CODEX_VERSION: '0.159.9' }, 'codex 0.159.9 is older than 0.160.0'],
-      [{ FAKE_CODEX_VERSION: '0.161.0' }, 'codex 0.161.0 is newer than the release CodeRay verified background calls with'],
+      [{ FAKE_CODEX_USER_AGENT: 'codex (fake)' }, 'Codex reports no version CodeRay can read, so it is not verified for background use'],
+      [{ FAKE_CODEX_VERSION: '0.159.9' }, 'Codex 0.159.9 is not verified for background use: update Codex to 0.160.0 or newer'],
+      [{ FAKE_CODEX_VERSION: '0.161.0' }, 'Codex 0.161.0 is not verified for background use'],
       [{ FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' }, 'codex reported sandbox workspaceWrite and approvals "never", not read-only'],
       [{ FAKE_CODEX_ECHO: '{"sandbox":{"type":"readOnly","networkAccess":true}}' }, 'codex reported sandbox readOnly with network access'],
       [{ FAKE_CODEX_ECHO: '{"approvalPolicy":"on-request"}' }, 'codex reported sandbox readOnly and approvals "on-request"'],

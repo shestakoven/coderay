@@ -8,13 +8,13 @@ import { tempDir } from '../helpers';
 
 const REQUEST = { prompt: 'p', schema: { type: 'object' } };
 type FakeEngine = Engine & { probes: number; backgrounds: number };
-function engine(id: Engine['id'], state: EngineStatus['state'], model: StructuredModel | null, hint = `${id} hint`): FakeEngine {
+function engine(id: Engine['id'], state: EngineStatus['state'], model: StructuredModel | string | null, hint = `${id} hint`): FakeEngine {
   const fake: FakeEngine = {
     id, capabilities: {} as never, probes: 0, backgrounds: 0,
     status: async () => { fake.probes += 1; return { engine: id, state, hint: state === 'ready' ? null : hint }; },
     listModels: async () => [],
     start: () => { throw new Error('not a chat'); },
-    background: async (choice) => { fake.backgrounds += 1; return model ? { modelId: choice ?? `${id}-default`, model } : null; },
+    background: async (choice) => { fake.backgrounds += 1; return typeof model === 'string' ? model : model ? { modelId: choice ?? `${id}-default`, model } : null; },
   };
   return fake;
 }
@@ -90,6 +90,13 @@ describe('BackgroundAi', () => {
     provider.setChoice({ mode: 'engine', engine: 'claude', model: 'opus' });
     expect(await provider.fast.generate(REQUEST)).toEqual({ a: 1 });
     expect(provider.status()).toMatchObject({ state: 'ready', engine: 'claude', modelId: 'opus' });
+    // An engine with a reason to run no background call is passed over calmly: no failure, its sentence as the note or the hint.
+    const unverified = 'Codex 0.164.0 is not verified for background use';
+    const calm = ai([engine('codex', 'ready', unverified), engine('opencode', 'ready', new ScriptedModel({ b: 2 }))], tempDir('bg-ai-', t));
+    expect(await calm.fast.generate(REQUEST)).toEqual({ b: 2 });
+    expect(calm.status()).toMatchObject({ state: 'ready', engine: 'opencode', note: unverified });
+    calm.setChoice({ mode: 'engine', engine: 'codex', model: null });
+    await expect(calm.fast.generate(REQUEST)).rejects.toThrow(`${unverified}. Choose another engine in Settings → Background AI.`);
   });
 
   it('Off makes no call, probes no engine and asks for no re-check', async (t) => {

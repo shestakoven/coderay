@@ -15,8 +15,11 @@ export interface Engine {
   status(): Promise<EngineStatus>;
   listModels(): Promise<ModelInfo[]>;
   start(launch: Launch, sink: TransportSink): AgentTransport;
-  /** The model a background call runs on: the engine's choice for null, else that model; null when the engine has none such. */
-  background(model: string | null): Promise<BackgroundModel | null>;
+  /**
+   * The model a background call runs on: the engine's choice for null, else that model; null when the engine has none such;
+   * a sentence for a person when this install of the engine runs no background call at all (its version is not verified for it).
+   */
+  background(model: string | null): Promise<BackgroundModel | string | null>;
 }
 
 export class EngineRegistry {

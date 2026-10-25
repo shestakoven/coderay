@@ -61,11 +61,11 @@ export function backgroundPolicyProblem(echo: unknown): string | null {
 }
 
 /** Why this codex may not run a background call: its version unread, older than CodeRay supports, or newer than the tool switches were verified on. */
-function codexVersionProblem(userAgent: string): string | null {
+export function codexBackgroundProblem(userAgent: string): string | null {
   const version = VERSION.exec(userAgent)?.[1];
-  if (version === undefined) return `CodeRay cannot read codex's version in ${JSON.stringify(userAgent)}, so the background call was not run`;
-  if (isOlderVersion(version, MIN_CODEX_VERSION)) return `codex ${version} is older than ${MIN_CODEX_VERSION}: update Codex to run background calls on it`;
-  if (!isOlderVersion(version, FIRST_UNVERIFIED_CODEX)) return `codex ${version} is newer than the release CodeRay verified background calls with, which may bring a tool CodeRay cannot switch off, so the background call was not run`;
+  if (version === undefined) return 'Codex reports no version CodeRay can read, so it is not verified for background use';
+  if (isOlderVersion(version, MIN_CODEX_VERSION)) return `Codex ${version} is not verified for background use: update Codex to ${MIN_CODEX_VERSION} or newer`;
+  if (!isOlderVersion(version, FIRST_UNVERIFIED_CODEX)) return `Codex ${version} is not verified for background use`;
   return null;
 }
 
@@ -136,7 +136,8 @@ export class CodexModel implements StructuredModel {
     if (signal?.aborted) onAbort();
     const within = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, failed]);
     try {
-      const unsupported = codexVersionProblem((await within(handshake(server.rpc))).userAgent);
+      // The engine checked the version at the pick; codex may have been updated since.
+      const unsupported = codexBackgroundProblem((await within(handshake(server.rpc))).userAgent);
       if (unsupported !== null) throw new Error(unsupported);
       const effective = await within(server.rpc.request<ConfigReadResponse>('config/read', { cwd, includeLayers: false }));
       const config = threadConfig(isRecord(effective) && isRecord(effective.config) ? effective.config : {}, { servers: new Set(), config: BACKGROUND_TOOLS_OFF });

@@ -51,15 +51,14 @@ export async function handshake(rpc: JsonRpc): Promise<InitializeResponse> {
 }
 
 /** A short-lived app-server for one question (status, models, sign-out), stopped afterwards whatever happens. */
-export async function withAppServer<T>(command: CodexCommand, cwd: string, ask: (rpc: JsonRpc) => Promise<T>, timeoutMs = PROBE_TIMEOUT_MS): Promise<T> {
+export async function withAppServer<T>(command: CodexCommand, cwd: string, ask: (rpc: JsonRpc, hello: InitializeResponse) => Promise<T>, timeoutMs = PROBE_TIMEOUT_MS): Promise<T> {
   const server = startAppServer(command, { cwd });
   const timer = setTimeout(() => {
     server.rpc.end(new Error(`codex app-server did not answer in ${timeoutMs / 1000} s.`));
     void server.kill();
   }, timeoutMs);
   try {
-    await handshake(server.rpc);
-    return await ask(server.rpc);
+    return await ask(server.rpc, await handshake(server.rpc));
   } finally {
     clearTimeout(timer);
     await server.kill();

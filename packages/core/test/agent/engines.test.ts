@@ -36,14 +36,18 @@ describe('codexEngine', () => {
   it('runs a background call on its fast model, else its default, or on the chosen one from any page of the list, at the lowest effort, never on another engine\'s model, and only with a run directory', async (t) => {
     const dir = tempDir('ide-codex-bg-', t);
     const runDir = join(dir, 'run');
-    const command = fakeCodex(null, join(dir, 'record.jsonl'));
-    const engine = (withRunDir: boolean) => codexEngine({ command: () => command, cwd: dir, signedOut: () => 'signed out', ...(withRunDir ? { runDir } : {}) });
-    const answers = await Promise.all([engine(true).background(null), engine(true).background('codex:gpt-5.6-terra'), engine(true).background('gpt-6-luna'), engine(false).background(null)]);
+    const engine = (withRunDir: boolean, env: Record<string, string> = {}) => codexEngine({ command: () => fakeCodex(null, join(dir, 'record.jsonl'), env), cwd: dir, signedOut: () => 'signed out', ...(withRunDir ? { runDir } : {}) });
+    const answers = await Promise.all([
+      engine(true).background(null), engine(true).background('codex:gpt-5.6-terra'), engine(true).background('gpt-6-luna'), engine(false).background(null),
+      engine(true, { FAKE_CODEX_VERSION: '0.161.0' }).background(null),
+    ]);
     expect(answers).toMatchObject([
       { modelId: 'codex:gpt-6-luna', model: { options: { model: 'gpt-6-luna', effort: 'low', runDir } } },
       { modelId: 'codex:gpt-5.6-terra', model: { options: { model: 'gpt-5.6-terra', effort: 'low', runDir } } },
       null,
       null,
+      // A codex the tool switches were not verified on is a reason, before any call.
+      'Codex 0.161.0 is not verified for background use',
     ]);
   });
 });

@@ -2,7 +2,7 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ENGINE_CAPABILITIES, formatModelId, isEffortFor, parseModelId, type EngineStatus, type ModelInfo } from '@ide/protocol';
 import type { AccountHome } from '../../accounts/account-homes';
-import { CodexModel, pickCodexModel } from '../../models/codex-model';
+import { codexBackgroundProblem, CodexModel, pickCodexModel } from '../../models/codex-model';
 import { withAppServer } from '../codex/app-server';
 import { codexEnv, type CodexCommand } from '../codex/command';
 import type { GetAccountResponse, Model, ModelListResponse } from '../codex/protocol';
@@ -99,8 +99,9 @@ export function codexEngine(options: CodexEngineOptions): Engine {
       const runDir = options.runDir;
       const ref = model === null ? null : parseModelId(model);
       if (runDir === undefined || (model !== null && ref?.engine !== 'codex')) return null;
-      const picked = pickCodexModel(await withAppServer(options.command(), options.cwd, modelList), ref?.model ?? null);
-      if (picked === null) return null;
+      // The version first, from the same app-server: an unverified one is a reason, never a call that fails.
+      const picked = await withAppServer(options.command(), options.cwd, async (rpc, hello) => codexBackgroundProblem(hello.userAgent) ?? pickCodexModel(await modelList(rpc), ref?.model ?? null));
+      if (picked === null || typeof picked === 'string') return picked;
       return {
         modelId: formatModelId({ engine: 'codex', model: picked.id }),
         model: new CodexModel({ command: options.command, model: picked.id, effort: picked.effort, runDir }),
