@@ -28,7 +28,7 @@ const INTERRUPT_SETTLE_MS = 5_000;
 const NOT_HANDLED = -32601;
 const SKILL = /^\/(\S+)(?:\s+([\s\S]*))?$/;
 // Codex's userAgent: "<client>/<version> (…)".
-const VERSION = /\/(\d+\.\d+\.\d+)/;
+export const VERSION = /\/(\d+\.\d+\.\d+)/;
 // What 0.160.0 answers a resume of a thread it keeps no record of: one that never ran a turn, or one the user deleted.
 const NO_ROLLOUT = /^no rollout found for thread id /;
 const INTERRUPTED: StreamEvent = { type: 'result', subtype: 'error_during_execution', origin: null };

@@ -6,19 +6,26 @@ import type { CodexCommand } from '../agent/codex/command';
 import type { ConfigReadResponse, JsonValue, Model, ThreadStartResponse, Turn, TurnStartResponse } from '../agent/codex/protocol';
 import type { IncomingRequest } from '../agent/codex/rpc';
 import { hideSecrets } from '../agent/codex/secrets';
-import { threadConfig } from '../agent/codex/transport';
+import { threadConfig, VERSION } from '../agent/codex/transport';
+import { isOlderVersion, MIN_CODEX_VERSION } from '../agent/tools';
 import { isRecord } from '../json';
 import { structuredOutput } from './structured-output';
 import type { GenerateOptions, StructuredModel, StructuredRequest } from './types';
 
 export const CODEX_FAST_PATTERN = /mini|nano/i;
 /**
- * The thread keys codex-cli 0.160 takes to switch off what a JSON answer never needs (docs/spike/2026-10-19-background-ai-verified.md, Q2):
- * the shell, web search, local image reads and goals; and the login-shell snapshot, which runs the user's dotfiles and writes into the Codex home.
+ * Every tool switch codex-cli 0.160 takes as a thread key (docs/spike/2026-10-19-background-ai-verified.md, Q2, the "all off" set), whatever
+ * the user's own config turns on: a JSON answer needs none of them. The login-shell snapshot runs the user's dotfiles and writes into the Codex home.
  */
 export const BACKGROUND_TOOLS_OFF: Record<string, JsonValue> = {
-  'features.shell_tool': false, web_search: 'disabled', 'features.view_image': false, 'features.goals': false, 'features.shell_snapshot': false,
+  'features.shell_tool': false, 'features.unified_exec': false, 'features.code_mode_host': false, 'features.multi_agent': false,
+  'features.goals': false, 'features.sleep_tool': false, 'features.image_generation': false, 'features.view_image': false,
+  'features.browser_use': false, 'features.computer_use': false, 'features.in_app_browser': false,
+  'features.tool_suggest': false, 'features.skill_search': false, 'features.shell_snapshot': false,
+  web_search: 'disabled', 'tools.web_search': false,
 };
+/** The first codex release `BACKGROUND_TOOLS_OFF` was not verified against: a later release may bring a tool no key here switches off. */
+export const FIRST_UNVERIFIED_CODEX = '0.161.0';
 export const BACKGROUND_INSTRUCTIONS = 'Answer with one JSON document only. Do not run commands, read files, search the web or call tools: everything you need is in the message.';
 /** The item types a plain answer emits (spike Q2); any other one is a tool starting. */
 const ANSWER_ITEMS: ReadonlySet<string> = new Set(['agentMessage', 'reasoning', 'userMessage']);
@@ -51,6 +58,15 @@ export function backgroundPolicyProblem(echo: unknown): string | null {
   const offline = sandbox.networkAccess === undefined || sandbox.networkAccess === false;
   if (sandbox.type === 'readOnly' && offline && echo.approvalPolicy === 'never') return null;
   return `codex reported sandbox ${String(sandbox.type)}${offline ? '' : ' with network access'} and approvals ${JSON.stringify(echo.approvalPolicy)}, not read-only and never asking, so the background call was not run`;
+}
+
+/** Why this codex may not run a background call: its version unread, older than CodeRay supports, or newer than the tool switches were verified on. */
+function codexVersionProblem(userAgent: string): string | null {
+  const version = VERSION.exec(userAgent)?.[1];
+  if (version === undefined) return `CodeRay cannot read codex's version in ${JSON.stringify(userAgent)}, so the background call was not run`;
+  if (isOlderVersion(version, MIN_CODEX_VERSION)) return `codex ${version} is older than ${MIN_CODEX_VERSION}: update Codex to run background calls on it`;
+  if (!isOlderVersion(version, FIRST_UNVERIFIED_CODEX)) return `codex ${version} is newer than the release CodeRay verified background calls with, which may bring a tool CodeRay cannot switch off, so the background call was not run`;
+  return null;
 }
 
 /** A background turn grants nothing: every approval, permission or elicitation request is declined. */
@@ -119,7 +135,8 @@ export class CodexModel implements StructuredModel {
     if (signal?.aborted) onAbort();
     const within = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, failed]);
     try {
-      await within(handshake(server.rpc));
+      const unsupported = codexVersionProblem((await within(handshake(server.rpc))).userAgent);
+      if (unsupported !== null) throw new Error(unsupported);
       const effective = await within(server.rpc.request<ConfigReadResponse>('config/read', { cwd, includeLayers: false }));
       const config = threadConfig(isRecord(effective) && isRecord(effective.config) ? effective.config : {}, { servers: new Set(), config: BACKGROUND_TOOLS_OFF });
       if (typeof config === 'string') throw new Error(config);

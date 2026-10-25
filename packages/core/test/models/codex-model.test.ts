@@ -29,7 +29,11 @@ describe('CodexModel', () => {
     // node_repl is fake-codex's default user server: a JS REPL that would run outside the sandbox.
     expect(thread!.config).toMatchObject({
       'mcp_servers.node_repl.enabled': false, 'features.apps': false, 'features.plugins': false,
-      'features.shell_tool': false, web_search: 'disabled', 'features.view_image': false, 'features.goals': false, 'features.shell_snapshot': false,
+      'features.shell_tool': false, 'features.unified_exec': false, 'features.code_mode_host': false, 'features.multi_agent': false,
+      'features.goals': false, 'features.sleep_tool': false, 'features.image_generation': false, 'features.view_image': false,
+      'features.browser_use': false, 'features.computer_use': false, 'features.in_app_browser': false,
+      'features.tool_suggest': false, 'features.skill_search': false, 'features.shell_snapshot': false,
+      web_search: 'disabled', 'tools.web_search': false,
     });
     expect(String(thread!.cwd)).toMatch(/model-\d+-/);
     const [turn] = sent(records(dir), 'turn/start') as Record<string, unknown>[];
@@ -61,8 +65,11 @@ describe('CodexModel', () => {
     expect(leftovers(exited)).toEqual([]);
   });
 
-  it('refuses a thread whose echo is not read-only, offline and never asking, before any turn', async (t) => {
+  it('refuses a codex it cannot vouch for, or a thread whose echo is not read-only, offline and never asking, before any turn', async (t) => {
     const echoes: [Record<string, string>, string][] = [
+      [{ FAKE_CODEX_USER_AGENT: 'codex (fake)' }, 'CodeRay cannot read codex\'s version in "codex (fake)"'],
+      [{ FAKE_CODEX_VERSION: '0.159.9' }, 'codex 0.159.9 is older than 0.160.0'],
+      [{ FAKE_CODEX_VERSION: '0.161.0' }, 'codex 0.161.0 is newer than the release CodeRay verified background calls with'],
       [{ FAKE_CODEX_ECHO_SANDBOX: 'workspace-write' }, 'codex reported sandbox workspaceWrite and approvals "never", not read-only'],
       [{ FAKE_CODEX_ECHO: '{"sandbox":{"type":"readOnly","networkAccess":true}}' }, 'codex reported sandbox readOnly with network access'],
       [{ FAKE_CODEX_ECHO: '{"approvalPolicy":"on-request"}' }, 'codex reported sandbox readOnly and approvals "on-request"'],
