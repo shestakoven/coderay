@@ -54,6 +54,7 @@
 | `FAKE_OPENCODE_UNKNOWN_MODEL=1` | Every prompt gets `session.status` busy, `session.error` `UnknownError` "Model not found: <provider>/<model>. Did you mean: …" (1.19's words for a model of a provider it has not connected) and `session.idle`. |
 | `FAKE_OPENCODE_GONE=<id>` | `GET /session/<id>` is 404. |
 | `FAKE_OPENCODE_SESSION_FAIL=1` | `POST /session` answers 500. |
+| `FAKE_OPENCODE_SESSION_HOLD_MS` | `POST /session` answers this many milliseconds after it created the session (default 20). |
 | `FAKE_OPENCODE_PROMPT_FAIL=1` | `/session/:id/prompt_async` and `/command` answer 400 after the prompt is recorded. |
 | `FAKE_OPENCODE_REPLIED=1` | At the first prompt, before its turn plays, a `permission.replied` `once` nobody asked for (`per_nobody`): the tripwire; `=reject` replies `reject`. |
 | `FAKE_OPENCODE_RULES_FLIP=1` | After the first prompt `build` gains a last rule `edit * allow`: the per-prompt self-check. |

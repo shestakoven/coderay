@@ -320,7 +320,7 @@ const server = createServer(async (req, res) => {
     record({ session: { id: s.id, permission: s.permission } });
     send('session.created', { sessionID: s.id, info: info(s) });
     // The event can come before the answer, as from a busy 1.19.
-    setTimeout(() => json(res, 200, info(s)), 20);
+    setTimeout(() => json(res, 200, info(s)), Number(env.FAKE_OPENCODE_SESSION_HOLD_MS ?? 20));
     return;
   }
   let s;

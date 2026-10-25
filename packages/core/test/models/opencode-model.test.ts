@@ -71,6 +71,13 @@ describe('OpencodeModel', () => {
     starting.abort();
     expect([await started, prompts(early), leftovers(early)]).toEqual(['cancelled', [], []]);
     expect([await failure(model('structured', before).generate(ASK, { signal: AbortSignal.abort() })), records(before)]).toEqual(['cancelled', []]);
+    // One while the session is being made: the session the server makes anyway is deleted, not left in the account's history.
+    const making = tempDir('bg-opencode-', t);
+    const midway = new AbortController();
+    const made = failure(model('structured', making, { FAKE_OPENCODE_SESSION_HOLD_MS: '300' }).generate(ASK, { signal: midway.signal }));
+    await waitFor(() => requests(records(making), 'POST', '/session').length > 0, 'the session asked for');
+    midway.abort();
+    expect([await made, prompts(making), requests(records(making), 'DELETE', /^\/session\/[^/]+$/).length, leftovers(making)]).toEqual(['cancelled', [], 1, []]);
   });
 
   it("fails at once with opencode's reason, the server's password and keys hidden: a failed turn, a retry only after the deadline, the timeout", async (t) => {

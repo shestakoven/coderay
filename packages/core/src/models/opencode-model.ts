@@ -76,6 +76,7 @@ export class OpencodeModel implements StructuredModel {
     let server: OpencodeServer | null = null;
     let client: OpencodeClient | null = null;
     let sessionId: string | null = null;
+    let creating: Promise<string> | null = null;
     try {
       // The chat's server, the probe's and other projects' cores share one database: a busy start is tried again.
       for (let attempt = 0; client === null; attempt += 1) {
@@ -93,7 +94,8 @@ export class OpencodeModel implements StructuredModel {
       const toolOutput = toolOutputGlob(opencodeEnv(command));
       const problem = selfCheck({ agents, config, toolIds }, { mcp: {}, toolOutput, shell }) ?? denyAllProblem(agents, toolOutput);
       if (problem !== null) throw new Error(typeof problem === 'string' ? problem : `opencode's agent ${problem.agent} would ${problem.action} ${problem.permission} ${problem.pattern}`);
-      sessionId = (await within(client.post<{ id: string }>('/session', { title: SESSION_TITLE, permission: DENY_ALL }))).id;
+      creating = client.post<{ id: string }>('/session', { title: SESSION_TITLE, permission: DENY_ALL }).then((session) => session.id);
+      sessionId = await within(creating);
       await within(watchRetries(client, deadline, fail, watching.signal));
       const text = await within(this.ask(client, sessionId, `${request.prompt}\n\nJSON Schema of the answer:\n${JSON.stringify(request.schema)}`));
       try {
@@ -109,6 +111,10 @@ export class OpencodeModel implements StructuredModel {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       watching.abort();
+      // A session the server goes on to create after the call gave up on it would stay in the account's history: it is deleted too.
+      if (sessionId === null && creating !== null) {
+        sessionId = await Promise.race([creating.catch(() => null), new Promise<null>((resolve) => setTimeout(resolve, CLEANUP_MS, null).unref())]);
+      }
       if (client !== null && sessionId !== null) await client.del(`/session/${sessionId}`, CLEANUP_MS).catch(() => undefined);
       await server?.kill();
       await rm(cwd, { recursive: true, force: true });
