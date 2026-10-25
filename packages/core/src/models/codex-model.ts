@@ -90,7 +90,6 @@ export class CodexModel implements StructuredModel {
         if (!isRecord(params)) return;
         if (method === 'turn/started' && isRecord(params.turn) && typeof params.turn.id === 'string') turnId = params.turn.id;
         if (method === 'item/started' && isRecord(params.item) && !ANSWER_ITEMS.has(String(params.item.type))) {
-          if (turnId === null && typeof params.turnId === 'string') turnId = params.turnId;
           stopWith(new Error(`codex tried to run a tool in a background call (${String(params.item.type)})`));
         }
         // Every server the configuration defines is switched off: one that starts anyway is not CodeRay's to trust.
@@ -116,6 +115,8 @@ export class CodexModel implements StructuredModel {
     const timer = setTimeout(() => stopWith(new Error(`codex did not answer in ${timeoutMs / 1000} s`)), timeoutMs);
     const onAbort = (): void => stopWith(cancelled());
     signal?.addEventListener('abort', onAbort, { once: true });
+    // An abort while the directory was made fired no listener yet.
+    if (signal?.aborted) onAbort();
     const within = <T>(promise: Promise<T>): Promise<T> => Promise.race([promise, failed]);
     try {
       await within(handshake(server.rpc));

@@ -1,5 +1,9 @@
 {"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"userMessage","id":"user-1","clientId":null,"content":[{"type":"text","text":"Say hi","text_elements":[]}]}}}
 {"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"reasoning","id":"rs-1","summary":[],"content":[]}}}
+{"request":"item/commandExecution/requestApproval","params":{"kind":"command","threadId":"$THREAD","turnId":"$TURN","itemId":"cmd-1","command":"/bin/zsh -lc 'cat ~/.ssh/id_ed25519'","cwd":"$CWD","availableDecisions":["accept","decline"]}}
+{"request":"item/permissions/requestApproval","params":{"threadId":"$THREAD","turnId":"$TURN","itemId":"cmd-1","reason":null,"permissions":{"network":{"enabled":true}}}}
+{"request":"mcpServer/elicitation/request","params":{"threadId":"$THREAD","turnId":"$TURN","serverName":"node_repl","mode":"form","message":"Allow node_repl to run?","_meta":{"codex_approval_kind":"mcp_tool_call"}}}
+{"request":"applyPatchApproval","params":{"conversationId":"$THREAD","callId":"p","fileChanges":{},"reason":null,"grantRoot":null}}
 {"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-0","text":"","phase":"commentary"}}}
 {"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-0","text":"Reading the request.","phase":"commentary"}}}
 {"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"","phase":"final_answer"}}}
