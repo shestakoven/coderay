@@ -13,6 +13,8 @@ import type { GenerateOptions, StructuredModel, StructuredRequest } from './type
 
 export const JSON_SYSTEM_PROMPT = 'You answer with exactly one JSON document that fits the JSON Schema given in the message, and nothing else: no prose, no code fence. You have no tools; do not try to run commands or read files.';
 const RETRY_NOTE = 'Your previous answer was not valid JSON for the schema. Answer again with one JSON document only.';
+// 1.19 titles only a session that has none, with a second model call that also carries the prompt (spike Q7).
+const SESSION_TITLE = 'CodeRay background call';
 const CHEAP = /mini|flash|lite|haiku|free/i;
 const CLEANUP_MS = 2_000;
 const cancelled = (): Error => new Error('cancelled');
@@ -90,7 +92,7 @@ export class OpencodeModel implements StructuredModel {
       const toolOutput = toolOutputGlob(opencodeEnv(command));
       const problem = selfCheck({ agents, config, toolIds }, { mcp: {}, toolOutput, shell }) ?? denyAllProblem(agents, toolOutput);
       if (problem !== null) throw new Error(typeof problem === 'string' ? problem : `opencode's agent ${problem.agent} would ${problem.action} ${problem.permission} ${problem.pattern}`);
-      sessionId = (await within(client.post<{ id: string }>('/session', { permission: DENY_ALL }))).id;
+      sessionId = (await within(client.post<{ id: string }>('/session', { title: SESSION_TITLE, permission: DENY_ALL }))).id;
       await within(watchRetries(client, deadline, fail, watching.signal));
       const text = await within(this.ask(client, sessionId, `${request.prompt}\n\nJSON Schema of the answer:\n${JSON.stringify(request.schema)}`));
       try {

@@ -28,7 +28,8 @@ describe('OpencodeModel', () => {
       mcp: { github: { enabled: false } }, share: 'disabled', autoupdate: false, lsp: false, formatter: false, snapshot: false,
       shell: expect.stringContaining(`${dir}/opencode-shell/`), small_model: 'opencode/nemotron-3.5-lightning-free',
     });
-    expect(requests(records(dir), 'POST', '/session')[0]!.body).toEqual({ permission: [{ permission: '*', pattern: '*', action: 'deny' }] });
+    // A session with a title of its own costs no second model call to title it.
+    expect(requests(records(dir), 'POST', '/session')[0]!.body).toEqual({ title: 'CodeRay background call', permission: [{ permission: '*', pattern: '*', action: 'deny' }] });
     const [prompt] = prompts(dir);
     expect(prompt!.body).toMatchObject({
       agent: 'build', model: { providerID: 'opencode', modelID: 'nemotron-3.5-lightning-free' }, system: expect.stringContaining('exactly one JSON document'),
