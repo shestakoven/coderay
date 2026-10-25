@@ -81,7 +81,7 @@ describe('describeMapStatus', () => {
     ]);
   });
 
-  it('names the engine behind a ready AI map, and a grouping that failed on an engine Auto has since passed over is calm', () => {
+  it('names the engine behind a ready AI map, and a grouping that failed on an engine Auto has since passed over is calm, not one that failed on the engine in use', () => {
     const note = 'Claude Code failed: Not logged in';
     const ready = { state: 'ready', engine: 'codex', modelId: 'codex:x', note } as const;
     const [chip] = describeMapStatus(status({ layer: 'ai', groupedAt: 'T1', backgroundAi: ready }));
@@ -91,7 +91,10 @@ describe('describeMapStatus', () => {
       { text: 'folder map', tone: 'muted', title: `Components are folders until an AI grouping succeeds\nBackground AI: Codex\n${note}` },
       { text: 'grouping moves to Codex', tone: 'muted', title: `${note}\nThe next grouping runs on Codex; Regroup runs it now.` },
     ]);
-    expect(describeMapStatus(status({ grouping: 'failed', groupingError: 'Not logged in', backgroundAi: { ...ready, note: null } }))[1]).toEqual({ text: 'grouping failed', tone: 'error', title: 'Not logged in' });
+    // A note with no failure is an engine passed over before any call: the failure was the engine in use's.
+    const unverified = 'Codex 0.164.0 is newer than CodeRay has checked for background calls; chats are not affected';
+    expect([null, unverified].map((other) => describeMapStatus(status({ grouping: 'failed', groupingError: 'Not logged in', backgroundAi: { ...ready, engine: 'opencode', note: other } }))[1]))
+      .toEqual([{ text: 'grouping failed', tone: 'error', title: 'Not logged in' }, { text: 'grouping failed', tone: 'error', title: 'Not logged in' }]);
   });
 });
 

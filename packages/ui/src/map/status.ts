@@ -52,9 +52,9 @@ function offChip(ai: Extract<BackgroundAiStatus, { state: 'off' }>): StatusChip 
   return { text: ai.reason === 'none' ? 'AI off · no engine' : 'AI off', tone: 'muted', title: ai.hint };
 }
 
-// Any failed call parks its engine and Auto picks again: with a note, the failure was the passed-over engine's, and the next grouping is the ready one's.
+// Any failed call parks its engine and Auto picks again: with a failure in the note, it was the passed-over engine's, and the next grouping is the ready one's.
 function failedChip({ groupingError }: MapStatus, ai: BackgroundAiStatus): StatusChip {
-  if (ai.state === 'ready' && ai.note !== null) {
+  if (ai.state === 'ready' && ai.note !== null && ai.note.includes('failed:')) {
     const engine = ENGINE_PRODUCT_NAMES[ai.engine];
     return { text: `grouping moves to ${engine}`, tone: 'muted', title: `${ai.note}\nThe next grouping runs on ${engine}; Regroup runs it now.` };
   }
