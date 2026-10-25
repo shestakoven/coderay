@@ -1,6 +1,7 @@
 // Opt-in re-check of the Codex engine on the real binary (`pnpm engines:smoke [--codex <path>] [--model <id>] [--only <name>] [--dry-run]`), and the
 // re-verification when the pinned version moves. Runs under the System account in a scratch project and deletes the threads it made.
-// `--engine opencode [--opencode <path>]` re-checks opencode instead (scripts/opencode-smoke.ts).
+// `--engine opencode [--opencode <path>]` re-checks opencode instead (scripts/opencode-smoke.ts); `--engine background` the background AI on
+// real cores in scratch homes (scripts/background-smoke.ts).
 // Never part of `pnpm check`. PASS and FAIL check what CodeRay relies on; INFO records what codex does where CodeRay holds either way.
 // --dry-run asks the model nothing: it checks the cleanup's guard and the diagnostics tap, and says what the cleanup would delete.
 import { execFileSync, spawn } from 'node:child_process';
@@ -29,12 +30,20 @@ import { isAlive } from '../src/os-process';
 const { values } = parseArgs({ options: {
   engine: { type: 'string', default: 'codex' }, codex: { type: 'string', default: 'codex' }, opencode: { type: 'string', default: 'opencode' },
   model: { type: 'string' }, only: { type: 'string' }, 'dry-run': { type: 'boolean', default: false },
+  claude: { type: 'string', default: 'claude' }, 'ide-home': { type: 'string' }, port: { type: 'string', default: '4319' }, keep: { type: 'boolean', default: false },
 } });
 if (values.engine === 'opencode') {
   const { runOpencodeSmoke } = await import('./opencode-smoke');
   process.exit(await runOpencodeSmoke({ opencode: values.opencode, model: values.model ?? 'opencode/nemotron-3.5-lightning-free', only: values.only }));
 }
-if (values.engine !== 'codex') throw new Error(`--engine is codex or opencode, not ${values.engine}`);
+if (values.engine === 'background') {
+  const { runBackgroundSmoke } = await import('./background-smoke');
+  process.exit(await runBackgroundSmoke({
+    claude: values.claude, codex: values.codex, opencode: values.opencode, model: values.model ?? 'opencode/nemotron-3.5-lightning-free', ideHome: values['ide-home'],
+    port: Number(values.port), only: values.only, keep: values.keep,
+  }));
+}
+if (values.engine !== 'codex') throw new Error(`--engine is codex, opencode or background, not ${values.engine}`);
 const codex = codexCommand(values.codex);
 const model = values.model ?? 'gpt-6-luna';
 const allow: HookAnswer = { permissionDecision: 'allow', permissionDecisionReason: 'smoke' };
