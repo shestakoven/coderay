@@ -121,6 +121,8 @@ describe('denyAllProblem', () => {
       denyAllProblem(echo(), TOOL_OUTPUT),
       denyAllProblem(echo({ build: [rule('external_directory', '/etc/*', 'allow')] }), TOOL_OUTPUT),
       denyAllProblem(echo({ plan: [rule('bash', '*', 'ask')] }), TOOL_OUTPUT),
-    ]).toEqual([null, "opencode's agent build would allow external_directory /etc/*", "opencode's agent plan would ask bash *"]);
+      // An ask of everything is no anchor: nobody answers it.
+      denyAllProblem(echo({ explore: [rule('*', '*', 'ask')] }), TOOL_OUTPUT),
+    ]).toEqual([null, "opencode's agent build would allow external_directory /etc/*", "opencode's agent plan would ask bash *", "opencode's agent explore would ask * *"]);
   });
 });

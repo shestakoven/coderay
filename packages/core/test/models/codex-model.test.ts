@@ -25,7 +25,7 @@ describe('CodexModel', () => {
     const dir = tempDir('bg-codex-', t);
     expect(await model('structured', dir).generate(ASK)).toEqual({ answer: 'hi' });
     const [thread] = sent(records(dir), 'thread/start') as Record<string, any>[];
-    expect(thread).toMatchObject({ ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never', developerInstructions: expect.stringContaining('JSON document only') });
+    expect(thread).toMatchObject({ ephemeral: true, sandbox: 'read-only', approvalPolicy: 'never', approvalsReviewer: 'user', developerInstructions: expect.stringContaining('JSON document only') });
     // node_repl is fake-codex's default user server: a JS REPL that would run outside the sandbox.
     expect(thread!.config).toMatchObject({
       'mcp_servers.node_repl.enabled': false, 'features.apps': false, 'features.plugins': false,
@@ -37,7 +37,7 @@ describe('CodexModel', () => {
     });
     expect(String(thread!.cwd)).toMatch(/model-\d+-/);
     const [turn] = sent(records(dir), 'turn/start') as Record<string, unknown>[];
-    expect(turn).toMatchObject({ outputSchema: SCHEMA, effort: 'low', approvalPolicy: 'never', sandboxPolicy: { type: 'readOnly', networkAccess: false }, model: 'gpt-5.1-codex-mini' });
+    expect(turn).toMatchObject({ outputSchema: SCHEMA, effort: 'low', approvalPolicy: 'never', approvalsReviewer: 'user', sandboxPolicy: { type: 'readOnly', networkAccess: false }, model: 'gpt-5.1-codex-mini' });
     expect(records(dir).flatMap((record) => (record.reply ? [record.reply] : []))).toEqual([
       { method: 'item/commandExecution/requestApproval', result: { decision: 'decline' } },
       { method: 'item/permissions/requestApproval', result: { permissions: {}, scope: 'turn' } },
@@ -61,7 +61,10 @@ describe('CodexModel', () => {
     await expect(model(scenario(failed, [{ fake: 'fail', message: 'unexpected status 401 Unauthorized: Bearer sk-proj-abcdefghijklmnopqrstuvwxyz' }]), failed).generate(ASK))
       .rejects.toThrow(/^codex turn failed: unexpected status 401 Unauthorized: \[key hidden\]$/);
     const exited = tempDir('bg-codex-', t);
-    await expect(model(scenario(exited, [{ fake: 'exit', code: 1 }]), exited, {}, 60_000).generate(ASK)).rejects.toThrow('codex app-server stopped before it answered');
+    // A model that lists no effort sends none.
+    const noEffort = new CodexModel({ command: () => fakeCodex(scenario(exited, [{ fake: 'exit', code: 1 }]), join(exited, 'record.jsonl')), model: 'm', effort: null, runDir: exited, timeoutMs: 60_000 });
+    await expect(noEffort.generate(ASK)).rejects.toThrow('codex app-server stopped before it answered');
+    expect(sent(records(exited), 'turn/start')[0]).not.toHaveProperty('effort');
     expect(leftovers(exited)).toEqual([]);
     const gone = tempDir('bg-codex-', t);
     await expect(new CodexModel({ command: () => { throw new Error('codex is gone'); }, model: 'm', effort: null, runDir: gone }).generate(ASK)).rejects.toThrow('codex is gone');

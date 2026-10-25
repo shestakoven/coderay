@@ -91,8 +91,8 @@ export class CodexModel implements StructuredModel {
     const timeoutMs = this.options.timeoutMs ?? 300_000;
     let threadId: string | null = null;
     let turnId: string | null = null;
-    let reported: string | null = null;
-    const answers: { text: string; final: boolean }[] = [];
+    // The turn's last message is its answer: codex sends the final one after any commentary.
+    const answers: string[] = [];
     // One reason ends the call early (a tool or an MCP server started, the timeout, an abort); the first one wins.
     let stopped: Error | null = null;
     let fail: (reason: Error) => void = () => undefined;
@@ -113,9 +113,8 @@ export class CodexModel implements StructuredModel {
         // Every server the configuration defines is switched off: one that starts anyway is not CodeRay's to trust.
         if (method === 'mcpServer/startupStatus/updated') stopWith(new Error(`codex started an MCP server in a background call (${String(params.name)})`));
         if (method === 'item/completed' && isRecord(params.item) && params.item.type === 'agentMessage' && typeof params.item.text === 'string') {
-          answers.push({ text: params.item.text, final: params.item.phase === 'final_answer' });
+          answers.push(params.item.text);
         }
-        if (method === 'error' && isRecord(params.error) && typeof params.error.message === 'string' && params.willRetry !== true) reported = params.error.message;
         if (method === 'turn/completed' && isRecord(params.turn)) settle(params.turn as unknown as Turn);
       },
     });
@@ -157,10 +156,10 @@ export class CodexModel implements StructuredModel {
       if (turnId === null && isRecord(started) && isRecord(started.turn) && typeof started.turn.id === 'string') turnId = started.turn.id;
       const turn = await within(ended);
       if (stopped !== null) throw stopped;
-      if (turn.status !== 'completed') throw new Error(`codex turn ${turn.status}: ${turn.error?.message ?? reported ?? 'no reason given'}`);
-      const answer = answers.find((candidate) => candidate.final) ?? answers.at(-1);
+      if (turn.status !== 'completed') throw new Error(`codex turn ${turn.status}: ${turn.error?.message ?? 'no reason given'}`);
+      const answer = answers.at(-1);
       if (answer === undefined) throw new Error('codex ended the turn without a message');
-      return structuredOutput(answer.text, request.schema);
+      return structuredOutput(answer, request.schema);
     } catch (caught) {
       if (signal?.aborted) throw cancelled();
       const reason = stopped ?? caught;
