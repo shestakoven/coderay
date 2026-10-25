@@ -24,7 +24,10 @@ export const BACKGROUND_TOOLS_OFF: Record<string, JsonValue> = {
   'features.tool_suggest': false, 'features.skill_search': false, 'features.shell_snapshot': false,
   web_search: 'disabled', 'tools.web_search': false,
 };
-/** The first codex release `BACKGROUND_TOOLS_OFF` was not verified against: a later release may bring a tool no key here switches off. */
+/**
+ * The first codex release `BACKGROUND_TOOLS_OFF` was not verified against: a later release may bring a tool no key here switches off.
+ * 0.163 and 0.164 do: code mode's `exec` offers list_mcp_resources, list_mcp_resource_templates and read_mcp_resource whatever the keys.
+ */
 export const FIRST_UNVERIFIED_CODEX = '0.161.0';
 export const BACKGROUND_INSTRUCTIONS = 'Answer with one JSON document only. Do not run commands, read files, search the web or call tools: everything you need is in the message.';
 /** The item types a plain answer emits (spike Q2); any other one is a tool starting. */
