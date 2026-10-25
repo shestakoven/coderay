@@ -10,6 +10,10 @@ export interface ClaudeCliOptions {
   runDir: string;
   claudePath?: string;
   env?: () => Readonly<Record<string, string>>;
+  /** The whole environment, in place of the core's own with `env` over it. */
+  baseEnv?: () => NodeJS.ProcessEnv;
+  /** Arguments before claude's own, such as the active account's. */
+  leadingArgs?: string[];
   timeoutMs?: number;
   retryDelaysMs?: number[];
   wait?: (ms: number, signal?: AbortSignal) => Promise<unknown>;
@@ -51,6 +55,8 @@ export class ClaudeCliModel implements StructuredModel {
   private readonly runDir: string;
   private readonly claudePath: string;
   private readonly env: (() => Readonly<Record<string, string>>) | undefined;
+  private readonly baseEnv: (() => NodeJS.ProcessEnv) | undefined;
+  private readonly leadingArgs: string[];
   private readonly timeoutMs: number;
   private readonly retryDelaysMs: number[];
   private readonly wait: (ms: number, signal?: AbortSignal) => Promise<unknown>;
@@ -60,6 +66,8 @@ export class ClaudeCliModel implements StructuredModel {
     this.runDir = options.runDir;
     this.claudePath = options.claudePath ?? 'claude';
     this.env = options.env;
+    this.baseEnv = options.baseEnv;
+    this.leadingArgs = options.leadingArgs ?? [];
     this.timeoutMs = options.timeoutMs ?? 300_000;
     this.retryDelaysMs = options.retryDelaysMs ?? [2000, 8000];
     this.wait = options.wait ?? ((ms, signal) => sleep(ms, undefined, { signal }));
@@ -96,7 +104,7 @@ export class ClaudeCliModel implements StructuredModel {
 
   private exec(cwd: string, prompt: string, args: string[], signal: AbortSignal | undefined): Promise<string> {
     return new Promise((resolve, reject) => {
-      const child = spawn(this.claudePath, args, { cwd, env: { ...process.env, ...this.env?.() }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
+      const child = spawn(this.claudePath, [...this.leadingArgs, ...args], { cwd, env: this.baseEnv?.() ?? { ...process.env, ...this.env?.() }, stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       const stdout: Buffer[] = [];
       let stdoutBytes = 0;
       let stderr = '';

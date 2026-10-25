@@ -222,11 +222,12 @@ export class AgentSession {
     this.blobs = new BlobStore(projectDir(options.home, options.root));
     const { codex, opencode } = options;
     this.engines = options.engines ?? new EngineRegistry([
-      claudeEngine({ command: () => this.activeClaude(), cwd: options.root, account: () => this.options.accounts?.claude?.activeLabel() ?? null }),
+      claudeEngine({ command: () => this.activeClaude(), cwd: options.root, account: () => this.options.accounts?.claude?.activeLabel() ?? null, runDir: runDir(options.home) }),
       ...(codex ? [codexEngine({
         command: () => codexUnder(codex, this.accountHome('codex', this.activeAccount('codex'))), cwd: options.root,
         signedOut: () => signedOutHint(this.accountHome('codex', this.activeAccount('codex'))),
         account: () => this.options.accounts?.codex?.activeLabel() ?? null,
+        runDir: runDir(options.home),
       })] : []),
       ...(opencode ? [opencodeEngine({
         command: () => opencodeUnder(opencode, this.accountHome('opencode', this.activeAccount('opencode'))), cwd: options.root,

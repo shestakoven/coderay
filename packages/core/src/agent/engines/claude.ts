@@ -1,7 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { ENGINE_CAPABILITIES, type EngineStatus } from '@ide/protocol';
+import { ENGINE_CAPABILITIES, parseModelId, type EngineStatus } from '@ide/protocol';
 import { fetchModels } from '../../models/catalog';
+import { ClaudeCliModel } from '../../models/claude-cli';
 import { claudeEnv, type ClaudeCommand } from '../claude-process';
 import { startSdkTransport } from '../sdk-transport';
 import { isOlderVersion, MIN_CLAUDE_VERSION } from '../tools';
@@ -16,6 +17,8 @@ export interface ClaudeEngineOptions {
   cwd: string;
   /** The active account's name, or null while Claude has no account of CodeRay's. */
   account?: () => string | null;
+  /** The core's run directory, where a background call runs; without it the engine runs none. */
+  runDir?: string;
 }
 
 export function claudeEngine(options: ClaudeEngineOptions): Engine {
@@ -31,6 +34,17 @@ export function claudeEngine(options: ClaudeEngineOptions): Engine {
     start: (launch, sink) => {
       if (!('claude' in launch)) throw new Error(`The Claude engine cannot start a ${launch.engine} chat.`);
       return startSdkTransport(launch, sink);
+    },
+    background: async (model) => {
+      const runDir = options.runDir;
+      const value = model ?? 'haiku';
+      if (runDir === undefined || parseModelId(value)?.engine !== 'claude') return null;
+      const command = options.command();
+      // claudeEnv is the whole environment: merged over the core's, it would bring back what claudeUnder removed.
+      return {
+        modelId: value,
+        model: new ClaudeCliModel({ model: value, runDir, claudePath: command.command, leadingArgs: command.args, baseEnv: () => claudeEnv(options.command()) }),
+      };
     },
   };
 }

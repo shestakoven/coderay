@@ -2,9 +2,11 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { ENGINE_CAPABILITIES, formatModelId, isEffortFor, parseModelId, type EngineStatus, type ModelInfo } from '@ide/protocol';
 import type { AccountHome } from '../../accounts/account-homes';
+import { CodexModel, pickCodexModel } from '../../models/codex-model';
 import { withAppServer } from '../codex/app-server';
 import { codexEnv, type CodexCommand } from '../codex/command';
-import type { GetAccountResponse, ModelListResponse } from '../codex/protocol';
+import type { GetAccountResponse, Model, ModelListResponse } from '../codex/protocol';
+import type { JsonRpc } from '../codex/rpc';
 import { startCodexTransport } from '../codex/transport';
 import { isOlderVersion, MIN_CODEX_VERSION } from '../tools';
 import type { Engine } from './registry';
@@ -46,23 +48,26 @@ export async function codexStatus(codex: CodexCommand, cwd: string, signedOut: s
   }
 }
 
+/** Every page of codex's `model/list`. */
+async function modelList(rpc: JsonRpc): Promise<Model[]> {
+  const models: Model[] = [];
+  let cursor: string | null = null;
+  do {
+    const page: ModelListResponse = await rpc.request<ModelListResponse>('model/list', cursor === null ? {} : { cursor });
+    models.push(...page.data);
+    cursor = page.nextCursor;
+  } while (cursor !== null);
+  return models;
+}
+
 /** codex's model catalog (not an entitlement check), hidden models left out, each with the efforts it lists. */
 export function codexModels(codex: CodexCommand, cwd: string): Promise<ModelInfo[]> {
-  return withAppServer(codex, cwd, async (rpc) => {
-    const models: ModelInfo[] = [];
-    let cursor: string | null = null;
-    do {
-      const page: ModelListResponse = await rpc.request<ModelListResponse>('model/list', cursor === null ? {} : { cursor });
-      for (const model of page.data) {
-        const value = formatModelId({ engine: 'codex', model: model.id });
-        if (model.hidden || parseModelId(value) === null) continue;
-        const efforts = model.supportedReasoningEfforts.map((option) => option.reasoningEffort).filter((effort) => isEffortFor('codex', effort));
-        models.push({ value, name: model.displayName, engine: 'codex', efforts });
-      }
-      cursor = page.nextCursor;
-    } while (cursor !== null);
-    return models;
-  });
+  return withAppServer(codex, cwd, async (rpc) => (await modelList(rpc)).flatMap((model): ModelInfo[] => {
+    const value = formatModelId({ engine: 'codex', model: model.id });
+    if (model.hidden || parseModelId(value) === null) return [];
+    const efforts = model.supportedReasoningEfforts.map((option) => option.reasoningEffort).filter((effort) => isEffortFor('codex', effort));
+    return [{ value, name: model.displayName, engine: 'codex', efforts }];
+  }));
 }
 
 export interface CodexEngineOptions {
@@ -72,6 +77,8 @@ export interface CodexEngineOptions {
   signedOut: () => string;
   /** The active account's name, or null while Codex has no account of CodeRay's. */
   account?: () => string | null;
+  /** The core's run directory, where a background call runs; without it the engine runs none. */
+  runDir?: string;
 }
 
 export function codexEngine(options: CodexEngineOptions): Engine {
@@ -87,6 +94,17 @@ export function codexEngine(options: CodexEngineOptions): Engine {
     start: (launch, sink) => {
       if (!('codex' in launch)) throw new Error(`The Codex engine cannot start a ${launch.engine} chat.`);
       return startCodexTransport(launch, sink);
+    },
+    background: async (model) => {
+      const runDir = options.runDir;
+      const ref = model === null ? null : parseModelId(model);
+      if (runDir === undefined || (model !== null && ref?.engine !== 'codex')) return null;
+      const picked = pickCodexModel(await withAppServer(options.command(), options.cwd, modelList), ref?.model ?? null);
+      if (picked === null) return null;
+      return {
+        modelId: formatModelId({ engine: 'codex', model: picked.id }),
+        model: new CodexModel({ command: options.command, model: picked.id, effort: picked.effort, runDir }),
+      };
     },
   };
 }

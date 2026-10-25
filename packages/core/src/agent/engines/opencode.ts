@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { ENGINE_CAPABILITIES, formatModelId, isEffortFor, parseModelId, type EngineState, type EngineStatus, type ModelInfo } from '@ide/protocol';
 import type { AccountHome } from '../../accounts/account-homes';
 import { isRecord } from '../../json';
+import { OpencodeModel, pickOpencodeModel } from '../../models/opencode-model';
 import { opencodeEnv, type OpencodeCommand } from '../opencode/command';
 import { inlineConfig } from '../opencode/config';
 import { HARDENING_ENV, shellWrapper, withServer } from '../opencode/server';
@@ -126,6 +127,7 @@ export function opencodeEngine(options: OpencodeEngineOptions): Engine {
     last = { at: Date.now(), probe: started };
     return started;
   };
+  const recent = (): Promise<OpencodeProbe> => (last !== null && Date.now() - last.at < REUSE_MS ? last.probe : probe());
   return {
     id: 'opencode',
     capabilities: ENGINE_CAPABILITIES.opencode,
@@ -134,10 +136,20 @@ export function opencodeEngine(options: OpencodeEngineOptions): Engine {
       const account = options.account?.() ?? null;
       return account === null ? status : { ...status, account };
     },
-    listModels: async () => (await (last !== null && Date.now() - last.at < REUSE_MS ? last.probe : probe())).models,
+    listModels: async () => (await recent()).models,
     start: (launch, sink) => {
       if (!('opencode' in launch)) throw new Error(`The opencode engine cannot start a ${launch.engine} chat.`);
       return startOpencodeTransport(launch, sink);
+    },
+    background: async (model) => {
+      const runDir = options.runDir;
+      if (runDir === undefined) return null;
+      const { status, catalog, userServers } = await recent();
+      if (status.state !== 'ready') return null;
+      // A chosen model must be in the catalog; the pick of a one-model catalog is that model.
+      const picked = pickOpencodeModel(model === null ? catalog : catalog.filter((entry) => entry.value === model));
+      if (picked === null) return null;
+      return { modelId: picked.value, model: new OpencodeModel({ command: options.command, model: { providerID: picked.providerID, modelID: picked.modelID }, userServers, runDir }) };
     },
   };
 }

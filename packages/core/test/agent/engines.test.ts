@@ -2,7 +2,9 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { claudeStatus } from '../../src/agent/engines/claude';
+import { codexEngine } from '../../src/agent/engines/codex';
 import { MIN_CLAUDE_VERSION } from '../../src/agent/tools';
+import { fakeCodex } from '../fake-codex/fake';
 import { tempDir } from '../helpers';
 
 const script = (body: string) => {
@@ -26,6 +28,22 @@ describe('claudeStatus', () => {
       { engine: 'claude', state: 'error', hint: 'claude --version printed no version.' },
       { engine: 'claude', state: 'error', hint: failed },
       { engine: 'claude', state: 'error', hint: 'claude --version did not answer in 0.3 s.' },
+    ]);
+  });
+});
+
+describe('codexEngine', () => {
+  it('runs a background call on its fast model, else its default, or on the chosen one from any page of the list, at the lowest effort, never on another engine\'s model, and only with a run directory', async (t) => {
+    const dir = tempDir('ide-codex-bg-', t);
+    const runDir = join(dir, 'run');
+    const command = fakeCodex(null, join(dir, 'record.jsonl'));
+    const engine = (withRunDir: boolean) => codexEngine({ command: () => command, cwd: dir, signedOut: () => 'signed out', ...(withRunDir ? { runDir } : {}) });
+    const answers = await Promise.all([engine(true).background(null), engine(true).background('codex:gpt-5.6-terra'), engine(true).background('gpt-6-luna'), engine(false).background(null)]);
+    expect(answers).toMatchObject([
+      { modelId: 'codex:gpt-6-luna', model: { options: { model: 'gpt-6-luna', effort: 'low', runDir } } },
+      { modelId: 'codex:gpt-5.6-terra', model: { options: { model: 'gpt-5.6-terra', effort: 'low', runDir } } },
+      null,
+      null,
     ]);
   });
 });

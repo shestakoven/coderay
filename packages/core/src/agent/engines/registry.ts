@@ -1,5 +1,12 @@
 import type { EngineCapabilities, EngineId, EngineStatus, ModelInfo } from '@ide/protocol';
+import type { StructuredModel } from '../../models/types';
 import type { AgentTransport, Launch, TransportSink } from '../transport';
+
+/** A background model on an engine, and its id in `ModelInfo.value` form. */
+export interface BackgroundModel {
+  modelId: string;
+  model: StructuredModel;
+}
 
 /** One agent CLI a chat can run on. */
 export interface Engine {
@@ -8,6 +15,8 @@ export interface Engine {
   status(): Promise<EngineStatus>;
   listModels(): Promise<ModelInfo[]>;
   start(launch: Launch, sink: TransportSink): AgentTransport;
+  /** The model a background call runs on: the engine's choice for null, else that model; null when the engine has none such. */
+  background(model: string | null): Promise<BackgroundModel | null>;
 }
 
 export class EngineRegistry {
