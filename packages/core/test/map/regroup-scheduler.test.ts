@@ -84,6 +84,18 @@ describe('RegroupScheduler', () => {
     expect(state.runs.map((at) => (at - start) / MINUTE)).toEqual([0, 10, 30, 70]);
   });
 
+  it('after a failed grouping a resume regroups a stale map at once, also when it comes while that grouping still runs', async () => {
+    const { state, scheduler } = setup(STALE, { outcome: 'failed', durationMs: MINUTE });
+    const start = Date.now();
+    scheduler.evaluate();
+    scheduler.resume();
+    await vi.advanceTimersByTimeAsync(2 * MINUTE);
+    const minutes = () => state.runs.map((at) => (at - start) / MINUTE);
+    expect(minutes()).toEqual([0, 1]);
+    scheduler.resume();
+    expect(minutes()).toEqual([0, 1, 2]);
+  });
+
   it('remembers the last attempt across restarts', async () => {
     const first = setup(FIRST, { outcome: 'failed' });
     first.scheduler.evaluate();

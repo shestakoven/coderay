@@ -1,7 +1,7 @@
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
-import type { EngineStatus } from '@ide/protocol';
+import type { BackgroundAiStatus, EngineStatus } from '@ide/protocol';
 import type { Engine } from '../../src/agent/engines/registry';
-import { BackgroundAi, BackgroundAiOff, BackgroundAiStore, OFF_RECHECK_MS, offHint } from '../../src/models/background-ai';
+import { BackgroundAi, BackgroundAiOff, BackgroundAiStore, movedOn, OFF_RECHECK_MS, offHint } from '../../src/models/background-ai';
 import type { StructuredModel } from '../../src/models/types';
 import { FakeEmbedModel, GatedModel, ScriptedModel } from './fake-models';
 import { tempDir } from '../helpers';
@@ -144,5 +144,15 @@ describe('BackgroundAi', () => {
     expect(offHint({ mode: 'engine', engine: 'codex', model: null }, [{ engine: 'codex', state: 'signed-out', hint: 'Codex is signed out: run codex login.' }], [], new Map()))
       .toBe('Codex is signed out: run codex login. Choose another engine in Settings → Background AI.');
     expect(offHint({ mode: 'auto' }, [{ engine: 'codex', state: 'error', hint: 'OpenAI rejected the API key sk-proj-abcdefghijklmnop' }], [], new Map())).not.toContain('sk-proj');
+  });
+
+  it('movedOn: the AI moved on when it is ready after off or on another engine or model, not on the first status or the same engine', () => {
+    const on = (engine: Engine['id'], modelId: string, note: string | null = null): BackgroundAiStatus => ({ state: 'ready', engine, modelId, note });
+    const off: BackgroundAiStatus = { state: 'off', reason: 'none', engine: null, hint: 'h' };
+    const rows: [BackgroundAiStatus | null, BackgroundAiStatus][] = [
+      [off, on('claude', 'haiku')], [on('claude', 'haiku'), on('codex', 'codex:a', 'Claude Code failed')], [on('codex', 'codex:a'), on('codex', 'codex:b')],
+      [null, on('claude', 'haiku')], [on('codex', 'codex:a', 'Claude Code failed'), on('codex', 'codex:a')], [on('claude', 'haiku'), off],
+    ];
+    expect(rows.map(([before, after]) => movedOn(before, after))).toEqual([true, true, true, false, false, false]);
   });
 });

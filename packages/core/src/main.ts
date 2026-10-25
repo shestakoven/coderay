@@ -43,6 +43,7 @@ import { watchDeploy } from './c4/deploy';
 import { buildC4 } from './c4/model';
 import { claudeJsonPath } from './mcp/claude-code';
 import { McpRegistry } from './mcp/registry';
+import { movedOn } from './models/background-ai';
 import { removeStaleModelDirs } from './models/claude-cli';
 import { createModelProvider } from './models/provider';
 import { PolicyStore } from './policy/policy';
@@ -516,19 +517,19 @@ try {
   };
   const profiles: OpencodeProfiles | null = opencode && opencodeAccounts ? { command: opencode, runDir: runDir(home), store: opencodeAccounts, refreshEngines } : null;
 
-  // Off → ready asks the map, the overview, the summaries and the names again; a `checking` between two states changes nothing.
-  let settled: BackgroundAiStatus['state'] | null = null;
+  // Off → ready, or another engine or model, asks the map, the overview, the summaries and the names again; a `checking` between two states changes nothing.
+  let settled: BackgroundAiStatus | null = null;
   models.onChange((status) => {
     mapService?.publishNow();
     server?.broadcast(settingsSnapshot());
     if (status.state === 'checking') return;
-    if (status.state === 'ready' && settled === 'off') {
+    if (movedOn(settled, status)) {
       mapService?.resumeGrouping();
       overviews?.retryFailed();
       rt.summarizer.resume();
       classifier?.resume();
     }
-    settled = status.state;
+    settled = status;
   });
   // One probe at startup serves the pick and the first-run screen; Off once answered needs neither, and starts no engine.
   if (models.choice().mode === 'off' && models.onboarded()) models.refresh();

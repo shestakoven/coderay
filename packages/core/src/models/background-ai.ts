@@ -48,6 +48,15 @@ export function offHint(choice: BackgroundAiChoice, statuses: EngineStatus[], no
   return `${found.map((engine) => line(engine).replace(/\.$/, '')).join(' · ')}. The map and chat work without an AI engine.`;
 }
 
+/**
+ * The background AI now runs where it did not: on after off, or on another model, and so another engine, since a model id names its
+ * engine. What waited or failed did so on `before`, the last status that was not `checking`.
+ */
+export function movedOn(before: BackgroundAiStatus | null, after: BackgroundAiStatus): boolean {
+  if (after.state !== 'ready' || before === null) return false;
+  return before.state === 'off' || (before.state === 'ready' && before.modelId !== after.modelId);
+}
+
 interface Stored { choice: BackgroundAiChoice; onboarded: boolean }
 const DEFAULT: Stored = { choice: { mode: 'auto' }, onboarded: false };
 

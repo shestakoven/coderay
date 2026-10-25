@@ -34,6 +34,7 @@ export class RegroupScheduler {
   private readonly cooldownMs: number;
   private state: SchedulerState;
   private running = false;
+  private resumed = false;
   private stopped = false;
   private timer: NodeJS.Timeout | undefined;
 
@@ -74,11 +75,18 @@ export class RegroupScheduler {
     clearTimeout(this.timer);
   }
 
-  /** The background AI is back: no failure counts against the next grouping, and with no AI map it groups at once. */
+  /**
+   * The background AI is back or runs on another engine: no failure counts against the next grouping, and with no AI map, or after a
+   * failed grouping, it groups at once. During a grouping it applies once that ends, since the grouping may fail on the engine left behind.
+   */
   resume(): void {
     if (this.stopped) return;
+    if (this.running) {
+      this.resumed = true;
+      return;
+    }
     const { hasAiMap } = this.options.need();
-    this.save({ ...this.state, startedAt: null, failures: 0, ...(hasAiMap ? {} : { lastEndedAt: null }) });
+    this.save({ ...this.state, startedAt: null, failures: 0, ...(hasAiMap && this.state.failures === 0 ? {} : { lastEndedAt: null }) });
     this.evaluate();
   }
 
@@ -97,14 +105,14 @@ export class RegroupScheduler {
       })
       .then((outcome) => {
         this.running = false;
+        const resumed = this.resumed;
+        this.resumed = false;
         if (outcome === 'cancelled' || this.stopped) return;
         // The state from before the run comes back, and nothing is tried again until resume() or another change asks.
-        if (outcome === 'skipped') {
-          this.save({ ...this.state, startedAt: null });
-          return;
-        }
-        this.save({ lastEndedAt: Date.now(), startedAt: null, failures: outcome === 'done' ? 0 : this.state.failures + 1 });
-        this.evaluate();
+        if (outcome === 'skipped') this.save({ ...this.state, startedAt: null });
+        else this.save({ lastEndedAt: Date.now(), startedAt: null, failures: outcome === 'done' ? 0 : this.state.failures + 1 });
+        if (resumed) this.resume();
+        else if (outcome !== 'skipped') this.evaluate();
       });
   }
 
