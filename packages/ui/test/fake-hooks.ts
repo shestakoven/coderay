@@ -1,4 +1,4 @@
-// Stands in for React's useState and useEffect where there is no DOM to render into: a hook or a component runs against it and shows what it returned.
+// Stands in for React's useState, useRef and useEffect where there is no DOM to render into: a hook or a component runs against it and shows what it returned.
 type Setter<S> = (next: S | ((previous: S) => S)) => void;
 
 interface Slot {
@@ -37,6 +37,12 @@ export function useState<S>(initial: S | (() => S)): [S, Setter<S>] {
     fiber.rerender();
   };
   return [slot.value as S, set];
+}
+
+export function useRef<T>(initial: T): { current: T } {
+  const fiber = active();
+  const slot = (fiber.slots[fiber.cursor++] ??= { value: { current: initial } });
+  return slot.value as { current: T };
 }
 
 export function useEffect(effect: () => void | (() => void), deps?: readonly unknown[]): void {

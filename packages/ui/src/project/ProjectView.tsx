@@ -1,6 +1,6 @@
 import { ReactFlowProvider } from '@xyflow/react';
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import { AGENT_TERMINAL_ID, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type ReviewGraphFile, type SettingsView } from '@ide/protocol';
+import { AGENT_TERMINAL_ID, type BackgroundAiChoice, type ClientMessage, type GateAnswer, type GitStatus, type HubProject, type MapProgress, type PlanAnswer, type ReviewGraphFile, type SettingsView } from '@ide/protocol';
 import { createPortal } from 'react-dom';
 import { BranchChip } from '../git/BranchChip';
 import { GitClient } from '../git/git-client';
@@ -36,6 +36,7 @@ import { PlanFlowView } from '../plan-flow/PlanFlowView';
 import { flowOf } from '../plan-flow/flow-model';
 import { availableModes, resolveMode, type MapMode } from '../plan-flow/map-mode';
 import { describeMapStatus, describeProgress } from '../map/status';
+import { Onboarding } from '../onboarding/Onboarding';
 import { connect, fitsFrame, type Connection, type ConnectionStatus } from '../net/socket';
 import type { ProviderList } from '../settings/accounts';
 import type { CategoryId } from '../settings/categories';
@@ -76,6 +77,10 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   const [plans, dispatchPlans] = useReducer(planReducer, initialPlanState);
   const [hist, dispatchHist] = useReducer(historyReducer, initialHistoryState);
   const [settings, setSettings] = useState<SettingsView | null>(null);
+  // The first-run screen trusts only a snapshot read while this project is shown: another project's window may have answered it.
+  const [settingsFresh, setSettingsFresh] = useState(false);
+  // Answered here: the screen stays closed until the core's snapshot says so too, whatever older snapshot is still on its way.
+  const [answered, setAnswered] = useState(false);
   const [settingsResult, setSettingsResult] = useState<SettingsResult | null>(null);
   const [providers, setProviders] = useState<Record<string, ProviderList>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -129,6 +134,8 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
           break;
         case 'settings.snapshot':
           setSettings(message.settings);
+          setSettingsFresh(activeRef.current);
+          if (message.settings.backgroundAi.onboarded) setAnswered(false);
           break;
         case 'settings.result':
           setSettingsResult({ requestId: message.requestId, error: message.error });
@@ -194,6 +201,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
       }
     }, (next) => {
       setConnection(next);
+      if (next !== 'open') setSettingsFresh(false);
       if (next !== 'open') setTerminalsKnown(false);
       if (next !== 'open') git.dropAll();
       images.setOnline(next === 'open');
@@ -233,6 +241,20 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   };
   const openSettingsRef = useRef(openSettings);
   openSettingsRef.current = openSettings;
+  useEffect(() => {
+    if (!active) {
+      setSettingsFresh(false);
+      return;
+    }
+    sendRef.current({ type: 'settings.get' });
+  }, [active]);
+  const onboarding = active && settingsFresh && !answered && !settingsOpen && settings?.backgroundAi.onboarded === false;
+  // The answer goes before the choice, so the snapshot the choice brings already keeps the screen closed.
+  const finishOnboarding = (choice: BackgroundAiChoice | null): void => {
+    if (!send({ type: 'background-ai.onboarded', requestId: crypto.randomUUID(), onboarded: true })) return;
+    if (choice) send({ type: 'background-ai.save', requestId: crypto.randomUUID(), choice });
+    setAnswered(true);
+  };
   const lastSettingsRequest = useRef(settingsRequest);
   useEffect(() => {
     if (settingsRequest === lastSettingsRequest.current) return;
@@ -440,7 +462,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
   return (
     <DetailsSlotContext.Provider value={detailsSlot}>
       <div className={`project-view${active ? '' : ' away'}${panels.focus ? ' focus' : ''}`} inert={!active} style={{ '--left-w': `${sizes.left}px`, '--right-w': `${sizes.right}px`, '--bottom-h': `${sizes.bottom}px` } as React.CSSProperties}>
-        <div className="workspace">
+        <div className="workspace" inert={onboarding}>
           <LeftPanel
             hidden={!panels.left || reviewMode}
             tab={panels.leftTab}
@@ -577,7 +599,7 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
             )}
           />
         </div>
-        <div className="bottom-area">
+        <div className="bottom-area" inert={onboarding}>
           {panels.bottom && !panels.focus && <Resizer orientation="horizontal" label="Resize timeline" value={sizes.bottom} min={LIMITS.bottom.min} max={LIMITS.bottom.max} grow={-1} onResize={(size) => resize('bottom', size)} onReset={() => resetSize('bottom')} />}
           <Timeline
             plans={plans.plans}
@@ -626,6 +648,18 @@ export function ProjectView({ project, token, url, active, settingsRequest, onSt
             onClose={() => setSettingsOpen(false)}
             initialCategory={settingsCategory}
             projectName={snapshot?.projectName ?? project.name}
+          />
+        )}
+        {onboarding && settings && (
+          <Onboarding
+            view={settings.backgroundAi}
+            onUseFound={() => finishOnboarding({ mode: 'auto' })}
+            onChoose={() => {
+              finishOnboarding(null);
+              openSettings('background');
+            }}
+            onWithoutAi={() => finishOnboarding({ mode: 'off' })}
+            onSkip={() => finishOnboarding(null)}
           />
         )}
       </div>

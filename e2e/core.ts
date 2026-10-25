@@ -14,6 +14,8 @@ export interface Core {
   url: string;
   file(rel: string): string;
   root: string;
+  // The core's CodeRay home.
+  home: string;
   // Where claude keeps the transcripts of the project's conversations, as the core looks for them.
   transcripts: string;
   record: string;
@@ -193,13 +195,16 @@ export async function startHub(names: string[]): Promise<Hub> {
   };
 }
 
-// `codex` and `opencode` name a scenario of their fake; null runs the core without that engine.
-export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, fixture = 'tiny', codex: string | null = null, opencode: string | null = null): Promise<Core> {
+// `codex` and `opencode` name a scenario of their fake; null runs the core without that engine. `onboarded: false` starts with a fresh
+// home, where the background AI is Auto and the first-run screen shows.
+export async function startCore(
+  scenario: string, env: NodeJS.ProcessEnv = {}, fixture = 'tiny', codex: string | null = null, opencode: string | null = null, { onboarded = true }: { onboarded?: boolean } = {},
+): Promise<Core> {
   const base = realpathSync(mkdtempSync(join(tmpdir(), 'ide-e2e-')));
   const root = join(base, 'project');
   cpSync(join(REPO, 'e2e/fixtures', fixture), root, { recursive: true });
   execFileSync('git', ['init', '-q'], { cwd: root });
-  const { home, bin } = prepareHome(base);
+  const { home, bin } = prepareHome(base, { onboarded });
   const record = join(base, 'fake-claude-record.jsonl');
   const core = await spawnCore(
     base,
@@ -218,6 +223,7 @@ export async function startCore(scenario: string, env: NodeJS.ProcessEnv = {}, f
     url: core.url,
     record,
     root,
+    home,
     transcripts: join(userHomeOf(base), '.claude/projects', root.replace(/[^A-Za-z0-9]/g, '-')),
     file: (rel) => readFileSync(join(root, rel), 'utf8'),
     stop: async () => {
