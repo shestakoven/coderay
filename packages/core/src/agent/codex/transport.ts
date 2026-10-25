@@ -61,6 +61,27 @@ function policyProblem(answer: ThreadStartResponse): string | null {
   return `Codex reported sandbox ${String(sandbox)}${offline ? '' : ` with network access ${JSON.stringify(network)}`}, approvals ${JSON.stringify(answer.approvalPolicy)} by ${String(answer.approvalsReviewer)} and sub-agents ${JSON.stringify(agents)}, not read-only with every write sent to CodeRay, so the chat was not started.`;
 }
 
+/**
+ * The thread config: `own.config`, every server the user's and the project's Codex configuration define switched off by name
+ * (only those: a name nobody defines stops the app-server), and CodeRay's secrets added to the user's own shell exclusions.
+ * A string says why the thread cannot run.
+ */
+export function threadConfig(effective: Record<string, JsonValue>, own: { servers: ReadonlySet<string>; config: Record<string, JsonValue> }): Record<string, JsonValue> | string {
+  const servers = isRecord(effective.mcp_servers) ? Object.keys(effective.mcp_servers) : [];
+  const clash = servers.find((name) => own.servers.has(name));
+  if (clash !== undefined) return `Your Codex configuration defines an MCP server named "${clash}", as CodeRay does: rename yours to run Codex in CodeRay.`;
+  const odd = servers.find((name) => !SERVER_NAME.test(name));
+  if (odd !== undefined) return `Your Codex configuration defines an MCP server named ${JSON.stringify(odd)}, which CodeRay cannot switch off: rename yours to run Codex in CodeRay.`;
+  const policy = isRecord(effective.shell_environment_policy) ? effective.shell_environment_policy : {};
+  const excluded = Array.isArray(policy.exclude) ? policy.exclude.filter((pattern): pattern is string => typeof pattern === 'string') : [];
+  return {
+    ...own.config,
+    ...FEATURES_OFF,
+    ...Object.fromEntries(servers.map((name) => [`mcp_servers.${name}.enabled`, false])),
+    'shell_environment_policy.exclude': [...new Set([...excluded, SECRET_VARIABLES])],
+  };
+}
+
 interface Pending { message: UserMessage; stop: number }
 
 class CodexTransport implements AgentTransport {
@@ -196,7 +217,7 @@ class CodexTransport implements AgentTransport {
       this.apiKey = account.account.type === 'apiKey';
       const answer = await server.rpc.request<ConfigReadResponse>('config/read', { cwd: this.launch.cwd, includeLayers: false });
       if (!this.current(server)) return;
-      const config = this.threadConfig(isRecord(answer) && isRecord(answer.config) ? answer.config : {});
+      const config = threadConfig(isRecord(answer) && isRecord(answer.config) ? answer.config : {}, { servers: this.ours, config: this.launch.config });
       if (typeof config === 'string') return this.refuse(config);
       this.threadParams = { cwd: this.launch.cwd, developerInstructions: this.launch.developerInstructions, config };
       this.ready = true;
@@ -204,27 +225,6 @@ class CodexTransport implements AgentTransport {
     } catch (error) {
       if (this.current(server)) this.refuse(`Codex did not start: ${(error as Error).message}`);
     }
-  }
-
-  /**
-   * The thread config: the launch's, every server the user's and the project's Codex configuration define switched off by name
-   * (only those: a name nobody defines stops the app-server), and CodeRay's secrets added to the user's own shell exclusions.
-   * A string says why the chat cannot run.
-   */
-  private threadConfig(effective: Record<string, JsonValue>): Record<string, JsonValue> | string {
-    const servers = isRecord(effective.mcp_servers) ? Object.keys(effective.mcp_servers) : [];
-    const clash = servers.find((name) => this.ours.has(name));
-    if (clash !== undefined) return `Your Codex configuration defines an MCP server named "${clash}", as CodeRay does: rename yours to run Codex in CodeRay.`;
-    const odd = servers.find((name) => !SERVER_NAME.test(name));
-    if (odd !== undefined) return `Your Codex configuration defines an MCP server named ${JSON.stringify(odd)}, which CodeRay cannot switch off: rename yours to run Codex in CodeRay.`;
-    const policy = isRecord(effective.shell_environment_policy) ? effective.shell_environment_policy : {};
-    const excluded = Array.isArray(policy.exclude) ? policy.exclude.filter((pattern): pattern is string => typeof pattern === 'string') : [];
-    return {
-      ...this.launch.config,
-      ...FEATURES_OFF,
-      ...Object.fromEntries(servers.map((name) => [`mcp_servers.${name}.enabled`, false])),
-      'shell_environment_policy.exclude': [...new Set([...excluded, SECRET_VARIABLES])],
-    };
   }
 
   private async loadSkills(server: AppServer): Promise<void> {
