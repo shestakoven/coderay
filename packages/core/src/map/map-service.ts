@@ -116,7 +116,8 @@ export class MapService {
         return {
           hasAiMap: this.effectiveAi() !== null,
           stale: this.stale.reasons.length > 0,
-          groupable: groupable > 0 && groupable <= MAX_AI_FILES,
+          // Off, a grouping would only be skipped: each map change would rewrite the schedule for nothing.
+          groupable: groupable > 0 && groupable <= MAX_AI_FILES && this.options.backgroundAi().state !== 'off',
         };
       },
       isAgentIdle: options.isAgentIdle,

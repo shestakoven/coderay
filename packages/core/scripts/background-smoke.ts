@@ -10,8 +10,8 @@ import { homedir, tmpdir } from 'node:os';
 import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocket } from 'ws';
-import type { BackgroundAiStatus, BackgroundAiView, MapSnapshot, ModelInfo, SettingsView } from '@ide/protocol';
-import { accountHome, CREDENTIAL_VARS } from '../src/accounts/account-homes';
+import { ENGINE_PRODUCT_NAMES, type BackgroundAiStatus, type BackgroundAiView, type MapSnapshot, type ModelInfo, type SettingsView } from '@ide/protocol';
+import { ACCOUNT_DIRS, accountHome, CREDENTIAL_VARS } from '../src/accounts/account-homes';
 import { withAppServer } from '../src/agent/codex/app-server';
 import { codexCommand, codexUnder } from '../src/agent/codex/command';
 import { hideSecrets } from '../src/agent/codex/secrets';
@@ -64,14 +64,18 @@ export function scratchProblem(homes: ReadonlyArray<readonly [string, string | u
   return null;
 }
 
-/** Every home a run would touch: the IDE home given, the environment's Codex and XDG homes, and each Codex account home in that IDE home. */
+/** Every home a run would touch: the IDE home given, the environment's Codex and XDG homes, and each engine's account homes in that IDE home. */
 export function homesOf(ideHome: string | undefined, env: NodeJS.ProcessEnv): Array<readonly [string, string | undefined]> {
   const used = ideHome ?? env.IDE_HOME;
-  const accounts = used === undefined || !existsSync(join(used, 'codex-accounts')) ? [] : readdirSync(join(used, 'codex-accounts'));
+  const accounts = used === undefined ? [] : Object.entries(ACCOUNT_DIRS).flatMap(([engine, dir]) => {
+    const parent = join(used, dir);
+    const name = ENGINE_PRODUCT_NAMES[engine as keyof typeof ACCOUNT_DIRS];
+    return existsSync(parent) ? readdirSync(parent).map((id) => [`the ${name} account home ${id}`, join(parent, id)] as const) : [];
+  });
   return [
     ['--ide-home', ideHome], ['IDE_HOME', env.IDE_HOME], ['CODEX_HOME', env.CODEX_HOME],
     ...Object.keys(env).filter((name) => name.startsWith('XDG_')).map((name) => [name, env[name]] as const),
-    ...accounts.map((id) => [`the Codex account home ${id}`, join(used!, 'codex-accounts', id)] as const),
+    ...accounts,
   ];
 }
 

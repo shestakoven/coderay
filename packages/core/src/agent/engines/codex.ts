@@ -100,7 +100,9 @@ export function codexEngine(options: CodexEngineOptions): Engine {
       const ref = model === null ? null : parseModelId(model);
       if (runDir === undefined || (model !== null && ref?.engine !== 'codex')) return null;
       // The version first, from the same app-server: an unverified one is a reason, never a call that fails.
-      const picked = await withAppServer(options.command(), options.cwd, async (rpc, hello) => codexBackgroundProblem(hello.userAgent) ?? pickCodexModel(await modelList(rpc), ref?.model ?? null));
+      const picked = await withAppServer(
+        options.command(), options.cwd, async (rpc, hello) => codexBackgroundProblem(hello.userAgent) ?? pickCodexModel(await modelList(rpc), ref?.model ?? null), undefined, runDir,
+      );
       if (picked === null || typeof picked === 'string') return picked;
       return {
         modelId: formatModelId({ engine: 'codex', model: picked.id }),

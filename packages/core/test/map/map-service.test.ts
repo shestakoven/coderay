@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, rmSync } from 'node:fs';
 import { readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -229,7 +229,7 @@ describe('MapService', () => {
     expect(view.status).toMatchObject({ layer: 'folder', grouping: 'failed', groupingError: 'claude exited with code 1: not logged in' });
   });
 
-  it('with the background AI off from the start, grouping is skipped, not failed, and once it is back a resume groups at once, even after a grouping failed', async () => {
+  it('with the background AI off from the start, grouping is skipped, not failed, a map change schedules none, and once it is back a resume groups at once, even after a grouping failed', async () => {
     let status: BackgroundAiStatus = { state: 'checking' };
     const reasoning = new ScriptedModel(() => { throw new BackgroundAiOff('x'); }, () => { throw new Error('the engine left behind failed'); }, componentsPerDirectory);
     const { service, stateDir } = await startService({ reasoning, backgroundAi: () => status });
@@ -237,6 +237,9 @@ describe('MapService', () => {
     expect([service.view().status.grouping, reasoning.requests.length, state]).toEqual(['idle', 1, { lastEndedAt: null, startedAt: null, failures: 0 }]);
     status = { state: 'off', reason: 'none', engine: null, hint: 'No AI engine is installed.' };
     expect([await service.regroup(), reasoning.requests.length, service.view().status.backgroundAi]).toEqual(['skipped', 1, status]);
+    rmSync(join(stateDir, 'regroup-state.json'));
+    service.onAgentIdle();
+    expect(existsSync(join(stateDir, 'regroup-state.json'))).toBe(false);
     status = READY();
     service.onAgentIdle();
     await waitFor(() => service.view().status.grouping === 'failed', 'the failed grouping');

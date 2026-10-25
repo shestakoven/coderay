@@ -50,9 +50,11 @@ export async function handshake(rpc: JsonRpc): Promise<InitializeResponse> {
   return answer;
 }
 
-/** A short-lived app-server for one question (status, models, sign-out), stopped afterwards whatever happens. */
-export async function withAppServer<T>(command: CodexCommand, cwd: string, ask: (rpc: JsonRpc, hello: InitializeResponse) => Promise<T>, timeoutMs = PROBE_TIMEOUT_MS): Promise<T> {
-  const server = startAppServer(command, { cwd });
+/** A short-lived app-server for one question (status, models, sign-out), stopped afterwards whatever happens; `pidDir` keeps its pid file for the reaper. */
+export async function withAppServer<T>(
+  command: CodexCommand, cwd: string, ask: (rpc: JsonRpc, hello: InitializeResponse) => Promise<T>, timeoutMs = PROBE_TIMEOUT_MS, pidDir?: string,
+): Promise<T> {
+  const server = startAppServer(command, { cwd, pidDir });
   const timer = setTimeout(() => {
     server.rpc.end(new Error(`codex app-server did not answer in ${timeoutMs / 1000} s.`));
     void server.kill();

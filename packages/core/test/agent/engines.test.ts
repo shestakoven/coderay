@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import { claudeEngine, claudeStatus } from '../../src/agent/engines/claude';
@@ -6,7 +6,7 @@ import { codexEngine } from '../../src/agent/engines/codex';
 import type { BackgroundModel } from '../../src/agent/engines/registry';
 import { MIN_CLAUDE_VERSION } from '../../src/agent/tools';
 import { fakeCodex } from '../fake-codex/fake';
-import { tempDir } from '../helpers';
+import { tempDir, waitFor } from '../helpers';
 
 const script = (body: string) => {
   const file = join(tempDir('ide-claude-'), 'claude.mjs');
@@ -57,14 +57,17 @@ describe('claudeEngine', () => {
 });
 
 describe('codexEngine', () => {
-  it('runs a background call on its fast model, else its default, or on the chosen one from any page of the list, at the lowest effort, never on another engine\'s model, and only with a run directory', async (t) => {
+  it('runs a background call on its fast model, else its default, or on the chosen one from any page of the list, at the lowest effort, never on another engine\'s model, and only with a run directory, where its pick keeps a pid file', async (t) => {
     const dir = tempDir('ide-codex-bg-', t);
     const runDir = join(dir, 'run');
     const engine = (withRunDir: boolean, env: Record<string, string> = {}) => codexEngine({ command: () => fakeCodex(null, join(dir, 'record.jsonl'), env), cwd: dir, signedOut: () => 'signed out', ...(withRunDir ? { runDir } : {}) });
+    // A slow model list keeps the pick's app-server up while its pid file is looked for: a core killed mid-pick leaves the reaper an orphan to find.
+    const pidFile = waitFor(() => existsSync(runDir) && readdirSync(runDir).some((name) => /^codex-\d+\.pid\.json$/.test(name)), "the pick's pid file");
     const answers = await Promise.all([
-      engine(true).background(null), engine(true).background('codex:gpt-5.6-terra'), engine(true).background('gpt-6-luna'), engine(false).background(null),
+      engine(true, { FAKE_CODEX_SLOW: 'model/list' }).background(null), engine(true).background('codex:gpt-5.6-terra'), engine(true).background('gpt-6-luna'), engine(false).background(null),
       engine(true, { FAKE_CODEX_VERSION: '0.161.0' }).background(null),
     ]);
+    expect(await pidFile).toBe(true);
     expect(answers).toMatchObject([
       { modelId: 'codex:gpt-6-luna', model: { options: { model: 'gpt-6-luna', effort: 'low', runDir } } },
       { modelId: 'codex:gpt-5.6-terra', model: { options: { model: 'gpt-5.6-terra', effort: 'low', runDir } } },

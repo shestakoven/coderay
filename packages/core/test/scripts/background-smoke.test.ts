@@ -5,7 +5,7 @@ import { homesOf, scratchProblem } from '../../scripts/background-smoke';
 import { tempDir } from '../helpers';
 
 describe('the background smoke guard', () => {
-  it('refuses any home that is inside, holds or links into ~/.ide, ~/.codex or an opencode home, and lets scratch homes through', () => {
+  it('refuses any home that is inside, holds or links into ~/.ide, ~/.codex or an opencode home, an account home of any engine included, and lets scratch homes through', () => {
     const owner = tempDir('bg-smoke-owner-');
     for (const dir of ['.ide', 'dotfiles/codex', '.config/opencode', '.local/share/opencode', '.local/state/opencode', '.cache/opencode']) mkdirSync(join(owner, dir), { recursive: true });
     // An owner home that is itself a link, as dotfile managers make them.
@@ -24,6 +24,14 @@ describe('the background smoke guard', () => {
     symlinkSync(join(owner, '.codex'), join(scratch, 'codex-accounts', 'linked'));
     expect(refused(homesOf(scratch, {}))).toMatch(/^the Codex account home linked .* overlaps .*dotfiles\/codex/);
     expect(refused(homesOf(undefined, { IDE_HOME: scratch }))).toMatch(/^the Codex account home linked/);
+    // So are an opencode or Claude profile home linked into an opencode home or ~/.ide.
+    const other = tempDir('bg-smoke-scratch-');
+    for (const dir of ['opencode-accounts', 'claude-accounts']) mkdirSync(join(other, dir));
+    symlinkSync(join(owner, '.config', 'opencode'), join(other, 'opencode-accounts', 'work'));
+    symlinkSync(join(owner, '.ide'), join(other, 'claude-accounts', 'home'));
+    expect(homesOf(other, {}).map((home) => refused([home])).filter((problem) => problem !== null)).toEqual([
+      expect.stringMatching(/^the Claude Code account home home .* overlaps .*\/\.ide/), expect.stringMatching(/^the opencode account home work .* overlaps .*\/\.config\/opencode/),
+    ]);
     expect(refused(homesOf(undefined, { XDG_STATE_HOME: join(owner, '.local', 'state'), CODEX_HOME: scratch }))).toMatch(/^XDG_STATE_HOME/);
     expect(refused(homesOf(undefined, { CODEX_HOME: join(owner, 'dotfiles', 'codex', 'sub') }))).toMatch(/^CODEX_HOME/);
   });
