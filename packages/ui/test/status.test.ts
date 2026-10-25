@@ -3,7 +3,7 @@ import type { MapStatus } from '@ide/protocol';
 import { describeMapStatus, describeProgress } from '../src/map/status';
 import { folderStatus } from './snapshot';
 
-const status = (overrides: Partial<MapStatus>): MapStatus => ({ ...folderStatus, ...overrides });
+const status = (overrides: Partial<MapStatus>): MapStatus => ({ ...folderStatus, backgroundAi: { state: 'checking' }, ...overrides });
 
 describe('describeMapStatus', () => {
   it('shows a fresh AI map with its grouping time', () => {
@@ -66,6 +66,31 @@ describe('describeMapStatus', () => {
       { text: 'folder map', tone: 'muted', title: 'Components are folders until an AI grouping succeeds' },
       { text: 'grouping failed', tone: 'error', title: 'not logged in' },
     ]);
+  });
+
+  it('shows an off background AI as one calm chip per reason, never "grouping failed" or "AI grouping off"', () => {
+    const rows = ([
+      [{ reason: 'none', engine: null }, 'failed'],
+      [{ reason: 'choice', engine: null }, 'too-large'],
+      [{ reason: 'unavailable', engine: 'codex' }, 'failed'],
+    ] as const).map(([off, grouping]) => describeMapStatus(status({ grouping, groupingError: 'x', backgroundAi: { state: 'off', hint: 'The hint.', ...off } })));
+    expect(rows).toEqual([
+      [{ text: 'folder map', tone: 'muted', title: 'Components are folders until an AI grouping succeeds' }, { text: 'AI off · no engine', tone: 'muted', title: 'The hint.' }],
+      [{ text: 'folder map', tone: 'muted', title: 'Components are folders until an AI grouping succeeds' }, { text: 'AI off', tone: 'muted', title: 'The hint.' }],
+      [{ text: 'folder map', tone: 'muted', title: 'Components are folders until an AI grouping succeeds' }, { text: 'AI off · Codex not ready', tone: 'warn', title: 'The hint.' }],
+    ]);
+  });
+
+  it('names the engine behind a ready AI map, and a grouping that failed on an engine Auto has since passed over is calm', () => {
+    const note = 'Claude Code failed: Not logged in';
+    const ready = { state: 'ready', engine: 'codex', modelId: 'codex:x', note } as const;
+    const [chip] = describeMapStatus(status({ layer: 'ai', groupedAt: 'T1', backgroundAi: ready }));
+    expect(chip!.title).toBe(`Grouped at T1\nBackground AI: Codex\n${note}`);
+    expect(describeMapStatus(status({ grouping: 'failed', groupingError: 'Not logged in', backgroundAi: ready }))).toEqual([
+      { text: 'folder map', tone: 'muted', title: `Components are folders until an AI grouping succeeds\nBackground AI: Codex\n${note}` },
+      { text: 'grouping moves to Codex', tone: 'muted', title: `${note}\nThe next grouping runs on Codex; Regroup runs it now.` },
+    ]);
+    expect(describeMapStatus(status({ grouping: 'failed', groupingError: 'Not logged in', backgroundAi: { ...ready, note: null } }))[1]).toEqual({ text: 'grouping failed', tone: 'error', title: 'Not logged in' });
   });
 });
 
