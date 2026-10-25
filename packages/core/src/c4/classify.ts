@@ -1,6 +1,6 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { ExternalKind } from '@ide/protocol';
+import type { BackgroundAiStatus, ExternalKind } from '@ide/protocol';
 import { isRecord, parseJson } from '../json';
 import type { JsonSchema, StructuredModel } from '../models/types';
 
@@ -92,6 +92,15 @@ export function parseClassification(raw: unknown, ids: Identifier[]): Map<string
     });
   }
   return result;
+}
+
+/** The C4 view's lines about the names: none while the background AI is off by choice, and no "classifying" while it is off at all. */
+export function classifyWarnings(status: { waiting: number; failure: string | null }, backgroundAi: BackgroundAiStatus): string[] {
+  const off = backgroundAi.state === 'off';
+  return [
+    ...(status.waiting > 0 && !off ? [`Classifying ${status.waiting} package, image and host names`] : []),
+    ...(status.failure && !(off && backgroundAi.reason === 'choice') ? [`Could not classify names: ${status.failure}`] : []),
+  ];
 }
 
 export interface ClassifierOptions {

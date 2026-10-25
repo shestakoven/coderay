@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   classificationPrompt,
+  classifyWarnings,
   IdentifierClassifier,
   identifierKey,
   parseClassification,
@@ -281,11 +282,18 @@ describe('IdentifierClassifier', () => {
   });
 
   describe('after a model failure', () => {
-    it('reports the failure in its status', async () => {
+    it('reports the failure in its status, and in the C4 warnings unless the background AI is off by choice', async () => {
       const classifier = start(new FailingModel());
       classifier.request([pkg('sqlalchemy')]);
       await elapse(SETTLE);
-      expect(classifier.status().failure).toContain('rate limited');
+      const status = classifier.status();
+      const off = (reason: 'choice' | 'none') => classifyWarnings(status, { state: 'off', reason, engine: null, hint: 'h' });
+      expect([status.failure, classifyWarnings(status, { state: 'checking' }), off('choice'), off('none')]).toEqual([
+        expect.stringContaining('rate limited'),
+        ['Classifying 1 package, image and host names', `Could not classify names: ${status.failure}`],
+        [],
+        [`Could not classify names: ${status.failure}`],
+      ]);
     });
 
     it('does not ask again within five minutes', async () => {
