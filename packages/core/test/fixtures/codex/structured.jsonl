@@ -1,0 +1,6 @@
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"userMessage","id":"user-1","clientId":null,"content":[{"type":"text","text":"Say hi","text_elements":[]}]}}}
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"reasoning","id":"rs-1","summary":[],"content":[]}}}
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-0","text":"","phase":"commentary"}}}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-0","text":"Reading the request.","phase":"commentary"}}}
+{"method":"item/started","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"","phase":"final_answer"}}}
+{"method":"item/completed","params":{"threadId":"$THREAD","turnId":"$TURN","item":{"type":"agentMessage","id":"msg-1","text":"{\"answer\":\"hi\"}","phase":"final_answer"}}}
