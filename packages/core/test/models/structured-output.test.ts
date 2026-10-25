@@ -7,11 +7,10 @@ const SCHEMA = {
   required: ['name', 'kind'],
   additionalProperties: false,
 };
-
 describe('extractJson', () => {
   it.each([
     ['Sure:\n```json\n{"a":1}\n```\nDone.', { a: 1 }],
-    ['text {"a":{"b":"}"}} tail', { a: { b: '}' } }],
+    ['text {"a":{"b":"\\"}"}} tail', { a: { b: '"}' } }],
     ['no json here', undefined],
   ])('reads %j', (text, expected) => expect(extractJson(text)).toEqual(expected));
 });
@@ -26,7 +25,14 @@ describe('conforms', () => {
   ])('%j → %s', (value, violation) => expect(conforms(value, SCHEMA)).toBe(violation));
 });
 
-it('structuredOutput reads the whole text, or JSON inside prose, and throws with the violation', () => {
+it('structuredOutput takes the first JSON that fits, and throws with the violation of the largest', () => {
   expect(() => structuredOutput('{"name":"x"}', SCHEMA)).toThrow('does not fit the schema: $.kind is required');
-  expect(structuredOutput('ok {"name":"x","kind":"b"}', SCHEMA)).toEqual({ name: 'x', kind: 'b' });
+  expect(structuredOutput('Step [1] or {}: {"name":"x","kind":"b"}', SCHEMA)).toEqual({ name: 'x', kind: 'b' });
+  expect(() => structuredOutput('Step [1]: {"name":"x"}', SCHEMA)).toThrow('does not fit the schema: $.kind is required');
+  expect(() => structuredOutput('no json here', SCHEMA)).toThrow('the model answered with no JSON');
+  // Degenerate output costs about its length, not its square: brackets that never close, nested ones around junk, deeply nested JSON that does not fit.
+  const started = performance.now();
+  const junk = `${'['.repeat(50_000)}${'['.repeat(25_000)}x${']'.repeat(25_000)}${'['.repeat(25_000)}${']'.repeat(25_000)}`;
+  expect(structuredOutput(`${junk} {"name":"x","kind":"a"}`, SCHEMA)).toEqual({ name: 'x', kind: 'a' });
+  expect(performance.now() - started).toBeLessThan(1_000);
 });

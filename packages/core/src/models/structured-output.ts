@@ -1,46 +1,59 @@
 import { isRecord, parseJson } from '../json';
 import type { JsonSchema } from './types';
 
-const FENCE = /```(?:json)?\s*([\s\S]*?)```/;
-const OPENER = /[[{]/;
+interface Candidate { value: unknown; size: number }
 
-/** The whole text as JSON, else the fenced block, else the first balanced object or array that parses; undefined when none does. */
+/** The first balanced object or array in the text that parses (the whole text, a fenced block or JSON inside prose); undefined when none does. */
 export function extractJson(text: string): unknown | undefined {
-  const whole = parseJson(text.trim());
-  if (whole !== undefined) return whole;
-  const fenced = FENCE.exec(text)?.[1];
-  if (fenced !== undefined) {
-    const value = parseJson(fenced.trim());
-    if (value !== undefined) return value;
-  }
-  for (let start = text.search(OPENER); start !== -1; ) {
-    const end = balancedEnd(text, start);
-    if (end !== -1) {
-      const value = parseJson(text.slice(start, end + 1));
-      if (value !== undefined) return value;
-    }
-    const next = text.slice(start + 1).search(OPENER);
-    start = next === -1 ? -1 : start + 1 + next;
-  }
+  for (const { value } of candidates(text)) return value;
   return undefined;
 }
 
-function balancedEnd(text: string, start: number): number {
-  let depth = 0;
+/**
+ * The JSON the text holds, in reading order: each balanced object or array that parses and is not inside one already given.
+ * Every character is scanned about once, so a run of brackets costs no more than its length.
+ */
+function* candidates(text: string): Generator<Candidate> {
+  const ends = new Map<number, number>();
+  // What JSON.parse may read of spans that do not parse: past it, a span that fails is skipped whole, so nested junk is not parsed again at each depth.
+  let budget = 4 * text.length;
+  for (let start = 0; start < text.length; start += 1) {
+    if (text[start] !== '{' && text[start] !== '[') continue;
+    const end = ends.get(start) ?? closeOf(text, start, ends);
+    if (end === -1) continue;
+    const value = parseJson(text.slice(start, end + 1));
+    if (value === undefined) {
+      budget -= end + 1 - start;
+      if (budget < 0) start = end;
+      continue;
+    }
+    yield { value, size: end + 1 - start };
+    start = end;
+  }
+}
+
+/**
+ * Where the object or array opened at `start` closes, -1 when it never does. Every opener the scan meets outside a string is recorded in `ends`
+ * (its scan from there would be the same), and one already recorded is jumped over.
+ */
+function closeOf(text: string, start: number, ends: Map<number, number>): number {
+  const open = [start];
   let inString = false;
-  for (let i = start; i < text.length; i += 1) {
+  for (let i = start + 1; i < text.length && open.length > 0; i += 1) {
     const ch = text[i];
     if (inString) {
       if (ch === '\\') i += 1;
       else if (ch === '"') inString = false;
     } else if (ch === '"') inString = true;
-    else if (ch === '{' || ch === '[') depth += 1;
-    else if (ch === '}' || ch === ']') {
-      depth -= 1;
-      if (depth === 0) return i;
-    }
+    else if (ch === '{' || ch === '[') {
+      const known = ends.get(i);
+      if (known === undefined) open.push(i);
+      else if (known === -1) break;
+      else i = known;
+    } else if (ch === '}' || ch === ']') ends.set(open.pop()!, i);
   }
-  return -1;
+  for (const unclosed of open) ends.set(unclosed, -1);
+  return ends.get(start)!;
 }
 
 const typeOf = (value: unknown): string =>
@@ -102,11 +115,17 @@ export function conforms(value: unknown, schema: JsonSchema, path = '$'): string
   return null;
 }
 
-/** The model's text answer as JSON that fits the schema; throws with the reason when it has none or does not fit. */
+/**
+ * The first JSON in the model's text answer that fits the schema: a restated schema, an example or a "[1]" before the answer is passed over.
+ * Throws with the reason when there is none: no JSON, or the violation of the largest JSON, the likeliest to be the answer.
+ */
 export function structuredOutput(text: string, schema: JsonSchema): unknown {
-  const value = extractJson(text);
-  if (value === undefined) throw new Error('the model answered with no JSON');
-  const violation = conforms(value, schema);
-  if (violation) throw new Error(`the answer does not fit the schema: ${violation}`);
-  return value;
+  let largest: { size: number; violation: string } | null = null;
+  for (const { value, size } of candidates(text)) {
+    const violation = conforms(value, schema);
+    if (violation === null) return value;
+    if (largest === null || size > largest.size) largest = { size, violation };
+  }
+  if (largest === null) throw new Error('the model answered with no JSON');
+  throw new Error(`the answer does not fit the schema: ${largest.violation}`);
 }
