@@ -426,12 +426,15 @@ export function AccountsSection({ engine, view, login, busy, onRequest, provider
                   onChange={(event) => setHasCode(event.target.value.trim() !== '')}
                   placeholder="Code from the sign-in page"
                   aria-label="Sign-in code"
+                  aria-invalid={login.error !== null || undefined}
+                  aria-describedby={login.error === null ? undefined : `${keyId}-code-error`}
                   autoComplete="off"
                   spellCheck={false}
                 />
                 <button type="submit" className="sw-btn primary" disabled={busy || !hasCode}>Submit</button>
                 <button type="button" className="sw-btn ghost" onClick={cancel}>Cancel</button>
               </form>
+              {login.error !== null && <span id={`${keyId}-code-error`} className="sw-error" role="alert">{login.error}</span>}
             </>
           ) : (
             <>

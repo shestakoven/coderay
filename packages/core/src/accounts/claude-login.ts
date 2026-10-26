@@ -11,6 +11,9 @@ const ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b\[[0-?]*[ -/]*[@-~]/g;
 // The URL must be followed by a separator, so one cut off at the end of a chunk is not taken.
 const URL_PATTERN = /https:\/\/[^\s\x00-\x1f"'<>]+(?=[\s\x00-\x1f])/;
 
+const REFUSED_CODE = /invalid code/i;
+const REFUSED_CODE_NOTICE = 'That is not the code the sign-in page shows. Sign in on that page first, then paste the whole code it shows, including the part after #.';
+
 export function loginUrl(output: string): string | null {
   return URL_PATTERN.exec(output.replace(ESCAPES, ''))?.[0] ?? null;
 }
@@ -22,14 +25,20 @@ export function claudeLogin(claude: string): LoginFlow {
       // Detached so that cancelling stops claude's whole process group.
       const child = spawn(claude, ['auth', 'login'], { env: accountEnv(home), stdio: ['pipe', 'pipe', 'pipe'], detached: true });
       let output = '';
-      let shown = false;
+      let shown: string | null = null;
+      let asked = false;
       let over = false;
       const read = (chunk: string): void => {
-        if (shown || over) return;
+        if (over) return;
+        if (shown !== null) {
+          // Handed a code it cannot use, claude says so and keeps waiting.
+          if (asked && REFUSED_CODE.test(chunk)) report({ kind: 'waiting', url: shown, userCode: null, error: REFUSED_CODE_NOTICE });
+          return;
+        }
         output = (output + chunk).slice(0, MAX_OUTPUT_CHARS);
         const url = loginUrl(output);
         if (url === null) return;
-        shown = true;
+        shown = url;
         report({ kind: 'waiting', url, userCode: null });
       };
       child.stdout?.setEncoding('utf8');
@@ -70,6 +79,7 @@ export function claudeLogin(claude: string): LoginFlow {
       return {
         submitCode(code) {
           if (!child.stdin?.writable) throw new AccountError('No sign-in is waiting for a code.');
+          asked = true;
           child.stdin.write(`${code}\n`);
         },
         cancel() {

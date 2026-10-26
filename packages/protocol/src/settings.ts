@@ -118,6 +118,7 @@ export interface AccountLoginView {
   url: string | null;
   /** The one-time code a device-code sign-in asks the user to enter. */
   userCode: string | null;
+  /** Why the sign-in failed; while it waits, why the code just sent was refused. */
   error: string | null;
 }
 

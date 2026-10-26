@@ -163,6 +163,18 @@ describe('AccountsSection sign-in', () => {
     const root = render({ login: claudeLogin({ state: 'error', url: null, error: 'Claude did not report a signed-in account.' }) });
     expect(textOf(root)).toContain('Claude did not report a signed-in account.');
   });
+
+  it('shows why a code was refused as an alert under the code input that marks it invalid, and shows neither without a refusal', () => {
+    const refused = render({ login: claudeLogin({ state: 'waiting', url: URL, error: 'Paste the whole code, including the part after #.' }) });
+    const clean = render({ login: claudeLogin({ state: 'waiting', url: URL, error: null }) });
+    const codeInput = (root: Element) => all(root, (element) => element.tag === 'input' && !isRadio(element))[0]!;
+    const alerts = (root: Element) => all(root, (element) => element.attrs.role === 'alert');
+    const alert = alerts(refused)[0];
+    expect([
+      alerts(refused).map(textOf), alert?.attrs.class, alert?.attrs.id !== undefined && codeInput(refused).attrs['aria-describedby'] === alert.attrs.id, codeInput(refused).attrs['aria-invalid'],
+      alerts(clean).length, 'aria-invalid' in codeInput(clean).attrs, 'aria-describedby' in codeInput(clean).attrs,
+    ]).toStrictEqual([['Paste the whole code, including the part after #.'], 'sw-error', true, 'true', 0, false, false]);
+  });
 });
 
 const WORK = { id: '3c1e8f5a-7d2b-4c6e-9a1f-2b3c4d5e6f70', email: 'work@example.com', plan: 'Plus', createdAt: 3 };

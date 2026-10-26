@@ -16,6 +16,7 @@ record({
   credentialVars: ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN'].filter((name) => name in process.env),
 });
 
+const REFUSAL = 'Invalid code. Please make sure the full code was copied.\n';
 const exit = (code) => process.stdout.write('', () => process.stderr.write('', () => process.exit(code)));
 
 if (command === 'auth status') {
@@ -65,6 +66,12 @@ async function login() {
     writeFileSync(config.stdinFile, input);
     const newline = input.indexOf(10);
     if (newline === -1) return;
+    if (config.refuseCodes) {
+      // As the real claude does with a code it cannot use: it says so and keeps waiting.
+      input = input.subarray(newline + 1);
+      process.stderr.write(REFUSAL);
+      return;
+    }
     const outcome = config.codes?.[input.subarray(0, newline).toString()] ?? 'invalid';
     helper.kill();
     if (outcome === 'ok') writeFileSync(credentials, JSON.stringify({ email: config.email }));
@@ -75,4 +82,8 @@ async function login() {
     process.stderr.write('\nOAuth error: Invalid code\n');
     exit(1);
   });
+  if (config.strayRefusal) {
+    // Said before any code was sent, and recorded once the core has had time to read it.
+    setTimeout(() => process.stderr.write(REFUSAL, () => setTimeout(() => record({ strayRefusal: true }), 100)), 100);
+  }
 }

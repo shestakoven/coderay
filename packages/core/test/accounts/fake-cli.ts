@@ -15,6 +15,8 @@ export interface FakeCliConfig {
   splitAt?: 'target' | 'text';
   exitAtStart?: number;
   statusEmail?: string;
+  refuseCodes?: boolean;
+  strayRefusal?: boolean;
 }
 
 export interface CliRecord {
@@ -26,6 +28,7 @@ export interface CliRecord {
   credentialVars?: string[];
   pid?: number;
   helperPid?: number;
+  strayRefusal?: boolean;
 }
 
 export interface FakeCli {

@@ -4,7 +4,7 @@ import type { SignedHome } from './account-homes';
 import { AccountError, type AccountStore } from './account-store';
 
 export type FlowUpdate =
-  | { kind: 'waiting'; url: string | null; userCode: string | null }
+  | { kind: 'waiting'; url: string | null; userCode: string | null; error?: string }
   | { kind: 'checking' }
   | { kind: 'done'; email: string; plan: string | null }
   | { kind: 'failed'; error: string };
@@ -86,6 +86,8 @@ export class AccountLogin {
   submitCode(code: string): void {
     const run = this.attempt?.run;
     if (this.current.state !== 'waiting' || !run?.submitCode) throw new AccountError('No sign-in is waiting for a code.');
+    // The refusal of an earlier code goes at once, so a refusal of this one shows as new.
+    if (this.current.error !== null) this.set({ ...this.current, error: null });
     run.submitCode(code);
   }
 
@@ -99,7 +101,7 @@ export class AccountLogin {
     if (update.kind === 'waiting') {
       // A flow that waits for the user again after a check gets its full time once more.
       if (attempt.timer === undefined) this.arm(attempt);
-      this.set({ ...this.current, state: 'waiting', url: update.url, userCode: update.userCode, error: null });
+      this.set({ ...this.current, state: 'waiting', url: update.url, userCode: update.userCode, error: update.error ?? null });
     } else if (update.kind === 'checking') {
       clearTimeout(attempt.timer);
       attempt.timer = undefined;

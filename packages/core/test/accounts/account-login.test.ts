@@ -101,6 +101,28 @@ describe('AccountLogin.submitCode', () => {
     expect(bytes.toString('utf8')).toBe(`${code}\n`);
   });
 
+  it('shows why claude refused a code while still waiting on the same URL, and clears that as the next code is sent', async () => {
+    const { login, url, waiting } = setup({ refuseCodes: true });
+    login.start('claude', 'browser');
+    await waiting();
+    const refused = () => waitFor(() => login.view().error !== null && login.view(), 'claude refusing the code');
+    const shown = (view: AccountLoginView) => [view.state, view.url, view.userCode, typeof view.error === 'string' && view.error.length > 0];
+    login.submitCode('half-a-code');
+    const first = await refused();
+    login.submitCode('another-half');
+    const sent = login.view().error;
+    const second = await refused();
+    expect([shown(first), sent, shown(second)]).toStrictEqual([['waiting', url, null, true], null, ['waiting', url, null, true]]);
+  });
+
+  it('ignores a refusal that claude prints before any code was sent', async () => {
+    const { login, url, cli, waiting } = setup({ strayRefusal: true });
+    login.start('claude', 'browser');
+    await waiting();
+    await waitFor(() => cli.records().some((entry) => entry.strayRefusal), 'claude printed the refusal');
+    expect(login.view()).toStrictEqual(claudeView({ state: 'waiting', url, error: null }));
+  });
+
   it('registers the signed-in account by the email claude reports, under the directory it signed in to, and returns to idle', async () => {
     const { login, code, accounts, loginRecord, waiting, settled } = setup();
     login.start('claude', 'browser');
