@@ -16,6 +16,7 @@ describe('toolClass', () => {
     ['Grep', 'read'],
     ['WebFetch', 'read'],
     ['TaskStop', 'read'],
+    ['ToolSearch', 'read'],
     ['AskUserQuestion', 'interactive'],
     ['ExitPlanMode', 'interactive'],
     ['SendMessage', 'unknown'],

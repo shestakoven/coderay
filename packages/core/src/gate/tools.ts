@@ -14,6 +14,7 @@ const READ_TOOLS = new Set([
   'Read', 'Glob', 'Grep', 'LS', 'TodoWrite', 'WebFetch', 'WebSearch', 'Skill',
   'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate', 'TaskStop', 'ListAgents', 'ReportFindings',
   'ListMcpResourcesTool', 'ReadMcpResourceTool', 'ReadMcpResourceDirTool', 'WaitForMcpServers',
+  'ToolSearch',
 ]);
 
 export function toolClass(name: string): ToolClass {
